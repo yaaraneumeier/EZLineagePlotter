@@ -4909,13 +4909,13 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "🎨 v56c Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "🎨 v57 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("DEBUG: Added extensive debug output for heatmap processing"),
-                              tags$li("Check console/terminal for heatmap debug messages"),
-                              tags$li("Investigating: Status indicator and heatmap Apply button issues")
+                              tags$li("Fixed status indicator display issues"),
+                              tags$li("Added heatmap debugging improvements"),
+                              tags$li("Suppressed fortify warnings in ggtree calls")
                             )
                      )
             )
