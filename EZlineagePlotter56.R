@@ -2840,22 +2840,25 @@ func.print.lineage.tree <- function(conf_yaml_path,
             # v53: print(df_heat_temp[[title.id]])
             
             
-            df_heat_temp <- df_heat_temp[match(tip_list, df_heat_temp[[title.id]]),]
-            # v53: print("df_heat_temp is bef")
-            # v53: print(df_heat_temp)
-            
-            
-            # v53: print("NOWWW")
-            
-            #df_heat_temp_filtered  <- na.omit(df_heat_temp[, title.id, drop = FALSE])
-            #df_heat_temp_filtered <- df_heat_temp[!is.na(df_heat_temp$title.id), ]
-            #df_heat_temp_filtered <- df_heat_temp[!is.na(df_heat_temp$title.id), ]
+            # v58: DEBUG - Show matching details
+            cat(file=stderr(), paste0("\n=== v58: Matching heatmap data to tree tips ===\n"))
+            cat(file=stderr(), paste0("  tip_list length: ", length(tip_list), "\n"))
+            cat(file=stderr(), paste0("  tip_list sample: ", paste(head(tip_list, 5), collapse=", "), "\n"))
+            cat(file=stderr(), paste0("  CSV ID column (", title.id, ") sample: ", paste(head(df_heat_temp[[title.id]], 5), collapse=", "), "\n"))
+
+            # Check for matches before applying
+            matches <- match(tip_list, df_heat_temp[[title.id]])
+            num_matches <- sum(!is.na(matches))
+            cat(file=stderr(), paste0("  Number of matches found: ", num_matches, " out of ", length(tip_list), " tips\n"))
+
+            df_heat_temp <- df_heat_temp[matches,]
+            cat(file=stderr(), paste0("  After match(): ", nrow(df_heat_temp), " rows\n"))
+
             ro= na.omit(df_heat_temp[[title.id]])
-            # v53: print("ro is")
-            # v53: print(ro)
             df_heat_temp_filtered<- df_heat_temp[df_heat_temp[[title.id]] %in% (ro), ]
-            
+
             df_heat_temp<- df_heat_temp_filtered
+            cat(file=stderr(), paste0("  After filtering NAs: ", nrow(df_heat_temp), " rows\n"))
             # v53: print(df_heat_temp)
             # v53: print("df_heat_temp[[title.id]]) is")
             # v53: print(df_heat_temp[[title.id]])
@@ -2885,10 +2888,16 @@ func.print.lineage.tree <- function(conf_yaml_path,
             
             #question????YO YO
             
-            # v56b: FIXED - Validate data and ensure unique rownames before setting
+            # v58: FIXED - Validate data and ensure unique rownames before setting
             if (nrow(df_heat_temp) == 0) {
               # Skip this heatmap if no data
+              cat(file=stderr(), paste0("  WARNING: No matching data for heatmap - skipping\n"))
               heat_display_vec <- c(heat_display_vec, FALSE)
+              # v58: Reset heat_flag if no heatmaps have data
+              if (indx_for_sav == 1) {
+                heat_flag <- FALSE
+                cat(file=stderr(), paste0("  Resetting heat_flag to FALSE\n"))
+              }
               next
             }
 
@@ -4380,15 +4389,16 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   }
   
   # Add heatmap if requested
-  # v57: DEBUG - show heat_flag status
-  cat(file=stderr(), paste0("\n=== v57: Heatmap rendering check ===\n"))
+  # v58: DEBUG - show heat_flag status
+  cat(file=stderr(), paste0("\n=== v58: Heatmap rendering check ===\n"))
   cat(file=stderr(), paste0("  heat_flag: ", heat_flag, "\n"))
   if (heat_flag == TRUE) {
     cat(file=stderr(), paste0("  heat_map_title_list length: ", length(heat_map_title_list), "\n"))
     cat(file=stderr(), paste0("  dxdf440_for_heat length: ", length(dxdf440_for_heat), "\n"))
   }
 
-  if (heat_flag == TRUE) {
+  # v58: FIX - Also check that dxdf440_for_heat has data, not just heat_flag
+  if (heat_flag == TRUE && length(dxdf440_for_heat) > 0) {
     tt <- p
     
     for (i in cc_totss) {
@@ -4909,13 +4919,13 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "🎨 v57 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "🎨 v58 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("Fixed status indicator display issues"),
-                              tags$li("Added heatmap debugging improvements"),
-                              tags$li("Suppressed fortify warnings in ggtree calls")
+                              tags$li("FIX: Heatmap now checks both heat_flag AND data availability"),
+                              tags$li("FIX: Reset heat_flag when heatmap data matching fails"),
+                              tags$li("DEBUG: Added detailed trace for heatmap CSV-to-tree matching")
                             )
                      )
             )
