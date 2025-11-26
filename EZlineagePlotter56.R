@@ -2841,11 +2841,13 @@ func.print.lineage.tree <- function(conf_yaml_path,
               ggtree_labels <- tip_labels_from_tree
             }
 
-            #question
-            if (id_tip_trim_flag== FALSE) {
-
+            # v60: FIX - Logic was inverted! When id_tip_trim_flag == TRUE, apply trimming
+            # When id_tip_trim_flag == FALSE (default), use full labels as-is
+            if (id_tip_trim_flag == TRUE) {
+              # Trimming ENABLED: extract substring from tip labels
               tip_list <- substr(ggtree_labels, id_tip_trim_start, id_tip_trim_end)
             } else {
+              # Trimming DISABLED: use full tip labels
               tip_list <- ggtree_labels
             }
             # v53: print("TIP LIST CHECK")
@@ -4934,13 +4936,12 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "🎨 v59 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "🎨 v60 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("FIX: Status indicator now works on ALL preview tabs (Classification, Bootstrap, Highlighting, Heatmap)"),
-                              tags$li("FIX: Heatmap tip_list now uses tree440$tip.label when ggtree labels are NA"),
-                              tags$li("CLEANUP: Replaced laggy renderUI status indicators with fast shinyjs-toggled static HTML")
+                              tags$li("FIX: Heatmap now displays correctly - fixed inverted id_tip_trim_flag logic"),
+                              tags$li("The condition for applying substr() was backwards, causing all tip labels to become NA")
                             )
                      )
             )
