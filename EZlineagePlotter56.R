@@ -4871,14 +4871,13 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "🎨 v17.2-IMPROVED Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "🎨 v56a-HOTFIX Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("Switch between saved classifications with radio buttons"),
-                              tags$li("Preview color changes before saving"),
-                              tags$li("Consistent plot display across all tabs"),
-                              tags$li("Ready/Processing indicator next to plots")
+                              tags$li("Fixed: Status indicators now properly sync across all tabs"),
+                              tags$li("Fixed: Heatmap Apply button now correctly reads column selections"),
+                              tags$li("Status indicators depend on plot_counter for reliable updates")
                             )
                      )
             )
@@ -8679,15 +8678,20 @@ server <- function(input, output, session) {
       showNotification("No heatmaps configured", type = "warning")
       return()
     }
-    
-    # v56: Build heatmaps list from configs with multiple column support
+
+    # v56a: Build heatmaps list from configs with multiple column support
+    # Read directly from inputs to ensure we get current values (fixes ignoreInit issue)
     heatmaps_list <- lapply(seq_along(values$heatmap_configs), function(i) {
       cfg <- values$heatmap_configs[[i]]
-      
-      # v56: Check columns (plural)
-      if (is.null(cfg$columns) || length(cfg$columns) == 0) {
+
+      # v56a: Read columns directly from input (fixes issue where ignoreInit=TRUE misses initial selection)
+      current_columns <- input[[paste0("heatmap_columns_", i)]]
+      if (is.null(current_columns) || length(current_columns) == 0) {
         return(NULL)
       }
+
+      # Update config with current columns
+      cfg$columns <- current_columns
       
       # Determine actual type based on first column
       actual_type <- cfg$type
@@ -9724,11 +9728,13 @@ server <- function(input, output, session) {
   
   
   output$tree_status_indicator <- renderUI({
-    # v56: Three states - Waiting (initial), Processing (during generation), Ready (after generation)
+    # v56a: Fixed status indicator - depend on plot_counter to force refresh
+    # Read reactive values to establish dependencies
+    plot_counter <- values$plot_counter
     plot_rdy <- values$plot_ready
     plot_gen <- values$plot_generating
     has_tree <- !is.null(values$tree)
-    
+
     if (!has_tree) {
       # No tree loaded yet
       tags$span(
@@ -9781,11 +9787,12 @@ server <- function(input, output, session) {
   
   # Status indicator for classification preview
   output$classification_status_indicator <- renderUI({
-    # v56: Three states
+    # v56a: Fixed - depend on plot_counter to force refresh
+    plot_counter <- values$plot_counter
     plot_rdy <- values$plot_ready
     plot_gen <- values$plot_generating
     has_tree <- !is.null(values$tree)
-    
+
     if (!has_tree) {
       tags$span(
         style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #f8f9fa; color: #6c757d; font-size: 12px;",
@@ -9814,11 +9821,12 @@ server <- function(input, output, session) {
   })
   
   output$bootstrap_status_indicator <- renderUI({
-    # v56: Three states
+    # v56a: Fixed - depend on plot_counter to force refresh
+    plot_counter <- values$plot_counter
     plot_rdy <- values$plot_ready
     plot_gen <- values$plot_generating
     has_tree <- !is.null(values$tree)
-    
+
     if (!has_tree) {
       tags$span(
         style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #f8f9fa; color: #6c757d; font-size: 12px;",
@@ -9847,11 +9855,12 @@ server <- function(input, output, session) {
   })
   
   output$highlight_status_indicator <- renderUI({
-    # v56: Three states
+    # v56a: Fixed - depend on plot_counter to force refresh
+    plot_counter <- values$plot_counter
     plot_rdy <- values$plot_ready
     plot_gen <- values$plot_generating
     has_tree <- !is.null(values$tree)
-    
+
     if (!has_tree) {
       tags$span(
         style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #f8f9fa; color: #6c757d; font-size: 12px;",
@@ -9880,11 +9889,12 @@ server <- function(input, output, session) {
   })
   
   output$heatmap_status_indicator <- renderUI({
-    # v56: Three states
+    # v56a: Fixed - depend on plot_counter to force refresh
+    plot_counter <- values$plot_counter
     plot_rdy <- values$plot_ready
     plot_gen <- values$plot_generating
     has_tree <- !is.null(values$tree)
-    
+
     if (!has_tree) {
       tags$span(
         style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #f8f9fa; color: #6c757d; font-size: 12px;",
