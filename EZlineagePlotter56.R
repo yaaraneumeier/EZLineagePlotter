@@ -6478,10 +6478,12 @@ server <- function(input, output, session) {
               heatmap_item[[as.character(j)]]$midpoint <- if (!is.null(heatmap_entry$midpoint)) heatmap_entry$midpoint else 0
             }
             
-            # Add columns
+            # Add columns - format must match expected YAML structure
+            # Each column entry needs to be a named list like list("1" = "column_name")
             if (!is.null(heatmap_entry$columns)) {
               for (k in seq_along(heatmap_entry$columns)) {
-                column_entry <- list(heatmap_entry$columns[k])
+                column_entry <- list()
+                column_entry[[as.character(k)]] <- heatmap_entry$columns[k]
                 heatmap_item[[as.character(j)]]$according[[k]] <- column_entry
               }
             }
@@ -6586,7 +6588,49 @@ server <- function(input, output, session) {
       )
       
       default_classification[["1"]]$according <- list(default_according)
-      
+
+      # v56: Add heatmaps to default classification if values$heatmaps is set
+      if (!is.null(values$heatmaps) && length(values$heatmaps) > 0) {
+        default_classification[["1"]]$heatmap_display <- list()
+
+        for (j in seq_along(values$heatmaps)) {
+          heatmap_entry <- values$heatmaps[[j]]
+
+          heatmap_item <- list()
+          heatmap_item[[as.character(j)]] <- list(
+            display = "yes",
+            title = heatmap_entry$title,
+            is_discrete = if (heatmap_entry$is_discrete) "yes" else "no",
+            according = list()
+          )
+
+          if (heatmap_entry$is_discrete) {
+            if (!is.null(heatmap_entry$use_custom_colors) && heatmap_entry$use_custom_colors) {
+              heatmap_item[[as.character(j)]]$man_define_colors <- "yes"
+              heatmap_item[[as.character(j)]]$color_scale_option <- heatmap_entry$colors
+            } else {
+              heatmap_item[[as.character(j)]]$color_scale_option <- heatmap_entry$color_scheme
+            }
+          } else {
+            heatmap_item[[as.character(j)]]$low <- heatmap_entry$low_color
+            heatmap_item[[as.character(j)]]$mid <- if (!is.null(heatmap_entry$mid_color)) heatmap_entry$mid_color else heatmap_entry$low_color
+            heatmap_item[[as.character(j)]]$high <- heatmap_entry$high_color
+            heatmap_item[[as.character(j)]]$midpoint <- if (!is.null(heatmap_entry$midpoint)) heatmap_entry$midpoint else 0
+          }
+
+          # Add columns - format must match expected YAML structure
+          if (!is.null(heatmap_entry$columns)) {
+            for (k in seq_along(heatmap_entry$columns)) {
+              column_entry <- list()
+              column_entry[[as.character(k)]] <- heatmap_entry$columns[k]
+              heatmap_item[[as.character(j)]]$according[[k]] <- column_entry
+            }
+          }
+
+          default_classification[["1"]]$heatmap_display[[j]] <- heatmap_item
+        }
+      }
+
       values$yaml_data$`visual definitions`$classification <- list(default_classification)
     }
     
@@ -9693,11 +9737,11 @@ server <- function(input, output, session) {
         " Waiting for data"
       )
     } else if (isTRUE(plot_gen)) {
-      # Currently generating
+      # Currently generating - gray/processing state
       tags$span(
-        style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #fff3cd; color: #856404; font-size: 12px; font-weight: bold;",
+        style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #6c757d; color: #ffffff; font-size: 12px; font-weight: bold;",
         icon("spinner", class = "fa-spin"),
-        " Generating..."
+        " Processing..."
       )
     } else if (isTRUE(plot_rdy)) {
       # Plot is ready
@@ -9750,9 +9794,9 @@ server <- function(input, output, session) {
       )
     } else if (isTRUE(plot_gen)) {
       tags$span(
-        style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #fff3cd; color: #856404; font-size: 12px; font-weight: bold;",
+        style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #6c757d; color: #ffffff; font-size: 12px; font-weight: bold;",
         icon("spinner", class = "fa-spin"),
-        " Generating..."
+        " Processing..."
       )
     } else if (isTRUE(plot_rdy)) {
       tags$span(
@@ -9783,9 +9827,9 @@ server <- function(input, output, session) {
       )
     } else if (isTRUE(plot_gen)) {
       tags$span(
-        style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #fff3cd; color: #856404; font-size: 12px; font-weight: bold;",
+        style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #6c757d; color: #ffffff; font-size: 12px; font-weight: bold;",
         icon("spinner", class = "fa-spin"),
-        " Generating..."
+        " Processing..."
       )
     } else if (isTRUE(plot_rdy)) {
       tags$span(
@@ -9816,9 +9860,9 @@ server <- function(input, output, session) {
       )
     } else if (isTRUE(plot_gen)) {
       tags$span(
-        style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #fff3cd; color: #856404; font-size: 12px; font-weight: bold;",
+        style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #6c757d; color: #ffffff; font-size: 12px; font-weight: bold;",
         icon("spinner", class = "fa-spin"),
-        " Generating..."
+        " Processing..."
       )
     } else if (isTRUE(plot_rdy)) {
       tags$span(
@@ -9849,9 +9893,9 @@ server <- function(input, output, session) {
       )
     } else if (isTRUE(plot_gen)) {
       tags$span(
-        style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #fff3cd; color: #856404; font-size: 12px; font-weight: bold;",
+        style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #6c757d; color: #ffffff; font-size: 12px; font-weight: bold;",
         icon("spinner", class = "fa-spin"),
-        " Generating..."
+        " Processing..."
       )
     } else if (isTRUE(plot_rdy)) {
       tags$span(
