@@ -2539,14 +2539,18 @@ func.print.lineage.tree <- function(conf_yaml_path,
       
       heat_display_vec=c()
       heat_display_params_list <- c()
-      #print("B6")
-      
+
+      # v56c: DEBUG - show what attributes are in the classification
+      cat(file=stderr(), paste0("\n=== v56c: Classification attributes (att1): ", paste(att1, collapse=", "), " ===\n"))
+
       if ('heatmap_display' %in% att1) {
-        
-        #print("B7")
-        
+
+        # v56c: DEBUG
+        cat(file=stderr(), "\n=== v56c: FOUND heatmap_display in classification ===\n")
+
         heat_definitions <- yaml_file[['visual definitions']]$'classification'[[disp_index]][[disp_indx_ch]]$heatmap_display
         heat_list_len <- length(heat_definitions)
+        cat(file=stderr(), paste0("  Number of heatmaps found: ", heat_list_len, "\n"))
         #print("heat_list_len is")
         #print(heat_list_len)
         dxdf440_for_heat <- c()
@@ -4877,13 +4881,13 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "🎨 v56b Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "🎨 v56c Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("Fixed: Heatmap 'invalid row.names length' error - now validates data and handles duplicates"),
-                              tags$li("Fixed: Suppressed harmless ggtree/ggplot2 fortify warnings"),
-                              tags$li("Improved: Better error handling for empty heatmap data")
+                              tags$li("DEBUG: Added extensive debug output for heatmap processing"),
+                              tags$li("Check console/terminal for heatmap debug messages"),
+                              tags$li("Investigating: Status indicator and heatmap Apply button issues")
                             )
                      )
             )
@@ -6458,11 +6462,18 @@ server <- function(input, output, session) {
         }
         
         if (!is.null(heatmaps_to_use) && length(heatmaps_to_use) > 0) {
+          # v56c: DEBUG
+          cat(file=stderr(), paste0("\n=== v56c: Adding ", length(heatmaps_to_use), " heatmap(s) to classification ", i, " ===\n"))
+
           class_item[[as.character(i)]]$heatmap_display <- list()
-          
+
           for (j in seq_along(heatmaps_to_use)) {
             heatmap_entry <- heatmaps_to_use[[j]]
-            
+
+            # v56c: DEBUG
+            cat(file=stderr(), paste0("  Processing heatmap ", j, ": ", heatmap_entry$title, "\n"))
+            cat(file=stderr(), paste0("    Columns: ", paste(heatmap_entry$columns, collapse=", "), "\n"))
+
             heatmap_item <- list()
             heatmap_item[[as.character(j)]] <- list(
               display = "yes",
@@ -6598,10 +6609,17 @@ server <- function(input, output, session) {
 
       # v56: Add heatmaps to default classification if values$heatmaps is set
       if (!is.null(values$heatmaps) && length(values$heatmaps) > 0) {
+        # v56c: DEBUG
+        cat(file=stderr(), paste0("\n=== v56c: Adding ", length(values$heatmaps), " heatmap(s) to DEFAULT classification ===\n"))
+
         default_classification[["1"]]$heatmap_display <- list()
 
         for (j in seq_along(values$heatmaps)) {
           heatmap_entry <- values$heatmaps[[j]]
+
+          # v56c: DEBUG
+          cat(file=stderr(), paste0("  Processing heatmap ", j, ": ", heatmap_entry$title, "\n"))
+          cat(file=stderr(), paste0("    Columns: ", paste(heatmap_entry$columns, collapse=", "), "\n"))
 
           heatmap_item <- list()
           heatmap_item[[as.character(j)]] <- list(
@@ -8745,10 +8763,22 @@ server <- function(input, output, session) {
     }
     
     values$heatmaps <- heatmaps_list
-    
+
+    # v56c: DEBUG - Print heatmap structure being applied
+    cat(file=stderr(), "\n=== v56c HEATMAP APPLY DEBUG ===\n")
+    cat(file=stderr(), "Number of heatmaps:", length(heatmaps_list), "\n")
+    for (h_idx in seq_along(heatmaps_list)) {
+      hm <- heatmaps_list[[h_idx]]
+      cat(file=stderr(), paste0("  Heatmap ", h_idx, ":\n"))
+      cat(file=stderr(), paste0("    Title: ", hm$title, "\n"))
+      cat(file=stderr(), paste0("    Columns: ", paste(hm$columns, collapse=", "), "\n"))
+      cat(file=stderr(), paste0("    Is discrete: ", hm$is_discrete, "\n"))
+    }
+    cat(file=stderr(), "================================\n\n")
+
     # Generate plot
     generate_plot()
-    
+
     showNotification(paste(length(heatmaps_list), "heatmap(s) applied"), type = "message")
   })
   
