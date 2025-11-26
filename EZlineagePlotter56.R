@@ -2542,16 +2542,20 @@ func.print.lineage.tree <- function(conf_yaml_path,
       heat_display_params_list <- c()
 
       # v56c: DEBUG - show what attributes are in the classification
-      cat(file=stderr(), paste0("\n=== v56c: Classification attributes (att1): ", paste(att1, collapse=", "), " ===\n"))
+      cat(file=stderr(), paste0("\n=== v57: Classification attributes (att1): ", paste(att1, collapse=", "), " ===\n"))
 
       if ('heatmap_display' %in% att1) {
 
         # v56c: DEBUG
-        cat(file=stderr(), "\n=== v56c: FOUND heatmap_display in classification ===\n")
+        cat(file=stderr(), "\n=== v57: FOUND heatmap_display in classification ===\n")
 
         heat_definitions <- yaml_file[['visual definitions']]$'classification'[[disp_index]][[disp_indx_ch]]$heatmap_display
         heat_list_len <- length(heat_definitions)
         cat(file=stderr(), paste0("  Number of heatmaps found: ", heat_list_len, "\n"))
+        cat(file=stderr(), paste0("  heat_definitions structure: ", class(heat_definitions), "\n"))
+        if (heat_list_len > 0) {
+          cat(file=stderr(), paste0("  First heatmap names: ", paste(names(heat_definitions[[1]]), collapse=", "), "\n"))
+        }
         #print("heat_list_len is")
         #print(heat_list_len)
         dxdf440_for_heat <- c()
@@ -2723,16 +2727,22 @@ func.print.lineage.tree <- function(conf_yaml_path,
               
               
             } else {
+              # v57: DEBUG - trace column extraction
+              cat(file=stderr(), paste0("\n=== v57: Extracting heatmap columns from 'according' ===\n"))
+              cat(file=stderr(), paste0("  acc_heat_list length: ", length(acc_heat_list), "\n"))
               ind <-1
               for (j in acc_heat_list) {
-                
+
                 j1 <- names(j)
-                
+                cat(file=stderr(), paste0("  Column ", ind, ": j1=", j1, "\n"))
+
                 ind<- ind+1
                 j2<- j[[j1]]
-                
+                cat(file=stderr(), paste0("    j2 (column name)=", j2, "\n"))
+
                 l_titles_for_heat <- c(l_titles_for_heat,j2)
-              } 
+              }
+              cat(file=stderr(), paste0("  Final l_titles_for_heat: ", paste(l_titles_for_heat, collapse=", "), "\n"))
             }
             
             
@@ -2763,12 +2773,21 @@ func.print.lineage.tree <- function(conf_yaml_path,
             #print(names(readfile440))
             
             l_titles_for_heat <- as.character(l_titles_for_heat)
-            
+
+            # v57: DEBUG - show column validation
+            cat(file=stderr(), paste0("\n=== v57: Validating heatmap columns ===\n"))
+            cat(file=stderr(), paste0("  title.id: ", title.id, "\n"))
+            cat(file=stderr(), paste0("  l_titles_for_heat: ", paste(l_titles_for_heat, collapse=", "), "\n"))
+            cat(file=stderr(), paste0("  Available CSV columns: ", paste(head(names(readfile440), 10), collapse=", "), "...\n"))
+
             valid_columns <- c(title.id, l_titles_for_heat)
             valid_columns <- valid_columns[valid_columns %in% names(readfile440)]
-            
+            cat(file=stderr(), paste0("  Valid columns (after filtering): ", paste(valid_columns, collapse=", "), "\n"))
+            cat(file=stderr(), paste0("  Number of valid columns: ", length(valid_columns), "\n"))
+
             # Select only the valid columns
             df_heat_temp <- readfile440[, valid_columns, drop = FALSE]
+            cat(file=stderr(), paste0("  df_heat_temp dimensions: ", nrow(df_heat_temp), " rows x ", ncol(df_heat_temp), " cols\n"))
             
             #print("df_heat_temp is")
             #print(df_heat_temp)
@@ -4361,7 +4380,15 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   }
   
   # Add heatmap if requested
-  if (heat_flag == TRUE) { 
+  # v57: DEBUG - show heat_flag status
+  cat(file=stderr(), paste0("\n=== v57: Heatmap rendering check ===\n"))
+  cat(file=stderr(), paste0("  heat_flag: ", heat_flag, "\n"))
+  if (heat_flag == TRUE) {
+    cat(file=stderr(), paste0("  heat_map_title_list length: ", length(heat_map_title_list), "\n"))
+    cat(file=stderr(), paste0("  dxdf440_for_heat length: ", length(dxdf440_for_heat), "\n"))
+  }
+
+  if (heat_flag == TRUE) {
     tt <- p
     
     for (i in cc_totss) {
@@ -5033,9 +5060,25 @@ ui <- dashboardPage(
           box(
             title = tagList(
               "Tree Preview ",
-              uiOutput("tree_status_indicator", inline = TRUE)  
+              # v57: Static status indicator elements for shinyjs toggling (immediate UI updates)
+              span(id = "status_waiting",
+                style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #f8f9fa; color: #6c757d; font-size: 12px;",
+                icon("clock"), " Waiting for data"
+              ),
+              span(id = "status_processing",
+                style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #6c757d; color: #ffffff; font-size: 12px; font-weight: bold;",
+                icon("spinner", class = "fa-spin"), " Processing..."
+              ),
+              span(id = "status_ready",
+                style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #28a745; color: #ffffff; font-size: 12px; font-weight: bold;",
+                icon("check-circle"), " Ready"
+              ),
+              span(id = "status_click_to_generate",
+                style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #e9ecef; color: #6c757d; font-size: 12px;",
+                icon("hourglass-half"), " Click to generate"
+              )
             ),
-            status = "primary", 
+            status = "primary",
             solidHeader = TRUE,
             width = 12,
             plotOutput("tree_preview", height = "600px")
@@ -5394,7 +5437,36 @@ server <- function(input, output, session) {
   )
   
   classification_loading <- reactiveVal(FALSE)
-  
+
+  # v57: Helper functions to toggle status indicator via shinyjs (immediate UI updates)
+  show_status_waiting <- function() {
+    shinyjs::show("status_waiting")
+    shinyjs::hide("status_processing")
+    shinyjs::hide("status_ready")
+    shinyjs::hide("status_click_to_generate")
+  }
+
+  show_status_processing <- function() {
+    shinyjs::hide("status_waiting")
+    shinyjs::show("status_processing")
+    shinyjs::hide("status_ready")
+    shinyjs::hide("status_click_to_generate")
+  }
+
+  show_status_ready <- function() {
+    shinyjs::hide("status_waiting")
+    shinyjs::hide("status_processing")
+    shinyjs::show("status_ready")
+    shinyjs::hide("status_click_to_generate")
+  }
+
+  show_status_click_to_generate <- function() {
+    shinyjs::hide("status_waiting")
+    shinyjs::hide("status_processing")
+    shinyjs::hide("status_ready")
+    shinyjs::show("status_click_to_generate")
+  }
+
   # Initialize YAML data structure immediately
   values$yaml_data <- list(
     "Individual general definitions" = list(
@@ -5937,7 +6009,12 @@ server <- function(input, output, session) {
       
       # Hide progress
       values$progress_visible <- FALSE
-      
+
+      # v57: Update status indicator - CSV is loaded
+      if (!is.null(values$tree)) {
+        show_status_click_to_generate()
+      }
+
       # Don't auto-match - user must click "Process Data" button
       # v53: cat(file=stderr(), "CSV loaded. Ready for user to select columns and click 'Process Data'.\n")
     }, error = function(e) {
@@ -5945,7 +6022,7 @@ server <- function(input, output, session) {
       showNotification(paste("Error loading CSV:", e$message), type = "error")
     })
   })
-  
+
   # Update individual value dropdown when column is selected
   observeEvent(input$individual_column, {
     # v53: cat(file=stderr(), paste("individual_column changed to:", input$individual_column), "\n")
@@ -6042,7 +6119,12 @@ server <- function(input, output, session) {
       
       # Hide progress
       values$progress_visible <- FALSE
-      
+
+      # v57: Update status indicator - tree is loaded, ready to generate
+      if (!is.null(values$csv_data)) {
+        show_status_click_to_generate()
+      }
+
       # Don't auto-match - user must click "Process Data" button
       # v53: cat(file=stderr(), "Tree loaded. Ready for user to select columns and click 'Process Data'.\n")
     }, error = function(e) {
@@ -9286,32 +9368,15 @@ server <- function(input, output, session) {
       return(NULL)
     }
     
-    
+
     # v53: cat(file=stderr(), "\n=== generate_plot() called ===\n")
-    
+
+    # v57: Show processing status IMMEDIATELY via shinyjs (before R blocks)
+    show_status_processing()
+
     # Set generating flag for status indicator
     values$plot_generating <- TRUE
-    #values$progress_message <- "🎨 Generating your beautiful plot..."
-    #values$progress_visible <- TRUE
-    
     values$plot_ready <- FALSE  # Mark as not ready while generating
-    
-    # CRITICAL: Return control to Shiny to update UI, then continue
-    #shiny::invalidateLater(100, session, function() {
-    #  # This ensures UI updates before continuing
-    #  NULL
-    #})
-    
-    # Force Shiny to update the UI by flushing reactive context
-    shiny::invalidateLater(0, session)
-    
-    
-    # Show progress - use isolate to force immediate update
-    #isolate({
-    #  values$progress_message <- "🎨 Generating your beautiful plot..."
-    #  values$progress_visible <- TRUE
-    #})
-    # Force reactive flush
     #shiny::invalidateLater(0, session)
     
     # Small delay to ensure progress shows
@@ -9487,7 +9552,37 @@ server <- function(input, output, session) {
     
     # Write modified YAML to temporary file
     writeLines(yaml::as.yaml(yaml_data_modified, indent.mapping.sequence = TRUE), temp_yaml_file)
-    
+
+    # v57: DEBUG - Show heatmap structure in YAML
+    if (!is.null(yaml_data_modified$`visual definitions`$classification)) {
+      cat(file=stderr(), "\n=== v57 HEATMAP YAML DEBUG ===\n")
+      for (ci in seq_along(yaml_data_modified$`visual definitions`$classification)) {
+        class_entry <- yaml_data_modified$`visual definitions`$classification[[ci]]
+        class_key <- names(class_entry)[1]
+        cat(file=stderr(), paste0("Classification ", ci, " (key=", class_key, "):\n"))
+        cat(file=stderr(), paste0("  Has heatmap_display: ", !is.null(class_entry[[class_key]]$heatmap_display), "\n"))
+        if (!is.null(class_entry[[class_key]]$heatmap_display)) {
+          cat(file=stderr(), paste0("  Number of heatmaps: ", length(class_entry[[class_key]]$heatmap_display), "\n"))
+          for (hi in seq_along(class_entry[[class_key]]$heatmap_display)) {
+            hm <- class_entry[[class_key]]$heatmap_display[[hi]]
+            hm_key <- names(hm)[1]
+            cat(file=stderr(), paste0("    Heatmap ", hi, " (key=", hm_key, "):\n"))
+            cat(file=stderr(), paste0("      Title: ", hm[[hm_key]]$title, "\n"))
+            cat(file=stderr(), paste0("      Display: ", hm[[hm_key]]$display, "\n"))
+            cat(file=stderr(), paste0("      According length: ", length(hm[[hm_key]]$according), "\n"))
+            if (length(hm[[hm_key]]$according) > 0) {
+              for (ai in seq_along(hm[[hm_key]]$according)) {
+                acc <- hm[[hm_key]]$according[[ai]]
+                acc_key <- names(acc)[1]
+                cat(file=stderr(), paste0("        Column ", ai, ": ", acc[[acc_key]], "\n"))
+              }
+            }
+          }
+        }
+      }
+      cat(file=stderr(), "==============================\n\n")
+    }
+
     # DEBUG: Also print part of the YAML file
     # v53: cat(file=stderr(), "\n=== YAML FILE CONTENT (first 50 lines) ===\n")
     yaml_lines <- readLines(temp_yaml_file, n = 50)
@@ -9717,17 +9812,20 @@ server <- function(input, output, session) {
         
         if (file.exists(temp_plot_file)) {
           # v53: cat(file=stderr(), "File size:", file.info(temp_plot_file)$size, "bytes\n")
-          
+
           # Store the file path - this will trigger renderImage
           values$temp_plot_file <- temp_plot_file
           values$plot_ready <- TRUE
           values$plot_counter <- values$plot_counter + 1  # Increment to force reactive update
-          
+
           # Hide progress - plot is ready!
           values$progress_visible <- FALSE
           values$progress_message <- ""
           values$plot_generating <- FALSE  # Turn off generating indicator
-          
+
+          # v57: Show Ready status via shinyjs
+          show_status_ready()
+
           # v53: cat(file=stderr(), "Plot saved successfully and path stored\n")
           # v53: cat(file=stderr(), "Plot counter now:", values$plot_counter, "\n")
         } else {
@@ -9736,6 +9834,8 @@ server <- function(input, output, session) {
           values$plot_ready <- FALSE
           values$progress_visible <- FALSE
           values$plot_generating <- FALSE
+          # v57: Show click to generate on error
+          show_status_click_to_generate()
         }
         
       }, error = function(e) {
@@ -9746,6 +9846,8 @@ server <- function(input, output, session) {
         values$plot_ready <- FALSE
         values$progress_visible <- FALSE
         values$plot_generating <- FALSE
+        # v57: Show click to generate on error
+        show_status_click_to_generate()
       })
       
       # v53: cat(file=stderr(), "==============================\n\n")
@@ -9766,44 +9868,9 @@ server <- function(input, output, session) {
   
   
   
-  output$tree_status_indicator <- renderUI({
-    # v56a: Fixed status indicator - depend on plot_counter to force refresh
-    # Read reactive values to establish dependencies
-    plot_counter <- values$plot_counter
-    plot_rdy <- values$plot_ready
-    plot_gen <- values$plot_generating
-    has_tree <- !is.null(values$tree)
-
-    if (!has_tree) {
-      # No tree loaded yet
-      tags$span(
-        style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #f8f9fa; color: #6c757d; font-size: 12px;",
-        icon("clock"),
-        " Waiting for data"
-      )
-    } else if (isTRUE(plot_gen)) {
-      # Currently generating - gray/processing state
-      tags$span(
-        style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #6c757d; color: #ffffff; font-size: 12px; font-weight: bold;",
-        icon("spinner", class = "fa-spin"),
-        " Processing..."
-      )
-    } else if (isTRUE(plot_rdy)) {
-      # Plot is ready
-      tags$span(
-        style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #d4edda; color: #155724; font-size: 12px; font-weight: bold;",
-        icon("check-circle"),
-        " Ready"
-      )
-    } else {
-      # Tree loaded but plot not yet generated
-      tags$span(
-        style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #e9ecef; color: #6c757d; font-size: 12px;",
-        icon("hourglass-half"),
-        " Click to generate"
-      )
-    }
-  })
+  # v57: tree_status_indicator replaced with static HTML + shinyjs for immediate updates
+  # The status indicator is now controlled via show_status_waiting(), show_status_processing(),
+  # show_status_ready(), and show_status_click_to_generate() helper functions
   
   # Output renderers (outside of generate_plot function)
   output$tree_preview <- renderImage({
