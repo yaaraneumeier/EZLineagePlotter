@@ -530,7 +530,8 @@ func.get.subtree.wrapper.return.list.tips <- function(tree, nod) {
     sub <- subset(su, isTip == TRUE)
     out <- sub$node
   } else {
-    subb <- subset(ggtree(tree)$data, node %in% c(su))
+    # v56b: Suppress harmless fortify warnings
+    subb <- subset(suppressWarnings(ggtree(tree))$data, node %in% c(su))
     out <- subset(subb, isTip == TRUE)
     out <- out$node
   }
@@ -543,8 +544,9 @@ fix.readfile440.with.missing.leaves <- function(readfile440, title.id, tree440, 
                                                 id_tip_trim_flag, id_tip_trim_start, id_tip_trim_end, id_tip_prefix, debug_mode = FALSE) {
   readfile440n <- readfile440
   #print("in fix.readfile440.with.missing.leaves")
-  
-  tree_data <- ggtree(tree440)$data
+
+  # v56b: Suppress harmless fortify warnings
+  tree_data <- suppressWarnings(ggtree(tree440))$data
   leaves_id_from_tree1 <- tree_data[tree_data$isTip == TRUE, 'label']
   leaves_id_from_tree <- as.list(leaves_id_from_tree1['label'])$label
   #print(leaves_id_from_tree)
@@ -1000,7 +1002,8 @@ func.make.rot.params <- function(rot_index, yaml_file, title.id, ids_list, tree4
                                            id_tip_trim_flag, id_tip_prefix)
   
   TREE_OTU_dx.rx <- groupOTU(tree440, list_id_by_rot)
-  iis <- subset(ggtree(TREE_OTU_dx.rx)$data, group == 0)
+  # v56b: Suppress harmless fortify warnings
+  iis <- subset(suppressWarnings(ggtree(TREE_OTU_dx.rx))$data, group == 0)
   types_list_dx.rx <- names(list_id_by_rot)
   list_weight_dx.rx <- func.set.list_weight(types_list_dx.rx)
   
@@ -1160,7 +1163,8 @@ func.set.list_weight <- function(types_list) {
 # Create weight list for tree
 func.create.weight_list <- function(tree_TRY, weights_list, TREE_OTU_class, tree_size) {
   # Define weights to tips for rotation
-  g <- ggtree(TREE_OTU_class)
+  # v56b: Suppress harmless fortify warnings
+  g <- suppressWarnings(ggtree(TREE_OTU_class))
   weight_list <- rep(0, tree_size)
   
   for (nod in g$data$node) {
@@ -2780,10 +2784,11 @@ func.print.lineage.tree <- function(conf_yaml_path,
             } else {
               # v53: print("No duplicate column names found.")
             }
-            
-            
-            
-            g_check <- ggtree(tree440)$data
+
+
+
+            # v56b: Suppress harmless fortify warnings
+            g_check <- suppressWarnings(ggtree(tree440))$data
             #print(print("B15a"))
             
             if (flag_print_tree_data== TRUE) {
@@ -2856,46 +2861,43 @@ func.print.lineage.tree <- function(conf_yaml_path,
             
             #question????YO YO
             
+            # v56b: FIXED - Validate data and ensure unique rownames before setting
+            if (nrow(df_heat_temp) == 0) {
+              # Skip this heatmap if no data
+              heat_display_vec <- c(heat_display_vec, FALSE)
+              next
+            }
+
             if (id_tip_trim_flag== FALSE) {
               #print("inn1")
-              
-              #print("df_heat_temp is")
-              #print(df_heat_temp)
-              
-              rownames(df_heat_temp) <- paste0(id_tip_prefix,df_heat_temp[[title.id]])
+
+              # v56b: Create row names and ensure they are unique
+              new_rownames <- paste0(id_tip_prefix, df_heat_temp[[title.id]])
+              # Handle duplicates by making unique
+              if (anyDuplicated(new_rownames) > 0) {
+                new_rownames <- make.unique(as.character(new_rownames))
+              }
+              # v56b: Validate length matches before setting
+              if (length(new_rownames) == nrow(df_heat_temp)) {
+                rownames(df_heat_temp) <- new_rownames
+              }
               # v53: print("rownames(df_heat_temp) is")
               # v53: print(rownames(df_heat_temp))
               # v53: print("inn2")
             } else {
               # v53: print("else21")
-              
-              # Find duplicate column names
-              #duplicated_cols <- names(df_heat_temp)[duplicated(names(df_heat_temp))]
-              
-              ## Print the duplicates (if any)
-              #if (length(duplicated_cols) > 0) {
-              #  print(paste("Duplicate column names:", paste(duplicated_cols, collapse = ", ")))
-              #} else {
-              #  print("No duplicate column names found.")
-              #}
-              # v53: print(sum(is.na(df_heat_temp[[title.id]])) )
-              # v53: print(df_heat_temp[[title.id]])
-              #df_heat_temp[[title.id]][is.na(df_heat_temp[[title.id]])] <- "missing_value"
-              #duplicated_values <- df_heat_temp[[title.id]][duplicated(df_heat_temp[[title.id]])]
-              #df_heat_temp[[title.id]] <- make.unique(as.character(df_heat_temp[[title.id]]))
-              #rownames(df_heat_temp) <- df_heat_temp[[title.id]]
-              
-              #print("df_heat_temp is")
-              
-              #print(head(df_heat_temp))
-              #print("title.id is")
-              #print(title.id)
-              #print(colnames(df_heat_temp))
-              #print(df_heat_temp$'Sample.Reads.ID')
-              #rownames(df_heat_temp)
-              #print(df_heat_temp[[title.id]])
-              rownames(df_heat_temp) <- paste0("",df_heat_temp[[title.id]])
-              
+
+              # v56b: Create row names and ensure they are unique
+              new_rownames <- paste0("", df_heat_temp[[title.id]])
+              # Handle duplicates by making unique
+              if (anyDuplicated(new_rownames) > 0) {
+                new_rownames <- make.unique(as.character(new_rownames))
+              }
+              # v56b: Validate length matches before setting
+              if (length(new_rownames) == nrow(df_heat_temp)) {
+                rownames(df_heat_temp) <- new_rownames
+              }
+
               # v53: print("else22")
             }
             # v53: print("check l_titles_for_heat is")
@@ -3071,12 +3073,13 @@ func.print.lineage.tree <- function(conf_yaml_path,
         
         
       }
-      
-      tree_data <- ggtree(tree440)$data
-      
-      
-      
-      
+
+      # v56b: Suppress harmless fortify warnings
+      tree_data <- suppressWarnings(ggtree(tree440))$data
+
+
+
+
       leaves_id_from_tree1 <- tree_data[tree_data$isTip==TRUE,'label']
       leaves_id_from_tree <- as.list(leaves_id_from_tree1['label'])$label
       
@@ -3633,7 +3636,8 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   # v53: print("A")
   # v53: print(dx_rx_types1)
   
-  pr440 <- ggtree(tree440) 
+  # v56b: Wrap in suppressWarnings to suppress harmless ggtree/ggplot2 fortify warnings
+  pr440 <- suppressWarnings(ggtree(tree440))
   d440 <- pr440$data
   cc_tipss <- func.create.cc_tipss(d440)
   cc_nodss <- func.create.cc_nodss(d440)
@@ -3697,12 +3701,14 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   
   # Group tree by class
   tree_with_group_CPY <- ggtree::groupOTU(tree440, list_rename_by_class)
-  levels_groups <- levels(ggtree(tree_with_group_CPY)$data$group)
+  # v56b: Wrap in suppressWarnings to suppress harmless fortify warnings
+  levels_groups <- levels(suppressWarnings(ggtree(tree_with_group_CPY))$data$group)
   # v53: print("E")
-  
+
   # Create tree with coloring
-  tree_TRY <- ggtree(tree_with_group_CPY, aes(color = new_class, size = p_val_new),
-                     ladderize = laderize_flag)
+  # v56b: Wrap in suppressWarnings to suppress harmless fortify warnings
+  tree_TRY <- suppressWarnings(ggtree(tree_with_group_CPY, aes(color = new_class, size = p_val_new),
+                     ladderize = laderize_flag))
   
   test_fig <- tree_TRY
   
@@ -4871,13 +4877,13 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "🎨 v56a-HOTFIX Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "🎨 v56b Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("Fixed: Status indicators now properly sync across all tabs"),
-                              tags$li("Fixed: Heatmap Apply button now correctly reads column selections"),
-                              tags$li("Status indicators depend on plot_counter for reliable updates")
+                              tags$li("Fixed: Heatmap 'invalid row.names length' error - now validates data and handles duplicates"),
+                              tags$li("Fixed: Suppressed harmless ggtree/ggplot2 fortify warnings"),
+                              tags$li("Improved: Better error handling for empty heatmap data")
                             )
                      )
             )
@@ -5558,8 +5564,9 @@ server <- function(input, output, session) {
       tree_file <- yaml_data$`Individual general definitions`$`tree path`[[1]]
       tree <- read.tree(tree_file)
       values$tree <- tree
-      values$tree_data <- ggtree(tree)$data
-      
+      # v56b: Suppress harmless fortify warnings
+      values$tree_data <- suppressWarnings(ggtree(tree))$data
+
       # Update tree summary
       output$tree_summary <- renderPrint({
         cat("Tree loaded from YAML configuration\n")
@@ -6008,8 +6015,9 @@ server <- function(input, output, session) {
     tryCatch({
       tree <- read.tree(tree_file$datapath)
       values$tree <- tree
-      values$tree_data <- ggtree(tree)$data
-      
+      # v56b: Suppress harmless fortify warnings
+      values$tree_data <- suppressWarnings(ggtree(tree))$data
+
       # Update tree summary
       output$tree_summary <- renderPrint({
         cat("Tree loaded successfully\n")
