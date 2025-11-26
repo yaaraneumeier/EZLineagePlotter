@@ -1685,7 +1685,8 @@ func.make.highlight.params.NEW <- function(yaml_file, title.id, ids_list, tree44
     adjust_width_eclipse <- hi_def$adjust_width
   }
   
-  tab <- ggtree(tree440)$data
+  # v56d: Suppress harmless fortify warnings
+  tab <- suppressWarnings(ggtree(tree440))$data
   
   lists_list_hi <- c()
   for (in_hi in indexes_hi) {
