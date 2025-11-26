@@ -4582,13 +4582,29 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       }
       
       # Create the heatmap
+      # v61: DEBUG - show data structure before gheatmap call
+      cat(file=stderr(), paste0("\n=== v61: GHEATMAP DATA DEBUG ===\n"))
+      cat(file=stderr(), paste0("  Heatmap index: j1=", j1, ", j=", j, "\n"))
+      heat_data <- dxdf440_for_heat[[j1]]
+      cat(file=stderr(), paste0("  heat_data dimensions: ", nrow(heat_data), " x ", ncol(heat_data), "\n"))
+      cat(file=stderr(), paste0("  heat_data rownames sample: ", paste(head(rownames(heat_data), 5), collapse=", "), "\n"))
+      cat(file=stderr(), paste0("  heat_data columns: ", paste(colnames(heat_data), collapse=", "), "\n"))
+      tt_tips <- subset(tt$data, isTip == TRUE)
+      cat(file=stderr(), paste0("  Tree tip labels sample: ", paste(head(tt_tips$label, 5), collapse=", "), "\n"))
+      # Check if rownames match tree tip labels
+      matching_tips <- sum(rownames(heat_data) %in% tt_tips$label)
+      cat(file=stderr(), paste0("  Rownames matching tree tips: ", matching_tips, " / ", nrow(heat_data), "\n"))
+      cat(file=stderr(), paste0("  offset (new_heat_x): ", new_heat_x, "\n"))
+      cat(file=stderr(), paste0("  width (wi): ", wi, "\n"))
+      cat(file=stderr(), paste0("================================\n"))
+
       pr440_short_tips_TRY_heat <- gheatmap(
-        tt, 
-        data = dxdf440_for_heat[[j1]], 
-        colnames_angle = colnames_angle, 
-        offset = new_heat_x, 
+        tt,
+        data = dxdf440_for_heat[[j1]],
+        colnames_angle = colnames_angle,
+        offset = new_heat_x,
         width = wi,
-        font.size = size_font_heat_map_legend, 
+        font.size = size_font_heat_map_legend,
         colnames_offset_x = 0,
         colnames_offset_y = heat_names_offset,
         legend_title = heat_map_title_list[[j1]],
@@ -4936,12 +4952,12 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "🎨 v60 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "🎨 v61 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("FIX: Heatmap now displays correctly - fixed inverted id_tip_trim_flag logic"),
-                              tags$li("The condition for applying substr() was backwards, causing all tip labels to become NA")
+                              tags$li("DEBUG: Added detailed gheatmap diagnostics to identify why heatmap not appearing"),
+                              tags$li("Shows rownames vs tree tip labels comparison before gheatmap call")
                             )
                      )
             )
