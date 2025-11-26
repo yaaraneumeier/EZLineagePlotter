@@ -2814,24 +2814,39 @@ func.print.lineage.tree <- function(conf_yaml_path,
             # v56b: Suppress harmless fortify warnings
             g_check <- suppressWarnings(ggtree(tree440))$data
             #print(print("B15a"))
-            
+
             if (flag_print_tree_data== TRUE) {
               # v53: print("##tree data##")
-              
-              tib <- as_tibble(g_check) 
+
+              tib <- as_tibble(g_check)
               rows <- nrow(tib)
               # v53: print(tib,n=rows)
-              
+
             }
-            
+
             g_check_tip <- subset(g_check,isTip==TRUE)
-            
+
+            # v59: Fix tip_list extraction - use tree440$tip.label directly if ggtree labels are NA
+            # The ggtree data frame can sometimes have NA labels even when tree440$tip.label is valid
+            ggtree_labels <- g_check_tip$label
+
+            # Check if ggtree labels are all NA
+            if (all(is.na(ggtree_labels))) {
+              cat(file=stderr(), paste0("  v59: ggtree labels are all NA, using tree440$tip.label instead\n"))
+              # Use tree440$tip.label and match to the ggtree order using node numbers
+              # g_check_tip$node contains the node IDs which correspond to positions in tip.label
+              # For tips, node ID 1 to Ntip corresponds to tip.label indices
+              tip_indices <- g_check_tip$node
+              tip_labels_from_tree <- tree440$tip.label[tip_indices]
+              ggtree_labels <- tip_labels_from_tree
+            }
+
             #question
             if (id_tip_trim_flag== FALSE) {
-              
-              tip_list <- substr(g_check_tip$label,id_tip_trim_start, id_tip_trim_end)
+
+              tip_list <- substr(ggtree_labels, id_tip_trim_start, id_tip_trim_end)
             } else {
-              tip_list <- g_check_tip$label
+              tip_list <- ggtree_labels
             }
             # v53: print("TIP LIST CHECK")
             # v53: print("tip_list is")
@@ -4919,13 +4934,13 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "🎨 v58 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "🎨 v59 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("FIX: Heatmap now checks both heat_flag AND data availability"),
-                              tags$li("FIX: Reset heat_flag when heatmap data matching fails"),
-                              tags$li("DEBUG: Added detailed trace for heatmap CSV-to-tree matching")
+                              tags$li("FIX: Status indicator now works on ALL preview tabs (Classification, Bootstrap, Highlighting, Heatmap)"),
+                              tags$li("FIX: Heatmap tip_list now uses tree440$tip.label when ggtree labels are NA"),
+                              tags$li("CLEANUP: Replaced laggy renderUI status indicators with fast shinyjs-toggled static HTML")
                             )
                      )
             )
@@ -5129,16 +5144,32 @@ ui <- dashboardPage(
           box(
             title = tagList(
               "Preview ",
-              uiOutput("classification_status_indicator", inline = TRUE)
+              # v59: Static status indicators for immediate shinyjs updates (same as Tree Display)
+              span(id = "class_status_waiting",
+                style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #f8f9fa; color: #6c757d; font-size: 12px;",
+                icon("clock"), " Waiting for data"
+              ),
+              span(id = "class_status_processing",
+                style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #6c757d; color: #ffffff; font-size: 12px; font-weight: bold;",
+                icon("spinner", class = "fa-spin"), " Processing..."
+              ),
+              span(id = "class_status_ready",
+                style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #28a745; color: #ffffff; font-size: 12px; font-weight: bold;",
+                icon("check-circle"), " Ready"
+              ),
+              span(id = "class_status_click_to_generate",
+                style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #e9ecef; color: #6c757d; font-size: 12px;",
+                icon("hourglass-half"), " Click to generate"
+              )
             ),
-            status = "primary", 
+            status = "primary",
             solidHeader = TRUE,
             width = 12,
             imageOutput("classification_preview", height = "auto")
           )
         )
       ),
-      
+
       # Bootstrap Values Tab
       tabItem(
         tabName = "bootstrap",
@@ -5175,16 +5206,32 @@ ui <- dashboardPage(
           box(
             title = tagList(
               "Preview ",
-              uiOutput("bootstrap_status_indicator", inline = TRUE)
+              # v59: Static status indicators for immediate shinyjs updates
+              span(id = "boot_status_waiting",
+                style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #f8f9fa; color: #6c757d; font-size: 12px;",
+                icon("clock"), " Waiting for data"
+              ),
+              span(id = "boot_status_processing",
+                style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #6c757d; color: #ffffff; font-size: 12px; font-weight: bold;",
+                icon("spinner", class = "fa-spin"), " Processing..."
+              ),
+              span(id = "boot_status_ready",
+                style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #28a745; color: #ffffff; font-size: 12px; font-weight: bold;",
+                icon("check-circle"), " Ready"
+              ),
+              span(id = "boot_status_click_to_generate",
+                style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #e9ecef; color: #6c757d; font-size: 12px;",
+                icon("hourglass-half"), " Click to generate"
+              )
             ),
-            status = "primary", 
+            status = "primary",
             solidHeader = TRUE,
             width = 8,
             imageOutput("bootstrap_preview", height = "auto")
           )
         )
       ),
-      
+
       # Highlighting Tab
       # ============================================================================
       # HIGHLIGHTING TAB - COMPLETE REPLACEMENT
@@ -5276,16 +5323,32 @@ ui <- dashboardPage(
           box(
             title = tagList(
               "Tree Preview ",
-              uiOutput("highlight_status_indicator", inline = TRUE)
+              # v59: Static status indicators for immediate shinyjs updates
+              span(id = "high_status_waiting",
+                style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #f8f9fa; color: #6c757d; font-size: 12px;",
+                icon("clock"), " Waiting for data"
+              ),
+              span(id = "high_status_processing",
+                style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #6c757d; color: #ffffff; font-size: 12px; font-weight: bold;",
+                icon("spinner", class = "fa-spin"), " Processing..."
+              ),
+              span(id = "high_status_ready",
+                style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #28a745; color: #ffffff; font-size: 12px; font-weight: bold;",
+                icon("check-circle"), " Ready"
+              ),
+              span(id = "high_status_click_to_generate",
+                style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #e9ecef; color: #6c757d; font-size: 12px;",
+                icon("hourglass-half"), " Click to generate"
+              )
             ),
-            status = "primary", 
+            status = "primary",
             solidHeader = TRUE,
             width = 12,
             imageOutput("highlight_preview", height = "auto")
           )
         )
       ),
-      
+
       # Heatmap Tab
       tabItem(
         tabName = "heatmap",
@@ -5349,16 +5412,32 @@ ui <- dashboardPage(
           box(
             title = tagList(
               "Preview ",
-              uiOutput("heatmap_status_indicator", inline = TRUE)
+              # v59: Static status indicators for immediate shinyjs updates
+              span(id = "heat_status_waiting",
+                style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #f8f9fa; color: #6c757d; font-size: 12px;",
+                icon("clock"), " Waiting for data"
+              ),
+              span(id = "heat_status_processing",
+                style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #6c757d; color: #ffffff; font-size: 12px; font-weight: bold;",
+                icon("spinner", class = "fa-spin"), " Processing..."
+              ),
+              span(id = "heat_status_ready",
+                style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #28a745; color: #ffffff; font-size: 12px; font-weight: bold;",
+                icon("check-circle"), " Ready"
+              ),
+              span(id = "heat_status_click_to_generate",
+                style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #e9ecef; color: #6c757d; font-size: 12px;",
+                icon("hourglass-half"), " Click to generate"
+              )
             ),
-            status = "primary", 
+            status = "primary",
             solidHeader = TRUE,
             width = 12,
             imageOutput("heatmap_preview", height = "auto")
           )
         )
       ),
-      
+
       # Download Tab
       tabItem(
         tabName = "download",
@@ -5448,33 +5527,118 @@ server <- function(input, output, session) {
   
   classification_loading <- reactiveVal(FALSE)
 
-  # v57: Helper functions to toggle status indicator via shinyjs (immediate UI updates)
+  # v59: Helper functions to toggle status indicator via shinyjs (immediate UI updates)
+  # Updated to toggle status indicators on ALL preview tabs (Tree Display, Classification, Bootstrap, Highlighting, Heatmap)
   show_status_waiting <- function() {
+    # Tree Display tab
     shinyjs::show("status_waiting")
     shinyjs::hide("status_processing")
     shinyjs::hide("status_ready")
     shinyjs::hide("status_click_to_generate")
+    # Classification tab
+    shinyjs::show("class_status_waiting")
+    shinyjs::hide("class_status_processing")
+    shinyjs::hide("class_status_ready")
+    shinyjs::hide("class_status_click_to_generate")
+    # Bootstrap tab
+    shinyjs::show("boot_status_waiting")
+    shinyjs::hide("boot_status_processing")
+    shinyjs::hide("boot_status_ready")
+    shinyjs::hide("boot_status_click_to_generate")
+    # Highlighting tab
+    shinyjs::show("high_status_waiting")
+    shinyjs::hide("high_status_processing")
+    shinyjs::hide("high_status_ready")
+    shinyjs::hide("high_status_click_to_generate")
+    # Heatmap tab
+    shinyjs::show("heat_status_waiting")
+    shinyjs::hide("heat_status_processing")
+    shinyjs::hide("heat_status_ready")
+    shinyjs::hide("heat_status_click_to_generate")
   }
 
   show_status_processing <- function() {
+    # Tree Display tab
     shinyjs::hide("status_waiting")
     shinyjs::show("status_processing")
     shinyjs::hide("status_ready")
     shinyjs::hide("status_click_to_generate")
+    # Classification tab
+    shinyjs::hide("class_status_waiting")
+    shinyjs::show("class_status_processing")
+    shinyjs::hide("class_status_ready")
+    shinyjs::hide("class_status_click_to_generate")
+    # Bootstrap tab
+    shinyjs::hide("boot_status_waiting")
+    shinyjs::show("boot_status_processing")
+    shinyjs::hide("boot_status_ready")
+    shinyjs::hide("boot_status_click_to_generate")
+    # Highlighting tab
+    shinyjs::hide("high_status_waiting")
+    shinyjs::show("high_status_processing")
+    shinyjs::hide("high_status_ready")
+    shinyjs::hide("high_status_click_to_generate")
+    # Heatmap tab
+    shinyjs::hide("heat_status_waiting")
+    shinyjs::show("heat_status_processing")
+    shinyjs::hide("heat_status_ready")
+    shinyjs::hide("heat_status_click_to_generate")
   }
 
   show_status_ready <- function() {
+    # Tree Display tab
     shinyjs::hide("status_waiting")
     shinyjs::hide("status_processing")
     shinyjs::show("status_ready")
     shinyjs::hide("status_click_to_generate")
+    # Classification tab
+    shinyjs::hide("class_status_waiting")
+    shinyjs::hide("class_status_processing")
+    shinyjs::show("class_status_ready")
+    shinyjs::hide("class_status_click_to_generate")
+    # Bootstrap tab
+    shinyjs::hide("boot_status_waiting")
+    shinyjs::hide("boot_status_processing")
+    shinyjs::show("boot_status_ready")
+    shinyjs::hide("boot_status_click_to_generate")
+    # Highlighting tab
+    shinyjs::hide("high_status_waiting")
+    shinyjs::hide("high_status_processing")
+    shinyjs::show("high_status_ready")
+    shinyjs::hide("high_status_click_to_generate")
+    # Heatmap tab
+    shinyjs::hide("heat_status_waiting")
+    shinyjs::hide("heat_status_processing")
+    shinyjs::show("heat_status_ready")
+    shinyjs::hide("heat_status_click_to_generate")
   }
 
   show_status_click_to_generate <- function() {
+    # Tree Display tab
     shinyjs::hide("status_waiting")
     shinyjs::hide("status_processing")
     shinyjs::hide("status_ready")
     shinyjs::show("status_click_to_generate")
+    # Classification tab
+    shinyjs::hide("class_status_waiting")
+    shinyjs::hide("class_status_processing")
+    shinyjs::hide("class_status_ready")
+    shinyjs::show("class_status_click_to_generate")
+    # Bootstrap tab
+    shinyjs::hide("boot_status_waiting")
+    shinyjs::hide("boot_status_processing")
+    shinyjs::hide("boot_status_ready")
+    shinyjs::show("boot_status_click_to_generate")
+    # Highlighting tab
+    shinyjs::hide("high_status_waiting")
+    shinyjs::hide("high_status_processing")
+    shinyjs::hide("high_status_ready")
+    shinyjs::show("high_status_click_to_generate")
+    # Heatmap tab
+    shinyjs::hide("heat_status_waiting")
+    shinyjs::hide("heat_status_processing")
+    shinyjs::hide("heat_status_ready")
+    shinyjs::show("heat_status_click_to_generate")
   }
 
   # Initialize YAML data structure immediately
@@ -9901,143 +10065,10 @@ server <- function(input, output, session) {
     )
   }, deleteFile = FALSE)
   
-  # Status indicator for classification preview
-  output$classification_status_indicator <- renderUI({
-    # v56a: Fixed - depend on plot_counter to force refresh
-    plot_counter <- values$plot_counter
-    plot_rdy <- values$plot_ready
-    plot_gen <- values$plot_generating
-    has_tree <- !is.null(values$tree)
+  # v59: Removed renderUI status indicators for classification, bootstrap, highlight, and heatmap tabs
+  # Status indicators are now static HTML elements toggled via shinyjs helper functions
+  # (show_status_waiting, show_status_processing, show_status_ready, show_status_click_to_generate)
 
-    if (!has_tree) {
-      tags$span(
-        style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #f8f9fa; color: #6c757d; font-size: 12px;",
-        icon("clock"),
-        " Waiting for data"
-      )
-    } else if (isTRUE(plot_gen)) {
-      tags$span(
-        style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #6c757d; color: #ffffff; font-size: 12px; font-weight: bold;",
-        icon("spinner", class = "fa-spin"),
-        " Processing..."
-      )
-    } else if (isTRUE(plot_rdy)) {
-      tags$span(
-        style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #d4edda; color: #155724; font-size: 12px; font-weight: bold;",
-        icon("check-circle"),
-        " Ready"
-      )
-    } else {
-      tags$span(
-        style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #e9ecef; color: #6c757d; font-size: 12px;",
-        icon("hourglass-half"),
-        " Click to generate"
-      )
-    }
-  })
-  
-  output$bootstrap_status_indicator <- renderUI({
-    # v56a: Fixed - depend on plot_counter to force refresh
-    plot_counter <- values$plot_counter
-    plot_rdy <- values$plot_ready
-    plot_gen <- values$plot_generating
-    has_tree <- !is.null(values$tree)
-
-    if (!has_tree) {
-      tags$span(
-        style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #f8f9fa; color: #6c757d; font-size: 12px;",
-        icon("clock"),
-        " Waiting for data"
-      )
-    } else if (isTRUE(plot_gen)) {
-      tags$span(
-        style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #6c757d; color: #ffffff; font-size: 12px; font-weight: bold;",
-        icon("spinner", class = "fa-spin"),
-        " Processing..."
-      )
-    } else if (isTRUE(plot_rdy)) {
-      tags$span(
-        style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #d4edda; color: #155724; font-size: 12px; font-weight: bold;",
-        icon("check-circle"),
-        " Ready"
-      )
-    } else {
-      tags$span(
-        style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #e9ecef; color: #6c757d; font-size: 12px;",
-        icon("hourglass-half"),
-        " Click to generate"
-      )
-    }
-  })
-  
-  output$highlight_status_indicator <- renderUI({
-    # v56a: Fixed - depend on plot_counter to force refresh
-    plot_counter <- values$plot_counter
-    plot_rdy <- values$plot_ready
-    plot_gen <- values$plot_generating
-    has_tree <- !is.null(values$tree)
-
-    if (!has_tree) {
-      tags$span(
-        style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #f8f9fa; color: #6c757d; font-size: 12px;",
-        icon("clock"),
-        " Waiting for data"
-      )
-    } else if (isTRUE(plot_gen)) {
-      tags$span(
-        style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #6c757d; color: #ffffff; font-size: 12px; font-weight: bold;",
-        icon("spinner", class = "fa-spin"),
-        " Processing..."
-      )
-    } else if (isTRUE(plot_rdy)) {
-      tags$span(
-        style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #d4edda; color: #155724; font-size: 12px; font-weight: bold;",
-        icon("check-circle"),
-        " Ready"
-      )
-    } else {
-      tags$span(
-        style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #e9ecef; color: #6c757d; font-size: 12px;",
-        icon("hourglass-half"),
-        " Click to generate"
-      )
-    }
-  })
-  
-  output$heatmap_status_indicator <- renderUI({
-    # v56a: Fixed - depend on plot_counter to force refresh
-    plot_counter <- values$plot_counter
-    plot_rdy <- values$plot_ready
-    plot_gen <- values$plot_generating
-    has_tree <- !is.null(values$tree)
-
-    if (!has_tree) {
-      tags$span(
-        style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #f8f9fa; color: #6c757d; font-size: 12px;",
-        icon("clock"),
-        " Waiting for data"
-      )
-    } else if (isTRUE(plot_gen)) {
-      tags$span(
-        style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #6c757d; color: #ffffff; font-size: 12px; font-weight: bold;",
-        icon("spinner", class = "fa-spin"),
-        " Processing..."
-      )
-    } else if (isTRUE(plot_rdy)) {
-      tags$span(
-        style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #d4edda; color: #155724; font-size: 12px; font-weight: bold;",
-        icon("check-circle"),
-        " Ready"
-      )
-    } else {
-      tags$span(
-        style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #e9ecef; color: #6c757d; font-size: 12px;",
-        icon("hourglass-half"),
-        " Click to generate"
-      )
-    }
-  })
-  
   output$classification_preview <- renderImage({
     # Force reactive update by depending on plot_counter
     # v53: cat(file=stderr(), "\n=== renderImage called for classification_preview ===\n")
