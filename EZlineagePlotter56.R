@@ -4417,12 +4417,20 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   # v58: FIX - Also check that dxdf440_for_heat has data, not just heat_flag
   if (heat_flag == TRUE && length(dxdf440_for_heat) > 0) {
     tt <- p
-    
+
+    # v63: DEBUG - show x range BEFORE scaling
+    x_range_before <- range(tt$data$x, na.rm = TRUE)
+    cat(file=stderr(), paste0("\n=== v63: Pre-scaling x range: [", x_range_before[1], ", ", x_range_before[2], "] ===\n"))
+
     for (i in cc_totss) {
       par <- tt$data$parent[i]
       parX <- tt$data$x[par]
       tt$data[tt$data$node[i], "x"] <- tt$data[tt$data$node[i], "x"] * 15
     }
+
+    # v63: DEBUG - show x range AFTER scaling
+    x_range_after <- range(tt$data$x, na.rm = TRUE)
+    cat(file=stderr(), paste0("=== v63: Post-scaling x range: [", x_range_after[1], ", ", x_range_after[2], "] ===\n"))
     
     how_many_tips <- length(tt$data$isTip)
     
@@ -4614,7 +4622,17 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
         custom_column_labels = custom_column_labels,
         color = NA
       )
-      
+
+      # v63: DEBUG - verify gheatmap result
+      cat(file=stderr(), paste0("\n=== v63: POST-GHEATMAP DEBUG ===\n"))
+      cat(file=stderr(), paste0("  Number of layers in plot: ", length(pr440_short_tips_TRY_heat$layers), "\n"))
+      gheatmap_xrange <- range(pr440_short_tips_TRY_heat$data$x, na.rm = TRUE)
+      cat(file=stderr(), paste0("  Plot x range after gheatmap: [", gheatmap_xrange[1], ", ", gheatmap_xrange[2], "]\n"))
+      # Check if there's rect/tile data (heatmap)
+      layer_types <- sapply(pr440_short_tips_TRY_heat$layers, function(l) class(l$geom)[1])
+      cat(file=stderr(), paste0("  Layer geom types: ", paste(layer_types, collapse=", "), "\n"))
+      cat(file=stderr(), paste0("================================\n"))
+
       # Apply correct coloring scale based on heatmap type
       if (heat_param['is_discrete'] == FALSE) {
         limits <- heat_param[['limits']]
@@ -4730,8 +4748,15 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     
     # Update plot with heatmap
     p <- pr440_short_tips_TRY_heat
+
+    # v63: DEBUG - final heatmap state
+    cat(file=stderr(), paste0("\n=== v63: FINAL HEATMAP STATE ===\n"))
+    final_xrange <- range(p$data$x, na.rm = TRUE)
+    cat(file=stderr(), paste0("  Final plot x range: [", final_xrange[1], ", ", final_xrange[2], "]\n"))
+    cat(file=stderr(), paste0("  Final number of layers: ", length(p$layers), "\n"))
+    cat(file=stderr(), paste0("================================\n"))
   }
-  
+
   # Default ellipse parameters if not set
   a <- 1
   b <- 1
@@ -4911,13 +4936,13 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "🎨 v62 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "🎨 v63 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("FIX: Resolved heatmap display bug - removed theme_minimal() that corrupted ggtree object"),
-                              tags$li("FIX: Simplified gheatmap calls to prevent @mapping slot corruption"),
-                              tags$li("NEW: Added visual color palette previews in heatmap settings (discrete and continuous)")
+                              tags$li("DEBUG: Added extensive heatmap diagnostic output to trace display issue"),
+                              tags$li("DEBUG: Shows x coordinate ranges before/after scaling"),
+                              tags$li("DEBUG: Shows layer types and plot structure after gheatmap call")
                             )
                      )
             )
