@@ -4598,6 +4598,8 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       cat(file=stderr(), paste0("  width (wi): ", wi, "\n"))
       cat(file=stderr(), paste0("================================\n"))
 
+      # v62: Simplified gheatmap call - removed duplicate calls that could corrupt object structure
+      # tt is the base tree for j==1, or previous heatmap + new_scale_fill() for j>1
       pr440_short_tips_TRY_heat <- gheatmap(
         tt,
         data = dxdf440_for_heat[[j1]],
@@ -4612,41 +4614,6 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
         custom_column_labels = custom_column_labels,
         color = NA
       )
-      
-      # Apply special processing for first heatmap
-      if (j == 1) {
-        if (heat_param['is_discrete'] == FALSE) {
-          pr440_short_tips_TRY_heat <- gheatmap(
-            pr440_short_tips_TRY_heat, 
-            data = dxdf440_for_heat[[j1]], 
-            colnames_angle = colnames_angle, 
-            offset = new_heat_x, 
-            width = wi,
-            font.size = size_font_heat_map_legend, 
-            colnames_offset_x = 0,
-            colnames_offset_y = heat_names_offset,
-            legend_title = heat_map_title_list[[j1]],
-            colnames = TRUE,
-            custom_column_labels = custom_column_labels,
-            color = NA
-          )
-        } else {
-          pr440_short_tips_TRY_heat <- gheatmap(
-            tt, 
-            data = dxdf440_for_heat[[j1]], 
-            colnames_angle = colnames_angle, 
-            offset = new_heat_x, 
-            width = wi,
-            font.size = size_font_heat_map_legend, 
-            colnames_offset_x = 0,
-            colnames_offset_y = heat_names_offset,
-            legend_title = heat_map_title_list[[j1]],
-            colnames = TRUE,
-            custom_column_labels = custom_column_labels,
-            color = NA
-          )
-        }
-      }
       
       # Apply correct coloring scale based on heatmap type
       if (heat_param['is_discrete'] == FALSE) {
@@ -4678,21 +4645,13 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             pr440_short_tips_TRY_heat <- pr440_short_tips_TRY_heat +
               scale_fill_hue(name = heat_map_title_list[[j1]])
           } else {
+            # v62: Removed theme_minimal() which was corrupting ggtree object structure
+            # The @mapping slot was being converted to data.frame instead of ggplot2::mapping
             pr440_short_tips_TRY_heat <- pr440_short_tips_TRY_heat +
               scale_fill_manual(
-                values = heat_param[['color_scale_option']]$color_scale_option, 
+                values = heat_param[['color_scale_option']]$color_scale_option,
                 name = heat_map_title_list[[j1]],
                 na.value = 'WHITE'
-              ) +              
-              theme_minimal() +
-              theme(
-                panel.background = element_rect(fill = "white", color = NA),
-                plot.background = element_rect(fill = "white", color = NA),
-                panel.grid = element_blank(),
-                panel.border = element_blank(),
-                axis.text = element_blank(),
-                axis.ticks = element_blank(),
-                axis.title = element_blank()
               )
           }
         } else {
@@ -4952,12 +4911,13 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "🎨 v61 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "🎨 v62 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("DEBUG: Added detailed gheatmap diagnostics to identify why heatmap not appearing"),
-                              tags$li("Shows rownames vs tree tip labels comparison before gheatmap call")
+                              tags$li("FIX: Resolved heatmap display bug - removed theme_minimal() that corrupted ggtree object"),
+                              tags$li("FIX: Simplified gheatmap calls to prevent @mapping slot corruption"),
+                              tags$li("NEW: Added visual color palette previews in heatmap settings (discrete and continuous)")
                             )
                      )
             )
@@ -8705,10 +8665,12 @@ server <- function(input, output, session) {
               column(6,
                      selectInput(paste0("heatmap_discrete_palette_", i), "Color Palette",
                                  choices = discrete_palettes,
-                                 selected = if (!is.null(cfg$discrete_palette)) cfg$discrete_palette else "Set1")
+                                 selected = if (!is.null(cfg$discrete_palette)) cfg$discrete_palette else "Set1"),
+                     # v62: Add palette preview
+                     uiOutput(paste0("heatmap_discrete_palette_preview_", i))
               ),
               column(6,
-                     checkboxInput(paste0("heatmap_custom_discrete_", i), "Use custom colors per value", 
+                     checkboxInput(paste0("heatmap_custom_discrete_", i), "Use custom colors per value",
                                    value = if (!is.null(cfg$custom_discrete)) cfg$custom_discrete else FALSE)
               )
             ),
@@ -8727,7 +8689,9 @@ server <- function(input, output, session) {
               column(4,
                      selectInput(paste0("heatmap_cont_palette_", i), "Color Palette",
                                  choices = continuous_palettes,
-                                 selected = if (!is.null(cfg$cont_palette)) cfg$cont_palette else "Blues")
+                                 selected = if (!is.null(cfg$cont_palette)) cfg$cont_palette else "Blues"),
+                     # v62: Add palette preview
+                     uiOutput(paste0("heatmap_cont_palette_preview_", i))
               ),
               column(4,
                      colourInput(paste0("heatmap_low_color_", i), "Low Color",
@@ -8924,6 +8888,74 @@ server <- function(input, output, session) {
     })
   })
   
+  # v62: Render palette previews for discrete heatmaps
+  observe({
+    lapply(1:6, function(i) {
+      output[[paste0("heatmap_discrete_palette_preview_", i)]] <- renderUI({
+        palette_name <- input[[paste0("heatmap_discrete_palette_", i)]]
+        if (is.null(palette_name)) palette_name <- "Set1"
+
+        # Get colors from the selected palette (8 colors for preview)
+        n_colors <- 8
+        colors <- tryCatch({
+          if (palette_name %in% c("Set1", "Set2", "Set3", "Paired", "Dark2", "Accent", "Pastel1", "Pastel2")) {
+            RColorBrewer::brewer.pal(min(n_colors, RColorBrewer::brewer.pal.info[palette_name, "maxcolors"]), palette_name)
+          } else {
+            rainbow(n_colors)
+          }
+        }, error = function(e) rainbow(n_colors))
+
+        # Create color swatches
+        swatches <- lapply(colors, function(col) {
+          tags$span(style = paste0(
+            "display: inline-block; width: 20px; height: 20px; ",
+            "background-color: ", col, "; margin-right: 2px; border: 1px solid #ccc; border-radius: 2px;"
+          ))
+        })
+
+        tags$div(
+          style = "margin-top: 5px;",
+          do.call(tagList, swatches)
+        )
+      })
+    })
+  })
+
+  # v62: Render palette previews for continuous heatmaps
+  observe({
+    lapply(1:6, function(i) {
+      output[[paste0("heatmap_cont_palette_preview_", i)]] <- renderUI({
+        palette_name <- input[[paste0("heatmap_cont_palette_", i)]]
+        if (is.null(palette_name)) palette_name <- "Blues"
+
+        # Get colors from the selected palette (gradient preview with 10 colors)
+        n_colors <- 10
+        colors <- tryCatch({
+          if (palette_name %in% c("Viridis", "Plasma", "Inferno", "Magma")) {
+            viridis::viridis(n_colors, option = tolower(palette_name))
+          } else if (palette_name %in% rownames(RColorBrewer::brewer.pal.info)) {
+            colorRampPalette(RColorBrewer::brewer.pal(9, palette_name))(n_colors)
+          } else {
+            colorRampPalette(c("white", "blue"))(n_colors)
+          }
+        }, error = function(e) colorRampPalette(c("white", "blue"))(n_colors))
+
+        # Create gradient preview as a bar
+        gradient_css <- paste0(
+          "background: linear-gradient(to right, ",
+          paste(colors, collapse = ", "), ");"
+        )
+
+        tags$div(
+          style = paste0(
+            "margin-top: 5px; height: 20px; border-radius: 3px; border: 1px solid #ccc; ",
+            gradient_css
+          )
+        )
+      })
+    })
+  })
+
   # Render discrete color pickers for each heatmap
   observe({
     lapply(1:6, function(i) {
