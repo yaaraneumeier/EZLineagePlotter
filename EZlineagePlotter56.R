@@ -4658,6 +4658,24 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             )
         }
       } else {
+        # v65: DEBUG - trace discrete heatmap color path
+        cat(file=stderr(), paste0("\n=== v65: DISCRETE HEATMAP COLOR DEBUG ===\n"))
+        cat(file=stderr(), paste0("  heat_param['is_discrete']: ", heat_param['is_discrete'], "\n"))
+        cat(file=stderr(), paste0("  heat_param['man']: ", heat_param['man'], "\n"))
+        cat(file=stderr(), paste0("  heat_param['man_define_colors']: ", heat_param['man_define_colors'], "\n"))
+        cat(file=stderr(), paste0("  heat_param[['color_scale_option']]: ",
+                                  if(is.null(heat_param[['color_scale_option']])) "NULL"
+                                  else paste(class(heat_param[['color_scale_option']]), collapse=", "), "\n"))
+        if (!is.null(heat_param[['color_scale_option']])) {
+          cat(file=stderr(), paste0("  color_scale_option value: ",
+                                    paste(heat_param[['color_scale_option']], collapse=", "), "\n"))
+          if (is.list(heat_param[['color_scale_option']])) {
+            cat(file=stderr(), paste0("  color_scale_option$color_scale_option: ",
+                                      heat_param[['color_scale_option']]$color_scale_option, "\n"))
+          }
+        }
+        cat(file=stderr(), paste0("========================================\n"))
+
         if (heat_param['man'] == FALSE) {
           if (heat_param['man_define_colors'] == FALSE) {
             # v64: Check if a discrete palette is specified (e.g., "Set1", "Set2", etc.)
@@ -4665,11 +4683,22 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             if (!is.null(heat_param[['color_scale_option']])) {
               # Extract palette name from the structure
               palette_opt <- heat_param[['color_scale_option']]
+              cat(file=stderr(), paste0("  v65: palette_opt class: ", paste(class(palette_opt), collapse=", "), "\n"))
+              cat(file=stderr(), paste0("  v65: palette_opt: ", paste(palette_opt, collapse=", "), "\n"))
               if (is.list(palette_opt) && !is.null(palette_opt$color_scale_option)) {
                 palette_name <- palette_opt$color_scale_option
+                cat(file=stderr(), paste0("  v65: extracted palette_name from list: ", palette_name, "\n"))
               } else if (is.character(palette_opt)) {
                 palette_name <- palette_opt
+                cat(file=stderr(), paste0("  v65: extracted palette_name as character: ", palette_name, "\n"))
               }
+            }
+
+            cat(file=stderr(), paste0("  v65: Final palette_name: ",
+                                      if(is.null(palette_name)) "NULL" else palette_name, "\n"))
+            if (!is.null(palette_name)) {
+              cat(file=stderr(), paste0("  v65: Is valid RColorBrewer palette: ",
+                                        palette_name %in% rownames(RColorBrewer::brewer.pal.info), "\n"))
             }
 
             # v64: Use RColorBrewer palette if available, otherwise use default hue
@@ -4785,6 +4814,59 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     cat(file=stderr(), paste0("  Final plot x range: [", final_xrange[1], ", ", final_xrange[2], "]\n"))
     cat(file=stderr(), paste0("  Final number of layers: ", length(p$layers), "\n"))
     cat(file=stderr(), paste0("================================\n"))
+
+    # v65: FIX - Expand x-axis to include heatmap area
+    # The heatmap tiles are placed at positive x values (offset from tree tips at x=0)
+    # but the tree data x-range is all negative. We need to expand the coordinate system.
+    heatmap_max_x <- NULL
+    for (layer_idx in seq_along(p$layers)) {
+      layer <- p$layers[[layer_idx]]
+      if ("GeomTile" %in% class(layer$geom) || "GeomRect" %in% class(layer$geom)) {
+        # Get the layer data
+        layer_data <- tryCatch({
+          if (!is.null(layer$data) && is.data.frame(layer$data) && "x" %in% names(layer$data)) {
+            layer$data
+          } else {
+            # Try to build the layer data
+            ggplot2::layer_data(p, layer_idx)
+          }
+        }, error = function(e) NULL)
+
+        if (!is.null(layer_data) && "x" %in% names(layer_data)) {
+          layer_max_x <- max(layer_data$x, na.rm = TRUE)
+          if (is.null(heatmap_max_x) || layer_max_x > heatmap_max_x) {
+            heatmap_max_x <- layer_max_x
+          }
+        }
+      }
+    }
+
+    # v65: If we found heatmap tiles, expand the x-axis
+    if (!is.null(heatmap_max_x) && !is.na(heatmap_max_x) && heatmap_max_x > 0) {
+      # Add some margin (10% of heatmap extent)
+      margin <- abs(heatmap_max_x) * 0.1
+      new_xmax <- heatmap_max_x + margin
+
+      cat(file=stderr(), paste0("\n=== v65: EXPANDING X-AXIS FOR HEATMAP ===\n"))
+      cat(file=stderr(), paste0("  Detected heatmap max x: ", heatmap_max_x, "\n"))
+      cat(file=stderr(), paste0("  Expanding x-axis to: [", final_xrange[1], ", ", new_xmax, "]\n"))
+      cat(file=stderr(), paste0("========================================\n"))
+
+      # Use coord_cartesian to expand the view without clipping
+      p <- p + coord_cartesian(xlim = c(final_xrange[1], new_xmax), clip = "off")
+    } else {
+      # v65: Alternative approach - calculate expected heatmap position from parameters
+      # If we couldn't find tile data, estimate from the offset and width used
+      expected_heatmap_max <- new_heat_x + wi + 0.5  # offset + width + margin
+
+      cat(file=stderr(), paste0("\n=== v65: EXPANDING X-AXIS (estimated) ===\n"))
+      cat(file=stderr(), paste0("  Could not detect tile data directly\n"))
+      cat(file=stderr(), paste0("  Estimating from offset (", new_heat_x, ") + width (", wi, ")\n"))
+      cat(file=stderr(), paste0("  Expanding x-axis to: [", final_xrange[1], ", ", expected_heatmap_max, "]\n"))
+      cat(file=stderr(), paste0("========================================\n"))
+
+      p <- p + coord_cartesian(xlim = c(final_xrange[1], expected_heatmap_max), clip = "off")
+    }
   }
 
   # Default ellipse parameters if not set
@@ -4909,7 +4991,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
 # Define UI
 ui <- dashboardPage(
-  dashboardHeader(title = "Lineage Tree Plotter v56"),
+  dashboardHeader(title = "Lineage Tree Plotter v65"),
   
   dashboardSidebar(
     width = 300,
@@ -4966,13 +5048,13 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "🎨 v64 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v65 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("Added discrete palette preview in heatmap settings"),
-                              tags$li("Fixed discrete palette (Set1, Set2, etc.) now applied to heatmap colors"),
-                              tags$li("Color palettes from RColorBrewer are now properly used in discrete heatmaps")
+                              tags$li("FIXED: Heatmap now visible - expanded x-axis to include heatmap area"),
+                              tags$li("Added extensive debug output for discrete palette color tracing"),
+                              tags$li("Debug: Check console for v65 DISCRETE HEATMAP COLOR DEBUG")
                             )
                      )
             )
