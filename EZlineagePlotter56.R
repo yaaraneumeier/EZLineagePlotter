@@ -2826,19 +2826,39 @@ func.print.lineage.tree <- function(conf_yaml_path,
 
             g_check_tip <- subset(g_check,isTip==TRUE)
 
-            # v59: Fix tip_list extraction - use tree440$tip.label directly if ggtree labels are NA
-            # The ggtree data frame can sometimes have NA labels even when tree440$tip.label is valid
+            # v66: ROBUST FIX - Always use tree440$tip.label as source of truth
+            # ggtree data frame can have NA labels in many scenarios (ladderizing, reordering, etc.)
+            # The tree440$tip.label is indexed 1:Ntip corresponding to tip node IDs 1:Ntip
             ggtree_labels <- g_check_tip$label
 
-            # Check if ggtree labels are all NA
-            if (all(is.na(ggtree_labels))) {
-              cat(file=stderr(), paste0("  v59: ggtree labels are all NA, using tree440$tip.label instead\n"))
-              # Use tree440$tip.label and match to the ggtree order using node numbers
-              # g_check_tip$node contains the node IDs which correspond to positions in tip.label
-              # For tips, node ID 1 to Ntip corresponds to tip.label indices
-              tip_indices <- g_check_tip$node
-              tip_labels_from_tree <- tree440$tip.label[tip_indices]
-              ggtree_labels <- tip_labels_from_tree
+            # v66: DEBUG - show initial state
+            cat(file=stderr(), paste0("\n=== v66: TIP LABEL EXTRACTION DEBUG ===\n"))
+            cat(file=stderr(), paste0("  ggtree_labels NA count: ", sum(is.na(ggtree_labels)), " out of ", length(ggtree_labels), "\n"))
+            cat(file=stderr(), paste0("  tree440$tip.label sample: ", paste(head(tree440$tip.label, 5), collapse=", "), "\n"))
+            cat(file=stderr(), paste0("  g_check_tip$node sample: ", paste(head(g_check_tip$node, 5), collapse=", "), "\n"))
+
+            # v66: Check if ANY labels are NA or empty - if so, use tree440$tip.label
+            # This is more robust than only checking if ALL are NA
+            if (any(is.na(ggtree_labels)) || any(ggtree_labels == "")) {
+              cat(file=stderr(), paste0("  v66: Found NA/empty labels in ggtree, using tree440$tip.label\n"))
+
+              # For tip nodes, node IDs 1 to Ntip correspond directly to tree$tip.label indices
+              tip_node_ids <- g_check_tip$node
+              ntips <- length(tree440$tip.label)
+
+              # Validate that node IDs are in valid range
+              if (all(tip_node_ids >= 1 & tip_node_ids <= ntips)) {
+                ggtree_labels <- tree440$tip.label[tip_node_ids]
+                cat(file=stderr(), paste0("  v66: Successfully extracted labels from tree440$tip.label\n"))
+              } else {
+                # Fallback: use tip labels in their original order from tree440
+                cat(file=stderr(), paste0("  v66: WARNING - node IDs out of range, using tree tip order\n"))
+                # Order g_check_tip by y coordinate (visual order) and assign labels
+                tip_order <- order(g_check_tip$y)
+                ggtree_labels <- tree440$tip.label[tip_order]
+              }
+
+              cat(file=stderr(), paste0("  v66: After fix, ggtree_labels sample: ", paste(head(ggtree_labels, 5), collapse=", "), "\n"))
             }
 
             # v60: FIX - Logic was inverted! When id_tip_trim_flag == TRUE, apply trimming
@@ -4585,10 +4605,26 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       
       # Calculate max column name length again for formatting
       max_len_col_name_heat <- 0
-      for (j in 1:length(custom_column_labels)) {  
+      for (j in 1:length(custom_column_labels)) {
         max_len_col_name_heat <- max(max_len_col_name_heat, max(nchar(custom_column_labels)))
       }
-      
+
+      # v66: Convert discrete heatmap data to factors for proper color mapping
+      if (!is.null(heat_param) && heat_param['is_discrete'] == TRUE) {
+        cat(file=stderr(), paste0("\n=== v66: Converting discrete heatmap to factors ===\n"))
+        for (col_idx in 1:ncol(dxdf440_for_heat[[j1]])) {
+          col_name <- colnames(dxdf440_for_heat[[j1]])[col_idx]
+          col_vals <- dxdf440_for_heat[[j1]][, col_idx]
+          unique_vals <- sort(unique(na.omit(col_vals)))
+          cat(file=stderr(), paste0("  Column '", col_name, "': ", length(unique_vals), " unique values\n"))
+          cat(file=stderr(), paste0("  Unique values: ", paste(head(unique_vals, 10), collapse=", "),
+                                    if(length(unique_vals) > 10) "..." else "", "\n"))
+          # Convert to factor with sorted levels
+          dxdf440_for_heat[[j1]][, col_idx] <- factor(col_vals, levels = unique_vals)
+        }
+        cat(file=stderr(), paste0("================================\n"))
+      }
+
       # Create the heatmap
       # v61: DEBUG - show data structure before gheatmap call
       cat(file=stderr(), paste0("\n=== v61: GHEATMAP DATA DEBUG ===\n"))
@@ -4991,7 +5027,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
 # Define UI
 ui <- dashboardPage(
-  dashboardHeader(title = "Lineage Tree Plotter v65"),
+  dashboardHeader(title = "Lineage Tree Plotter v66"),
   
   dashboardSidebar(
     width = 300,
@@ -5048,13 +5084,13 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v65 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v66 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("FIXED: Heatmap now visible - expanded x-axis to include heatmap area"),
-                              tags$li("Added extensive debug output for discrete palette color tracing"),
-                              tags$li("Debug: Check console for v65 DISCRETE HEATMAP COLOR DEBUG")
+                              tags$li("FIXED: Heatmap tip_list NA bug - now uses tree440$tip.label robustly"),
+                              tags$li("FIXED: Discrete heatmap data now converted to factors for proper color mapping"),
+                              tags$li("Debug: Check console for v66 TIP LABEL EXTRACTION DEBUG")
                             )
                      )
             )
