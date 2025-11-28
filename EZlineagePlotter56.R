@@ -4660,8 +4660,38 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       } else {
         if (heat_param['man'] == FALSE) {
           if (heat_param['man_define_colors'] == FALSE) {
-            pr440_short_tips_TRY_heat <- pr440_short_tips_TRY_heat +
-              scale_fill_hue(name = heat_map_title_list[[j1]])
+            # v64: Check if a discrete palette is specified (e.g., "Set1", "Set2", etc.)
+            palette_name <- NULL
+            if (!is.null(heat_param[['color_scale_option']])) {
+              # Extract palette name from the structure
+              palette_opt <- heat_param[['color_scale_option']]
+              if (is.list(palette_opt) && !is.null(palette_opt$color_scale_option)) {
+                palette_name <- palette_opt$color_scale_option
+              } else if (is.character(palette_opt)) {
+                palette_name <- palette_opt
+              }
+            }
+
+            # v64: Use RColorBrewer palette if available, otherwise use default hue
+            if (!is.null(palette_name) && palette_name %in% rownames(RColorBrewer::brewer.pal.info)) {
+              # Get unique values to determine number of colors needed
+              heat_data_vals <- unique(na.omit(dxdf440_for_heat[[j1]][,1]))
+              n_vals <- length(heat_data_vals)
+              max_colors <- RColorBrewer::brewer.pal.info[palette_name, "maxcolors"]
+              n_colors <- min(n_vals, max_colors)
+
+              cat(file=stderr(), paste0("\n=== v64: Applying discrete palette ===\n"))
+              cat(file=stderr(), paste0("  Palette: ", palette_name, "\n"))
+              cat(file=stderr(), paste0("  Number of unique values: ", n_vals, "\n"))
+              cat(file=stderr(), paste0("  Colors to use: ", n_colors, "\n"))
+              cat(file=stderr(), paste0("================================\n"))
+
+              pr440_short_tips_TRY_heat <- pr440_short_tips_TRY_heat +
+                scale_fill_brewer(palette = palette_name, name = heat_map_title_list[[j1]], na.value = "white")
+            } else {
+              pr440_short_tips_TRY_heat <- pr440_short_tips_TRY_heat +
+                scale_fill_hue(name = heat_map_title_list[[j1]])
+            }
           } else {
             # v62: Removed theme_minimal() which was corrupting ggtree object structure
             # The @mapping slot was being converted to data.frame instead of ggplot2::mapping
@@ -4936,13 +4966,13 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "🎨 v63 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "🎨 v64 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("DEBUG: Added extensive heatmap diagnostic output to trace display issue"),
-                              tags$li("DEBUG: Shows x coordinate ranges before/after scaling"),
-                              tags$li("DEBUG: Shows layer types and plot structure after gheatmap call")
+                              tags$li("Added discrete palette preview in heatmap settings"),
+                              tags$li("Fixed discrete palette (Set1, Set2, etc.) now applied to heatmap colors"),
+                              tags$li("Color palettes from RColorBrewer are now properly used in discrete heatmaps")
                             )
                      )
             )
@@ -8976,6 +9006,42 @@ server <- function(input, output, session) {
             "margin-top: 5px; height: 20px; border-radius: 3px; border: 1px solid #ccc; ",
             gradient_css
           )
+        )
+      })
+    })
+  })
+
+  # v64: Render palette previews for discrete heatmaps
+  observe({
+    lapply(1:6, function(i) {
+      output[[paste0("heatmap_discrete_palette_preview_", i)]] <- renderUI({
+        palette_name <- input[[paste0("heatmap_discrete_palette_", i)]]
+        if (is.null(palette_name)) palette_name <- "Set1"
+
+        # Get colors from the selected palette
+        n_colors <- 8  # Show 8 colors for discrete palette preview
+        colors <- tryCatch({
+          if (palette_name %in% rownames(RColorBrewer::brewer.pal.info)) {
+            max_colors <- RColorBrewer::brewer.pal.info[palette_name, "maxcolors"]
+            RColorBrewer::brewer.pal(min(n_colors, max_colors), palette_name)
+          } else {
+            rainbow(n_colors)
+          }
+        }, error = function(e) rainbow(n_colors))
+
+        # Create discrete color swatches preview
+        color_boxes <- lapply(colors, function(col) {
+          tags$div(
+            style = paste0(
+              "display: inline-block; width: ", 100/length(colors), "%; ",
+              "height: 20px; background-color: ", col, ";"
+            )
+          )
+        })
+
+        tags$div(
+          style = "margin-top: 5px; border-radius: 3px; border: 1px solid #ccc; overflow: hidden;",
+          do.call(tags$div, c(list(style = "display: flex;"), color_boxes))
         )
       })
     })
