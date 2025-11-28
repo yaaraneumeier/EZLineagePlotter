@@ -2610,10 +2610,12 @@ func.print.lineage.tree <- function(conf_yaml_path,
               
               
               if ('color_scale_option' %in% names(heat_map_i_def)) {
-                param['color_scale_option'] <- 'A'
-                param[['color_scale_option']] <- heat_map_i_def['color_scale_option']
+                # v67: FIX - use double brackets to get the value directly, not wrapped in a list
+                # Single brackets heat_map_i_def['color_scale_option'] returns list(color_scale_option = "Set1")
+                # Double brackets heat_map_i_def[['color_scale_option']] returns just "Set1"
+                param[['color_scale_option']] <- heat_map_i_def[['color_scale_option']]
               } else {
-                param['color_scale_option'] <- 'B'
+                param[['color_scale_option']] <- NULL
               }
               
               
@@ -4714,38 +4716,28 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
         if (heat_param['man'] == FALSE) {
           if (heat_param['man_define_colors'] == FALSE) {
-            # v64: Check if a discrete palette is specified (e.g., "Set1", "Set2", etc.)
-            palette_name <- NULL
-            if (!is.null(heat_param[['color_scale_option']])) {
-              # Extract palette name from the structure
-              palette_opt <- heat_param[['color_scale_option']]
-              cat(file=stderr(), paste0("  v65: palette_opt class: ", paste(class(palette_opt), collapse=", "), "\n"))
-              cat(file=stderr(), paste0("  v65: palette_opt: ", paste(palette_opt, collapse=", "), "\n"))
-              if (is.list(palette_opt) && !is.null(palette_opt$color_scale_option)) {
-                palette_name <- palette_opt$color_scale_option
-                cat(file=stderr(), paste0("  v65: extracted palette_name from list: ", palette_name, "\n"))
-              } else if (is.character(palette_opt)) {
-                palette_name <- palette_opt
-                cat(file=stderr(), paste0("  v65: extracted palette_name as character: ", palette_name, "\n"))
-              }
-            }
+            # v67: SIMPLIFIED - color_scale_option is now directly a palette name string (e.g., "Set1")
+            # No more nested list handling needed after the fix at line 2616
+            palette_name <- heat_param[['color_scale_option']]
 
-            cat(file=stderr(), paste0("  v65: Final palette_name: ",
-                                      if(is.null(palette_name)) "NULL" else palette_name, "\n"))
+            cat(file=stderr(), paste0("\n=== v67: Discrete palette check ===\n"))
+            cat(file=stderr(), paste0("  palette_name: ", if(is.null(palette_name)) "NULL" else palette_name, "\n"))
             if (!is.null(palette_name)) {
-              cat(file=stderr(), paste0("  v65: Is valid RColorBrewer palette: ",
+              cat(file=stderr(), paste0("  Is valid RColorBrewer palette: ",
                                         palette_name %in% rownames(RColorBrewer::brewer.pal.info), "\n"))
             }
+            cat(file=stderr(), paste0("================================\n"))
 
-            # v64: Use RColorBrewer palette if available, otherwise use default hue
-            if (!is.null(palette_name) && palette_name %in% rownames(RColorBrewer::brewer.pal.info)) {
+            # v67: Use RColorBrewer palette if available, otherwise use default hue
+            if (!is.null(palette_name) && is.character(palette_name) &&
+                palette_name %in% rownames(RColorBrewer::brewer.pal.info)) {
               # Get unique values to determine number of colors needed
               heat_data_vals <- unique(na.omit(dxdf440_for_heat[[j1]][,1]))
               n_vals <- length(heat_data_vals)
               max_colors <- RColorBrewer::brewer.pal.info[palette_name, "maxcolors"]
               n_colors <- min(n_vals, max_colors)
 
-              cat(file=stderr(), paste0("\n=== v64: Applying discrete palette ===\n"))
+              cat(file=stderr(), paste0("\n=== v67: Applying discrete palette ===\n"))
               cat(file=stderr(), paste0("  Palette: ", palette_name, "\n"))
               cat(file=stderr(), paste0("  Number of unique values: ", n_vals, "\n"))
               cat(file=stderr(), paste0("  Colors to use: ", n_colors, "\n"))
@@ -4754,15 +4746,22 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
               pr440_short_tips_TRY_heat <- pr440_short_tips_TRY_heat +
                 scale_fill_brewer(palette = palette_name, name = heat_map_title_list[[j1]], na.value = "white")
             } else {
+              cat(file=stderr(), paste0("  v67: Using default hue scale (no valid palette specified)\n"))
               pr440_short_tips_TRY_heat <- pr440_short_tips_TRY_heat +
                 scale_fill_hue(name = heat_map_title_list[[j1]])
             }
           } else {
-            # v62: Removed theme_minimal() which was corrupting ggtree object structure
-            # The @mapping slot was being converted to data.frame instead of ggplot2::mapping
+            # v67: man_define_colors is TRUE - use custom color values
+            # color_scale_option should be a named vector of colors
+            custom_colors <- heat_param[['color_scale_option']]
+            cat(file=stderr(), paste0("\n=== v67: Applying custom discrete colors ===\n"))
+            cat(file=stderr(), paste0("  custom_colors class: ", paste(class(custom_colors), collapse=", "), "\n"))
+            cat(file=stderr(), paste0("  custom_colors: ", paste(head(custom_colors, 5), collapse=", "), "\n"))
+            cat(file=stderr(), paste0("================================\n"))
+
             pr440_short_tips_TRY_heat <- pr440_short_tips_TRY_heat +
               scale_fill_manual(
-                values = heat_param[['color_scale_option']]$color_scale_option,
+                values = custom_colors,
                 name = heat_map_title_list[[j1]],
                 na.value = 'WHITE'
               )
@@ -4844,65 +4843,35 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     # Update plot with heatmap
     p <- pr440_short_tips_TRY_heat
 
-    # v63: DEBUG - final heatmap state
-    cat(file=stderr(), paste0("\n=== v63: FINAL HEATMAP STATE ===\n"))
+    # v67: DEBUG - final heatmap state
+    cat(file=stderr(), paste0("\n=== v67: FINAL HEATMAP STATE ===\n"))
     final_xrange <- range(p$data$x, na.rm = TRUE)
     cat(file=stderr(), paste0("  Final plot x range: [", final_xrange[1], ", ", final_xrange[2], "]\n"))
     cat(file=stderr(), paste0("  Final number of layers: ", length(p$layers), "\n"))
+    cat(file=stderr(), paste0("  new_heat_x (offset used): ", new_heat_x, "\n"))
+    cat(file=stderr(), paste0("  wi (width used): ", wi, "\n"))
     cat(file=stderr(), paste0("================================\n"))
 
-    # v65: FIX - Expand x-axis to include heatmap area
-    # The heatmap tiles are placed at positive x values (offset from tree tips at x=0)
-    # but the tree data x-range is all negative. We need to expand the coordinate system.
-    heatmap_max_x <- NULL
-    for (layer_idx in seq_along(p$layers)) {
-      layer <- p$layers[[layer_idx]]
-      if ("GeomTile" %in% class(layer$geom) || "GeomRect" %in% class(layer$geom)) {
-        # Get the layer data
-        layer_data <- tryCatch({
-          if (!is.null(layer$data) && is.data.frame(layer$data) && "x" %in% names(layer$data)) {
-            layer$data
-          } else {
-            # Try to build the layer data
-            ggplot2::layer_data(p, layer_idx)
-          }
-        }, error = function(e) NULL)
+    # v67: ROBUST FIX - Always expand x-axis when heatmap is present
+    # The heatmap tiles are at positive x (starting at offset ~0.7)
+    # but tree tips are at x=0 and branches extend to negative x.
+    # We MUST expand the coordinate system to show the heatmap.
 
-        if (!is.null(layer_data) && "x" %in% names(layer_data)) {
-          layer_max_x <- max(layer_data$x, na.rm = TRUE)
-          if (is.null(heatmap_max_x) || layer_max_x > heatmap_max_x) {
-            heatmap_max_x <- layer_max_x
-          }
-        }
-      }
-    }
+    # Calculate the expected maximum x based on the offset and width we used
+    # Add 20% margin for labels and padding
+    expected_xmax <- new_heat_x + wi + 0.5
 
-    # v65: If we found heatmap tiles, expand the x-axis
-    if (!is.null(heatmap_max_x) && !is.na(heatmap_max_x) && heatmap_max_x > 0) {
-      # Add some margin (10% of heatmap extent)
-      margin <- abs(heatmap_max_x) * 0.1
-      new_xmax <- heatmap_max_x + margin
+    cat(file=stderr(), paste0("\n=== v67: EXPANDING X-AXIS FOR HEATMAP ===\n"))
+    cat(file=stderr(), paste0("  Tree x range: [", final_xrange[1], ", ", final_xrange[2], "]\n"))
+    cat(file=stderr(), paste0("  Heatmap offset: ", new_heat_x, "\n"))
+    cat(file=stderr(), paste0("  Heatmap width: ", wi, "\n"))
+    cat(file=stderr(), paste0("  Expected max x: ", expected_xmax, "\n"))
+    cat(file=stderr(), paste0("  Setting coord_cartesian xlim to: [", final_xrange[1], ", ", expected_xmax, "]\n"))
+    cat(file=stderr(), paste0("========================================\n"))
 
-      cat(file=stderr(), paste0("\n=== v65: EXPANDING X-AXIS FOR HEATMAP ===\n"))
-      cat(file=stderr(), paste0("  Detected heatmap max x: ", heatmap_max_x, "\n"))
-      cat(file=stderr(), paste0("  Expanding x-axis to: [", final_xrange[1], ", ", new_xmax, "]\n"))
-      cat(file=stderr(), paste0("========================================\n"))
-
-      # Use coord_cartesian to expand the view without clipping
-      p <- p + coord_cartesian(xlim = c(final_xrange[1], new_xmax), clip = "off")
-    } else {
-      # v65: Alternative approach - calculate expected heatmap position from parameters
-      # If we couldn't find tile data, estimate from the offset and width used
-      expected_heatmap_max <- new_heat_x + wi + 0.5  # offset + width + margin
-
-      cat(file=stderr(), paste0("\n=== v65: EXPANDING X-AXIS (estimated) ===\n"))
-      cat(file=stderr(), paste0("  Could not detect tile data directly\n"))
-      cat(file=stderr(), paste0("  Estimating from offset (", new_heat_x, ") + width (", wi, ")\n"))
-      cat(file=stderr(), paste0("  Expanding x-axis to: [", final_xrange[1], ", ", expected_heatmap_max, "]\n"))
-      cat(file=stderr(), paste0("========================================\n"))
-
-      p <- p + coord_cartesian(xlim = c(final_xrange[1], expected_heatmap_max), clip = "off")
-    }
+    # v67: Use coord_cartesian to expand view to include heatmap
+    # clip = "off" allows elements to draw outside the panel
+    p <- p + coord_cartesian(xlim = c(final_xrange[1], expected_xmax), clip = "off")
   }
 
   # Default ellipse parameters if not set
@@ -5027,7 +4996,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
 # Define UI
 ui <- dashboardPage(
-  dashboardHeader(title = "Lineage Tree Plotter v66"),
+  dashboardHeader(title = "Lineage Tree Plotter v67"),
   
   dashboardSidebar(
     width = 300,
@@ -5084,13 +5053,13 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v66 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v67 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("FIXED: Heatmap tip_list NA bug - now uses tree440$tip.label robustly"),
-                              tags$li("FIXED: Discrete heatmap data now converted to factors for proper color mapping"),
-                              tags$li("Debug: Check console for v66 TIP LABEL EXTRACTION DEBUG")
+                              tags$li("FIXED: Discrete colormap structure - color_scale_option is now a direct string (e.g., 'Set1') not nested list"),
+                              tags$li("FIXED: Heatmap x-axis expansion - always expands to show heatmap tiles"),
+                              tags$li("Debug: Check console for v67 DISCRETE PALETTE CHECK and EXPANDING X-AXIS messages")
                             )
                      )
             )
