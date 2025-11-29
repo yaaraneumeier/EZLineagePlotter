@@ -4803,7 +4803,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       layer_types <- sapply(pr440_short_tips_TRY_heat$layers, function(l) class(l$geom)[1])
       cat(file=stderr(), paste0("  Layer geom types: ", paste(layer_types, collapse=", "), "\n"))
 
-      # v71: Find and inspect the GeomTile layer
+      # v72: Enhanced debugging to find and inspect the GeomTile layer
       for (layer_idx in seq_along(pr440_short_tips_TRY_heat$layers)) {
         layer <- pr440_short_tips_TRY_heat$layers[[layer_idx]]
         if (inherits(layer$geom, "GeomTile")) {
@@ -4825,8 +4825,22 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
                 y_vals <- layer_data$y
                 cat(file=stderr(), paste0("    Tile y range: [", min(y_vals, na.rm=TRUE), ", ", max(y_vals, na.rm=TRUE), "]\n"))
               }
+              # v72: Check value column (this is what fill maps to in gheatmap)
+              if ("value" %in% names(layer_data)) {
+                cat(file=stderr(), paste0("    Value column (unique): ", paste(unique(layer_data$value), collapse=", "), "\n"))
+                cat(file=stderr(), paste0("    Value column class: ", class(layer_data$value)[1], "\n"))
+              }
+              # v72: Check width column (tile width)
+              if ("width" %in% names(layer_data)) {
+                width_vals <- layer_data$width
+                cat(file=stderr(), paste0("    Width values: [", min(width_vals, na.rm=TRUE), ", ", max(width_vals, na.rm=TRUE), "]\n"))
+              }
               if ("fill" %in% names(layer_data)) {
                 cat(file=stderr(), paste0("    Fill values (first 5): ", paste(head(layer_data$fill, 5), collapse=", "), "\n"))
+              }
+              # v72: Check the layer's aesthetic mapping
+              if (!is.null(layer$mapping)) {
+                cat(file=stderr(), paste0("    Layer mapping: ", paste(names(layer$mapping), collapse=", "), "\n"))
               }
             } else {
               cat(file=stderr(), paste0("    WARNING: Layer data is not a data.frame: ", class(layer_data)[1], "\n"))
@@ -4836,6 +4850,33 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
           })
         }
       }
+
+      # v72: Try ggplot_build to see actual rendered fill colors
+      cat(file=stderr(), paste0("\n=== v72: CHECKING RENDERED FILL COLORS ===\n"))
+      tryCatch({
+        built_plot <- ggplot2::ggplot_build(pr440_short_tips_TRY_heat)
+        # Find the tile layer in built data
+        for (i in seq_along(built_plot$data)) {
+          built_layer <- built_plot$data[[i]]
+          # Tile layers have PANEL, x, y, width, height, fill columns after building
+          if (all(c("x", "y", "fill") %in% names(built_layer))) {
+            cat(file=stderr(), paste0("  Built layer ", i, ":\n"))
+            cat(file=stderr(), paste0("    Rows: ", nrow(built_layer), "\n"))
+            if ("fill" %in% names(built_layer)) {
+              fill_vals <- unique(built_layer$fill)
+              cat(file=stderr(), paste0("    Unique fill colors: ", paste(head(fill_vals, 10), collapse=", "), "\n"))
+            }
+            if ("width" %in% names(built_layer)) {
+              cat(file=stderr(), paste0("    Width range: [", min(built_layer$width, na.rm=TRUE), ", ", max(built_layer$width, na.rm=TRUE), "]\n"))
+            }
+            if ("x" %in% names(built_layer)) {
+              cat(file=stderr(), paste0("    X range: [", min(built_layer$x, na.rm=TRUE), ", ", max(built_layer$x, na.rm=TRUE), "]\n"))
+            }
+          }
+        }
+      }, error = function(e) {
+        cat(file=stderr(), paste0("  v72: ggplot_build error: ", e$message, "\n"))
+      })
       cat(file=stderr(), paste0("================================\n"))
 
       # Apply correct coloring scale based on heatmap type
@@ -5277,6 +5318,79 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   # This fixes the "@mapping must be <ggplot2::mapping>" error in newer ggplot2 versions
   p <- func.repair.ggtree.mapping(p)
 
+  # v72: FINAL DEBUG - verify heatmap layer exists and inspect plot state
+  cat(file=stderr(), paste0("\n=== v72: FINAL PLOT STATE BEFORE GGSAVE ===\n"))
+  cat(file=stderr(), paste0("  Number of layers: ", length(p$layers), "\n"))
+  layer_types <- sapply(p$layers, function(l) class(l$geom)[1])
+  cat(file=stderr(), paste0("  Layer types: ", paste(layer_types, collapse=", "), "\n"))
+
+  # Check for GeomTile (heatmap)
+  geomtile_idx <- which(layer_types == "GeomTile")
+  if (length(geomtile_idx) > 0) {
+    cat(file=stderr(), paste0("  GeomTile found at layers: ", paste(geomtile_idx, collapse=", "), "\n"))
+    for (idx in geomtile_idx) {
+      tryCatch({
+        tile_layer <- p$layers[[idx]]
+        tile_data <- tile_layer$data
+        if (is.function(tile_data)) {
+          tile_data <- tile_data(p$data)
+        }
+        if (!is.null(tile_data) && is.data.frame(tile_data)) {
+          cat(file=stderr(), paste0("    Layer ", idx, " data rows: ", nrow(tile_data), "\n"))
+          if ("x" %in% names(tile_data)) {
+            cat(file=stderr(), paste0("    Layer ", idx, " x range: [", min(tile_data$x, na.rm=TRUE), ", ", max(tile_data$x, na.rm=TRUE), "]\n"))
+          }
+          if ("value" %in% names(tile_data)) {
+            cat(file=stderr(), paste0("    Layer ", idx, " values: ", paste(unique(tile_data$value), collapse=", "), "\n"))
+          }
+        }
+      }, error = function(e) {
+        cat(file=stderr(), paste0("    ERROR: ", e$message, "\n"))
+      })
+    }
+  } else {
+    cat(file=stderr(), paste0("  WARNING: No GeomTile layers found! Heatmap may not be displayed.\n"))
+  }
+
+  # Check coordinate system
+  if (!is.null(p$coordinates)) {
+    cat(file=stderr(), paste0("  Coordinate system: ", class(p$coordinates)[1], "\n"))
+    if (inherits(p$coordinates, "CoordCartesian")) {
+      if (!is.null(p$coordinates$limits$x)) {
+        cat(file=stderr(), paste0("  X limits: [", p$coordinates$limits$x[1], ", ", p$coordinates$limits$x[2], "]\n"))
+      }
+    }
+  }
+
+  # Try a final ggplot_build to get computed values
+  tryCatch({
+    final_built <- ggplot2::ggplot_build(p)
+    cat(file=stderr(), paste0("  ggplot_build successful\n"))
+
+    # Find tile layer in built data
+    for (i in seq_along(final_built$data)) {
+      if ("fill" %in% names(final_built$data[[i]]) && "width" %in% names(final_built$data[[i]])) {
+        bd <- final_built$data[[i]]
+        cat(file=stderr(), paste0("  Built layer ", i, ": ", nrow(bd), " rows, x=[",
+                                  min(bd$x, na.rm=TRUE), ", ", max(bd$x, na.rm=TRUE),
+                                  "], fill=", paste(unique(bd$fill), collapse=","), "\n"))
+      }
+    }
+
+    # Check panel ranges
+    if (!is.null(final_built$layout$panel_params)) {
+      for (panel_idx in seq_along(final_built$layout$panel_params)) {
+        pp <- final_built$layout$panel_params[[panel_idx]]
+        if (!is.null(pp$x.range)) {
+          cat(file=stderr(), paste0("  Panel ", panel_idx, " x.range: [", pp$x.range[1], ", ", pp$x.range[2], "]\n"))
+        }
+      }
+    }
+  }, error = function(e) {
+    cat(file=stderr(), paste0("  ggplot_build error: ", e$message, "\n"))
+  })
+  cat(file=stderr(), paste0("============================================\n"))
+
   # Save the plot to file
   ggsave(out_file_path, plot = p, width = width, height = height, units = units_out, limitsize = FALSE)
 
@@ -5305,7 +5419,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
 # Define UI
 ui <- dashboardPage(
-  dashboardHeader(title = "Lineage Tree Plotter v71"),
+  dashboardHeader(title = "Lineage Tree Plotter v72"),
   
   dashboardSidebar(
     width = 300,
@@ -5362,15 +5476,16 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v71 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v72 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("DEBUG: Added comprehensive layer diagnostics to identify heatmap issues"),
-                              tags$li("DEBUG: Enhanced GeomTile layer inspection with x/y range and fill values"),
-                              tags$li("IMPROVED: New func.diagnose.layer.issues() to identify problematic layers"),
-                              tags$li("IMPROVED: Direct GeomTile data access as fallback when ggplot_build fails"),
-                              tags$li("IMPROVED: Added fixed margin (2.5) as additional safety for x-axis expansion")
+                              tags$li("DEBUG: Enhanced GeomTile inspection to show value column contents and class"),
+                              tags$li("DEBUG: Added tile width column inspection to verify tile sizing"),
+                              tags$li("DEBUG: Added layer aesthetic mapping inspection"),
+                              tags$li("DEBUG: Using ggplot_build to show actual computed fill colors"),
+                              tags$li("DEBUG: Added final plot state check before ggsave with built layer analysis"),
+                              tags$li("DEBUG: Showing panel x.range to verify coordinate limits are applied")
                             )
                      )
             )
