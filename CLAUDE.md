@@ -18,7 +18,7 @@
    ```
 
 ## Current Version
-**v67**
+**v68**
 
 ## Version Box Location
-The version box is in the `tabItems` section under `tabName = "data_upload"`, approximately lines 4906-4922.
+The version box is in the `tabItems` section under `tabName = "data_upload"`, approximately lines 5093-5110.

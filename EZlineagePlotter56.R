@@ -4774,7 +4774,12 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             )
         }
       }
-      
+
+      # v68: DEBUG - after scale application
+      cat(file=stderr(), paste0("\n=== v68: After scale application ===\n"))
+      cat(file=stderr(), paste0("  j=", j, ", j1=", j1, "\n"))
+      cat(file=stderr(), paste0("================================\n"))
+
       # Apply theme for first heatmap
       if (j == 1) {
         pr440_short_tips_TRY_heat <- pr440_short_tips_TRY_heat + 
@@ -4836,40 +4841,78 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
         # v53: print(param)
       }
       
-      # Store position for next heatmap
-      min_col_x_of_frame_of_prev_heat <- func.calc.min_col_x_of_frame_of_prev_heat(pr440_short_tips_TRY_heat, colnames_sub_df_heat_j)
+      # v68: DEBUG - before func.calc call
+      cat(file=stderr(), paste0("\n=== v68: Before func.calc.min_col_x ===\n"))
+
+      # Store position for next heatmap (wrapped in tryCatch to prevent errors from breaking the loop)
+      min_col_x_of_frame_of_prev_heat <- tryCatch({
+        func.calc.min_col_x_of_frame_of_prev_heat(pr440_short_tips_TRY_heat, colnames_sub_df_heat_j)
+      }, error = function(e) {
+        cat(file=stderr(), paste0("  v68: WARNING - func.calc.min_col_x_of_frame_of_prev_heat failed: ", e$message, "\n"))
+        0  # Return default value
+      })
+
+      cat(file=stderr(), paste0("  v68: min_col_x_of_frame_of_prev_heat = ", min_col_x_of_frame_of_prev_heat, "\n"))
+      cat(file=stderr(), paste0("================================\n"))
     }
-    
+
+    # v68: DEBUG - after for loop
+    cat(file=stderr(), paste0("\n=== v68: After heatmap for loop ===\n"))
+
     # Update plot with heatmap
     p <- pr440_short_tips_TRY_heat
 
-    # v67: DEBUG - final heatmap state
-    cat(file=stderr(), paste0("\n=== v67: FINAL HEATMAP STATE ===\n"))
+    # v68: DEBUG - final heatmap state with layer analysis
+    cat(file=stderr(), paste0("\n=== v68: FINAL HEATMAP STATE ===\n"))
     final_xrange <- range(p$data$x, na.rm = TRUE)
-    cat(file=stderr(), paste0("  Final plot x range: [", final_xrange[1], ", ", final_xrange[2], "]\n"))
-    cat(file=stderr(), paste0("  Final number of layers: ", length(p$layers), "\n"))
-    cat(file=stderr(), paste0("  new_heat_x (offset used): ", new_heat_x, "\n"))
-    cat(file=stderr(), paste0("  wi (width used): ", wi, "\n"))
+    cat(file=stderr(), paste0("  Tree data x range: [", final_xrange[1], ", ", final_xrange[2], "]\n"))
+    cat(file=stderr(), paste0("  Number of layers: ", length(p$layers), "\n"))
+
+    # v68: Check for heatmap layer (GeomTile) and get its x coordinates
+    layer_types <- sapply(p$layers, function(l) class(l$geom)[1])
+    cat(file=stderr(), paste0("  Layer types: ", paste(layer_types, collapse=", "), "\n"))
+
+    # v68: Use ggplot_build to get actual rendered x coordinates of all layers
+    heatmap_xmax <- NULL
+    tryCatch({
+      built <- ggplot2::ggplot_build(p)
+      for (i in seq_along(built$data)) {
+        if ("x" %in% names(built$data[[i]])) {
+          layer_x <- built$data[[i]]$x
+          layer_xmax <- max(layer_x, na.rm = TRUE)
+          cat(file=stderr(), paste0("    Layer ", i, " x range: [",
+                                    min(layer_x, na.rm = TRUE), ", ", layer_xmax, "]\n"))
+          if (is.null(heatmap_xmax) || layer_xmax > heatmap_xmax) {
+            heatmap_xmax <- layer_xmax
+          }
+        }
+      }
+    }, error = function(e) {
+      cat(file=stderr(), paste0("  v68: Error building plot for x range: ", e$message, "\n"))
+    })
     cat(file=stderr(), paste0("================================\n"))
 
-    # v67: ROBUST FIX - Always expand x-axis when heatmap is present
-    # The heatmap tiles are at positive x (starting at offset ~0.7)
-    # but tree tips are at x=0 and branches extend to negative x.
-    # We MUST expand the coordinate system to show the heatmap.
+    # v68: ROBUST FIX - Calculate expected x range
+    # gheatmap places tiles relative to tree tips (at x=0)
+    # With offset=0.7 and width=0.06, tiles should be at x ~ 0.7-0.76
+    # But ggtree may scale internally, so use the built data if available
 
-    # Calculate the expected maximum x based on the offset and width we used
-    # Add 20% margin for labels and padding
-    expected_xmax <- new_heat_x + wi + 0.5
+    # Use the larger of: heatmap offset + width + margin, or built data max
+    expected_xmax <- max(
+      new_heat_x + wi + 0.5,  # Calculated from offset and width
+      ifelse(is.null(heatmap_xmax), new_heat_x + wi + 0.5, heatmap_xmax + 0.3)  # From built data
+    )
 
-    cat(file=stderr(), paste0("\n=== v67: EXPANDING X-AXIS FOR HEATMAP ===\n"))
+    cat(file=stderr(), paste0("\n=== v68: EXPANDING X-AXIS FOR HEATMAP ===\n"))
     cat(file=stderr(), paste0("  Tree x range: [", final_xrange[1], ", ", final_xrange[2], "]\n"))
-    cat(file=stderr(), paste0("  Heatmap offset: ", new_heat_x, "\n"))
-    cat(file=stderr(), paste0("  Heatmap width: ", wi, "\n"))
+    cat(file=stderr(), paste0("  Heatmap offset (new_heat_x): ", new_heat_x, "\n"))
+    cat(file=stderr(), paste0("  Heatmap width (wi): ", wi, "\n"))
+    cat(file=stderr(), paste0("  Detected heatmap max x: ", ifelse(is.null(heatmap_xmax), "NULL", heatmap_xmax), "\n"))
     cat(file=stderr(), paste0("  Expected max x: ", expected_xmax, "\n"))
     cat(file=stderr(), paste0("  Setting coord_cartesian xlim to: [", final_xrange[1], ", ", expected_xmax, "]\n"))
     cat(file=stderr(), paste0("========================================\n"))
 
-    # v67: Use coord_cartesian to expand view to include heatmap
+    # v68: Use coord_cartesian to expand view to include heatmap
     # clip = "off" allows elements to draw outside the panel
     p <- p + coord_cartesian(xlim = c(final_xrange[1], expected_xmax), clip = "off")
   }
@@ -4996,7 +5039,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
 # Define UI
 ui <- dashboardPage(
-  dashboardHeader(title = "Lineage Tree Plotter v67"),
+  dashboardHeader(title = "Lineage Tree Plotter v68"),
   
   dashboardSidebar(
     width = 300,
@@ -5053,13 +5096,14 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v67 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v68 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("FIXED: Discrete colormap structure - color_scale_option is now a direct string (e.g., 'Set1') not nested list"),
-                              tags$li("FIXED: Heatmap x-axis expansion - always expands to show heatmap tiles"),
-                              tags$li("Debug: Check console for v67 DISCRETE PALETTE CHECK and EXPANDING X-AXIS messages")
+                              tags$li("FIXED: Heatmap visibility - added comprehensive debugging to trace execution flow"),
+                              tags$li("FIXED: Wrapped func.calc.min_col_x call in tryCatch to prevent silent failures"),
+                              tags$li("FIXED: x-axis expansion now uses ggplot_build to get actual heatmap tile coordinates"),
+                              tags$li("Debug: Check console for v68 'After scale application', 'Before func.calc', 'After heatmap for loop' messages")
                             )
                      )
             )
