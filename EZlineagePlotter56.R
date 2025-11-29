@@ -4989,13 +4989,39 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             }
             cat(file=stderr(), paste0("  Heatmap factor levels: ", paste(head(heat_data_vals, 10), collapse=", "), "\n"))
 
-            # v70: Ensure custom_colors is properly named to match factor levels
+            # v73: Fix - properly subset custom_colors to match factor levels
+            # This prevents NA names which cause scale_fill_manual to fail
+            n_levels <- length(heat_data_vals)
+
             if (is.null(names(custom_colors)) || length(names(custom_colors)) == 0) {
-              cat(file=stderr(), paste0("  v70: WARNING - custom_colors has no names, assigning by position\n"))
-              # If no names, create names from factor levels
-              if (length(custom_colors) >= length(heat_data_vals)) {
-                names(custom_colors) <- as.character(heat_data_vals)
-                cat(file=stderr(), paste0("  v70: Assigned names: ", paste(names(custom_colors), collapse=", "), "\n"))
+              cat(file=stderr(), paste0("  v73: WARNING - custom_colors has no names, subsetting and assigning by position\n"))
+              cat(file=stderr(), paste0("  v73: Number of factor levels: ", n_levels, "\n"))
+              cat(file=stderr(), paste0("  v73: Number of custom colors: ", length(custom_colors), "\n"))
+
+              # CRITICAL: Only use as many colors as there are factor levels
+              if (length(custom_colors) >= n_levels) {
+                # Subset colors to match factor levels exactly
+                colors_to_use <- custom_colors[1:n_levels]
+                names(colors_to_use) <- as.character(heat_data_vals)
+                custom_colors <- colors_to_use
+                cat(file=stderr(), paste0("  v73: Subsetted to ", n_levels, " colors\n"))
+                cat(file=stderr(), paste0("  v73: Final names: ", paste(names(custom_colors), collapse=", "), "\n"))
+                cat(file=stderr(), paste0("  v73: Final values: ", paste(custom_colors, collapse=", "), "\n"))
+              } else {
+                # Not enough colors, recycle
+                cat(file=stderr(), paste0("  v73: WARNING - not enough colors, recycling\n"))
+                colors_to_use <- rep(custom_colors, length.out = n_levels)
+                names(colors_to_use) <- as.character(heat_data_vals)
+                custom_colors <- colors_to_use
+              }
+            } else {
+              # custom_colors already has names - ensure they match factor levels
+              cat(file=stderr(), paste0("  v73: custom_colors already named: ", paste(names(custom_colors), collapse=", "), "\n"))
+              # Only keep colors whose names are in heat_data_vals
+              valid_names <- names(custom_colors) %in% as.character(heat_data_vals)
+              if (any(valid_names)) {
+                custom_colors <- custom_colors[valid_names]
+                cat(file=stderr(), paste0("  v73: After filtering: ", paste(names(custom_colors), collapse=", "), "\n"))
               }
             }
             # v70: Get NA color from heat_param (default white)
@@ -5476,16 +5502,13 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v72 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v73 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("DEBUG: Enhanced GeomTile inspection to show value column contents and class"),
-                              tags$li("DEBUG: Added tile width column inspection to verify tile sizing"),
-                              tags$li("DEBUG: Added layer aesthetic mapping inspection"),
-                              tags$li("DEBUG: Using ggplot_build to show actual computed fill colors"),
-                              tags$li("DEBUG: Added final plot state check before ggsave with built layer analysis"),
-                              tags$li("DEBUG: Showing panel x.range to verify coordinate limits are applied")
+                              tags$li("FIX: Critical heatmap display bug fixed - scale_fill_manual was failing due to mismatched color vector names"),
+                              tags$li("FIX: Custom discrete colors now properly subset to match the number of factor levels"),
+                              tags$li("FIX: Prevents NA names in color vector which caused 'Problem while setting up geom' error")
                             )
                      )
             )
