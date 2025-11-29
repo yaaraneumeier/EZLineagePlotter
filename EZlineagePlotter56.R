@@ -5134,9 +5134,10 @@ ui <- dashboardPage(
                             "New in this version:",
                             tags$ul(
                               tags$li("CRITICAL FIX: Resolved '@mapping must be <ggplot2::mapping>, not S3<data.frame>' error"),
-                              tags$li("Added func.repair.ggtree.mapping() to fix mapping corruption from gheatmap/new_scale_fill"),
-                              tags$li("Mapping is now repaired after gheatmap, new_scale_fill, and before plot return"),
-                              tags$li("Compatible with newer ggplot2 versions (3.4+) which have stricter object validation")
+                              tags$li("IMPROVED: Discrete Color Settings UI - now shows all value-to-color mappings immediately"),
+                              tags$li("NEW: 'Apply Palette to All' button for discrete heatmaps (like classification settings)"),
+                              tags$li("NEW: Individual color pickers for each discrete value (up to 30 values)"),
+                              tags$li("Compatible with newer ggplot2 versions (3.4+)")
                             )
                      )
             )
@@ -7083,9 +7084,11 @@ server <- function(input, output, session) {
           )
 
           if (heatmap_entry$is_discrete) {
-            if (!is.null(heatmap_entry$use_custom_colors) && heatmap_entry$use_custom_colors) {
+            # v69: Check for custom colors (man_define_colors flag)
+            if (!is.null(heatmap_entry$man_define_colors) && heatmap_entry$man_define_colors) {
               heatmap_item[[as.character(j)]]$man_define_colors <- "yes"
-              heatmap_item[[as.character(j)]]$color_scale_option <- heatmap_entry$colors
+              heatmap_item[[as.character(j)]]$color_scale_option <- heatmap_entry$custom_colors
+              cat(file=stderr(), paste0("    v69: Using ", length(heatmap_entry$custom_colors), " custom colors\n"))
             } else {
               heatmap_item[[as.character(j)]]$color_scale_option <- heatmap_entry$color_scheme
             }
@@ -8874,26 +8877,31 @@ server <- function(input, output, session) {
           )
         ),
         
-        # Discrete settings
+        # Discrete settings - v69: Improved UI similar to classification settings
         conditionalPanel(
           condition = paste0("(input.heatmap_auto_type_", i, " && '", detected_type, "' == 'discrete') || (!input.heatmap_auto_type_", i, " && input.heatmap_type_", i, " == 'discrete')"),
           tags$div(
             style = "background-color: #f9f9f9; padding: 10px; border-radius: 5px; margin-top: 10px;",
             tags$h5(icon("palette"), " Discrete Color Settings"),
-            fluidRow(
-              column(6,
-                     selectInput(paste0("heatmap_discrete_palette_", i), "Color Palette",
-                                 choices = discrete_palettes,
-                                 selected = if (!is.null(cfg$discrete_palette)) cfg$discrete_palette else "Set1"),
-                     # v62: Add palette preview
-                     uiOutput(paste0("heatmap_discrete_palette_preview_", i))
+            # v69: Palette selection with Apply button
+            tags$div(
+              style = "background-color: #f0f0f0; padding: 10px; margin-bottom: 10px; border-radius: 5px;",
+              fluidRow(
+                column(6,
+                       selectInput(paste0("heatmap_discrete_palette_", i), "Color Palette",
+                                   choices = discrete_palettes,
+                                   selected = if (!is.null(cfg$discrete_palette)) cfg$discrete_palette else "Set1")
+                ),
+                column(6, style = "padding-top: 25px;",
+                       actionButton(paste0("apply_heatmap_palette_", i), "Apply Palette to All",
+                                    icon = icon("palette"), class = "btn-info btn-sm")
+                )
               ),
-              column(6,
-                     checkboxInput(paste0("heatmap_custom_discrete_", i), "Use custom colors per value",
-                                   value = if (!is.null(cfg$custom_discrete)) cfg$custom_discrete else FALSE)
-              )
+              # v62: Add palette preview
+              uiOutput(paste0("heatmap_discrete_palette_preview_", i))
             ),
-            # Custom colors UI will be rendered separately
+            # v69: Always show value-to-color mappings (no checkbox needed)
+            tags$h6("Value Colors:", style = "margin-top: 10px; margin-bottom: 5px;"),
             uiOutput(paste0("heatmap_discrete_colors_ui_", i))
           )
         ),
@@ -9211,50 +9219,122 @@ server <- function(input, output, session) {
     })
   })
 
-  # Render discrete color pickers for each heatmap
+  # v69: Render discrete color pickers for each heatmap - always show when columns are selected
   observe({
     lapply(1:6, function(i) {
       output[[paste0("heatmap_discrete_colors_ui_", i)]] <- renderUI({
-        req(input[[paste0("heatmap_custom_discrete_", i)]])
-        
-        if (!input[[paste0("heatmap_custom_discrete_", i)]]) {
-          return(NULL)
-        }
-        
-        # v56: Use columns (plural) - get unique values from first column
+        # v69: Use columns (plural) - get unique values from first column
         cols_selected <- input[[paste0("heatmap_columns_", i)]]
         if (is.null(cols_selected) || length(cols_selected) == 0 || is.null(values$csv_data)) {
-          return(tags$p(class = "text-muted", "Select column(s) first"))
+          return(tags$p(class = "text-muted", "Select column(s) first to see value-color mappings"))
         }
-        
+
         # Get unique values from first column (for discrete coloring)
         first_col <- cols_selected[1]
-        unique_vals <- unique(na.omit(values$csv_data[[first_col]]))
-        if (length(unique_vals) > 20) {
-          return(tags$p(class = "text-warning", 
-                        icon("exclamation-triangle"),
-                        " Too many unique values (", length(unique_vals), "). Consider using a palette instead."))
+        if (!(first_col %in% names(values$csv_data))) {
+          return(tags$p(class = "text-muted", "Column not found"))
         }
-        
+
+        unique_vals <- sort(unique(na.omit(values$csv_data[[first_col]])))
+        n_vals <- length(unique_vals)
+
+        if (n_vals == 0) {
+          return(tags$p(class = "text-muted", "No values found in selected column"))
+        }
+
+        if (n_vals > 30) {
+          return(tags$p(class = "text-warning",
+                        icon("exclamation-triangle"),
+                        paste0(" Too many unique values (", n_vals, "). Use a palette - individual colors not shown.")))
+        }
+
+        # v69: Get current palette for default colors
+        current_palette <- input[[paste0("heatmap_discrete_palette_", i)]]
+        if (is.null(current_palette)) current_palette <- "Set1"
+
+        # Generate default colors from palette
+        default_colors <- tryCatch({
+          max_colors <- RColorBrewer::brewer.pal.info[current_palette, "maxcolors"]
+          if (n_vals <= max_colors) {
+            RColorBrewer::brewer.pal(max(3, n_vals), current_palette)[1:n_vals]
+          } else {
+            # Use colorRampPalette for more colors
+            colorRampPalette(RColorBrewer::brewer.pal(max_colors, current_palette))(n_vals)
+          }
+        }, error = function(e) {
+          rainbow(n_vals)
+        })
+
         # Generate color pickers for each value
         color_pickers <- lapply(seq_along(unique_vals), function(j) {
           val <- as.character(unique_vals[j])
-          default_color <- rainbow(length(unique_vals))[j]
-          
+
+          # v69: Check if there's an existing custom color for this value
+          existing_color <- isolate(input[[paste0("heatmap_", i, "_color_", j)]])
+          color_to_use <- if (!is.null(existing_color)) existing_color else default_colors[j]
+
           fluidRow(
-            column(6, tags$label(val, style = "padding-top: 7px;")),
-            column(6, 
+            style = "margin-bottom: 3px;",
+            column(6, tags$label(val, style = "padding-top: 5px; font-weight: normal;")),
+            column(6,
                    colourInput(paste0("heatmap_", i, "_color_", j), NULL,
-                               value = default_color, showColour = "background")
+                               value = color_to_use, showColour = "background")
             )
           )
         })
-        
+
         tags$div(
-          style = "max-height: 200px; overflow-y: auto; padding: 10px; background: white; border-radius: 3px;",
+          style = "max-height: 250px; overflow-y: auto; padding: 10px; background: white; border-radius: 3px; border: 1px solid #ddd;",
+          tags$small(class = "text-muted", paste0(n_vals, " unique value(s)")),
+          tags$hr(style = "margin: 5px 0;"),
           do.call(tagList, color_pickers)
         )
       })
+    })
+  })
+
+  # v69: Observer for "Apply Palette to All" buttons for heatmaps
+  observe({
+    lapply(1:6, function(i) {
+      observeEvent(input[[paste0("apply_heatmap_palette_", i)]], {
+        cols_selected <- input[[paste0("heatmap_columns_", i)]]
+        if (is.null(cols_selected) || length(cols_selected) == 0 || is.null(values$csv_data)) {
+          showNotification("Please select a column first", type = "warning")
+          return()
+        }
+
+        # Get unique values
+        first_col <- cols_selected[1]
+        if (!(first_col %in% names(values$csv_data))) return()
+
+        unique_vals <- sort(unique(na.omit(values$csv_data[[first_col]])))
+        n_vals <- length(unique_vals)
+
+        if (n_vals == 0 || n_vals > 30) return()
+
+        # Get selected palette
+        palette_name <- input[[paste0("heatmap_discrete_palette_", i)]]
+        if (is.null(palette_name)) palette_name <- "Set1"
+
+        # Generate colors from palette
+        new_colors <- tryCatch({
+          max_colors <- RColorBrewer::brewer.pal.info[palette_name, "maxcolors"]
+          if (n_vals <= max_colors) {
+            RColorBrewer::brewer.pal(max(3, n_vals), palette_name)[1:n_vals]
+          } else {
+            colorRampPalette(RColorBrewer::brewer.pal(max_colors, palette_name))(n_vals)
+          }
+        }, error = function(e) {
+          rainbow(n_vals)
+        })
+
+        # Update all color pickers
+        for (j in seq_along(unique_vals)) {
+          updateColourInput(session, paste0("heatmap_", i, "_color_", j), value = new_colors[j])
+        }
+
+        showNotification(paste("Applied", palette_name, "palette to", n_vals, "values"), type = "message")
+      }, ignoreInit = TRUE)
     })
   })
   
@@ -9301,8 +9381,31 @@ server <- function(input, output, session) {
       )
       
       if (actual_type == "discrete") {
-        heatmap_entry$color_scheme <- cfg$discrete_palette
-        # TODO: handle custom colors
+        # v69: Get palette from current input (not stale cfg)
+        current_palette <- input[[paste0("heatmap_discrete_palette_", i)]]
+        heatmap_entry$color_scheme <- if (!is.null(current_palette)) current_palette else "Set1"
+
+        # v69: Collect custom colors if they've been set
+        if (!is.null(values$csv_data) && first_col %in% names(values$csv_data)) {
+          unique_vals <- sort(unique(na.omit(values$csv_data[[first_col]])))
+          n_vals <- length(unique_vals)
+
+          if (n_vals > 0 && n_vals <= 30) {
+            custom_colors <- c()
+            has_custom_colors <- FALSE
+            for (j in seq_along(unique_vals)) {
+              color_input <- input[[paste0("heatmap_", i, "_color_", j)]]
+              if (!is.null(color_input)) {
+                custom_colors[as.character(unique_vals[j])] <- color_input
+                has_custom_colors <- TRUE
+              }
+            }
+            if (has_custom_colors) {
+              heatmap_entry$custom_colors <- custom_colors
+              heatmap_entry$man_define_colors <- TRUE
+            }
+          }
+        }
       } else {
         heatmap_entry$low_color <- cfg$low_color
         heatmap_entry$high_color <- cfg$high_color
