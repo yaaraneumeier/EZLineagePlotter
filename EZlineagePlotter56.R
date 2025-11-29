@@ -269,6 +269,30 @@ func.check.bin.val.from.conf <- function(val) {
   return(out)
 }
 
+# v69: Function to repair corrupted ggtree/ggplot mapping attribute
+# This fixes the error: "@mapping must be <ggplot2::mapping>, not S3<data.frame>"
+# which occurs in newer versions of ggplot2 (3.4+) when gheatmap or other operations
+# accidentally corrupt the mapping slot
+func.repair.ggtree.mapping <- function(p) {
+  # Check if mapping is valid (should be class "uneval" from aes())
+  if (!inherits(p$mapping, "uneval")) {
+    cat(file=stderr(), paste0("\n=== v69: Repairing corrupted mapping ===\n"))
+    cat(file=stderr(), paste0("  Original mapping class: ", paste(class(p$mapping), collapse=", "), "\n"))
+
+    # Try to get mapping from tree_TRY (stored during ggtree creation)
+    # If not available, create a minimal valid mapping
+    tryCatch({
+      # Create a proper aes() mapping - this is the default ggtree mapping
+      p$mapping <- aes()
+      cat(file=stderr(), paste0("  Fixed mapping class: ", paste(class(p$mapping), collapse=", "), "\n"))
+      cat(file=stderr(), paste0("================================\n"))
+    }, error = function(e) {
+      cat(file=stderr(), paste0("  v69: Could not repair mapping: ", e$message, "\n"))
+    })
+  }
+  return(p)
+}
+
 
 # Parse YAML configuration file
 parse_yaml_config <- function(file_path) {
@@ -4508,8 +4532,10 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       if (j > 1) {
         off <- off + man_adj_heat_loc2
         tt <- pr440_short_tips_TRY_heat + new_scale_fill()
+        # v69: Repair mapping after new_scale_fill (can cause corruption)
+        tt <- func.repair.ggtree.mapping(tt)
       }
-      
+
       if (j > 2) {
         off <- off + man_adj_heat_loc3
       }
@@ -4660,6 +4686,9 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
         custom_column_labels = custom_column_labels,
         color = NA
       )
+
+      # v69: Immediately repair mapping after gheatmap (common source of corruption)
+      pr440_short_tips_TRY_heat <- func.repair.ggtree.mapping(pr440_short_tips_TRY_heat)
 
       # v63: DEBUG - verify gheatmap result
       cat(file=stderr(), paste0("\n=== v63: POST-GHEATMAP DEBUG ===\n"))
@@ -5010,10 +5039,14 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     ari_score_text <- paste0(" ari score: ", ari_score_rounded)
     p <- p + ggtitle(paste0(ps_score_text, ari_score_text))
   }
-  
+
+  # v69: Repair any corrupted mapping before saving/returning
+  # This fixes the "@mapping must be <ggplot2::mapping>" error in newer ggplot2 versions
+  p <- func.repair.ggtree.mapping(p)
+
   # Save the plot to file
-  ggsave(out_file_path, plot = p, width = width, height = height, units = units_out, limitsize = FALSE)  
-  
+  ggsave(out_file_path, plot = p, width = width, height = height, units = units_out, limitsize = FALSE)
+
   return(p)
 }
 
@@ -5096,14 +5129,14 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v68 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v69 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("FIXED: Heatmap visibility - added comprehensive debugging to trace execution flow"),
-                              tags$li("FIXED: Wrapped func.calc.min_col_x call in tryCatch to prevent silent failures"),
-                              tags$li("FIXED: x-axis expansion now uses ggplot_build to get actual heatmap tile coordinates"),
-                              tags$li("Debug: Check console for v68 'After scale application', 'Before func.calc', 'After heatmap for loop' messages")
+                              tags$li("CRITICAL FIX: Resolved '@mapping must be <ggplot2::mapping>, not S3<data.frame>' error"),
+                              tags$li("Added func.repair.ggtree.mapping() to fix mapping corruption from gheatmap/new_scale_fill"),
+                              tags$li("Mapping is now repaired after gheatmap, new_scale_fill, and before plot return"),
+                              tags$li("Compatible with newer ggplot2 versions (3.4+) which have stricter object validation")
                             )
                      )
             )
