@@ -269,27 +269,57 @@ func.check.bin.val.from.conf <- function(val) {
   return(out)
 }
 
-# v69: Function to repair corrupted ggtree/ggplot mapping attribute
+# v70: Enhanced function to repair corrupted ggtree/ggplot mapping attribute
 # This fixes the error: "@mapping must be <ggplot2::mapping>, not S3<data.frame>"
 # which occurs in newer versions of ggplot2 (3.4+) when gheatmap or other operations
 # accidentally corrupt the mapping slot
-func.repair.ggtree.mapping <- function(p) {
-  # Check if mapping is valid (should be class "uneval" from aes())
-  if (!inherits(p$mapping, "uneval")) {
-    cat(file=stderr(), paste0("\n=== v69: Repairing corrupted mapping ===\n"))
-    cat(file=stderr(), paste0("  Original mapping class: ", paste(class(p$mapping), collapse=", "), "\n"))
+func.repair.ggtree.mapping <- function(p, verbose = FALSE) {
+  repaired <- FALSE
 
-    # Try to get mapping from tree_TRY (stored during ggtree creation)
-    # If not available, create a minimal valid mapping
+  # Check if top-level mapping is valid (should be class "uneval" from aes())
+  if (!inherits(p$mapping, "uneval")) {
+    if (verbose) {
+      cat(file=stderr(), paste0("\n=== v70: Repairing corrupted plot mapping ===\n"))
+      cat(file=stderr(), paste0("  Original mapping class: ", paste(class(p$mapping), collapse=", "), "\n"))
+    }
+
     tryCatch({
-      # Create a proper aes() mapping - this is the default ggtree mapping
       p$mapping <- aes()
-      cat(file=stderr(), paste0("  Fixed mapping class: ", paste(class(p$mapping), collapse=", "), "\n"))
-      cat(file=stderr(), paste0("================================\n"))
+      repaired <- TRUE
+      if (verbose) {
+        cat(file=stderr(), paste0("  Fixed mapping class: ", paste(class(p$mapping), collapse=", "), "\n"))
+      }
     }, error = function(e) {
-      cat(file=stderr(), paste0("  v69: Could not repair mapping: ", e$message, "\n"))
+      cat(file=stderr(), paste0("  v70: Could not repair mapping: ", e$message, "\n"))
     })
   }
+
+  # v70: Also check and repair layer mappings
+  if (!is.null(p$layers) && length(p$layers) > 0) {
+    for (i in seq_along(p$layers)) {
+      layer <- p$layers[[i]]
+      if (!is.null(layer$mapping) && !inherits(layer$mapping, "uneval")) {
+        tryCatch({
+          # Try to preserve any valid mapping content by converting
+          # If mapping is a data.frame or other invalid type, reset to empty aes()
+          if (is.data.frame(layer$mapping)) {
+            p$layers[[i]]$mapping <- aes()
+            repaired <- TRUE
+            if (verbose) {
+              cat(file=stderr(), paste0("  v70: Fixed layer ", i, " mapping (was data.frame)\n"))
+            }
+          }
+        }, error = function(e) {
+          # Silently ignore layer repair errors
+        })
+      }
+    }
+  }
+
+  if (repaired && verbose) {
+    cat(file=stderr(), paste0("================================\n"))
+  }
+
   return(p)
 }
 
@@ -2650,13 +2680,19 @@ func.print.lineage.tree <- function(conf_yaml_path,
               } else {
                 param['man'] <- FALSE
               }
-              if ('color_scale_range_end' %in% names(heat_map_i_def)) { 
+              if ('color_scale_range_end' %in% names(heat_map_i_def)) {
                 param['color_scale_range_end'] <- as.numeric(heat_map_i_def$color_scale_range_end)
               } else {
                 param['color_scale_range_end'] <- 300
               }
-              
-              
+
+              # v70: Get NA color (default white)
+              if ('na_color' %in% names(heat_map_i_def)) {
+                param[['na_color']] <- heat_map_i_def[['na_color']]
+              } else {
+                param[['na_color']] <- "white"
+              }
+
             } else {
               #print("AAAAAAAAAAAA")
               # print("is discrete false")
@@ -4687,8 +4723,8 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
         color = NA
       )
 
-      # v69: Immediately repair mapping after gheatmap (common source of corruption)
-      pr440_short_tips_TRY_heat <- func.repair.ggtree.mapping(pr440_short_tips_TRY_heat)
+      # v70: Immediately repair mapping after gheatmap (common source of corruption)
+      pr440_short_tips_TRY_heat <- func.repair.ggtree.mapping(pr440_short_tips_TRY_heat, verbose = TRUE)
 
       # v63: DEBUG - verify gheatmap result
       cat(file=stderr(), paste0("\n=== v63: POST-GHEATMAP DEBUG ===\n"))
@@ -4703,27 +4739,31 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       # Apply correct coloring scale based on heatmap type
       if (heat_param['is_discrete'] == FALSE) {
         limits <- heat_param[['limits']]
-        
+
         if (is.na(limits[1]) == TRUE) {
           pr440_short_tips_TRY_heat <- pr440_short_tips_TRY_heat +
             scale_fill_gradient2(
-              low = heat_param['low'], 
-              mid = heat_param['mid'], 
-              high = heat_param['high'], 
+              low = heat_param['low'],
+              mid = heat_param['mid'],
+              high = heat_param['high'],
               midpoint = .02,
-              name = heat_map_title_list[[j1]] 
+              name = heat_map_title_list[[j1]],
+              na.value = "white"
             )
         } else {
           pr440_short_tips_TRY_heat <- pr440_short_tips_TRY_heat +
             scale_fill_gradient2(
-              low = heat_param['low'], 
-              mid = heat_param['mid'], 
-              high = heat_param['high'], 
+              low = heat_param['low'],
+              mid = heat_param['mid'],
+              high = heat_param['high'],
               midpoint = .02,
               name = heat_map_title_list[[j1]],
-              limits = limits
+              limits = limits,
+              na.value = "white"
             )
         }
+        # v70: Repair mapping after scale addition
+        pr440_short_tips_TRY_heat <- func.repair.ggtree.mapping(pr440_short_tips_TRY_heat)
       } else {
         # v65: DEBUG - trace discrete heatmap color path
         cat(file=stderr(), paste0("\n=== v65: DISCRETE HEATMAP COLOR DEBUG ===\n"))
@@ -4772,28 +4812,63 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
               cat(file=stderr(), paste0("  Colors to use: ", n_colors, "\n"))
               cat(file=stderr(), paste0("================================\n"))
 
+              # v70: Get NA color from heat_param (default white)
+              na_color <- if (!is.null(heat_param[['na_color']])) heat_param[['na_color']] else "white"
+              cat(file=stderr(), paste0("  NA color: ", na_color, "\n"))
+
               pr440_short_tips_TRY_heat <- pr440_short_tips_TRY_heat +
-                scale_fill_brewer(palette = palette_name, name = heat_map_title_list[[j1]], na.value = "white")
+                scale_fill_brewer(palette = palette_name, name = heat_map_title_list[[j1]], na.value = na_color)
+              # v70: Repair mapping after scale addition
+              pr440_short_tips_TRY_heat <- func.repair.ggtree.mapping(pr440_short_tips_TRY_heat)
             } else {
               cat(file=stderr(), paste0("  v67: Using default hue scale (no valid palette specified)\n"))
+              # v70: Get NA color from heat_param (default white)
+              na_color <- if (!is.null(heat_param[['na_color']])) heat_param[['na_color']] else "white"
               pr440_short_tips_TRY_heat <- pr440_short_tips_TRY_heat +
-                scale_fill_hue(name = heat_map_title_list[[j1]])
+                scale_fill_hue(name = heat_map_title_list[[j1]], na.value = na_color)
+              # v70: Repair mapping after scale addition
+              pr440_short_tips_TRY_heat <- func.repair.ggtree.mapping(pr440_short_tips_TRY_heat)
             }
           } else {
-            # v67: man_define_colors is TRUE - use custom color values
+            # v70: man_define_colors is TRUE - use custom color values
             # color_scale_option should be a named vector of colors
             custom_colors <- heat_param[['color_scale_option']]
-            cat(file=stderr(), paste0("\n=== v67: Applying custom discrete colors ===\n"))
+            cat(file=stderr(), paste0("\n=== v70: Applying custom discrete colors ===\n"))
             cat(file=stderr(), paste0("  custom_colors class: ", paste(class(custom_colors), collapse=", "), "\n"))
-            cat(file=stderr(), paste0("  custom_colors: ", paste(head(custom_colors, 5), collapse=", "), "\n"))
+            cat(file=stderr(), paste0("  custom_colors length: ", length(custom_colors), "\n"))
+            cat(file=stderr(), paste0("  custom_colors names: ", paste(head(names(custom_colors), 10), collapse=", "), "\n"))
+            cat(file=stderr(), paste0("  custom_colors values: ", paste(head(custom_colors, 10), collapse=", "), "\n"))
+
+            # v70: Get the actual factor levels from the heatmap data
+            heat_data_vals <- levels(dxdf440_for_heat[[j1]][,1])
+            if (is.null(heat_data_vals)) {
+              heat_data_vals <- unique(na.omit(dxdf440_for_heat[[j1]][,1]))
+            }
+            cat(file=stderr(), paste0("  Heatmap factor levels: ", paste(head(heat_data_vals, 10), collapse=", "), "\n"))
+
+            # v70: Ensure custom_colors is properly named to match factor levels
+            if (is.null(names(custom_colors)) || length(names(custom_colors)) == 0) {
+              cat(file=stderr(), paste0("  v70: WARNING - custom_colors has no names, assigning by position\n"))
+              # If no names, create names from factor levels
+              if (length(custom_colors) >= length(heat_data_vals)) {
+                names(custom_colors) <- as.character(heat_data_vals)
+                cat(file=stderr(), paste0("  v70: Assigned names: ", paste(names(custom_colors), collapse=", "), "\n"))
+              }
+            }
+            # v70: Get NA color from heat_param (default white)
+            na_color <- if (!is.null(heat_param[['na_color']])) heat_param[['na_color']] else "white"
+            cat(file=stderr(), paste0("  NA color: ", na_color, "\n"))
             cat(file=stderr(), paste0("================================\n"))
 
             pr440_short_tips_TRY_heat <- pr440_short_tips_TRY_heat +
               scale_fill_manual(
                 values = custom_colors,
                 name = heat_map_title_list[[j1]],
-                na.value = 'WHITE'
+                na.value = na_color
               )
+
+            # v70: Repair mapping after scale addition (can cause corruption)
+            pr440_short_tips_TRY_heat <- func.repair.ggtree.mapping(pr440_short_tips_TRY_heat)
           }
         } else {
           pr440_short_tips_TRY_heat <- pr440_short_tips_TRY_heat +
@@ -4891,59 +4966,78 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     # Update plot with heatmap
     p <- pr440_short_tips_TRY_heat
 
-    # v68: DEBUG - final heatmap state with layer analysis
-    cat(file=stderr(), paste0("\n=== v68: FINAL HEATMAP STATE ===\n"))
+    # v70: Repair mapping before final state check
+    p <- func.repair.ggtree.mapping(p)
+
+    # v70: Final heatmap state with layer analysis
+    cat(file=stderr(), paste0("\n=== v70: FINAL HEATMAP STATE ===\n"))
     final_xrange <- range(p$data$x, na.rm = TRUE)
     cat(file=stderr(), paste0("  Tree data x range: [", final_xrange[1], ", ", final_xrange[2], "]\n"))
     cat(file=stderr(), paste0("  Number of layers: ", length(p$layers), "\n"))
 
-    # v68: Check for heatmap layer (GeomTile) and get its x coordinates
+    # v70: Check for heatmap layer (GeomTile) and get its x coordinates
     layer_types <- sapply(p$layers, function(l) class(l$geom)[1])
     cat(file=stderr(), paste0("  Layer types: ", paste(layer_types, collapse=", "), "\n"))
 
-    # v68: Use ggplot_build to get actual rendered x coordinates of all layers
+    # v70: Try to get actual x coordinates from built data, but use fallback if it fails
     heatmap_xmax <- NULL
     tryCatch({
+      # Repair mapping one more time before building
+      p <- func.repair.ggtree.mapping(p)
       built <- ggplot2::ggplot_build(p)
       for (i in seq_along(built$data)) {
         if ("x" %in% names(built$data[[i]])) {
           layer_x <- built$data[[i]]$x
-          layer_xmax <- max(layer_x, na.rm = TRUE)
-          cat(file=stderr(), paste0("    Layer ", i, " x range: [",
-                                    min(layer_x, na.rm = TRUE), ", ", layer_xmax, "]\n"))
-          if (is.null(heatmap_xmax) || layer_xmax > heatmap_xmax) {
-            heatmap_xmax <- layer_xmax
+          if (length(layer_x) > 0 && !all(is.na(layer_x))) {
+            layer_xmax <- max(layer_x, na.rm = TRUE)
+            cat(file=stderr(), paste0("    Layer ", i, " x range: [",
+                                      min(layer_x, na.rm = TRUE), ", ", layer_xmax, "]\n"))
+            if (is.null(heatmap_xmax) || layer_xmax > heatmap_xmax) {
+              heatmap_xmax <- layer_xmax
+            }
           }
         }
       }
     }, error = function(e) {
-      cat(file=stderr(), paste0("  v68: Error building plot for x range: ", e$message, "\n"))
+      cat(file=stderr(), paste0("  v70: ggplot_build failed (will use fallback): ", e$message, "\n"))
     })
     cat(file=stderr(), paste0("================================\n"))
 
-    # v68: ROBUST FIX - Calculate expected x range
-    # gheatmap places tiles relative to tree tips (at x=0)
-    # With offset=0.7 and width=0.06, tiles should be at x ~ 0.7-0.76
-    # But ggtree may scale internally, so use the built data if available
+    # v70: Calculate expected x range using multiple methods
+    # gheatmap places tiles at x positions based on tree width and offset
+    tree_width <- abs(final_xrange[2] - final_xrange[1])
 
-    # Use the larger of: heatmap offset + width + margin, or built data max
+    # Method 1: Based on offset and width parameters (gheatmap uses offset relative to tips at x=0)
+    # The heatmap should span from x=offset to x=offset+width (approximately)
+    calculated_xmax <- new_heat_x + wi + 0.3  # Add margin
+
+    # Method 2: Use a proportion of tree width as margin (safer fallback)
+    proportional_xmax <- tree_width * 0.3 + wi + 0.5
+
+    # Use the largest of: calculated, proportional, or detected from built data
     expected_xmax <- max(
-      new_heat_x + wi + 0.5,  # Calculated from offset and width
-      ifelse(is.null(heatmap_xmax), new_heat_x + wi + 0.5, heatmap_xmax + 0.3)  # From built data
+      calculated_xmax,
+      proportional_xmax,
+      ifelse(is.null(heatmap_xmax), calculated_xmax, heatmap_xmax + 0.3)
     )
 
-    cat(file=stderr(), paste0("\n=== v68: EXPANDING X-AXIS FOR HEATMAP ===\n"))
+    cat(file=stderr(), paste0("\n=== v70: EXPANDING X-AXIS FOR HEATMAP ===\n"))
     cat(file=stderr(), paste0("  Tree x range: [", final_xrange[1], ", ", final_xrange[2], "]\n"))
+    cat(file=stderr(), paste0("  Tree width: ", tree_width, "\n"))
     cat(file=stderr(), paste0("  Heatmap offset (new_heat_x): ", new_heat_x, "\n"))
     cat(file=stderr(), paste0("  Heatmap width (wi): ", wi, "\n"))
-    cat(file=stderr(), paste0("  Detected heatmap max x: ", ifelse(is.null(heatmap_xmax), "NULL", heatmap_xmax), "\n"))
-    cat(file=stderr(), paste0("  Expected max x: ", expected_xmax, "\n"))
+    cat(file=stderr(), paste0("  Calculated x max: ", calculated_xmax, "\n"))
+    cat(file=stderr(), paste0("  Proportional x max: ", proportional_xmax, "\n"))
+    cat(file=stderr(), paste0("  Detected from build: ", ifelse(is.null(heatmap_xmax), "NULL", heatmap_xmax), "\n"))
+    cat(file=stderr(), paste0("  Final expected max x: ", expected_xmax, "\n"))
     cat(file=stderr(), paste0("  Setting coord_cartesian xlim to: [", final_xrange[1], ", ", expected_xmax, "]\n"))
     cat(file=stderr(), paste0("========================================\n"))
 
-    # v68: Use coord_cartesian to expand view to include heatmap
-    # clip = "off" allows elements to draw outside the panel
+    # v70: Use coord_cartesian to expand view to include heatmap
     p <- p + coord_cartesian(xlim = c(final_xrange[1], expected_xmax), clip = "off")
+
+    # v70: Final repair after coord_cartesian
+    p <- func.repair.ggtree.mapping(p)
   }
 
   # Default ellipse parameters if not set
@@ -5072,7 +5166,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
 # Define UI
 ui <- dashboardPage(
-  dashboardHeader(title = "Lineage Tree Plotter v68"),
+  dashboardHeader(title = "Lineage Tree Plotter v70"),
   
   dashboardSidebar(
     width = 300,
@@ -5129,15 +5223,15 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v69 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v70 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("CRITICAL FIX: Resolved '@mapping must be <ggplot2::mapping>, not S3<data.frame>' error"),
-                              tags$li("IMPROVED: Discrete Color Settings UI - now shows all value-to-color mappings immediately"),
-                              tags$li("NEW: 'Apply Palette to All' button for discrete heatmaps (like classification settings)"),
-                              tags$li("NEW: Individual color pickers for each discrete value (up to 30 values)"),
-                              tags$li("Compatible with newer ggplot2 versions (3.4+)")
+                              tags$li("CRITICAL FIX: Comprehensive mapping corruption repair for ggplot2 3.4+ compatibility"),
+                              tags$li("FIXED: Heatmap display issues - enhanced x-axis expansion and layer mapping repair"),
+                              tags$li("IMPROVED: Better fallback x-range calculation when ggplot_build fails"),
+                              tags$li("IMPROVED: Custom discrete colors now properly named to match factor levels"),
+                              tags$li("IMPROVED: Added NA color support (white by default) for all heatmap types")
                             )
                      )
             )
@@ -6937,12 +7031,15 @@ server <- function(input, output, session) {
             )
             
             if (heatmap_entry$is_discrete) {
-              if (!is.null(heatmap_entry$use_custom_colors) && heatmap_entry$use_custom_colors) {
+              # v70: Fixed bug - use man_define_colors (not use_custom_colors) and custom_colors (not colors)
+              if (!is.null(heatmap_entry$man_define_colors) && heatmap_entry$man_define_colors) {
                 heatmap_item[[as.character(j)]]$man_define_colors <- "yes"
-                heatmap_item[[as.character(j)]]$color_scale_option <- heatmap_entry$colors
+                heatmap_item[[as.character(j)]]$color_scale_option <- heatmap_entry$custom_colors
               } else {
                 heatmap_item[[as.character(j)]]$color_scale_option <- heatmap_entry$color_scheme
               }
+              # v70: Add NA color (default white)
+              heatmap_item[[as.character(j)]]$na_color <- if (!is.null(heatmap_entry$na_color)) heatmap_entry$na_color else "white"
             } else {
               heatmap_item[[as.character(j)]]$low <- heatmap_entry$low_color
               heatmap_item[[as.character(j)]]$mid <- if (!is.null(heatmap_entry$mid_color)) heatmap_entry$mid_color else heatmap_entry$low_color
@@ -7092,6 +7189,8 @@ server <- function(input, output, session) {
             } else {
               heatmap_item[[as.character(j)]]$color_scale_option <- heatmap_entry$color_scheme
             }
+            # v70: Add NA color (default white)
+            heatmap_item[[as.character(j)]]$na_color <- if (!is.null(heatmap_entry$na_color)) heatmap_entry$na_color else "white"
           } else {
             heatmap_item[[as.character(j)]]$low <- heatmap_entry$low_color
             heatmap_item[[as.character(j)]]$mid <- if (!is.null(heatmap_entry$mid_color)) heatmap_entry$mid_color else heatmap_entry$low_color
@@ -9219,7 +9318,30 @@ server <- function(input, output, session) {
     })
   })
 
-  # v69: Render discrete color pickers for each heatmap - always show when columns are selected
+  # v70: R color names list for dropdown menus (used in both classification and heatmap)
+  heat_r_colors <- c(
+    "Custom" = "",
+    # Basic colors
+    "red", "blue", "green", "yellow", "orange", "purple", "pink", "brown",
+    "gray", "black", "white", "cyan", "magenta",
+    # Dark variants
+    "darkred", "darkblue", "darkgreen", "darkorange", "darkviolet",
+    "darkgray", "darkcyan", "darkmagenta",
+    # Light variants
+    "lightblue", "lightgreen", "lightyellow", "lightpink", "lightgray",
+    "lightcyan", "lightcoral", "lightsalmon",
+    # Named colors
+    "steelblue", "skyblue", "navy", "maroon", "olive", "teal", "coral",
+    "tomato", "salmon", "khaki", "plum", "orchid", "tan",
+    # Greens
+    "forestgreen", "limegreen", "seagreen", "springgreen",
+    # Blues
+    "royalblue", "dodgerblue", "deepskyblue", "cornflowerblue",
+    # Reds/Pinks
+    "crimson", "firebrick", "indianred", "hotpink", "deeppink"
+  )
+
+  # v70: Render discrete color pickers for each heatmap - with NA color and dropdown menus
   observe({
     lapply(1:6, function(i) {
       output[[paste0("heatmap_discrete_colors_ui_", i)]] <- renderUI({
@@ -9265,7 +9387,7 @@ server <- function(input, output, session) {
           rainbow(n_vals)
         })
 
-        # Generate color pickers for each value
+        # v70: Generate color pickers for each value WITH dropdown menu
         color_pickers <- lapply(seq_along(unique_vals), function(j) {
           val <- as.character(unique_vals[j])
 
@@ -9275,21 +9397,73 @@ server <- function(input, output, session) {
 
           fluidRow(
             style = "margin-bottom: 3px;",
-            column(6, tags$label(val, style = "padding-top: 5px; font-weight: normal;")),
-            column(6,
+            column(4, tags$label(val, style = "padding-top: 5px; font-weight: normal; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;", title = val)),
+            column(4,
                    colourInput(paste0("heatmap_", i, "_color_", j), NULL,
                                value = color_to_use, showColour = "background")
+            ),
+            column(4,
+                   selectInput(paste0("heatmap_", i, "_color_name_", j), NULL,
+                               choices = heat_r_colors, selected = "")
             )
           )
         })
 
+        # v70: NA color picker (always shown at the end)
+        existing_na_color <- isolate(input[[paste0("heatmap_", i, "_na_color")]])
+        na_color_to_use <- if (!is.null(existing_na_color)) existing_na_color else "white"
+
+        na_color_row <- fluidRow(
+          style = "margin-bottom: 3px; background-color: #f8f8f8; padding: 5px; border-radius: 3px; margin-top: 10px;",
+          column(4, tags$label("NA / Missing", style = "padding-top: 5px; font-weight: bold; font-style: italic;")),
+          column(4,
+                 colourInput(paste0("heatmap_", i, "_na_color"), NULL,
+                             value = na_color_to_use, showColour = "background")
+          ),
+          column(4,
+                 selectInput(paste0("heatmap_", i, "_na_color_name"), NULL,
+                             choices = heat_r_colors, selected = "")
+          )
+        )
+
         tags$div(
-          style = "max-height: 250px; overflow-y: auto; padding: 10px; background: white; border-radius: 3px; border: 1px solid #ddd;",
-          tags$small(class = "text-muted", paste0(n_vals, " unique value(s)")),
+          style = "max-height: 300px; overflow-y: auto; padding: 10px; background: white; border-radius: 3px; border: 1px solid #ddd;",
+          tags$small(class = "text-muted", paste0(n_vals, " unique value(s) + NA color")),
           tags$hr(style = "margin: 5px 0;"),
-          do.call(tagList, color_pickers)
+          # v70: Header row
+          fluidRow(
+            style = "margin-bottom: 5px; font-weight: bold; font-size: 11px;",
+            column(4, "Value"),
+            column(4, "Color"),
+            column(4, "R Color Name")
+          ),
+          do.call(tagList, color_pickers),
+          na_color_row
         )
       })
+    })
+  })
+
+  # v70: Observer to update heatmap color pickers when R color name dropdown changes
+  observe({
+    lapply(1:6, function(i) {
+      # Observe changes to color name dropdowns for each value (up to 30 values)
+      lapply(1:30, function(j) {
+        observeEvent(input[[paste0("heatmap_", i, "_color_name_", j)]], {
+          color_name <- input[[paste0("heatmap_", i, "_color_name_", j)]]
+          if (!is.null(color_name) && color_name != "") {
+            updateColourInput(session, paste0("heatmap_", i, "_color_", j), value = color_name)
+          }
+        }, ignoreInit = TRUE)
+      })
+
+      # v70: Also observe NA color name dropdown
+      observeEvent(input[[paste0("heatmap_", i, "_na_color_name")]], {
+        color_name <- input[[paste0("heatmap_", i, "_na_color_name")]]
+        if (!is.null(color_name) && color_name != "") {
+          updateColourInput(session, paste0("heatmap_", i, "_na_color"), value = color_name)
+        }
+      }, ignoreInit = TRUE)
     })
   })
 
@@ -9405,6 +9579,10 @@ server <- function(input, output, session) {
               heatmap_entry$man_define_colors <- TRUE
             }
           }
+
+          # v70: Get NA color from input (default to white if not set)
+          na_color_input <- input[[paste0("heatmap_", i, "_na_color")]]
+          heatmap_entry$na_color <- if (!is.null(na_color_input)) na_color_input else "white"
         }
       } else {
         heatmap_entry$low_color <- cfg$low_color
