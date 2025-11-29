@@ -5236,13 +5236,19 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     cat(file=stderr(), paste0("  Fixed margin x max: ", fixed_margin_xmax, "\n"))
     cat(file=stderr(), paste0("  Detected from build: ", ifelse(is.null(heatmap_xmax), "NULL", heatmap_xmax), "\n"))
     cat(file=stderr(), paste0("  Final expected max x: ", expected_xmax, "\n"))
-    cat(file=stderr(), paste0("  Setting coord_cartesian xlim to: [", final_xrange[1], ", ", expected_xmax, "]\n"))
+    cat(file=stderr(), paste0("  Setting coord_flip xlim to: [", final_xrange[1], ", ", expected_xmax, "]\n"))
     cat(file=stderr(), paste0("========================================\n"))
 
-    # v71: Use coord_cartesian to expand view to include heatmap
-    p <- p + coord_cartesian(xlim = c(final_xrange[1], expected_xmax), clip = "off")
+    # v74: Use coord_flip (not coord_cartesian) to preserve ggtree's coordinate system
+    # Using coord_cartesian was replacing coord_flip which broke the heatmap display
+    # Note: coord_flip interprets xlim as the vertical axis limits and ylim as horizontal
+    # For ggtree: x is tree depth (displayed horizontally after flip), y is tip position (displayed vertically)
+    # We need to expand x (which becomes horizontal after flip) to show heatmap
+    p <- p + coord_flip(xlim = c(final_xrange[1], expected_xmax), clip = "off")
 
-    # v71: Final repair after coord_cartesian
+    cat(file=stderr(), paste0("  v74: Using coord_flip instead of coord_cartesian\n"))
+
+    # v71: Final repair after coordinate change
     p <- func.repair.ggtree.mapping(p)
   }
 
@@ -5445,7 +5451,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
 # Define UI
 ui <- dashboardPage(
-  dashboardHeader(title = "Lineage Tree Plotter v72"),
+  dashboardHeader(title = "Lineage Tree Plotter v74"),
   
   dashboardSidebar(
     width = 300,
@@ -5502,13 +5508,12 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v73 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v74 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("FIX: Critical heatmap display bug fixed - scale_fill_manual was failing due to mismatched color vector names"),
-                              tags$li("FIX: Custom discrete colors now properly subset to match the number of factor levels"),
-                              tags$li("FIX: Prevents NA names in color vector which caused 'Problem while setting up geom' error")
+                              tags$li("FIX: Heatmap now displays correctly - was using coord_cartesian which replaced coord_flip"),
+                              tags$li("FIX: Now using coord_flip to preserve ggtree's coordinate system while expanding view for heatmap")
                             )
                      )
             )
