@@ -269,7 +269,7 @@ func.check.bin.val.from.conf <- function(val) {
   return(out)
 }
 
-# v70: Enhanced function to repair corrupted ggtree/ggplot mapping attribute
+# v71: Enhanced function to repair corrupted ggtree/ggplot mapping attribute
 # This fixes the error: "@mapping must be <ggplot2::mapping>, not S3<data.frame>"
 # which occurs in newer versions of ggplot2 (3.4+) when gheatmap or other operations
 # accidentally corrupt the mapping slot
@@ -279,7 +279,7 @@ func.repair.ggtree.mapping <- function(p, verbose = FALSE) {
   # Check if top-level mapping is valid (should be class "uneval" from aes())
   if (!inherits(p$mapping, "uneval")) {
     if (verbose) {
-      cat(file=stderr(), paste0("\n=== v70: Repairing corrupted plot mapping ===\n"))
+      cat(file=stderr(), paste0("\n=== v71: Repairing corrupted plot mapping ===\n"))
       cat(file=stderr(), paste0("  Original mapping class: ", paste(class(p$mapping), collapse=", "), "\n"))
     }
 
@@ -290,11 +290,11 @@ func.repair.ggtree.mapping <- function(p, verbose = FALSE) {
         cat(file=stderr(), paste0("  Fixed mapping class: ", paste(class(p$mapping), collapse=", "), "\n"))
       }
     }, error = function(e) {
-      cat(file=stderr(), paste0("  v70: Could not repair mapping: ", e$message, "\n"))
+      cat(file=stderr(), paste0("  v71: Could not repair mapping: ", e$message, "\n"))
     })
   }
 
-  # v70: Also check and repair layer mappings
+  # v71: Also check and repair layer mappings
   if (!is.null(p$layers) && length(p$layers) > 0) {
     for (i in seq_along(p$layers)) {
       layer <- p$layers[[i]]
@@ -306,11 +306,24 @@ func.repair.ggtree.mapping <- function(p, verbose = FALSE) {
             p$layers[[i]]$mapping <- aes()
             repaired <- TRUE
             if (verbose) {
-              cat(file=stderr(), paste0("  v70: Fixed layer ", i, " mapping (was data.frame)\n"))
+              cat(file=stderr(), paste0("  v71: Fixed layer ", i, " mapping (was data.frame)\n"))
             }
           }
         }, error = function(e) {
           # Silently ignore layer repair errors
+        })
+      }
+
+      # v71: Check if layer has corrupted computed_mapping
+      if (!is.null(layer$computed_mapping) && !inherits(layer$computed_mapping, "uneval")) {
+        tryCatch({
+          p$layers[[i]]$computed_mapping <- aes()
+          repaired <- TRUE
+          if (verbose) {
+            cat(file=stderr(), paste0("  v71: Fixed layer ", i, " computed_mapping\n"))
+          }
+        }, error = function(e) {
+          # Silently ignore
         })
       }
     }
@@ -321,6 +334,60 @@ func.repair.ggtree.mapping <- function(p, verbose = FALSE) {
   }
 
   return(p)
+}
+
+# v71: Function to diagnose which layer is causing ggplot_build to fail
+func.diagnose.layer.issues <- function(p, verbose = TRUE) {
+  if (verbose) {
+    cat(file=stderr(), paste0("\n=== v71: DIAGNOSING LAYER ISSUES ===\n"))
+  }
+
+  problematic_layers <- c()
+
+  if (!is.null(p$layers) && length(p$layers) > 0) {
+    for (i in seq_along(p$layers)) {
+      layer <- p$layers[[i]]
+      geom_class <- class(layer$geom)[1]
+
+      # Try to set up this layer's data
+      layer_ok <- tryCatch({
+        # Get plot data
+        plot_data <- if (!is.null(p$data)) p$data else data.frame()
+
+        # Try basic setup
+        if (!is.null(layer$data)) {
+          if (is.function(layer$data)) {
+            test_data <- layer$data(plot_data)
+          } else {
+            test_data <- layer$data
+          }
+        }
+        TRUE
+      }, error = function(e) {
+        if (verbose) {
+          cat(file=stderr(), paste0("  Layer ", i, " (", geom_class, "): FAILED - ", e$message, "\n"))
+        }
+        FALSE
+      })
+
+      if (!layer_ok) {
+        problematic_layers <- c(problematic_layers, i)
+      } else if (verbose) {
+        cat(file=stderr(), paste0("  Layer ", i, " (", geom_class, "): OK\n"))
+      }
+    }
+  }
+
+  if (verbose) {
+    if (length(problematic_layers) == 0) {
+      cat(file=stderr(), paste0("  No obvious layer issues detected\n"))
+    } else {
+      cat(file=stderr(), paste0("  Problematic layers: ", paste(problematic_layers, collapse=", "), "\n"))
+    }
+    cat(file=stderr(), paste0("================================\n"))
+  }
+
+  return(problematic_layers)
 }
 
 
@@ -4723,17 +4790,52 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
         color = NA
       )
 
-      # v70: Immediately repair mapping after gheatmap (common source of corruption)
+      # v71: Immediately repair mapping after gheatmap (common source of corruption)
       pr440_short_tips_TRY_heat <- func.repair.ggtree.mapping(pr440_short_tips_TRY_heat, verbose = TRUE)
 
-      # v63: DEBUG - verify gheatmap result
-      cat(file=stderr(), paste0("\n=== v63: POST-GHEATMAP DEBUG ===\n"))
+      # v71: DEBUG - verify gheatmap result and tile layer data
+      cat(file=stderr(), paste0("\n=== v71: POST-GHEATMAP DEBUG ===\n"))
       cat(file=stderr(), paste0("  Number of layers in plot: ", length(pr440_short_tips_TRY_heat$layers), "\n"))
       gheatmap_xrange <- range(pr440_short_tips_TRY_heat$data$x, na.rm = TRUE)
-      cat(file=stderr(), paste0("  Plot x range after gheatmap: [", gheatmap_xrange[1], ", ", gheatmap_xrange[2], "]\n"))
+      cat(file=stderr(), paste0("  Plot data x range: [", gheatmap_xrange[1], ", ", gheatmap_xrange[2], "]\n"))
+
       # Check if there's rect/tile data (heatmap)
       layer_types <- sapply(pr440_short_tips_TRY_heat$layers, function(l) class(l$geom)[1])
       cat(file=stderr(), paste0("  Layer geom types: ", paste(layer_types, collapse=", "), "\n"))
+
+      # v71: Find and inspect the GeomTile layer
+      for (layer_idx in seq_along(pr440_short_tips_TRY_heat$layers)) {
+        layer <- pr440_short_tips_TRY_heat$layers[[layer_idx]]
+        if (inherits(layer$geom, "GeomTile")) {
+          cat(file=stderr(), paste0("  GeomTile found at layer ", layer_idx, "\n"))
+          tryCatch({
+            layer_data <- layer$data
+            if (is.function(layer_data)) {
+              cat(file=stderr(), paste0("    Layer data is a function, evaluating...\n"))
+              layer_data <- layer_data(pr440_short_tips_TRY_heat$data)
+            }
+            if (!is.null(layer_data) && is.data.frame(layer_data)) {
+              cat(file=stderr(), paste0("    Layer data rows: ", nrow(layer_data), "\n"))
+              cat(file=stderr(), paste0("    Layer data columns: ", paste(names(layer_data), collapse=", "), "\n"))
+              if ("x" %in% names(layer_data)) {
+                x_vals <- layer_data$x
+                cat(file=stderr(), paste0("    Tile x range: [", min(x_vals, na.rm=TRUE), ", ", max(x_vals, na.rm=TRUE), "]\n"))
+              }
+              if ("y" %in% names(layer_data)) {
+                y_vals <- layer_data$y
+                cat(file=stderr(), paste0("    Tile y range: [", min(y_vals, na.rm=TRUE), ", ", max(y_vals, na.rm=TRUE), "]\n"))
+              }
+              if ("fill" %in% names(layer_data)) {
+                cat(file=stderr(), paste0("    Fill values (first 5): ", paste(head(layer_data$fill, 5), collapse=", "), "\n"))
+              }
+            } else {
+              cat(file=stderr(), paste0("    WARNING: Layer data is not a data.frame: ", class(layer_data)[1], "\n"))
+            }
+          }, error = function(e) {
+            cat(file=stderr(), paste0("    ERROR accessing layer data: ", e$message, "\n"))
+          })
+        }
+      }
       cat(file=stderr(), paste0("================================\n"))
 
       # Apply correct coloring scale based on heatmap type
@@ -4966,44 +5068,76 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     # Update plot with heatmap
     p <- pr440_short_tips_TRY_heat
 
-    # v70: Repair mapping before final state check
-    p <- func.repair.ggtree.mapping(p)
+    # v71: Repair mapping before final state check
+    p <- func.repair.ggtree.mapping(p, verbose = TRUE)
 
-    # v70: Final heatmap state with layer analysis
-    cat(file=stderr(), paste0("\n=== v70: FINAL HEATMAP STATE ===\n"))
+    # v71: Diagnose any layer issues
+    problematic_layers <- func.diagnose.layer.issues(p, verbose = TRUE)
+
+    # v71: Final heatmap state with layer analysis
+    cat(file=stderr(), paste0("\n=== v71: FINAL HEATMAP STATE ===\n"))
     final_xrange <- range(p$data$x, na.rm = TRUE)
     cat(file=stderr(), paste0("  Tree data x range: [", final_xrange[1], ", ", final_xrange[2], "]\n"))
     cat(file=stderr(), paste0("  Number of layers: ", length(p$layers), "\n"))
 
-    # v70: Check for heatmap layer (GeomTile) and get its x coordinates
+    # v71: Check for heatmap layer (GeomTile) and get its x coordinates
     layer_types <- sapply(p$layers, function(l) class(l$geom)[1])
     cat(file=stderr(), paste0("  Layer types: ", paste(layer_types, collapse=", "), "\n"))
 
-    # v70: Try to get actual x coordinates from built data, but use fallback if it fails
+    # v71: Find the GeomTile layer (heatmap) and get its data directly
     heatmap_xmax <- NULL
-    tryCatch({
-      # Repair mapping one more time before building
-      p <- func.repair.ggtree.mapping(p)
-      built <- ggplot2::ggplot_build(p)
-      for (i in seq_along(built$data)) {
-        if ("x" %in% names(built$data[[i]])) {
-          layer_x <- built$data[[i]]$x
-          if (length(layer_x) > 0 && !all(is.na(layer_x))) {
-            layer_xmax <- max(layer_x, na.rm = TRUE)
-            cat(file=stderr(), paste0("    Layer ", i, " x range: [",
-                                      min(layer_x, na.rm = TRUE), ", ", layer_xmax, "]\n"))
-            if (is.null(heatmap_xmax) || layer_xmax > heatmap_xmax) {
-              heatmap_xmax <- layer_xmax
+    for (i in seq_along(p$layers)) {
+      layer <- p$layers[[i]]
+      if (inherits(layer$geom, "GeomTile")) {
+        cat(file=stderr(), paste0("  Found GeomTile at layer ", i, "\n"))
+        # Try to access the layer data
+        tryCatch({
+          layer_data <- layer$data
+          if (is.function(layer_data)) {
+            layer_data <- layer_data(p$data)
+          }
+          if (!is.null(layer_data) && "x" %in% names(layer_data)) {
+            tile_x <- layer_data$x
+            if (length(tile_x) > 0 && !all(is.na(tile_x))) {
+              tile_xmax <- max(tile_x, na.rm = TRUE)
+              cat(file=stderr(), paste0("    GeomTile x range: [", min(tile_x, na.rm = TRUE), ", ", tile_xmax, "]\n"))
+              heatmap_xmax <- tile_xmax
+            }
+          } else {
+            cat(file=stderr(), paste0("    GeomTile layer data does not have x column\n"))
+          }
+        }, error = function(e) {
+          cat(file=stderr(), paste0("    Could not access GeomTile data: ", e$message, "\n"))
+        })
+      }
+    }
+
+    # v71: Also try ggplot_build but don't fail if it doesn't work
+    if (is.null(heatmap_xmax)) {
+      tryCatch({
+        # Repair mapping one more time before building
+        p <- func.repair.ggtree.mapping(p)
+        built <- ggplot2::ggplot_build(p)
+        for (i in seq_along(built$data)) {
+          if ("x" %in% names(built$data[[i]])) {
+            layer_x <- built$data[[i]]$x
+            if (length(layer_x) > 0 && !all(is.na(layer_x))) {
+              layer_xmax <- max(layer_x, na.rm = TRUE)
+              cat(file=stderr(), paste0("    Built layer ", i, " x range: [",
+                                        min(layer_x, na.rm = TRUE), ", ", layer_xmax, "]\n"))
+              if (is.null(heatmap_xmax) || layer_xmax > heatmap_xmax) {
+                heatmap_xmax <- layer_xmax
+              }
             }
           }
         }
-      }
-    }, error = function(e) {
-      cat(file=stderr(), paste0("  v70: ggplot_build failed (will use fallback): ", e$message, "\n"))
-    })
+      }, error = function(e) {
+        cat(file=stderr(), paste0("  v71: ggplot_build failed (will use fallback): ", e$message, "\n"))
+      })
+    }
     cat(file=stderr(), paste0("================================\n"))
 
-    # v70: Calculate expected x range using multiple methods
+    # v71: Calculate expected x range using multiple methods
     # gheatmap places tiles at x positions based on tree width and offset
     tree_width <- abs(final_xrange[2] - final_xrange[1])
 
@@ -5014,29 +5148,34 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     # Method 2: Use a proportion of tree width as margin (safer fallback)
     proportional_xmax <- tree_width * 0.3 + wi + 0.5
 
-    # Use the largest of: calculated, proportional, or detected from built data
+    # v71: Method 3: Use a larger fixed margin to ensure heatmap is visible
+    fixed_margin_xmax <- 2.5  # Fixed generous margin
+
+    # Use the largest of: calculated, proportional, fixed, or detected from built data
     expected_xmax <- max(
       calculated_xmax,
       proportional_xmax,
-      ifelse(is.null(heatmap_xmax), calculated_xmax, heatmap_xmax + 0.3)
+      fixed_margin_xmax,
+      ifelse(is.null(heatmap_xmax), calculated_xmax, heatmap_xmax + 0.5)
     )
 
-    cat(file=stderr(), paste0("\n=== v70: EXPANDING X-AXIS FOR HEATMAP ===\n"))
+    cat(file=stderr(), paste0("\n=== v71: EXPANDING X-AXIS FOR HEATMAP ===\n"))
     cat(file=stderr(), paste0("  Tree x range: [", final_xrange[1], ", ", final_xrange[2], "]\n"))
     cat(file=stderr(), paste0("  Tree width: ", tree_width, "\n"))
     cat(file=stderr(), paste0("  Heatmap offset (new_heat_x): ", new_heat_x, "\n"))
     cat(file=stderr(), paste0("  Heatmap width (wi): ", wi, "\n"))
     cat(file=stderr(), paste0("  Calculated x max: ", calculated_xmax, "\n"))
     cat(file=stderr(), paste0("  Proportional x max: ", proportional_xmax, "\n"))
+    cat(file=stderr(), paste0("  Fixed margin x max: ", fixed_margin_xmax, "\n"))
     cat(file=stderr(), paste0("  Detected from build: ", ifelse(is.null(heatmap_xmax), "NULL", heatmap_xmax), "\n"))
     cat(file=stderr(), paste0("  Final expected max x: ", expected_xmax, "\n"))
     cat(file=stderr(), paste0("  Setting coord_cartesian xlim to: [", final_xrange[1], ", ", expected_xmax, "]\n"))
     cat(file=stderr(), paste0("========================================\n"))
 
-    # v70: Use coord_cartesian to expand view to include heatmap
+    # v71: Use coord_cartesian to expand view to include heatmap
     p <- p + coord_cartesian(xlim = c(final_xrange[1], expected_xmax), clip = "off")
 
-    # v70: Final repair after coord_cartesian
+    # v71: Final repair after coord_cartesian
     p <- func.repair.ggtree.mapping(p)
   }
 
@@ -5166,7 +5305,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
 # Define UI
 ui <- dashboardPage(
-  dashboardHeader(title = "Lineage Tree Plotter v70"),
+  dashboardHeader(title = "Lineage Tree Plotter v71"),
   
   dashboardSidebar(
     width = 300,
@@ -5223,15 +5362,15 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v70 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v71 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("CRITICAL FIX: Comprehensive mapping corruption repair for ggplot2 3.4+ compatibility"),
-                              tags$li("FIXED: Heatmap display issues - enhanced x-axis expansion and layer mapping repair"),
-                              tags$li("IMPROVED: Better fallback x-range calculation when ggplot_build fails"),
-                              tags$li("IMPROVED: Custom discrete colors now properly named to match factor levels"),
-                              tags$li("IMPROVED: Added NA color support (white by default) for all heatmap types")
+                              tags$li("DEBUG: Added comprehensive layer diagnostics to identify heatmap issues"),
+                              tags$li("DEBUG: Enhanced GeomTile layer inspection with x/y range and fill values"),
+                              tags$li("IMPROVED: New func.diagnose.layer.issues() to identify problematic layers"),
+                              tags$li("IMPROVED: Direct GeomTile data access as fallback when ggplot_build fails"),
+                              tags$li("IMPROVED: Added fixed margin (2.5) as additional safety for x-axis expansion")
                             )
                      )
             )
