@@ -4525,20 +4525,117 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   }
   
   # Add heatmap if requested
-  # v58: DEBUG - show heat_flag status
-  cat(file=stderr(), paste0("\n=== v58: Heatmap rendering check ===\n"))
+  # v91: SIMPLIFIED HEATMAP - Replaced complex heatmap logic with basic hardcoded approach
+  # to prove the concept works. The complex logic is preserved below in comments for reference.
+  cat(file=stderr(), paste0("\n=== v91: SIMPLIFIED HEATMAP RENDERING ===\n"))
   cat(file=stderr(), paste0("  heat_flag: ", heat_flag, "\n"))
   if (heat_flag == TRUE) {
     cat(file=stderr(), paste0("  heat_map_title_list length: ", length(heat_map_title_list), "\n"))
     cat(file=stderr(), paste0("  dxdf440_for_heat length: ", length(dxdf440_for_heat), "\n"))
   }
 
-  # v58: FIX - Also check that dxdf440_for_heat has data, not just heat_flag
+  # v91: SIMPLE HEATMAP IMPLEMENTATION
   if (heat_flag == TRUE && length(dxdf440_for_heat) > 0) {
+    cat(file=stderr(), paste0("\n=== v91: ENTERING SIMPLIFIED HEATMAP CODE ===\n"))
+
+    # Scale tree x coordinates for better heatmap positioning
     tt <- p
+    for (i in cc_totss) {
+      tt$data[tt$data$node[i], "x"] <- tt$data[tt$data$node[i], "x"] * 15
+    }
+
+    # Get the first heatmap data
+    heat_data <- dxdf440_for_heat[[1]]
+    cat(file=stderr(), paste0("  heat_data dimensions: ", nrow(heat_data), " x ", ncol(heat_data), "\n"))
+    cat(file=stderr(), paste0("  heat_data rownames sample: ", paste(head(rownames(heat_data), 5), collapse=", "), "\n"))
+    cat(file=stderr(), paste0("  heat_data columns: ", paste(colnames(heat_data), collapse=", "), "\n"))
+
+    # Check data types
+    for (col_idx in 1:ncol(heat_data)) {
+      col_name <- colnames(heat_data)[col_idx]
+      col_class <- class(heat_data[, col_idx])[1]
+      unique_vals <- length(unique(na.omit(heat_data[, col_idx])))
+      cat(file=stderr(), paste0("  Column '", col_name, "': class=", col_class, ", unique_values=", unique_vals, "\n"))
+    }
+
+    # Get heatmap parameters
+    heat_param <- heat_display_params_list[[1]]
+    is_discrete <- ifelse(!is.null(heat_param) && !is.na(heat_param['is_discrete']),
+                          heat_param['is_discrete'] == TRUE, FALSE)
+    cat(file=stderr(), paste0("  is_discrete: ", is_discrete, "\n"))
+
+    # Calculate offset and width
+    boudariestt <- func.find.plot.boundaries(tt, debug_mode)
+    new_heat_x <- 0.7
+    wi <- 1.4 * ncol(heat_data) / 23
+
+    cat(file=stderr(), paste0("  offset: ", new_heat_x, "\n"))
+    cat(file=stderr(), paste0("  width: ", wi, "\n"))
+
+    # v91: SIMPLE GHEATMAP CALL - no duplicate calls, no complex logic
+    cat(file=stderr(), paste0("\n=== v91: CALLING GHEATMAP ===\n"))
+
+    p <- tryCatch({
+      result <- gheatmap(
+        tt,
+        data = heat_data,
+        offset = new_heat_x,
+        width = wi,
+        font.size = 2,
+        colnames = TRUE,
+        colnames_angle = 0,
+        colnames_offset_y = 0.5,
+        legend_title = heat_map_title_list[[1]],
+        color = NA
+      )
+      cat(file=stderr(), paste0("  gheatmap call: SUCCESS\n"))
+      cat(file=stderr(), paste0("  Result layers: ", length(result$layers), "\n"))
+
+      # Add appropriate color scale
+      if (is_discrete) {
+        cat(file=stderr(), paste0("  Adding scale_fill_viridis_d for discrete data\n"))
+        result <- result + scale_fill_viridis_d(name = heat_map_title_list[[1]], na.value = "white")
+      } else {
+        cat(file=stderr(), paste0("  Adding scale_fill_gradient2 for continuous data\n"))
+        low_col <- ifelse(!is.null(heat_param) && !is.na(heat_param['low']), heat_param['low'], "blue")
+        mid_col <- ifelse(!is.null(heat_param) && !is.na(heat_param['mid']), heat_param['mid'], "white")
+        high_col <- ifelse(!is.null(heat_param) && !is.na(heat_param['high']), heat_param['high'], "red")
+        result <- result + scale_fill_gradient2(low = low_col, mid = mid_col, high = high_col,
+                                                 midpoint = 0.02, name = heat_map_title_list[[1]],
+                                                 na.value = "white")
+      }
+
+      # Expand x-axis to show heatmap
+      cat(file=stderr(), paste0("  Adding hexpand for x-axis\n"))
+      result <- result + ggtree::hexpand(ratio = 0.5, direction = 1)
+
+      cat(file=stderr(), paste0("  Final plot layers: ", length(result$layers), "\n"))
+      result
+    }, error = function(e) {
+      cat(file=stderr(), paste0("  gheatmap FAILED: ", e$message, "\n"))
+      cat(file=stderr(), paste0("  Returning tree without heatmap\n"))
+      tt
+    })
+
+    cat(file=stderr(), paste0("=== v91: SIMPLIFIED HEATMAP COMPLETE ===\n"))
+  }
+  # END v91 SIMPLIFIED HEATMAP
+
+  # ========================================================================
+  # v91: ORIGINAL COMPLEX HEATMAP CODE COMMENTED OUT BELOW
+
+  # The following 800+ lines of complex heatmap logic have been commented out
+  # to simplify debugging. This will be rebuilt step by step.
+  # ========================================================================
+
+  if (FALSE) {
+  # ORIGINAL CODE START (commented out for v91)
+  # v58: FIX - Also check that dxdf440_for_heat has data, not just heat_flag
+  # if (heat_flag == TRUE && length(dxdf440_for_heat) > 0) {
+    tt_DISABLED <- p
 
     # v63: DEBUG - show x range BEFORE scaling
-    x_range_before <- range(tt$data$x, na.rm = TRUE)
+    x_range_before <- range(tt_DISABLED$data$x, na.rm = TRUE)
     cat(file=stderr(), paste0("\n=== v63: Pre-scaling x range: [", x_range_before[1], ", ", x_range_before[2], "] ===\n"))
 
     for (i in cc_totss) {
@@ -5395,6 +5492,8 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       cat(file=stderr(), paste0("  v88: WARNING - Plot cannot be built, skipping all expansion\n"))
     }
   }
+  } # END if (FALSE) - v91: End of commented out original complex heatmap code
+  # ========================================================================
 
   # Default ellipse parameters if not set
   a <- 1
@@ -5766,14 +5865,15 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v90 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v91 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("CRITICAL FIX: Fixed heatmap causing entire plot to disappear"),
-                              tags$li("Root cause: geom_nodepoint layers (bootstrap triangles) added before gheatmap lost x/y aesthetics"),
-                              tags$li("Solution: Bootstrap triangle layers are now added AFTER gheatmap transforms the data"),
-                              tags$li("This prevents 'geom_point_g_gtree requires missing aesthetics x and y' error")
+                              tags$li("SIMPLIFIED HEATMAP: Replaced 800+ lines of complex heatmap code with simple basic implementation"),
+                              tags$li("Purpose: Prove that a simple gheatmap call works before rebuilding complexity"),
+                              tags$li("Single gheatmap call with viridis (discrete) or gradient2 (continuous) scale"),
+                              tags$li("Complex heatmap logic preserved in if(FALSE) block for reference"),
+                              tags$li("See HEATMAP_REBUILD_PLAN.md for step-by-step rebuild guide")
                             )
                      )
             )
