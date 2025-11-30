@@ -4774,13 +4774,9 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       cat(file=stderr(), paste0("  width (wi): ", wi, "\n"))
       cat(file=stderr(), paste0("================================\n"))
 
-      # v77: SIMPLIFIED - Single gheatmap call is sufficient
-      # The duplicate calls in v75/v76 were causing "Problem while setting up geom" errors
-      # because calling gheatmap on an already-heatmapped plot corrupts the layer structure.
-      # A single gheatmap call properly adds the heatmap tiles to the tree.
-      # v80: FIX - Changed color = NA to color = "transparent" to fix
-      # "Problem while setting up geom" error in some ggplot2 versions.
-      # NA as a color value can cause issues during geom setup in newer ggplot2.
+      # v81: RESTORED duplicate gheatmap pattern from original v61 code
+      # The duplicate gheatmap call was intentional and required for proper rendering.
+      # First call creates initial structure, second call properly populates the heatmap.
       pr440_short_tips_TRY_heat <- gheatmap(
         tt,
         data = dxdf440_for_heat[[j1]],
@@ -4793,8 +4789,46 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
         legend_title = heat_map_title_list[[j1]],
         colnames = TRUE,
         custom_column_labels = custom_column_labels,
-        color = "transparent"
+        color = NA
       )
+
+      # v81: Apply the REQUIRED second gheatmap call (this is the "duplicate" that was removed in v62)
+      # This pattern is essential for gheatmap to work correctly with ggtree
+      if (j == 1) {
+        if (heat_param['is_discrete'] == FALSE) {
+          # For continuous heatmaps, call gheatmap on the result
+          pr440_short_tips_TRY_heat <- gheatmap(
+            pr440_short_tips_TRY_heat,
+            data = dxdf440_for_heat[[j1]],
+            colnames_angle = colnames_angle,
+            offset = new_heat_x,
+            width = wi,
+            font.size = size_font_heat_map_legend,
+            colnames_offset_x = 0,
+            colnames_offset_y = heat_names_offset,
+            legend_title = heat_map_title_list[[j1]],
+            colnames = TRUE,
+            custom_column_labels = custom_column_labels,
+            color = NA
+          )
+        } else {
+          # For discrete heatmaps, call gheatmap on the original tree
+          pr440_short_tips_TRY_heat <- gheatmap(
+            tt,
+            data = dxdf440_for_heat[[j1]],
+            colnames_angle = colnames_angle,
+            offset = new_heat_x,
+            width = wi,
+            font.size = size_font_heat_map_legend,
+            colnames_offset_x = 0,
+            colnames_offset_y = heat_names_offset,
+            legend_title = heat_map_title_list[[j1]],
+            colnames = TRUE,
+            custom_column_labels = custom_column_labels,
+            color = NA
+          )
+        }
+      }
 
       # v71: Immediately repair mapping after gheatmap (common source of corruption)
       pr440_short_tips_TRY_heat <- func.repair.ggtree.mapping(pr440_short_tips_TRY_heat, verbose = TRUE)
@@ -5579,14 +5613,14 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v80 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v81 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("FIX: Heatmap 'Problem while setting up geom' error"),
-                              tags$li("Changed gheatmap color=NA to color='transparent' for ggplot2 compatibility"),
-                              tags$li("Convert tile value column to factor to match scale expectations"),
-                              tags$li("Improved ggsave error handling with fallback rendering")
+                              tags$li("FIX: Restored REQUIRED duplicate gheatmap call pattern from original v61 code"),
+                              tags$li("The duplicate gheatmap call was intentionally removed in v62 but was essential"),
+                              tags$li("First gheatmap creates structure, second call properly populates the heatmap"),
+                              tags$li("Discrete heatmaps use tt (tree), continuous use result of first gheatmap")
                             )
                      )
             )
