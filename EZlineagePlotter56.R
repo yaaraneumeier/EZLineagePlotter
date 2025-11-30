@@ -4745,9 +4745,10 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       cat(file=stderr(), paste0("  width (wi): ", wi, "\n"))
       cat(file=stderr(), paste0("================================\n"))
 
-      # v82: Single gheatmap call - removed duplicate pattern that was causing issues
-      # The duplicate gheatmap pattern from v81 was incorrect: for discrete heatmaps,
-      # both calls were on the original tree 'tt', which was wasteful and not the intended pattern.
+      # v83: RESTORED duplicate gheatmap pattern from v61 - THIS IS INTENTIONAL
+      # The user confirmed this pattern was in the original lineage plotter code and is required.
+      # DO NOT REMOVE THIS DUPLICATE CALL - it is necessary for gheatmap to work correctly.
+      # First gheatmap call creates the initial structure
       pr440_short_tips_TRY_heat <- gheatmap(
         tt,
         data = dxdf440_for_heat[[j1]],
@@ -4763,17 +4764,70 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
         color = NA
       )
 
-      # v82: Check and log if mapping repair is needed (but don't repair yet - do it after scale)
-      if (!inherits(pr440_short_tips_TRY_heat$mapping, "uneval")) {
-        cat(file=stderr(), paste0("\n=== v82: WARNING - gheatmap returned corrupted mapping ===\n"))
-        cat(file=stderr(), paste0("  Mapping class: ", paste(class(pr440_short_tips_TRY_heat$mapping), collapse=", "), "\n"))
-        cat(file=stderr(), paste0("  Will repair after applying scale\n"))
-        cat(file=stderr(), paste0("================================\n"))
+      # v83: IMMEDIATELY repair mapping after first gheatmap call
+      # This MUST happen before any other operations on the plot
+      pr440_short_tips_TRY_heat <- func.repair.ggtree.mapping(pr440_short_tips_TRY_heat, verbose = FALSE)
+
+      # v83: REQUIRED second gheatmap call - DO NOT REMOVE
+      # For j==1 (first heatmap):
+      #   - Continuous: call gheatmap on result (pr440_short_tips_TRY_heat)
+      #   - Discrete: call gheatmap on original tree (tt)
+      # This duplicate call is intentional and required for proper rendering.
+      if (j == 1) {
+        if (heat_param['is_discrete'] == FALSE) {
+          # Continuous heatmaps: apply gheatmap on the result
+          pr440_short_tips_TRY_heat <- gheatmap(
+            pr440_short_tips_TRY_heat,
+            data = dxdf440_for_heat[[j1]],
+            colnames_angle = colnames_angle,
+            offset = new_heat_x,
+            width = wi,
+            font.size = size_font_heat_map_legend,
+            colnames_offset_x = 0,
+            colnames_offset_y = heat_names_offset,
+            legend_title = heat_map_title_list[[j1]],
+            colnames = TRUE,
+            custom_column_labels = custom_column_labels,
+            color = NA
+          )
+        } else {
+          # Discrete heatmaps: apply gheatmap on original tree again
+          pr440_short_tips_TRY_heat <- gheatmap(
+            tt,
+            data = dxdf440_for_heat[[j1]],
+            colnames_angle = colnames_angle,
+            offset = new_heat_x,
+            width = wi,
+            font.size = size_font_heat_map_legend,
+            colnames_offset_x = 0,
+            colnames_offset_y = heat_names_offset,
+            legend_title = heat_map_title_list[[j1]],
+            colnames = TRUE,
+            custom_column_labels = custom_column_labels,
+            color = NA
+          )
+        }
+        # v83: IMMEDIATELY repair mapping after second gheatmap call
+        pr440_short_tips_TRY_heat <- func.repair.ggtree.mapping(pr440_short_tips_TRY_heat, verbose = FALSE)
       }
 
-      # v82: REMOVED v80 code that was modifying tile layer data directly
-      # This was causing "Problem while setting up geom" errors.
-      # gheatmap handles the data structure correctly, no need to modify it.
+      # v83: Convert tile layer's 'value' column back to factor
+      # gheatmap converts factors to characters internally, which breaks scale_fill_manual
+      # We need to convert back to factor to ensure proper color mapping
+      for (layer_idx in seq_along(pr440_short_tips_TRY_heat$layers)) {
+        layer <- pr440_short_tips_TRY_heat$layers[[layer_idx]]
+        if (inherits(layer$geom, "GeomTile") && !is.null(layer$data) && is.data.frame(layer$data)) {
+          if ("value" %in% names(layer$data) && !is.factor(layer$data$value)) {
+            cat(file=stderr(), paste0("  v83: Converting tile value to factor\n"))
+            unique_vals <- sort(unique(na.omit(layer$data$value)))
+            pr440_short_tips_TRY_heat$layers[[layer_idx]]$data$value <- factor(
+              layer$data$value,
+              levels = unique_vals
+            )
+            cat(file=stderr(), paste0("  v83: Factor levels: ", paste(unique_vals, collapse=", "), "\n"))
+          }
+        }
+      }
 
       # v82: DEBUG - verify gheatmap result and tile layer data
       cat(file=stderr(), paste0("\n=== v71: POST-GHEATMAP DEBUG ===\n"))
@@ -5507,14 +5561,14 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v82 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v83 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("FIX: Resolved 'Problem while setting up geom' heatmap error"),
-                              tags$li("Removed broken duplicate gheatmap pattern from v81"),
-                              tags$li("Fixed mapping repair to not destroy layer fill aesthetics"),
-                              tags$li("Removed code that was incorrectly modifying tile layer data")
+                              tags$li("FIX: Restored REQUIRED duplicate gheatmap pattern from original code"),
+                              tags$li("IMPORTANT: Duplicate gheatmap call is INTENTIONAL - do not remove"),
+                              tags$li("Repair mapping IMMEDIATELY after each gheatmap call"),
+                              tags$li("Convert tile value back to factor after gheatmap (gheatmap converts to char)")
                             )
                      )
             )
