@@ -269,17 +269,19 @@ func.check.bin.val.from.conf <- function(val) {
   return(out)
 }
 
-# v71: Enhanced function to repair corrupted ggtree/ggplot mapping attribute
+# v82: Enhanced function to repair corrupted ggtree/ggplot mapping attribute
 # This fixes the error: "@mapping must be <ggplot2::mapping>, not S3<data.frame>"
 # which occurs in newer versions of ggplot2 (3.4+) when gheatmap or other operations
 # accidentally corrupt the mapping slot
+# CRITICAL v82 FIX: Do NOT reset layer mappings - only fix top-level mapping
+# Resetting layer mappings (like fill = value for GeomTile) breaks the heatmap
 func.repair.ggtree.mapping <- function(p, verbose = FALSE) {
   repaired <- FALSE
 
   # Check if top-level mapping is valid (should be class "uneval" from aes())
   if (!inherits(p$mapping, "uneval")) {
     if (verbose) {
-      cat(file=stderr(), paste0("\n=== v71: Repairing corrupted plot mapping ===\n"))
+      cat(file=stderr(), paste0("\n=== v82: Repairing corrupted plot mapping ===\n"))
       cat(file=stderr(), paste0("  Original mapping class: ", paste(class(p$mapping), collapse=", "), "\n"))
     }
 
@@ -290,44 +292,13 @@ func.repair.ggtree.mapping <- function(p, verbose = FALSE) {
         cat(file=stderr(), paste0("  Fixed mapping class: ", paste(class(p$mapping), collapse=", "), "\n"))
       }
     }, error = function(e) {
-      cat(file=stderr(), paste0("  v71: Could not repair mapping: ", e$message, "\n"))
+      cat(file=stderr(), paste0("  v82: Could not repair mapping: ", e$message, "\n"))
     })
   }
 
-  # v71: Also check and repair layer mappings
-  if (!is.null(p$layers) && length(p$layers) > 0) {
-    for (i in seq_along(p$layers)) {
-      layer <- p$layers[[i]]
-      if (!is.null(layer$mapping) && !inherits(layer$mapping, "uneval")) {
-        tryCatch({
-          # Try to preserve any valid mapping content by converting
-          # If mapping is a data.frame or other invalid type, reset to empty aes()
-          if (is.data.frame(layer$mapping)) {
-            p$layers[[i]]$mapping <- aes()
-            repaired <- TRUE
-            if (verbose) {
-              cat(file=stderr(), paste0("  v71: Fixed layer ", i, " mapping (was data.frame)\n"))
-            }
-          }
-        }, error = function(e) {
-          # Silently ignore layer repair errors
-        })
-      }
-
-      # v71: Check if layer has corrupted computed_mapping
-      if (!is.null(layer$computed_mapping) && !inherits(layer$computed_mapping, "uneval")) {
-        tryCatch({
-          p$layers[[i]]$computed_mapping <- aes()
-          repaired <- TRUE
-          if (verbose) {
-            cat(file=stderr(), paste0("  v71: Fixed layer ", i, " computed_mapping\n"))
-          }
-        }, error = function(e) {
-          # Silently ignore
-        })
-      }
-    }
-  }
+  # v82: REMOVED layer mapping repairs - these were breaking the heatmap fill mapping
+  # The layer mappings are set correctly by gheatmap and should not be modified.
+  # Only the top-level plot mapping sometimes gets corrupted to a data.frame.
 
   if (repaired && verbose) {
     cat(file=stderr(), paste0("================================\n"))
@@ -4774,9 +4745,9 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       cat(file=stderr(), paste0("  width (wi): ", wi, "\n"))
       cat(file=stderr(), paste0("================================\n"))
 
-      # v81: RESTORED duplicate gheatmap pattern from original v61 code
-      # The duplicate gheatmap call was intentional and required for proper rendering.
-      # First call creates initial structure, second call properly populates the heatmap.
+      # v82: Single gheatmap call - removed duplicate pattern that was causing issues
+      # The duplicate gheatmap pattern from v81 was incorrect: for discrete heatmaps,
+      # both calls were on the original tree 'tt', which was wasteful and not the intended pattern.
       pr440_short_tips_TRY_heat <- gheatmap(
         tt,
         data = dxdf440_for_heat[[j1]],
@@ -4792,66 +4763,19 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
         color = NA
       )
 
-      # v81: Apply the REQUIRED second gheatmap call (this is the "duplicate" that was removed in v62)
-      # This pattern is essential for gheatmap to work correctly with ggtree
-      if (j == 1) {
-        if (heat_param['is_discrete'] == FALSE) {
-          # For continuous heatmaps, call gheatmap on the result
-          pr440_short_tips_TRY_heat <- gheatmap(
-            pr440_short_tips_TRY_heat,
-            data = dxdf440_for_heat[[j1]],
-            colnames_angle = colnames_angle,
-            offset = new_heat_x,
-            width = wi,
-            font.size = size_font_heat_map_legend,
-            colnames_offset_x = 0,
-            colnames_offset_y = heat_names_offset,
-            legend_title = heat_map_title_list[[j1]],
-            colnames = TRUE,
-            custom_column_labels = custom_column_labels,
-            color = NA
-          )
-        } else {
-          # For discrete heatmaps, call gheatmap on the original tree
-          pr440_short_tips_TRY_heat <- gheatmap(
-            tt,
-            data = dxdf440_for_heat[[j1]],
-            colnames_angle = colnames_angle,
-            offset = new_heat_x,
-            width = wi,
-            font.size = size_font_heat_map_legend,
-            colnames_offset_x = 0,
-            colnames_offset_y = heat_names_offset,
-            legend_title = heat_map_title_list[[j1]],
-            colnames = TRUE,
-            custom_column_labels = custom_column_labels,
-            color = NA
-          )
-        }
+      # v82: Check and log if mapping repair is needed (but don't repair yet - do it after scale)
+      if (!inherits(pr440_short_tips_TRY_heat$mapping, "uneval")) {
+        cat(file=stderr(), paste0("\n=== v82: WARNING - gheatmap returned corrupted mapping ===\n"))
+        cat(file=stderr(), paste0("  Mapping class: ", paste(class(pr440_short_tips_TRY_heat$mapping), collapse=", "), "\n"))
+        cat(file=stderr(), paste0("  Will repair after applying scale\n"))
+        cat(file=stderr(), paste0("================================\n"))
       }
 
-      # v71: Immediately repair mapping after gheatmap (common source of corruption)
-      pr440_short_tips_TRY_heat <- func.repair.ggtree.mapping(pr440_short_tips_TRY_heat, verbose = TRUE)
+      # v82: REMOVED v80 code that was modifying tile layer data directly
+      # This was causing "Problem while setting up geom" errors.
+      # gheatmap handles the data structure correctly, no need to modify it.
 
-      # v80: Convert tile layer's 'value' column to factor to match scale expectations
-      # gheatmap sometimes converts factors to characters, causing scale_fill_manual issues
-      for (layer_idx in seq_along(pr440_short_tips_TRY_heat$layers)) {
-        layer <- pr440_short_tips_TRY_heat$layers[[layer_idx]]
-        if (inherits(layer$geom, "GeomTile") && !is.null(layer$data) && is.data.frame(layer$data)) {
-          if ("value" %in% names(layer$data) && !is.factor(layer$data$value)) {
-            cat(file=stderr(), paste0("  v80: Converting tile value to factor\n"))
-            # Get unique non-NA values as factor levels
-            unique_vals <- sort(unique(na.omit(layer$data$value)))
-            pr440_short_tips_TRY_heat$layers[[layer_idx]]$data$value <- factor(
-              layer$data$value,
-              levels = unique_vals
-            )
-            cat(file=stderr(), paste0("  v80: Factor levels: ", paste(unique_vals, collapse=", "), "\n"))
-          }
-        }
-      }
-
-      # v71: DEBUG - verify gheatmap result and tile layer data
+      # v82: DEBUG - verify gheatmap result and tile layer data
       cat(file=stderr(), paste0("\n=== v71: POST-GHEATMAP DEBUG ===\n"))
       cat(file=stderr(), paste0("  Number of layers in plot: ", length(pr440_short_tips_TRY_heat$layers), "\n"))
       gheatmap_xrange <- range(pr440_short_tips_TRY_heat$data$x, na.rm = TRUE)
@@ -4909,33 +4833,8 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
         }
       }
 
-      # v72: Try ggplot_build to see actual rendered fill colors
-      cat(file=stderr(), paste0("\n=== v72: CHECKING RENDERED FILL COLORS ===\n"))
-      tryCatch({
-        built_plot <- ggplot2::ggplot_build(pr440_short_tips_TRY_heat)
-        # Find the tile layer in built data
-        for (i in seq_along(built_plot$data)) {
-          built_layer <- built_plot$data[[i]]
-          # Tile layers have PANEL, x, y, width, height, fill columns after building
-          if (all(c("x", "y", "fill") %in% names(built_layer))) {
-            cat(file=stderr(), paste0("  Built layer ", i, ":\n"))
-            cat(file=stderr(), paste0("    Rows: ", nrow(built_layer), "\n"))
-            if ("fill" %in% names(built_layer)) {
-              fill_vals <- unique(built_layer$fill)
-              cat(file=stderr(), paste0("    Unique fill colors: ", paste(head(fill_vals, 10), collapse=", "), "\n"))
-            }
-            if ("width" %in% names(built_layer)) {
-              cat(file=stderr(), paste0("    Width range: [", min(built_layer$width, na.rm=TRUE), ", ", max(built_layer$width, na.rm=TRUE), "]\n"))
-            }
-            if ("x" %in% names(built_layer)) {
-              cat(file=stderr(), paste0("    X range: [", min(built_layer$x, na.rm=TRUE), ", ", max(built_layer$x, na.rm=TRUE), "]\n"))
-            }
-          }
-        }
-      }, error = function(e) {
-        cat(file=stderr(), paste0("  v72: ggplot_build error: ", e$message, "\n"))
-      })
-      cat(file=stderr(), paste0("================================\n"))
+      # v82: Removed aggressive ggplot_build debugging that was causing premature errors
+      # The build will be done at the end when saving the plot
 
       # Apply correct coloring scale based on heatmap type
       if (heat_param['is_discrete'] == FALSE) {
@@ -4963,8 +4862,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
               na.value = "white"
             )
         }
-        # v70: Repair mapping after scale addition
-        pr440_short_tips_TRY_heat <- func.repair.ggtree.mapping(pr440_short_tips_TRY_heat)
+        # v82: Removed aggressive mapping repair - will do single repair at end of heatmap loop
       } else {
         # v65: DEBUG - trace discrete heatmap color path
         cat(file=stderr(), paste0("\n=== v65: DISCRETE HEATMAP COLOR DEBUG ===\n"))
@@ -5019,16 +4917,14 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
               pr440_short_tips_TRY_heat <- pr440_short_tips_TRY_heat +
                 scale_fill_brewer(palette = palette_name, name = heat_map_title_list[[j1]], na.value = na_color)
-              # v70: Repair mapping after scale addition
-              pr440_short_tips_TRY_heat <- func.repair.ggtree.mapping(pr440_short_tips_TRY_heat)
+              # v82: Removed aggressive mapping repair - will do single repair at end of heatmap loop
             } else {
               cat(file=stderr(), paste0("  v67: Using default hue scale (no valid palette specified)\n"))
               # v70: Get NA color from heat_param (default white)
               na_color <- if (!is.null(heat_param[['na_color']])) heat_param[['na_color']] else "white"
               pr440_short_tips_TRY_heat <- pr440_short_tips_TRY_heat +
                 scale_fill_hue(name = heat_map_title_list[[j1]], na.value = na_color)
-              # v70: Repair mapping after scale addition
-              pr440_short_tips_TRY_heat <- func.repair.ggtree.mapping(pr440_short_tips_TRY_heat)
+              # v82: Removed aggressive mapping repair - will do single repair at end of heatmap loop
             }
           } else {
             # v70: man_define_colors is TRUE - use custom color values
@@ -5093,9 +4989,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
                 name = heat_map_title_list[[j1]],
                 na.value = na_color
               )
-
-            # v70: Repair mapping after scale addition (can cause corruption)
-            pr440_short_tips_TRY_heat <- func.repair.ggtree.mapping(pr440_short_tips_TRY_heat)
+            # v82: Removed aggressive mapping repair - will do single repair at end of heatmap loop
           }
         } else {
           pr440_short_tips_TRY_heat <- pr440_short_tips_TRY_heat +
@@ -5613,14 +5507,14 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v81 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v82 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("FIX: Restored REQUIRED duplicate gheatmap call pattern from original v61 code"),
-                              tags$li("The duplicate gheatmap call was intentionally removed in v62 but was essential"),
-                              tags$li("First gheatmap creates structure, second call properly populates the heatmap"),
-                              tags$li("Discrete heatmaps use tt (tree), continuous use result of first gheatmap")
+                              tags$li("FIX: Resolved 'Problem while setting up geom' heatmap error"),
+                              tags$li("Removed broken duplicate gheatmap pattern from v81"),
+                              tags$li("Fixed mapping repair to not destroy layer fill aesthetics"),
+                              tags$li("Removed code that was incorrectly modifying tile layer data")
                             )
                      )
             )
