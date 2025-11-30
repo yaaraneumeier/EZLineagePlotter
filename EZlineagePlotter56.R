@@ -4773,8 +4773,10 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       cat(file=stderr(), paste0("  width (wi): ", wi, "\n"))
       cat(file=stderr(), paste0("================================\n"))
 
-      # v75: RESTORED duplicate gheatmap calls - these were intentionally in the original working code
-      # The duplicate calls are essential for proper heatmap rendering
+      # v77: SIMPLIFIED - Single gheatmap call is sufficient
+      # The duplicate calls in v75/v76 were causing "Problem while setting up geom" errors
+      # because calling gheatmap on an already-heatmapped plot corrupts the layer structure.
+      # A single gheatmap call properly adds the heatmap tiles to the tree.
       pr440_short_tips_TRY_heat <- gheatmap(
         tt,
         data = dxdf440_for_heat[[j1]],
@@ -4789,26 +4791,6 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
         custom_column_labels = custom_column_labels,
         color = NA
       )
-
-      # v76: FIX - Second gheatmap call should ALWAYS use the result (pr440_short_tips_TRY_heat)
-      # not the original tree (tt), matching the original working code behavior.
-      # The old code did NOT differentiate between discrete and continuous for this call.
-      if (j == 1) {
-        pr440_short_tips_TRY_heat <- gheatmap(
-          pr440_short_tips_TRY_heat,
-          data = dxdf440_for_heat[[j1]],
-          colnames_angle = colnames_angle,
-          offset = new_heat_x,
-          width = wi,
-          font.size = size_font_heat_map_legend,
-          colnames_offset_x = 0,
-          colnames_offset_y = heat_names_offset,
-          legend_title = heat_map_title_list[[j1]],
-          colnames = TRUE,
-          custom_column_labels = custom_column_labels,
-          color = NA
-        )
-      }
 
       # v71: Immediately repair mapping after gheatmap (common source of corruption)
       pr440_short_tips_TRY_heat <- func.repair.ggtree.mapping(pr440_short_tips_TRY_heat, verbose = TRUE)
@@ -5471,7 +5453,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
 # Define UI
 ui <- dashboardPage(
-  dashboardHeader(title = "Lineage Tree Plotter v74"),
+  dashboardHeader(title = "Lineage Tree Plotter v77"),
   
   dashboardSidebar(
     width = 300,
@@ -5528,13 +5510,13 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v76 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v77 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("FIX: Second gheatmap call now always uses the result (like the original working code)"),
-                              tags$li("v75 incorrectly used original tree for discrete heatmaps - this caused heatmap display issues"),
-                              tags$li("Original code behavior: both discrete and continuous heatmaps call gheatmap on the RESULT")
+                              tags$li("FIX: Removed duplicate gheatmap call that was causing 'Problem while setting up geom' errors"),
+                              tags$li("The v75/v76 duplicate calls corrupted the plot when gheatmap was applied to an already-heatmapped tree"),
+                              tags$li("A single gheatmap call is sufficient and now works correctly for heatmap display")
                             )
                      )
             )
