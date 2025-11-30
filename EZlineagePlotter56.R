@@ -5560,44 +5560,66 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
   # Add second legend if heatmap exists
   if (length(heat_map_title_list) > 0) {
-    cat(file=stderr(), paste0("\n=== v94: Before func.make.second.legend ===\n"))
+    cat(file=stderr(), paste0("\n=== v95: Before func.make.second.legend ===\n"))
     cat(file=stderr(), paste0("  p layers: ", length(p$layers), "\n"))
-    p <- func.make.second.legend(
-      p,
-      FLAG_BULK_DISPLAY,
-      how_many_hi,
-      heat_flag,
-      how_many_boxes,
-      how_mant_rows,
-      boudariestt,
-      y_off_base,
-      high_title_list,
-      size_font_legend_title,
-      high_label_list,
-      size_font_legend_text,
-      high_color_list,
-      a,
-      b,
-      x_range_min,
-      show_boot_flag,
-      size_90,
-      size_80,
-      size_70,
-      man_adjust_image_of_second_legend,
-      man_multiply_second_legend,
-      man_multiply_second_legend_text,
-      man_multiply_elipse,
-      man_space_second_legend,
-      man_space_second_legend_multiplier,
-      man_offset_for_highlight_legend_x,
-      debug_mode,
-      boot_values,
-      man_offset_second_legend,
-      width,
-      bootstrap_label_size
-    )
-    cat(file=stderr(), paste0("=== v94: After func.make.second.legend ===\n"))
+    cat(file=stderr(), paste0("  heat_flag: ", heat_flag, "\n"))
+    cat(file=stderr(), paste0("  FLAG_BULK_DISPLAY: ", FLAG_BULK_DISPLAY, "\n"))
+
+    # v95: Debug boudariestt
+    if (exists("boudariestt") && !is.null(boudariestt)) {
+      cat(file=stderr(), paste0("  boudariestt$xmax: ", boudariestt$xmax, "\n"))
+      cat(file=stderr(), paste0("  boudariestt$xmin: ", boudariestt$xmin, "\n"))
+    } else {
+      cat(file=stderr(), paste0("  WARNING: boudariestt is NULL or doesn't exist!\n"))
+    }
+
+    # v95: Wrap in tryCatch to catch any errors
+    p <- tryCatch({
+      result <- func.make.second.legend(
+        p,
+        FLAG_BULK_DISPLAY,
+        how_many_hi,
+        heat_flag,
+        how_many_boxes,
+        how_mant_rows,
+        boudariestt,
+        y_off_base,
+        high_title_list,
+        size_font_legend_title,
+        high_label_list,
+        size_font_legend_text,
+        high_color_list,
+        a,
+        b,
+        x_range_min,
+        show_boot_flag,
+        size_90,
+        size_80,
+        size_70,
+        man_adjust_image_of_second_legend,
+        man_multiply_second_legend,
+        man_multiply_second_legend_text,
+        man_multiply_elipse,
+        man_space_second_legend,
+        man_space_second_legend_multiplier,
+        man_offset_for_highlight_legend_x,
+        debug_mode,
+        boot_values,
+        man_offset_second_legend,
+        width,
+        bootstrap_label_size
+      )
+      cat(file=stderr(), paste0("  func.make.second.legend: SUCCESS\n"))
+      result
+    }, error = function(e) {
+      cat(file=stderr(), paste0("  func.make.second.legend ERROR: ", e$message, "\n"))
+      cat(file=stderr(), paste0("  Returning plot without second legend modifications\n"))
+      p  # Return original plot on error
+    })
+
+    cat(file=stderr(), paste0("=== v95: After func.make.second.legend ===\n"))
     cat(file=stderr(), paste0("  p layers: ", length(p$layers), "\n"))
+    cat(file=stderr(), paste0("  Layer types: ", paste(sapply(p$layers, function(l) class(l$geom)[1]), collapse=", "), "\n"))
   }
 
   # v94: DEBUG - before bootstrap triangles
@@ -5891,13 +5913,14 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v94 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v95 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("DEBUG: Added comprehensive layer tracking to find where heatmap layers are lost"),
-                              tags$li("Tracking p layers: after heatmap, after if(FALSE) block, before/after func.make.second.legend, before bootstrap"),
-                              tags$li("This will help identify the exact location where GeomTile layers disappear")
+                              tags$li("DEBUG: Wrapped func.make.second.legend in tryCatch to catch errors"),
+                              tags$li("Added boudariestt$xmax and xmin debug output before the call"),
+                              tags$li("Shows FLAG_BULK_DISPLAY and heat_flag values for diagnosis"),
+                              tags$li("Will show specific error message if func.make.second.legend fails")
                             )
                      )
             )
