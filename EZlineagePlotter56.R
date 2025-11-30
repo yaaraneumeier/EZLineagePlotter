@@ -5492,7 +5492,6 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       cat(file=stderr(), paste0("  v88: WARNING - Plot cannot be built, skipping all expansion\n"))
     }
   }
-  } # END if (FALSE) - v91: End of commented out original complex heatmap code
   # ========================================================================
 
   # Default ellipse parameters if not set
@@ -5865,15 +5864,12 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v91 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v92 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("SIMPLIFIED HEATMAP: Replaced 800+ lines of complex heatmap code with simple basic implementation"),
-                              tags$li("Purpose: Prove that a simple gheatmap call works before rebuilding complexity"),
-                              tags$li("Single gheatmap call with viridis (discrete) or gradient2 (continuous) scale"),
-                              tags$li("Complex heatmap logic preserved in if(FALSE) block for reference"),
-                              tags$li("See HEATMAP_REBUILD_PLAN.md for step-by-step rebuild guide")
+                              tags$li("SYNTAX FIX: Removed extra closing brace left over from v91 if(FALSE) block removal"),
+                              tags$li("File now parses correctly without R syntax errors")
                             )
                      )
             )
