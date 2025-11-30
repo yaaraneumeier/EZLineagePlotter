@@ -5241,16 +5241,43 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     cat(file=stderr(), paste0("  Setting coord_flip xlim to: [", final_xrange[1], ", ", expected_xmax, "]\n"))
     cat(file=stderr(), paste0("========================================\n"))
 
-    # v74: Use coord_flip (not coord_cartesian) to preserve ggtree's coordinate system
-    # Using coord_cartesian was replacing coord_flip which broke the heatmap display
-    # Note: coord_flip interprets xlim as the vertical axis limits and ylim as horizontal
-    # For ggtree: x is tree depth (displayed horizontally after flip), y is tip position (displayed vertically)
-    # We need to expand x (which becomes horizontal after flip) to show heatmap
-    p <- p + coord_flip(xlim = c(final_xrange[1], expected_xmax), clip = "off")
+    # v78: Use ggtree's hexpand() to expand plot area for heatmap visibility
+    # CRITICAL FIX: Do NOT use coord_flip() here - it replaces ggtree's coordinate system
+    # and causes "Problem while setting up geom" errors during rendering.
+    # Instead, use ggtree's built-in expansion functions.
 
-    cat(file=stderr(), paste0("  v74: Using coord_flip instead of coord_cartesian\n"))
+    # Calculate how much expansion is needed on the right side (positive x direction)
+    # The heatmap extends from ~new_heat_x to ~(new_heat_x + wi * num_cols)
+    # We need to expand the plot to show this
+    expansion_ratio <- (expected_xmax - final_xrange[2]) / abs(final_xrange[1] - final_xrange[2])
+    expansion_ratio <- max(0.3, expansion_ratio)  # At least 30% expansion
 
-    # v71: Final repair after coordinate change
+    cat(file=stderr(), paste0("  v78: Using hexpand() with ratio: ", expansion_ratio, "\n"))
+
+    # Use hexpand to expand the plot area to show heatmap
+    # hexpand adds expansion to the right side (positive x direction)
+    tryCatch({
+      p <- p + ggtree::hexpand(ratio = expansion_ratio, direction = 1)
+      cat(file=stderr(), paste0("  v78: hexpand applied successfully\n"))
+    }, error = function(e) {
+      cat(file=stderr(), paste0("  v78: hexpand failed: ", e$message, "\n"))
+      # Fallback: try xlim_expand if available
+      tryCatch({
+        p <- p + ggtree::xlim_expand(c(0, expected_xmax), "right")
+        cat(file=stderr(), paste0("  v78: xlim_expand applied as fallback\n"))
+      }, error = function(e2) {
+        cat(file=stderr(), paste0("  v78: xlim_expand also failed: ", e2$message, "\n"))
+        # Last resort: use scale_x_continuous to expand limits without replacing coord
+        tryCatch({
+          p <- p + scale_x_continuous(expand = expansion(mult = c(0.05, expansion_ratio)))
+          cat(file=stderr(), paste0("  v78: scale_x_continuous applied as last fallback\n"))
+        }, error = function(e3) {
+          cat(file=stderr(), paste0("  v78: All expansion methods failed\n"))
+        })
+      })
+    })
+
+    # v71: Final repair after any changes
     p <- func.repair.ggtree.mapping(p)
   }
 
@@ -5510,13 +5537,13 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v77 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v78 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("FIX: Removed duplicate gheatmap call that was causing 'Problem while setting up geom' errors"),
-                              tags$li("The v75/v76 duplicate calls corrupted the plot when gheatmap was applied to an already-heatmapped tree"),
-                              tags$li("A single gheatmap call is sufficient and now works correctly for heatmap display")
+                              tags$li("FIX: Heatmap now displays correctly by using ggtree's hexpand() instead of coord_flip()"),
+                              tags$li("Using coord_flip(xlim=...) was replacing ggtree's coordinate system and causing 'Problem while setting up geom' errors"),
+                              tags$li("The hexpand() function properly expands the plot area to show heatmap tiles without breaking the coordinate system")
                             )
                      )
             )
