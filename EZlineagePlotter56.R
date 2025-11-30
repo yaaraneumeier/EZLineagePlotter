@@ -4702,17 +4702,19 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       }
       
       # Replace heat legend labels if requested
+      # v87: CRITICAL FIX - renamed loop variable from 'j' to 'legend_key' to avoid overwriting heatmap counter
       if (!is.na(heat_legend_replace[1])) {
-        for (j in names(heat_legend_replace)) {
-          if (j %in% custom_column_labels) {
-            custom_column_labels[custom_column_labels == j] <- heat_legend_replace[j]
+        for (legend_key in names(heat_legend_replace)) {
+          if (legend_key %in% custom_column_labels) {
+            custom_column_labels[custom_column_labels == legend_key] <- heat_legend_replace[legend_key]
           }
         }
-      }   
-      
+      }
+
       # Calculate max column name length again for formatting
+      # v87: CRITICAL FIX - renamed loop variable from 'j' to 'col_idx2' to avoid overwriting heatmap counter
       max_len_col_name_heat <- 0
-      for (j in 1:length(custom_column_labels)) {
+      for (col_idx2 in 1:length(custom_column_labels)) {
         max_len_col_name_heat <- max(max_len_col_name_heat, max(nchar(custom_column_labels)))
       }
 
@@ -5610,14 +5612,15 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v86 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v87 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("CRITICAL FIX: Fixed loop variable naming conflict that caused 'Problem while setting up geom' heatmap error"),
-                              tags$li("The bug: a 'for (j in ...)' loop was overwriting the heatmap counter 'j', making j=2 instead of j=1"),
-                              tags$li("This caused incorrect scale application (viridis_d + hue on top of scale_fill_manual)"),
-                              tags$li("Renamed conflicting loop variable from 'j' to 'h_idx' at line 4569")
+                              tags$li("CRITICAL FIX: Found and fixed TWO MORE 'for (j in ...)' loops that were overwriting the heatmap counter"),
+                              tags$li("The bug: loops at lines 4706 and 4715 were setting j to 2 instead of 1 for the first heatmap"),
+                              tags$li("Line 4706: 'for (j in names(heat_legend_replace))' renamed to 'for (legend_key in ...)'"),
+                              tags$li("Line 4717: 'for (j in 1:length(custom_column_labels))' renamed to 'for (col_idx2 in ...)'"),
+                              tags$li("This caused incorrect theme/scale application, leading to 'Problem while setting up geom' errors")
                             )
                      )
             )
