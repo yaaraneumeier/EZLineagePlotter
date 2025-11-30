@@ -4561,9 +4561,13 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     }
     
     # Calculate max column name length for formatting
+    # v86: CRITICAL FIX - renamed loop variable from 'j' to 'h_idx' to avoid conflict with
+    # the heatmap counter 'j' that's used later in the code for tracking enabled heatmaps.
+    # Using 'j' here was overwriting the counter and causing j=2 instead of j=1 for the
+    # first heatmap, which led to incorrect scale application and "Problem while setting up geom" errors.
     max_len_col_name_heat <- 0
-    for (j in 1:length(heat_map_title_list)) {  
-      colnames_heat <- colnames(dxdf440_for_heat[[j]])
+    for (h_idx in 1:length(heat_map_title_list)) {
+      colnames_heat <- colnames(dxdf440_for_heat[[h_idx]])
       max_len_col_name_heat <- max(max_len_col_name_heat, max(nchar(colnames_heat)))
     }
     
@@ -5606,13 +5610,14 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v85 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v86 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("FIX: Removed direct layer data modification that caused 'Problem while setting up geom' error"),
-                              tags$li("FIX: Scale now uses actual tile layer values instead of source data"),
-                              tags$li("FIX: Fixed scoping issue in hexpand/xlim_expand fallback code")
+                              tags$li("CRITICAL FIX: Fixed loop variable naming conflict that caused 'Problem while setting up geom' heatmap error"),
+                              tags$li("The bug: a 'for (j in ...)' loop was overwriting the heatmap counter 'j', making j=2 instead of j=1"),
+                              tags$li("This caused incorrect scale application (viridis_d + hue on top of scale_fill_manual)"),
+                              tags$li("Renamed conflicting loop variable from 'j' to 'h_idx' at line 4569")
                             )
                      )
             )
