@@ -5627,32 +5627,46 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   cat(file=stderr(), paste0("  p layers: ", length(p$layers), "\n"))
   cat(file=stderr(), paste0("  Layer types: ", paste(sapply(p$layers, function(l) class(l$geom)[1]), collapse=", "), "\n"))
 
+  # v96: FIX - Repair corrupted mapping BEFORE adding bootstrap triangles
+  # gheatmap() corrupts the plot's @mapping attribute (changes it from ggplot2::mapping to data.frame)
+  # This causes geom_nodepoint() calls below to crash silently
+  # We must repair the mapping BEFORE adding any new layers
+  cat(file=stderr(), paste0("\n=== v96: Repairing mapping before bootstrap triangles ===\n"))
+  cat(file=stderr(), paste0("  Mapping class before repair: ", paste(class(p$mapping), collapse=", "), "\n"))
+  p <- func.repair.ggtree.mapping(p, verbose = TRUE)
+  cat(file=stderr(), paste0("  Mapping class after repair: ", paste(class(p$mapping), collapse=", "), "\n"))
+
   # v90: Add bootstrap triangles AFTER heatmap processing to avoid "missing x and y" error
   # When gheatmap transforms the plot data, any geom_nodepoint layers added beforehand
   # lose their x and y aesthetic mappings. By adding them here (after gheatmap),
   # the layers are created with the correct data structure.
   if (bootstrap_triangles_enabled && !is.null(bootstrap_triangles_params)) {
     cat(file=stderr(), paste0("\n=== v90: Adding bootstrap triangles after heatmap ===\n"))
-    p <- p +
-      geom_nodepoint(
-        position = position_nudge(x = bootstrap_triangles_params$man_boot_x_offset, y = 0),
-        aes(subset = boot_val >= 0.9),
-        size = bootstrap_triangles_params$size_90, shape = 24, fill = "grey36", colour = "grey20",
-        show.legend = FALSE, alpha = 1/2
-      ) +
-      geom_nodepoint(
-        position = position_nudge(x = bootstrap_triangles_params$man_boot_x_offset, y = 0),
-        aes(subset = boot_val >= 0.8 & boot_val < 0.9),
-        size = bootstrap_triangles_params$size_80, shape = 24, fill = "grey36", colour = "grey20",
-        show.legend = FALSE, alpha = 1/2
-      ) +
-      geom_nodepoint(
-        position = position_nudge(x = bootstrap_triangles_params$man_boot_x_offset, y = 0),
-        aes(subset = boot_val >= 0.7 & boot_val < 0.8),
-        size = bootstrap_triangles_params$size_70, shape = 24, fill = "grey36", colour = "grey20",
-        show.legend = FALSE, alpha = 1/2
-      )
-    cat(file=stderr(), paste0("  Bootstrap triangles added successfully\n"))
+    tryCatch({
+      p <- p +
+        geom_nodepoint(
+          position = position_nudge(x = bootstrap_triangles_params$man_boot_x_offset, y = 0),
+          aes(subset = boot_val >= 0.9),
+          size = bootstrap_triangles_params$size_90, shape = 24, fill = "grey36", colour = "grey20",
+          show.legend = FALSE, alpha = 1/2
+        ) +
+        geom_nodepoint(
+          position = position_nudge(x = bootstrap_triangles_params$man_boot_x_offset, y = 0),
+          aes(subset = boot_val >= 0.8 & boot_val < 0.9),
+          size = bootstrap_triangles_params$size_80, shape = 24, fill = "grey36", colour = "grey20",
+          show.legend = FALSE, alpha = 1/2
+        ) +
+        geom_nodepoint(
+          position = position_nudge(x = bootstrap_triangles_params$man_boot_x_offset, y = 0),
+          aes(subset = boot_val >= 0.7 & boot_val < 0.8),
+          size = bootstrap_triangles_params$size_70, shape = 24, fill = "grey36", colour = "grey20",
+          show.legend = FALSE, alpha = 1/2
+        )
+      cat(file=stderr(), paste0("  Bootstrap triangles added successfully\n"))
+    }, error = function(e) {
+      cat(file=stderr(), paste0("  v96 ERROR adding bootstrap triangles: ", e$message, "\n"))
+      cat(file=stderr(), paste0("  Continuing without bootstrap triangles\n"))
+    })
     cat(file=stderr(), paste0("================================\n"))
   }
 
@@ -5913,14 +5927,14 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v95 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v96 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("DEBUG: Wrapped func.make.second.legend in tryCatch to catch errors"),
-                              tags$li("Added boudariestt$xmax and xmin debug output before the call"),
-                              tags$li("Shows FLAG_BULK_DISPLAY and heat_flag values for diagnosis"),
-                              tags$li("Will show specific error message if func.make.second.legend fails")
+                              tags$li("FIX: Repair corrupted mapping BEFORE bootstrap triangles"),
+                              tags$li("gheatmap() corrupts @mapping, causing geom_nodepoint crash"),
+                              tags$li("Call func.repair.ggtree.mapping() before adding bootstrap layers"),
+                              tags$li("Wrapped bootstrap triangles in tryCatch for better error reporting")
                             )
                      )
             )
