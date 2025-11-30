@@ -4778,6 +4778,9 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       # The duplicate calls in v75/v76 were causing "Problem while setting up geom" errors
       # because calling gheatmap on an already-heatmapped plot corrupts the layer structure.
       # A single gheatmap call properly adds the heatmap tiles to the tree.
+      # v80: FIX - Changed color = NA to color = "transparent" to fix
+      # "Problem while setting up geom" error in some ggplot2 versions.
+      # NA as a color value can cause issues during geom setup in newer ggplot2.
       pr440_short_tips_TRY_heat <- gheatmap(
         tt,
         data = dxdf440_for_heat[[j1]],
@@ -4790,11 +4793,29 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
         legend_title = heat_map_title_list[[j1]],
         colnames = TRUE,
         custom_column_labels = custom_column_labels,
-        color = NA
+        color = "transparent"
       )
 
       # v71: Immediately repair mapping after gheatmap (common source of corruption)
       pr440_short_tips_TRY_heat <- func.repair.ggtree.mapping(pr440_short_tips_TRY_heat, verbose = TRUE)
+
+      # v80: Convert tile layer's 'value' column to factor to match scale expectations
+      # gheatmap sometimes converts factors to characters, causing scale_fill_manual issues
+      for (layer_idx in seq_along(pr440_short_tips_TRY_heat$layers)) {
+        layer <- pr440_short_tips_TRY_heat$layers[[layer_idx]]
+        if (inherits(layer$geom, "GeomTile") && !is.null(layer$data) && is.data.frame(layer$data)) {
+          if ("value" %in% names(layer$data) && !is.factor(layer$data$value)) {
+            cat(file=stderr(), paste0("  v80: Converting tile value to factor\n"))
+            # Get unique non-NA values as factor levels
+            unique_vals <- sort(unique(na.omit(layer$data$value)))
+            pr440_short_tips_TRY_heat$layers[[layer_idx]]$data$value <- factor(
+              layer$data$value,
+              levels = unique_vals
+            )
+            cat(file=stderr(), paste0("  v80: Factor levels: ", paste(unique_vals, collapse=", "), "\n"))
+          }
+        }
+      }
 
       # v71: DEBUG - verify gheatmap result and tile layer data
       cat(file=stderr(), paste0("\n=== v71: POST-GHEATMAP DEBUG ===\n"))
@@ -5454,8 +5475,27 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   })
   cat(file=stderr(), paste0("============================================\n"))
 
-  # Save the plot to file
-  ggsave(out_file_path, plot = p, width = width, height = height, units = units_out, limitsize = FALSE)
+  # v80: Save the plot with robust error handling
+  tryCatch({
+    ggsave(out_file_path, plot = p, width = width, height = height, units = units_out, limitsize = FALSE)
+  }, error = function(e) {
+    cat(file=stderr(), paste0("\n=== v80: GGSAVE ERROR ===\n"))
+    cat(file=stderr(), paste0("  Error message: ", e$message, "\n"))
+    cat(file=stderr(), paste0("  Attempting fallback rendering...\n"))
+
+    # v80: Fallback - try to repair plot and render again
+    tryCatch({
+      p_repaired <- func.repair.ggtree.mapping(p, verbose = TRUE)
+      # Try with simplified rendering (ragg graphics device if available)
+      ggsave(out_file_path, plot = p_repaired, width = width, height = height,
+             units = units_out, limitsize = FALSE, device = "png")
+      cat(file=stderr(), paste0("  Fallback rendering succeeded\n"))
+    }, error = function(e2) {
+      cat(file=stderr(), paste0("  Fallback also failed: ", e2$message, "\n"))
+      cat(file=stderr(), paste0("  Please check your data and try again\n"))
+      stop(e)  # Re-throw original error
+    })
+  })
 
   return(p)
 }
@@ -5539,12 +5579,14 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v79 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v80 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("FIX: Added missing bootstrap_label_size parameter to func.make.second.legend"),
-                              tags$li("This fixes the error: object 'bootstrap_label_size' not found")
+                              tags$li("FIX: Heatmap 'Problem while setting up geom' error"),
+                              tags$li("Changed gheatmap color=NA to color='transparent' for ggplot2 compatibility"),
+                              tags$li("Convert tile value column to factor to match scale expectations"),
+                              tags$li("Improved ggsave error handling with fallback rendering")
                             )
                      )
             )
