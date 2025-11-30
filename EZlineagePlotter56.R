@@ -4718,9 +4718,11 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
         max_len_col_name_heat <- max(max_len_col_name_heat, max(nchar(custom_column_labels)))
       }
 
-      # v66: Convert discrete heatmap data to factors for proper color mapping
+      # v88: CHANGED - Skip factor conversion for discrete heatmap data
+      # gheatmap internally converts factors back to character anyway, and the factor
+      # conversion was potentially causing issues. Just log the unique values for debugging.
       if (!is.null(heat_param) && heat_param['is_discrete'] == TRUE) {
-        cat(file=stderr(), paste0("\n=== v66: Converting discrete heatmap to factors ===\n"))
+        cat(file=stderr(), paste0("\n=== v88: Discrete heatmap data analysis (NOT converting to factors) ===\n"))
         for (col_idx in 1:ncol(dxdf440_for_heat[[j1]])) {
           col_name <- colnames(dxdf440_for_heat[[j1]])[col_idx]
           col_vals <- dxdf440_for_heat[[j1]][, col_idx]
@@ -4728,8 +4730,9 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
           cat(file=stderr(), paste0("  Column '", col_name, "': ", length(unique_vals), " unique values\n"))
           cat(file=stderr(), paste0("  Unique values: ", paste(head(unique_vals, 10), collapse=", "),
                                     if(length(unique_vals) > 10) "..." else "", "\n"))
-          # Convert to factor with sorted levels
-          dxdf440_for_heat[[j1]][, col_idx] <- factor(col_vals, levels = unique_vals)
+          cat(file=stderr(), paste0("  Current class: ", class(col_vals)[1], "\n"))
+          # v88: Keep data as-is (character), don't convert to factor
+          # gheatmap will handle the data internally
         }
         cat(file=stderr(), paste0("================================\n"))
       }
@@ -5065,7 +5068,44 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             cat(file=stderr(), paste0("  NA color: ", na_color, "\n"))
             cat(file=stderr(), paste0("================================\n"))
 
-            # v85: Apply scale with error handling
+            # v88: CRITICAL FIX - Test ggplot_build BEFORE applying scale to diagnose root cause
+            cat(file=stderr(), paste0("  v88: Testing ggplot_build BEFORE scale application...\n"))
+            pre_scale_ok <- tryCatch({
+              test_build_pre <- ggplot2::ggplot_build(pr440_short_tips_TRY_heat)
+              cat(file=stderr(), paste0("  v88: Pre-scale ggplot_build: SUCCESS\n"))
+              TRUE
+            }, error = function(e) {
+              cat(file=stderr(), paste0("  v88: Pre-scale ggplot_build: FAILED - ", e$message, "\n"))
+              cat(file=stderr(), paste0("  v88: ERROR IS IN GHEATMAP OUTPUT, NOT SCALE\n"))
+              # Get more info about the error
+              cat(file=stderr(), paste0("  v88: Checking individual layers...\n"))
+              for (li in seq_along(pr440_short_tips_TRY_heat$layers)) {
+                layer_test <- tryCatch({
+                  # Try to compute layer data
+                  layer <- pr440_short_tips_TRY_heat$layers[[li]]
+                  if (is.function(layer$data)) {
+                    test_d <- layer$data(pr440_short_tips_TRY_heat$data)
+                  } else {
+                    test_d <- layer$data
+                  }
+                  # Check if layer has valid mapping
+                  if (!is.null(layer$mapping)) {
+                    mapping_names <- names(layer$mapping)
+                    cat(file=stderr(), paste0("    Layer ", li, " (", class(layer$geom)[1], "): mapping=", paste(mapping_names, collapse=","), "\n"))
+                  } else {
+                    cat(file=stderr(), paste0("    Layer ", li, " (", class(layer$geom)[1], "): no mapping\n"))
+                  }
+                  TRUE
+                }, error = function(e2) {
+                  cat(file=stderr(), paste0("    Layer ", li, " (", class(pr440_short_tips_TRY_heat$layers[[li]]$geom)[1], "): FAILED - ", e2$message, "\n"))
+                  FALSE
+                })
+              }
+              FALSE
+            })
+
+            # v88: Apply scale regardless of pre-test result (the scale itself isn't the problem)
+            cat(file=stderr(), paste0("  v88: Applying scale_fill_manual...\n"))
             tryCatch({
               pr440_short_tips_TRY_heat <- pr440_short_tips_TRY_heat +
                 scale_fill_manual(
@@ -5073,15 +5113,26 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
                   name = heat_map_title_list[[j1]],
                   na.value = na_color
                 )
-              cat(file=stderr(), paste0("  v85: scale_fill_manual applied successfully\n"))
+              cat(file=stderr(), paste0("  v88: scale_fill_manual applied\n"))
+
+              # v88: Test after scale
+              post_scale_ok <- tryCatch({
+                test_build_post <- ggplot2::ggplot_build(pr440_short_tips_TRY_heat)
+                cat(file=stderr(), paste0("  v88: Post-scale ggplot_build: SUCCESS\n"))
+                TRUE
+              }, error = function(e) {
+                cat(file=stderr(), paste0("  v88: Post-scale ggplot_build: FAILED - ", e$message, "\n"))
+                FALSE
+              })
+
             }, error = function(e) {
-              cat(file=stderr(), paste0("  v85: scale_fill_manual failed: ", e$message, "\n"))
-              cat(file=stderr(), paste0("  v85: Trying scale_fill_discrete as fallback\n"))
+              cat(file=stderr(), paste0("  v88: scale_fill_manual failed: ", e$message, "\n"))
+              cat(file=stderr(), paste0("  v88: Trying scale_fill_discrete as fallback\n"))
               tryCatch({
                 pr440_short_tips_TRY_heat <<- pr440_short_tips_TRY_heat +
                   scale_fill_discrete(name = heat_map_title_list[[j1]], na.value = na_color)
               }, error = function(e2) {
-                cat(file=stderr(), paste0("  v85: scale_fill_discrete also failed: ", e2$message, "\n"))
+                cat(file=stderr(), paste0("  v88: scale_fill_discrete also failed: ", e2$message, "\n"))
               })
             })
           }
@@ -5285,55 +5336,65 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     cat(file=stderr(), paste0("  Setting coord_flip xlim to: [", final_xrange[1], ", ", expected_xmax, "]\n"))
     cat(file=stderr(), paste0("========================================\n"))
 
-    # v78: Use ggtree's hexpand() to expand plot area for heatmap visibility
-    # CRITICAL FIX: Do NOT use coord_flip() here - it replaces ggtree's coordinate system
-    # and causes "Problem while setting up geom" errors during rendering.
-    # Instead, use ggtree's built-in expansion functions.
-
-    # Calculate how much expansion is needed on the right side (positive x direction)
-    # The heatmap extends from ~new_heat_x to ~(new_heat_x + wi * num_cols)
-    # We need to expand the plot to show this
-    expansion_ratio <- (expected_xmax - final_xrange[2]) / abs(final_xrange[1] - final_xrange[2])
-    expansion_ratio <- max(0.3, expansion_ratio)  # At least 30% expansion
-
-    cat(file=stderr(), paste0("  v78: Using hexpand() with ratio: ", expansion_ratio, "\n"))
-
-    # v85: Use hexpand to expand the plot area to show heatmap
-    # FIXED: Use <<- to modify outer scope p variable
-    expansion_success <- FALSE
-    tryCatch({
-      p <- p + ggtree::hexpand(ratio = expansion_ratio, direction = 1)
-      expansion_success <- TRUE
-      cat(file=stderr(), paste0("  v78: hexpand applied successfully\n"))
+    # v88: SIMPLIFIED EXPANSION - Skip expansion functions if plot can't be built
+    # Test if plot is buildable before trying expansion
+    plot_buildable <- tryCatch({
+      ggplot2::ggplot_build(p)
+      cat(file=stderr(), paste0("  v88: Plot is buildable, proceeding with expansion\n"))
+      TRUE
     }, error = function(e) {
-      cat(file=stderr(), paste0("  v78: hexpand failed: ", e$message, "\n"))
+      cat(file=stderr(), paste0("  v88: Plot is NOT buildable: ", e$message, "\n"))
+      cat(file=stderr(), paste0("  v88: Skipping expansion - will render plot as-is\n"))
+      FALSE
     })
 
-    # v85: Fallback expansions if hexpand failed
-    if (!expansion_success) {
-      cat(file=stderr(), paste0("  v85: Trying fallback expansion methods\n"))
-      tryCatch({
-        p <- p + ggtree::xlim_expand(c(0, expected_xmax), "right")
-        expansion_success <- TRUE
-        cat(file=stderr(), paste0("  v78: xlim_expand applied as fallback\n"))
-      }, error = function(e2) {
-        cat(file=stderr(), paste0("  v78: xlim_expand also failed: ", e2$message, "\n"))
-      })
-    }
+    if (plot_buildable) {
+      # Calculate how much expansion is needed on the right side (positive x direction)
+      expansion_ratio <- (expected_xmax - final_xrange[2]) / abs(final_xrange[1] - final_xrange[2])
+      expansion_ratio <- max(0.3, expansion_ratio)
 
-    if (!expansion_success) {
-      # Last resort: try scale_x_continuous
-      tryCatch({
-        p <- p + scale_x_continuous(expand = expansion(mult = c(0.05, expansion_ratio)))
-        expansion_success <- TRUE
-        cat(file=stderr(), paste0("  v78: scale_x_continuous applied as last fallback\n"))
-      }, error = function(e3) {
-        cat(file=stderr(), paste0("  v78: All expansion methods failed, continuing anyway\n"))
-      })
-    }
+      cat(file=stderr(), paste0("  v88: Using hexpand() with ratio: ", expansion_ratio, "\n"))
 
-    # v71: Final repair after any changes
-    p <- func.repair.ggtree.mapping(p)
+      # v88: Try hexpand first
+      expansion_success <- FALSE
+      tryCatch({
+        p <- p + ggtree::hexpand(ratio = expansion_ratio, direction = 1)
+        expansion_success <- TRUE
+        cat(file=stderr(), paste0("  v88: hexpand applied successfully\n"))
+      }, error = function(e) {
+        cat(file=stderr(), paste0("  v88: hexpand failed: ", e$message, "\n"))
+      })
+
+      # v88: Fallback to xlim_expand
+      if (!expansion_success) {
+        cat(file=stderr(), paste0("  v88: Trying xlim_expand fallback\n"))
+        tryCatch({
+          p <- p + ggtree::xlim_expand(c(0, expected_xmax), "right")
+          expansion_success <- TRUE
+          cat(file=stderr(), paste0("  v88: xlim_expand applied\n"))
+        }, error = function(e2) {
+          cat(file=stderr(), paste0("  v88: xlim_expand also failed: ", e2$message, "\n"))
+        })
+      }
+
+      # v88: Final fallback - just add geom_blank with expanded limits
+      if (!expansion_success) {
+        tryCatch({
+          # Use geom_blank to expand plot limits without modifying coordinate system
+          p <- p + geom_blank(data = data.frame(x = c(final_xrange[1], expected_xmax), y = c(1, 1)),
+                              aes(x = x, y = y))
+          cat(file=stderr(), paste0("  v88: geom_blank expansion applied\n"))
+        }, error = function(e3) {
+          cat(file=stderr(), paste0("  v88: All expansion methods failed\n"))
+        })
+      }
+
+      # Repair mapping after changes
+      p <- func.repair.ggtree.mapping(p)
+    } else {
+      # v88: Plot is not buildable - don't add any expansion, just try to render
+      cat(file=stderr(), paste0("  v88: WARNING - Plot cannot be built, skipping all expansion\n"))
+    }
   }
 
   # Default ellipse parameters if not set
@@ -5508,27 +5569,92 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   })
   cat(file=stderr(), paste0("============================================\n"))
 
-  # v80: Save the plot with robust error handling
+  # v88: Save the plot with comprehensive error handling and multiple fallbacks
+  save_success <- FALSE
+
+  # v88: Primary attempt - standard ggsave
   tryCatch({
     ggsave(out_file_path, plot = p, width = width, height = height, units = units_out, limitsize = FALSE)
+    save_success <- TRUE
+    cat(file=stderr(), paste0("\n=== v88: Plot saved successfully ===\n"))
   }, error = function(e) {
-    cat(file=stderr(), paste0("\n=== v80: GGSAVE ERROR ===\n"))
-    cat(file=stderr(), paste0("  Error message: ", e$message, "\n"))
-    cat(file=stderr(), paste0("  Attempting fallback rendering...\n"))
+    cat(file=stderr(), paste0("\n=== v88: GGSAVE ERROR ===\n"))
+    cat(file=stderr(), paste0("  Primary error: ", e$message, "\n"))
+  })
 
-    # v80: Fallback - try to repair plot and render again
+  # v88: Fallback 1 - repair mapping and try again
+  if (!save_success) {
+    cat(file=stderr(), paste0("  v88: Trying fallback 1 - repair mapping\n"))
     tryCatch({
       p_repaired <- func.repair.ggtree.mapping(p, verbose = TRUE)
-      # Try with simplified rendering (ragg graphics device if available)
       ggsave(out_file_path, plot = p_repaired, width = width, height = height,
-             units = units_out, limitsize = FALSE, device = "png")
-      cat(file=stderr(), paste0("  Fallback rendering succeeded\n"))
+             units = units_out, limitsize = FALSE)
+      save_success <- TRUE
+      cat(file=stderr(), paste0("  v88: Fallback 1 succeeded\n"))
     }, error = function(e2) {
-      cat(file=stderr(), paste0("  Fallback also failed: ", e2$message, "\n"))
-      cat(file=stderr(), paste0("  Please check your data and try again\n"))
-      stop(e)  # Re-throw original error
+      cat(file=stderr(), paste0("  v88: Fallback 1 failed: ", e2$message, "\n"))
     })
-  })
+  }
+
+  # v88: Fallback 2 - remove heatmap scale and try with defaults
+  if (!save_success && heat_flag) {
+    cat(file=stderr(), paste0("  v88: Trying fallback 2 - reset fill scale to defaults\n"))
+    tryCatch({
+      # Create fresh plot with default scale
+      p_default <- p + scale_fill_discrete(na.value = "white")
+      p_default <- func.repair.ggtree.mapping(p_default)
+      ggsave(out_file_path, plot = p_default, width = width, height = height,
+             units = units_out, limitsize = FALSE)
+      save_success <- TRUE
+      cat(file=stderr(), paste0("  v88: Fallback 2 succeeded (using default colors)\n"))
+    }, error = function(e3) {
+      cat(file=stderr(), paste0("  v88: Fallback 2 failed: ", e3$message, "\n"))
+    })
+  }
+
+  # v88: Fallback 3 - use print() to render instead of ggsave
+  if (!save_success) {
+    cat(file=stderr(), paste0("  v88: Trying fallback 3 - direct PNG rendering\n"))
+    tryCatch({
+      # Determine file extension
+      file_ext <- tolower(tools::file_ext(out_file_path))
+      if (file_ext == "png") {
+        png(out_file_path, width = width, height = height, units = units_out, res = 300)
+      } else if (file_ext == "pdf") {
+        pdf(out_file_path, width = width, height = height)
+      } else {
+        png(out_file_path, width = width, height = height, units = units_out, res = 300)
+      }
+      print(p)
+      dev.off()
+      save_success <- TRUE
+      cat(file=stderr(), paste0("  v88: Fallback 3 succeeded\n"))
+    }, error = function(e4) {
+      cat(file=stderr(), paste0("  v88: Fallback 3 failed: ", e4$message, "\n"))
+      tryCatch(dev.off(), error = function(x) {})  # Clean up device
+    })
+  }
+
+  # v88: Final fallback - save tree without heatmap
+  if (!save_success && heat_flag) {
+    cat(file=stderr(), paste0("  v88: Trying fallback 4 - save tree without heatmap\n"))
+    tryCatch({
+      # Use the original tree plot (tt) without heatmap
+      ggsave(out_file_path, plot = tt, width = width, height = height,
+             units = units_out, limitsize = FALSE)
+      save_success <- TRUE
+      cat(file=stderr(), paste0("  v88: Fallback 4 succeeded (saved tree only, no heatmap)\n"))
+      cat(file=stderr(), paste0("  v88: WARNING - Heatmap could not be rendered\n"))
+    }, error = function(e5) {
+      cat(file=stderr(), paste0("  v88: Fallback 4 failed: ", e5$message, "\n"))
+      stop(e5)  # Re-throw if all fallbacks fail
+    })
+  }
+
+  if (!save_success) {
+    cat(file=stderr(), paste0("  v88: All save attempts failed\n"))
+    stop("Could not save plot after multiple attempts")
+  }
 
   return(p)
 }
@@ -5555,7 +5681,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
 # Define UI
 ui <- dashboardPage(
-  dashboardHeader(title = "Lineage Tree Plotter v77"),
+  dashboardHeader(title = "Lineage Tree Plotter v88"),
   
   dashboardSidebar(
     width = 300,
@@ -5612,15 +5738,16 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v87 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v88 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("CRITICAL FIX: Found and fixed TWO MORE 'for (j in ...)' loops that were overwriting the heatmap counter"),
-                              tags$li("The bug: loops at lines 4706 and 4715 were setting j to 2 instead of 1 for the first heatmap"),
-                              tags$li("Line 4706: 'for (j in names(heat_legend_replace))' renamed to 'for (legend_key in ...)'"),
-                              tags$li("Line 4717: 'for (j in 1:length(custom_column_labels))' renamed to 'for (col_idx2 in ...)'"),
-                              tags$li("This caused incorrect theme/scale application, leading to 'Problem while setting up geom' errors")
+                              tags$li("COMPREHENSIVE DIAGNOSTICS: Added ggplot_build tests BEFORE and AFTER scale application"),
+                              tags$li("REMOVED factor conversion: gheatmap converts to character anyway, skip unnecessary conversion"),
+                              tags$li("IMPROVED expansion handling: Skip expansion if plot can't be built, avoid making things worse"),
+                              tags$li("MULTIPLE SAVE FALLBACKS: Try 4 different save methods if primary fails"),
+                              tags$li("FALLBACK 4: Save tree without heatmap if all else fails, so you still get output"),
+                              tags$li("Better error messages to help diagnose 'Problem while setting up geom' errors")
                             )
                      )
             )
