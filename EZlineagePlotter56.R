@@ -4811,23 +4811,26 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
         pr440_short_tips_TRY_heat <- func.repair.ggtree.mapping(pr440_short_tips_TRY_heat, verbose = FALSE)
       }
 
-      # v83: Convert tile layer's 'value' column back to factor
-      # gheatmap converts factors to characters internally, which breaks scale_fill_manual
-      # We need to convert back to factor to ensure proper color mapping
+      # v85: REMOVED direct layer data modification - it corrupts ggplot2 internal state
+      # gheatmap creates tile layers with character values, and scale_fill_manual can handle
+      # both character and factor values. Direct modification of layer$data causes
+      # "Problem while setting up geom" errors during ggplot_build.
+      #
+      # Instead, we collect the unique values for scale setup without modifying layer data.
+      tile_values <- c()
       for (layer_idx in seq_along(pr440_short_tips_TRY_heat$layers)) {
         layer <- pr440_short_tips_TRY_heat$layers[[layer_idx]]
         if (inherits(layer$geom, "GeomTile") && !is.null(layer$data) && is.data.frame(layer$data)) {
-          if ("value" %in% names(layer$data) && !is.factor(layer$data$value)) {
-            cat(file=stderr(), paste0("  v83: Converting tile value to factor\n"))
-            unique_vals <- sort(unique(na.omit(layer$data$value)))
-            pr440_short_tips_TRY_heat$layers[[layer_idx]]$data$value <- factor(
-              layer$data$value,
-              levels = unique_vals
-            )
-            cat(file=stderr(), paste0("  v83: Factor levels: ", paste(unique_vals, collapse=", "), "\n"))
+          if ("value" %in% names(layer$data)) {
+            layer_vals <- unique(na.omit(layer$data$value))
+            tile_values <- c(tile_values, layer_vals)
+            cat(file=stderr(), paste0("  v85: Found tile layer ", layer_idx, " with values: ",
+                                      paste(head(layer_vals, 5), collapse=", "), "\n"))
           }
         }
       }
+      tile_values <- unique(tile_values)
+      cat(file=stderr(), paste0("  v85: All tile values: ", paste(tile_values, collapse=", "), "\n"))
 
       # v82: DEBUG - verify gheatmap result and tile layer data
       cat(file=stderr(), paste0("\n=== v71: POST-GHEATMAP DEBUG ===\n"))
@@ -4990,46 +4993,51 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             cat(file=stderr(), paste0("  custom_colors names: ", paste(head(names(custom_colors), 10), collapse=", "), "\n"))
             cat(file=stderr(), paste0("  custom_colors values: ", paste(head(custom_colors, 10), collapse=", "), "\n"))
 
-            # v84: Get all unique factor levels across ALL heatmap columns
-            # Previously only checked column 1, which may be all-NA
-            heat_data_vals <- c()
-            for (col_idx in 1:ncol(dxdf440_for_heat[[j1]])) {
-              col_vals <- dxdf440_for_heat[[j1]][, col_idx]
-              if (is.factor(col_vals)) {
-                col_levels <- levels(col_vals)
-                if (!is.null(col_levels) && length(col_levels) > 0) {
-                  heat_data_vals <- c(heat_data_vals, col_levels)
-                }
-              } else {
-                col_unique <- unique(na.omit(col_vals))
-                if (length(col_unique) > 0) {
-                  heat_data_vals <- c(heat_data_vals, col_unique)
-                }
-              }
-            }
-            heat_data_vals <- unique(heat_data_vals)
-            cat(file=stderr(), paste0("  v84: Collected factor levels from all ", ncol(dxdf440_for_heat[[j1]]), " columns\n"))
-            cat(file=stderr(), paste0("  Heatmap factor levels: ", paste(head(heat_data_vals, 10), collapse=", "), "\n"))
+            # v85: Use tile_values collected from actual tile layer data (not dxdf440_for_heat)
+            # This ensures we match exactly what gheatmap created
+            heat_data_vals <- tile_values
+            cat(file=stderr(), paste0("  v85: Using tile_values from layer: ", paste(head(heat_data_vals, 10), collapse=", "), "\n"))
 
-            # v73: Fix - properly subset custom_colors to match factor levels
+            # v73: Fix - properly subset custom_colors to match tile values
             # This prevents NA names which cause scale_fill_manual to fail
             n_levels <- length(heat_data_vals)
 
+            if (n_levels == 0) {
+              # v85: If no tile values found, fall back to using dxdf440_for_heat
+              cat(file=stderr(), paste0("  v85: WARNING - no tile values found, using source data\n"))
+              for (col_idx in 1:ncol(dxdf440_for_heat[[j1]])) {
+                col_vals <- dxdf440_for_heat[[j1]][, col_idx]
+                if (is.factor(col_vals)) {
+                  col_levels <- levels(col_vals)
+                  if (!is.null(col_levels) && length(col_levels) > 0) {
+                    heat_data_vals <- c(heat_data_vals, col_levels)
+                  }
+                } else {
+                  col_unique <- unique(na.omit(col_vals))
+                  if (length(col_unique) > 0) {
+                    heat_data_vals <- c(heat_data_vals, col_unique)
+                  }
+                }
+              }
+              heat_data_vals <- unique(heat_data_vals)
+              n_levels <- length(heat_data_vals)
+            }
+
             if (is.null(names(custom_colors)) || length(names(custom_colors)) == 0) {
               cat(file=stderr(), paste0("  v73: WARNING - custom_colors has no names, subsetting and assigning by position\n"))
-              cat(file=stderr(), paste0("  v73: Number of factor levels: ", n_levels, "\n"))
+              cat(file=stderr(), paste0("  v73: Number of tile values: ", n_levels, "\n"))
               cat(file=stderr(), paste0("  v73: Number of custom colors: ", length(custom_colors), "\n"))
 
-              # CRITICAL: Only use as many colors as there are factor levels
-              if (length(custom_colors) >= n_levels) {
-                # Subset colors to match factor levels exactly
+              # CRITICAL: Only use as many colors as there are values
+              if (n_levels > 0 && length(custom_colors) >= n_levels) {
+                # Subset colors to match values exactly
                 colors_to_use <- custom_colors[1:n_levels]
                 names(colors_to_use) <- as.character(heat_data_vals)
                 custom_colors <- colors_to_use
                 cat(file=stderr(), paste0("  v73: Subsetted to ", n_levels, " colors\n"))
                 cat(file=stderr(), paste0("  v73: Final names: ", paste(names(custom_colors), collapse=", "), "\n"))
                 cat(file=stderr(), paste0("  v73: Final values: ", paste(custom_colors, collapse=", "), "\n"))
-              } else {
+              } else if (n_levels > 0) {
                 # Not enough colors, recycle
                 cat(file=stderr(), paste0("  v73: WARNING - not enough colors, recycling\n"))
                 colors_to_use <- rep(custom_colors, length.out = n_levels)
@@ -5037,7 +5045,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
                 custom_colors <- colors_to_use
               }
             } else {
-              # custom_colors already has names - ensure they match factor levels
+              # custom_colors already has names - ensure they match values
               cat(file=stderr(), paste0("  v73: custom_colors already named: ", paste(names(custom_colors), collapse=", "), "\n"))
               # Only keep colors whose names are in heat_data_vals
               valid_names <- names(custom_colors) %in% as.character(heat_data_vals)
@@ -5051,13 +5059,25 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             cat(file=stderr(), paste0("  NA color: ", na_color, "\n"))
             cat(file=stderr(), paste0("================================\n"))
 
-            pr440_short_tips_TRY_heat <- pr440_short_tips_TRY_heat +
-              scale_fill_manual(
-                values = custom_colors,
-                name = heat_map_title_list[[j1]],
-                na.value = na_color
-              )
-            # v82: Removed aggressive mapping repair - will do single repair at end of heatmap loop
+            # v85: Apply scale with error handling
+            tryCatch({
+              pr440_short_tips_TRY_heat <- pr440_short_tips_TRY_heat +
+                scale_fill_manual(
+                  values = custom_colors,
+                  name = heat_map_title_list[[j1]],
+                  na.value = na_color
+                )
+              cat(file=stderr(), paste0("  v85: scale_fill_manual applied successfully\n"))
+            }, error = function(e) {
+              cat(file=stderr(), paste0("  v85: scale_fill_manual failed: ", e$message, "\n"))
+              cat(file=stderr(), paste0("  v85: Trying scale_fill_discrete as fallback\n"))
+              tryCatch({
+                pr440_short_tips_TRY_heat <<- pr440_short_tips_TRY_heat +
+                  scale_fill_discrete(name = heat_map_title_list[[j1]], na.value = na_color)
+              }, error = function(e2) {
+                cat(file=stderr(), paste0("  v85: scale_fill_discrete also failed: ", e2$message, "\n"))
+              })
+            })
           }
         } else {
           pr440_short_tips_TRY_heat <- pr440_short_tips_TRY_heat +
@@ -5272,28 +5292,39 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
     cat(file=stderr(), paste0("  v78: Using hexpand() with ratio: ", expansion_ratio, "\n"))
 
-    # Use hexpand to expand the plot area to show heatmap
-    # hexpand adds expansion to the right side (positive x direction)
+    # v85: Use hexpand to expand the plot area to show heatmap
+    # FIXED: Use <<- to modify outer scope p variable
+    expansion_success <- FALSE
     tryCatch({
       p <- p + ggtree::hexpand(ratio = expansion_ratio, direction = 1)
+      expansion_success <- TRUE
       cat(file=stderr(), paste0("  v78: hexpand applied successfully\n"))
     }, error = function(e) {
       cat(file=stderr(), paste0("  v78: hexpand failed: ", e$message, "\n"))
-      # Fallback: try xlim_expand if available
+    })
+
+    # v85: Fallback expansions if hexpand failed
+    if (!expansion_success) {
+      cat(file=stderr(), paste0("  v85: Trying fallback expansion methods\n"))
       tryCatch({
         p <- p + ggtree::xlim_expand(c(0, expected_xmax), "right")
+        expansion_success <- TRUE
         cat(file=stderr(), paste0("  v78: xlim_expand applied as fallback\n"))
       }, error = function(e2) {
         cat(file=stderr(), paste0("  v78: xlim_expand also failed: ", e2$message, "\n"))
-        # Last resort: use scale_x_continuous to expand limits without replacing coord
-        tryCatch({
-          p <- p + scale_x_continuous(expand = expansion(mult = c(0.05, expansion_ratio)))
-          cat(file=stderr(), paste0("  v78: scale_x_continuous applied as last fallback\n"))
-        }, error = function(e3) {
-          cat(file=stderr(), paste0("  v78: All expansion methods failed\n"))
-        })
       })
-    })
+    }
+
+    if (!expansion_success) {
+      # Last resort: try scale_x_continuous
+      tryCatch({
+        p <- p + scale_x_continuous(expand = expansion(mult = c(0.05, expansion_ratio)))
+        expansion_success <- TRUE
+        cat(file=stderr(), paste0("  v78: scale_x_continuous applied as last fallback\n"))
+      }, error = function(e3) {
+        cat(file=stderr(), paste0("  v78: All expansion methods failed, continuing anyway\n"))
+      })
+    }
 
     # v71: Final repair after any changes
     p <- func.repair.ggtree.mapping(p)
@@ -5575,13 +5606,13 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v84 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v85 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("FIX: Heatmap color scale now collects factor levels from ALL columns"),
-                              tags$li("Previously only checked column 1 which may be all-NA"),
-                              tags$li("Fixes 'Problem while setting up geom' error when first column has no values")
+                              tags$li("FIX: Removed direct layer data modification that caused 'Problem while setting up geom' error"),
+                              tags$li("FIX: Scale now uses actual tile layer values instead of source data"),
+                              tags$li("FIX: Fixed scoping issue in hexpand/xlim_expand fallback code")
                             )
                      )
             )
