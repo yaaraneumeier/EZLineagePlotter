@@ -4229,27 +4229,25 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   # v53: print("Q")
   
   # Add bootstrap visualization if requested
+  # v90: Bootstrap triangle layers are stored separately and added AFTER gheatmap
+  # to avoid "missing aesthetics x and y" error when gheatmap transforms the data.
+  # See bootstrap_triangles_* variables used later after gheatmap section.
+  bootstrap_triangles_enabled <- FALSE
+  bootstrap_triangles_params <- NULL
+
   if (show_boot_flag == TRUE) {
     if (boot_values$'format' == 'triangles') {
-      pr440_short_tips_TRY_new_with_boot <- pr440_short_tips_TRY_new + 
-        geom_nodepoint(
-          position = position_nudge(x = man_boot_x_offset, y = 0),
-          aes(subset = boot_val >= 0.9),
-          size = size_90+bootstrap_label_size, shape = 24, fill = "grey36", colour = "grey20",
-          show.legend = FALSE, alpha = 1/2
-        ) + 
-        geom_nodepoint(
-          position = position_nudge(x = +man_boot_x_offset, y = 0),
-          aes(subset = boot_val >= 0.8 & boot_val < 0.9),
-          size = size_80+bootstrap_label_size, shape = 24, fill = "grey36", colour = "grey20",
-          show.legend = FALSE, alpha = 1/2
-        ) + 
-        geom_nodepoint(
-          position = position_nudge(x = man_boot_x_offset, y = 0),
-          aes(subset = boot_val >= 0.7 & boot_val < 0.8),
-          size = size_70+bootstrap_label_size, shape = 24, fill = "grey36", colour = "grey20",
-          show.legend = FALSE, alpha = 1/2
-        )
+      # v90: Store parameters for later - DO NOT add layers here
+      # These will be added after gheatmap to avoid breaking the layers
+      bootstrap_triangles_enabled <- TRUE
+      bootstrap_triangles_params <- list(
+        man_boot_x_offset = man_boot_x_offset,
+        size_90 = size_90 + bootstrap_label_size,
+        size_80 = size_80 + bootstrap_label_size,
+        size_70 = size_70 + bootstrap_label_size
+      )
+      # Set to base plot - triangles will be added later
+      pr440_short_tips_TRY_new_with_boot <- pr440_short_tips_TRY_new
     }
     
     if (boot_values$'format' == 'raw') {
@@ -5482,6 +5480,35 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     )
   }
 
+  # v90: Add bootstrap triangles AFTER heatmap processing to avoid "missing x and y" error
+  # When gheatmap transforms the plot data, any geom_nodepoint layers added beforehand
+  # lose their x and y aesthetic mappings. By adding them here (after gheatmap),
+  # the layers are created with the correct data structure.
+  if (bootstrap_triangles_enabled && !is.null(bootstrap_triangles_params)) {
+    cat(file=stderr(), paste0("\n=== v90: Adding bootstrap triangles after heatmap ===\n"))
+    p <- p +
+      geom_nodepoint(
+        position = position_nudge(x = bootstrap_triangles_params$man_boot_x_offset, y = 0),
+        aes(subset = boot_val >= 0.9),
+        size = bootstrap_triangles_params$size_90, shape = 24, fill = "grey36", colour = "grey20",
+        show.legend = FALSE, alpha = 1/2
+      ) +
+      geom_nodepoint(
+        position = position_nudge(x = bootstrap_triangles_params$man_boot_x_offset, y = 0),
+        aes(subset = boot_val >= 0.8 & boot_val < 0.9),
+        size = bootstrap_triangles_params$size_80, shape = 24, fill = "grey36", colour = "grey20",
+        show.legend = FALSE, alpha = 1/2
+      ) +
+      geom_nodepoint(
+        position = position_nudge(x = bootstrap_triangles_params$man_boot_x_offset, y = 0),
+        aes(subset = boot_val >= 0.7 & boot_val < 0.8),
+        size = bootstrap_triangles_params$size_70, shape = 24, fill = "grey36", colour = "grey20",
+        show.legend = FALSE, alpha = 1/2
+      )
+    cat(file=stderr(), paste0("  Bootstrap triangles added successfully\n"))
+    cat(file=stderr(), paste0("================================\n"))
+  }
+
   # Add score information if requested
   if (flag_calc_scores_for_tree == TRUE) {
     # v53: print("SCORE")
@@ -5739,14 +5766,14 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v89 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v90 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("CRITICAL FIX: Restored factor conversion for discrete heatmaps"),
-                              tags$li("The v88 change to skip factor conversion caused 'Problem while setting up geom' errors"),
-                              tags$li("Discrete heatmap data MUST be converted to factors for gheatmap/ggplot2 to work"),
-                              tags$li("Heatmap should now display correctly when applying to plot")
+                              tags$li("CRITICAL FIX: Fixed heatmap causing entire plot to disappear"),
+                              tags$li("Root cause: geom_nodepoint layers (bootstrap triangles) added before gheatmap lost x/y aesthetics"),
+                              tags$li("Solution: Bootstrap triangle layers are now added AFTER gheatmap transforms the data"),
+                              tags$li("This prevents 'geom_point_g_gtree requires missing aesthetics x and y' error")
                             )
                      )
             )
