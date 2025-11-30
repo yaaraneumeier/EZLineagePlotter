@@ -1554,7 +1554,8 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
                                     man_multiply_second_legend, man_multiply_second_legend_text,
                                     man_multiply_elipse, man_space_second_legend,
                                     man_space_second_legend_multiplier, man_offset_for_highlight_legend_x,
-                                    debug_mode = FALSE, boot_values = NA, man_offset_second_legend = 0, width) {
+                                    debug_mode = FALSE, boot_values = NA, man_offset_second_legend = 0, width,
+                                    bootstrap_label_size = 3.5) {
   if (debug_mode == TRUE) {
     # v53: print("boudariestt is")
     # v53: print(boudariestt)
@@ -5360,10 +5361,11 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       debug_mode,
       boot_values,
       man_offset_second_legend,
-      width
+      width,
+      bootstrap_label_size
     )
   }
-  
+
   # Add score information if requested
   if (flag_calc_scores_for_tree == TRUE) {
     # v53: print("SCORE")
@@ -5537,13 +5539,12 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v78 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v79 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("FIX: Heatmap now displays correctly by using ggtree's hexpand() instead of coord_flip()"),
-                              tags$li("Using coord_flip(xlim=...) was replacing ggtree's coordinate system and causing 'Problem while setting up geom' errors"),
-                              tags$li("The hexpand() function properly expands the plot area to show heatmap tiles without breaking the coordinate system")
+                              tags$li("FIX: Added missing bootstrap_label_size parameter to func.make.second.legend"),
+                              tags$li("This fixes the error: object 'bootstrap_label_size' not found")
                             )
                      )
             )
