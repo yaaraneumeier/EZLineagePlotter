@@ -4525,18 +4525,18 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   }
   
   # Add heatmap if requested
-  # v91: SIMPLIFIED HEATMAP - Replaced complex heatmap logic with basic hardcoded approach
+  # v93: SIMPLIFIED HEATMAP - Replaced complex heatmap logic with basic hardcoded approach
   # to prove the concept works. The complex logic is preserved below in comments for reference.
-  cat(file=stderr(), paste0("\n=== v91: SIMPLIFIED HEATMAP RENDERING ===\n"))
+  cat(file=stderr(), paste0("\n=== v93: SIMPLIFIED HEATMAP RENDERING ===\n"))
   cat(file=stderr(), paste0("  heat_flag: ", heat_flag, "\n"))
   if (heat_flag == TRUE) {
     cat(file=stderr(), paste0("  heat_map_title_list length: ", length(heat_map_title_list), "\n"))
     cat(file=stderr(), paste0("  dxdf440_for_heat length: ", length(dxdf440_for_heat), "\n"))
   }
 
-  # v91: SIMPLE HEATMAP IMPLEMENTATION
+  # v93: SIMPLE HEATMAP IMPLEMENTATION
   if (heat_flag == TRUE && length(dxdf440_for_heat) > 0) {
-    cat(file=stderr(), paste0("\n=== v91: ENTERING SIMPLIFIED HEATMAP CODE ===\n"))
+    cat(file=stderr(), paste0("\n=== v93: ENTERING SIMPLIFIED HEATMAP CODE ===\n"))
 
     # Scale tree x coordinates for better heatmap positioning
     tt <- p
@@ -4572,8 +4572,8 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     cat(file=stderr(), paste0("  offset: ", new_heat_x, "\n"))
     cat(file=stderr(), paste0("  width: ", wi, "\n"))
 
-    # v91: SIMPLE GHEATMAP CALL - no duplicate calls, no complex logic
-    cat(file=stderr(), paste0("\n=== v91: CALLING GHEATMAP ===\n"))
+    # v93: SIMPLE GHEATMAP CALL - no duplicate calls, no complex logic
+    cat(file=stderr(), paste0("\n=== v93: CALLING GHEATMAP ===\n"))
 
     p <- tryCatch({
       result <- gheatmap(
@@ -4591,23 +4591,29 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       cat(file=stderr(), paste0("  gheatmap call: SUCCESS\n"))
       cat(file=stderr(), paste0("  Result layers: ", length(result$layers), "\n"))
 
-      # Add appropriate color scale
-      if (is_discrete) {
-        cat(file=stderr(), paste0("  Adding scale_fill_viridis_d for discrete data\n"))
-        result <- result + scale_fill_viridis_d(name = heat_map_title_list[[1]], na.value = "white")
-      } else {
-        cat(file=stderr(), paste0("  Adding scale_fill_gradient2 for continuous data\n"))
-        low_col <- ifelse(!is.null(heat_param) && !is.na(heat_param['low']), heat_param['low'], "blue")
-        mid_col <- ifelse(!is.null(heat_param) && !is.na(heat_param['mid']), heat_param['mid'], "white")
-        high_col <- ifelse(!is.null(heat_param) && !is.na(heat_param['high']), heat_param['high'], "red")
-        result <- result + scale_fill_gradient2(low = low_col, mid = mid_col, high = high_col,
-                                                 midpoint = 0.02, name = heat_map_title_list[[1]],
-                                                 na.value = "white")
-      }
+      # v93: Add appropriate color scale - wrap in separate tryCatch
+      result <- tryCatch({
+        if (is_discrete) {
+          cat(file=stderr(), paste0("  Adding scale_fill_viridis_d for discrete data\n"))
+          result + scale_fill_viridis_d(name = heat_map_title_list[[1]], na.value = "white")
+        } else {
+          cat(file=stderr(), paste0("  Adding scale_fill_gradient2 for continuous data\n"))
+          low_col <- ifelse(!is.null(heat_param) && !is.na(heat_param['low']), heat_param['low'], "blue")
+          mid_col <- ifelse(!is.null(heat_param) && !is.na(heat_param['mid']), heat_param['mid'], "white")
+          high_col <- ifelse(!is.null(heat_param) && !is.na(heat_param['high']), heat_param['high'], "red")
+          result + scale_fill_gradient2(low = low_col, mid = mid_col, high = high_col,
+                                                   midpoint = 0.02, name = heat_map_title_list[[1]],
+                                                   na.value = "white")
+        }
+      }, error = function(e) {
+        cat(file=stderr(), paste0("  Color scale FAILED: ", e$message, "\n"))
+        cat(file=stderr(), paste0("  Continuing without custom color scale\n"))
+        result
+      })
 
-      # Expand x-axis to show heatmap
-      cat(file=stderr(), paste0("  Adding hexpand for x-axis\n"))
-      result <- result + ggtree::hexpand(ratio = 0.5, direction = 1)
+      # v93: REMOVED hexpand() call - it was causing "Problem while computing aesthetics" error
+      # The gheatmap should handle layout expansion automatically
+      cat(file=stderr(), paste0("  v93: Skipping hexpand (was causing aesthetics error)\n"))
 
       cat(file=stderr(), paste0("  Final plot layers: ", length(result$layers), "\n"))
       result
@@ -4617,9 +4623,9 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       tt
     })
 
-    cat(file=stderr(), paste0("=== v91: SIMPLIFIED HEATMAP COMPLETE ===\n"))
+    cat(file=stderr(), paste0("=== v93: SIMPLIFIED HEATMAP COMPLETE ===\n"))
   }
-  # END v91 SIMPLIFIED HEATMAP
+  # END v93 SIMPLIFIED HEATMAP
 
   # ========================================================================
   # v91: ORIGINAL COMPLEX HEATMAP CODE COMMENTED OUT BELOW
@@ -5864,12 +5870,13 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v92 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v93 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("SYNTAX FIX: Removed extra closing brace left over from v91 if(FALSE) block removal"),
-                              tags$li("File now parses correctly without R syntax errors")
+                              tags$li("FIX: Removed hexpand() call that was causing 'Problem while computing aesthetics' error"),
+                              tags$li("Heatmap should now render correctly without the aesthetics failure"),
+                              tags$li("Added separate tryCatch for color scale to isolate errors better")
                             )
                      )
             )
