@@ -4624,8 +4624,16 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     })
 
     cat(file=stderr(), paste0("=== v93: SIMPLIFIED HEATMAP COMPLETE ===\n"))
+    cat(file=stderr(), paste0("  p layers after heatmap: ", length(p$layers), "\n"))
+    cat(file=stderr(), paste0("  Layer types: ", paste(sapply(p$layers, function(l) class(l$geom)[1]), collapse=", "), "\n"))
   }
   # END v93 SIMPLIFIED HEATMAP
+
+  # v94: Track p right after heatmap block
+  cat(file=stderr(), paste0("\n=== v94: Immediately after simplified heatmap block ===\n"))
+  cat(file=stderr(), paste0("  heat_flag: ", heat_flag, "\n"))
+  cat(file=stderr(), paste0("  p layers: ", length(p$layers), "\n"))
+  cat(file=stderr(), paste0("  Layer types: ", paste(sapply(p$layers, function(l) class(l$geom)[1]), collapse=", "), "\n"))
 
   # ========================================================================
   # v91: ORIGINAL COMPLEX HEATMAP CODE COMMENTED OUT BELOW
@@ -5544,10 +5552,16 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     b <- 0.2
   }
   
-  # Add second legend if heatmap exists
-  
+  # v94: DEBUG - track layers after if(FALSE) block
+  cat(file=stderr(), paste0("\n=== v94: AFTER if(FALSE) block ===\n"))
+  cat(file=stderr(), paste0("  p layers: ", length(p$layers), "\n"))
+  cat(file=stderr(), paste0("  Layer types: ", paste(sapply(p$layers, function(l) class(l$geom)[1]), collapse=", "), "\n"))
+  cat(file=stderr(), paste0("================================\n"))
+
   # Add second legend if heatmap exists
   if (length(heat_map_title_list) > 0) {
+    cat(file=stderr(), paste0("\n=== v94: Before func.make.second.legend ===\n"))
+    cat(file=stderr(), paste0("  p layers: ", length(p$layers), "\n"))
     p <- func.make.second.legend(
       p,
       FLAG_BULK_DISPLAY,
@@ -5582,7 +5596,14 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       width,
       bootstrap_label_size
     )
+    cat(file=stderr(), paste0("=== v94: After func.make.second.legend ===\n"))
+    cat(file=stderr(), paste0("  p layers: ", length(p$layers), "\n"))
   }
+
+  # v94: DEBUG - before bootstrap triangles
+  cat(file=stderr(), paste0("\n=== v94: Before bootstrap triangles ===\n"))
+  cat(file=stderr(), paste0("  p layers: ", length(p$layers), "\n"))
+  cat(file=stderr(), paste0("  Layer types: ", paste(sapply(p$layers, function(l) class(l$geom)[1]), collapse=", "), "\n"))
 
   # v90: Add bootstrap triangles AFTER heatmap processing to avoid "missing x and y" error
   # When gheatmap transforms the plot data, any geom_nodepoint layers added beforehand
@@ -5870,13 +5891,13 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v93 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v94 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("FIX: Removed hexpand() call that was causing 'Problem while computing aesthetics' error"),
-                              tags$li("Heatmap should now render correctly without the aesthetics failure"),
-                              tags$li("Added separate tryCatch for color scale to isolate errors better")
+                              tags$li("DEBUG: Added comprehensive layer tracking to find where heatmap layers are lost"),
+                              tags$li("Tracking p layers: after heatmap, after if(FALSE) block, before/after func.make.second.legend, before bootstrap"),
+                              tags$li("This will help identify the exact location where GeomTile layers disappear")
                             )
                      )
             )
