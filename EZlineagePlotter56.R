@@ -4990,11 +4990,25 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             cat(file=stderr(), paste0("  custom_colors names: ", paste(head(names(custom_colors), 10), collapse=", "), "\n"))
             cat(file=stderr(), paste0("  custom_colors values: ", paste(head(custom_colors, 10), collapse=", "), "\n"))
 
-            # v70: Get the actual factor levels from the heatmap data
-            heat_data_vals <- levels(dxdf440_for_heat[[j1]][,1])
-            if (is.null(heat_data_vals)) {
-              heat_data_vals <- unique(na.omit(dxdf440_for_heat[[j1]][,1]))
+            # v84: Get all unique factor levels across ALL heatmap columns
+            # Previously only checked column 1, which may be all-NA
+            heat_data_vals <- c()
+            for (col_idx in 1:ncol(dxdf440_for_heat[[j1]])) {
+              col_vals <- dxdf440_for_heat[[j1]][, col_idx]
+              if (is.factor(col_vals)) {
+                col_levels <- levels(col_vals)
+                if (!is.null(col_levels) && length(col_levels) > 0) {
+                  heat_data_vals <- c(heat_data_vals, col_levels)
+                }
+              } else {
+                col_unique <- unique(na.omit(col_vals))
+                if (length(col_unique) > 0) {
+                  heat_data_vals <- c(heat_data_vals, col_unique)
+                }
+              }
             }
+            heat_data_vals <- unique(heat_data_vals)
+            cat(file=stderr(), paste0("  v84: Collected factor levels from all ", ncol(dxdf440_for_heat[[j1]]), " columns\n"))
             cat(file=stderr(), paste0("  Heatmap factor levels: ", paste(head(heat_data_vals, 10), collapse=", "), "\n"))
 
             # v73: Fix - properly subset custom_colors to match factor levels
@@ -5561,14 +5575,13 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v83 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v84 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("FIX: Restored REQUIRED duplicate gheatmap pattern from original code"),
-                              tags$li("IMPORTANT: Duplicate gheatmap call is INTENTIONAL - do not remove"),
-                              tags$li("Repair mapping IMMEDIATELY after each gheatmap call"),
-                              tags$li("Convert tile value back to factor after gheatmap (gheatmap converts to char)")
+                              tags$li("FIX: Heatmap color scale now collects factor levels from ALL columns"),
+                              tags$li("Previously only checked column 1 which may be all-NA"),
+                              tags$li("Fixes 'Problem while setting up geom' error when first column has no values")
                             )
                      )
             )
