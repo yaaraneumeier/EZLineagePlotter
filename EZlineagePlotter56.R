@@ -4536,7 +4536,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
   # v93: SIMPLE HEATMAP IMPLEMENTATION
   if (heat_flag == TRUE && length(dxdf440_for_heat) > 0) {
-    cat(file=stderr(), paste0("\n=== v93: ENTERING SIMPLIFIED HEATMAP CODE ===\n"))
+    cat(file=stderr(), paste0("\n=== v97: ENTERING SIMPLIFIED HEATMAP CODE ===\n"))
 
     # Scale tree x coordinates for better heatmap positioning
     tt <- p
@@ -4546,17 +4546,61 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
     # Get the first heatmap data
     heat_data <- dxdf440_for_heat[[1]]
-    cat(file=stderr(), paste0("  heat_data dimensions: ", nrow(heat_data), " x ", ncol(heat_data), "\n"))
-    cat(file=stderr(), paste0("  heat_data rownames sample: ", paste(head(rownames(heat_data), 5), collapse=", "), "\n"))
-    cat(file=stderr(), paste0("  heat_data columns: ", paste(colnames(heat_data), collapse=", "), "\n"))
 
-    # Check data types
-    for (col_idx in 1:ncol(heat_data)) {
-      col_name <- colnames(heat_data)[col_idx]
-      col_class <- class(heat_data[, col_idx])[1]
-      unique_vals <- length(unique(na.omit(heat_data[, col_idx])))
-      cat(file=stderr(), paste0("  Column '", col_name, "': class=", col_class, ", unique_values=", unique_vals, "\n"))
+    # v97: CRITICAL FIX - Validate and repair heatmap data before gheatmap
+    cat(file=stderr(), paste0("\n=== v97: HEATMAP DATA VALIDATION ===\n"))
+    cat(file=stderr(), paste0("  Initial heat_data dimensions: ", nrow(heat_data), " x ", ncol(heat_data), "\n"))
+
+    # v97: Check if heat_data is valid
+    if (is.null(heat_data) || !is.data.frame(heat_data) || nrow(heat_data) == 0) {
+      cat(file=stderr(), paste0("  ERROR: Invalid heatmap data - skipping heatmap\n"))
+      heat_flag <- FALSE
+    } else {
+      # v97: Get tree tip labels for matching
+      tree_tips <- subset(tt$data, isTip == TRUE)$label
+      cat(file=stderr(), paste0("  Tree has ", length(tree_tips), " tips\n"))
+      cat(file=stderr(), paste0("  Tree tips sample: ", paste(head(tree_tips, 5), collapse=", "), "\n"))
+
+      # v97: Check current row names
+      current_rownames <- rownames(heat_data)
+      cat(file=stderr(), paste0("  Current rownames: ", paste(head(current_rownames, 5), collapse=", "), "\n"))
+
+      # v97: Verify row names are valid and match tree tips
+      if (is.null(current_rownames) || all(current_rownames == as.character(1:nrow(heat_data)))) {
+        cat(file=stderr(), paste0("  WARNING: Heat data has default numeric row names - cannot match to tree tips\n"))
+        # Try to skip heatmap gracefully
+        cat(file=stderr(), paste0("  Skipping heatmap due to missing/invalid row names\n"))
+        heat_flag <- FALSE
+      } else {
+        # v97: Check how many row names match tree tips
+        matching_tips <- sum(current_rownames %in% tree_tips)
+        cat(file=stderr(), paste0("  Row names matching tree tips: ", matching_tips, " / ", nrow(heat_data), "\n"))
+
+        if (matching_tips == 0) {
+          cat(file=stderr(), paste0("  ERROR: No row names match tree tips - skipping heatmap\n"))
+          heat_flag <- FALSE
+        } else if (matching_tips < nrow(heat_data)) {
+          cat(file=stderr(), paste0("  WARNING: Only ", matching_tips, " row names match - filtering data\n"))
+          # Filter to only matching rows
+          heat_data <- heat_data[current_rownames %in% tree_tips, , drop = FALSE]
+          cat(file=stderr(), paste0("  After filtering: ", nrow(heat_data), " rows\n"))
+        }
+      }
     }
+
+    # v97: Continue only if we have valid data
+    if (heat_flag == TRUE && nrow(heat_data) > 0) {
+      cat(file=stderr(), paste0("  heat_data dimensions: ", nrow(heat_data), " x ", ncol(heat_data), "\n"))
+      cat(file=stderr(), paste0("  heat_data rownames sample: ", paste(head(rownames(heat_data), 5), collapse=", "), "\n"))
+      cat(file=stderr(), paste0("  heat_data columns: ", paste(colnames(heat_data), collapse=", "), "\n"))
+
+      # Check data types
+      for (col_idx in 1:ncol(heat_data)) {
+        col_name <- colnames(heat_data)[col_idx]
+        col_class <- class(heat_data[, col_idx])[1]
+        unique_vals <- length(unique(na.omit(heat_data[, col_idx])))
+        cat(file=stderr(), paste0("  Column '", col_name, "': class=", col_class, ", unique_values=", unique_vals, "\n"))
+      }
 
     # Get heatmap parameters
     heat_param <- heat_display_params_list[[1]]
@@ -4623,11 +4667,12 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       tt
     })
 
-    cat(file=stderr(), paste0("=== v93: SIMPLIFIED HEATMAP COMPLETE ===\n"))
+    cat(file=stderr(), paste0("=== v97: SIMPLIFIED HEATMAP COMPLETE ===\n"))
     cat(file=stderr(), paste0("  p layers after heatmap: ", length(p$layers), "\n"))
     cat(file=stderr(), paste0("  Layer types: ", paste(sapply(p$layers, function(l) class(l$geom)[1]), collapse=", "), "\n"))
+    } # End of v97 validation block (heat_flag == TRUE && nrow(heat_data) > 0)
   }
-  # END v93 SIMPLIFIED HEATMAP
+  # END v97 SIMPLIFIED HEATMAP
 
   # v94: Track p right after heatmap block
   cat(file=stderr(), paste0("\n=== v94: Immediately after simplified heatmap block ===\n"))
@@ -5927,14 +5972,14 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v96 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v97 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("FIX: Repair corrupted mapping BEFORE bootstrap triangles"),
-                              tags$li("gheatmap() corrupts @mapping, causing geom_nodepoint crash"),
-                              tags$li("Call func.repair.ggtree.mapping() before adding bootstrap layers"),
-                              tags$li("Wrapped bootstrap triangles in tryCatch for better error reporting")
+                              tags$li("FIX: Add heatmap data validation to prevent 'invalid row.names' error"),
+                              tags$li("Validate row names match tree tips before calling gheatmap"),
+                              tags$li("Filter heatmap data to only include rows matching tree tips"),
+                              tags$li("Skip heatmap gracefully if data is invalid (prevents crash)")
                             )
                      )
             )
