@@ -4718,11 +4718,12 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
         max_len_col_name_heat <- max(max_len_col_name_heat, max(nchar(custom_column_labels)))
       }
 
-      # v88: CHANGED - Skip factor conversion for discrete heatmap data
-      # gheatmap internally converts factors back to character anyway, and the factor
-      # conversion was potentially causing issues. Just log the unique values for debugging.
+      # v89: RESTORED factor conversion for discrete heatmap data
+      # The v88 change to skip factor conversion was WRONG - gheatmap needs factors
+      # for discrete data to work properly with ggplot2's discrete color scales.
+      # Without factors, "Problem while setting up geom" errors occur during rendering.
       if (!is.null(heat_param) && heat_param['is_discrete'] == TRUE) {
-        cat(file=stderr(), paste0("\n=== v88: Discrete heatmap data analysis (NOT converting to factors) ===\n"))
+        cat(file=stderr(), paste0("\n=== v89: Converting discrete heatmap to factors ===\n"))
         for (col_idx in 1:ncol(dxdf440_for_heat[[j1]])) {
           col_name <- colnames(dxdf440_for_heat[[j1]])[col_idx]
           col_vals <- dxdf440_for_heat[[j1]][, col_idx]
@@ -4730,9 +4731,9 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
           cat(file=stderr(), paste0("  Column '", col_name, "': ", length(unique_vals), " unique values\n"))
           cat(file=stderr(), paste0("  Unique values: ", paste(head(unique_vals, 10), collapse=", "),
                                     if(length(unique_vals) > 10) "..." else "", "\n"))
-          cat(file=stderr(), paste0("  Current class: ", class(col_vals)[1], "\n"))
-          # v88: Keep data as-is (character), don't convert to factor
-          # gheatmap will handle the data internally
+          # v89: RESTORED - Convert to factor with sorted levels (REQUIRED for discrete heatmaps)
+          dxdf440_for_heat[[j1]][, col_idx] <- factor(col_vals, levels = unique_vals)
+          cat(file=stderr(), paste0("  Converted to factor with ", length(unique_vals), " levels\n"))
         }
         cat(file=stderr(), paste0("================================\n"))
       }
@@ -5681,7 +5682,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
 # Define UI
 ui <- dashboardPage(
-  dashboardHeader(title = "Lineage Tree Plotter v88"),
+  dashboardHeader(title = "Lineage Tree Plotter v89"),
   
   dashboardSidebar(
     width = 300,
@@ -5738,16 +5739,14 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v88 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v89 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("COMPREHENSIVE DIAGNOSTICS: Added ggplot_build tests BEFORE and AFTER scale application"),
-                              tags$li("REMOVED factor conversion: gheatmap converts to character anyway, skip unnecessary conversion"),
-                              tags$li("IMPROVED expansion handling: Skip expansion if plot can't be built, avoid making things worse"),
-                              tags$li("MULTIPLE SAVE FALLBACKS: Try 4 different save methods if primary fails"),
-                              tags$li("FALLBACK 4: Save tree without heatmap if all else fails, so you still get output"),
-                              tags$li("Better error messages to help diagnose 'Problem while setting up geom' errors")
+                              tags$li("CRITICAL FIX: Restored factor conversion for discrete heatmaps"),
+                              tags$li("The v88 change to skip factor conversion caused 'Problem while setting up geom' errors"),
+                              tags$li("Discrete heatmap data MUST be converted to factors for gheatmap/ggplot2 to work"),
+                              tags$li("Heatmap should now display correctly when applying to plot")
                             )
                      )
             )
