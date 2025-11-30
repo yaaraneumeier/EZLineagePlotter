@@ -5,7 +5,7 @@
 This document contains the step-by-step plan for rebuilding the heatmap functionality in EZLineagePlotter.
 The complex heatmap code (~800 lines) has been disabled in v91 and replaced with a simple proof-of-concept.
 
-**Current Status**: v91 - Simplified heatmap implementation (single gheatmap call)
+**Current Status**: v98 - Manual geom_tile implementation (gheatmap was corrupting plot mapping)
 
 ## Why We Simplified
 

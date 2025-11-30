@@ -4525,54 +4525,54 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   }
   
   # Add heatmap if requested
-  # v93: SIMPLIFIED HEATMAP - Replaced complex heatmap logic with basic hardcoded approach
-  # to prove the concept works. The complex logic is preserved below in comments for reference.
-  cat(file=stderr(), paste0("\n=== v93: SIMPLIFIED HEATMAP RENDERING ===\n"))
+  # v98: MANUAL HEATMAP - Replaced gheatmap() with manual geom_tile() approach
+  # because gheatmap was corrupting the plot's @mapping property
+  cat(file=stderr(), paste0("\n=== v98: HEATMAP RENDERING ===\n"))
   cat(file=stderr(), paste0("  heat_flag: ", heat_flag, "\n"))
   if (heat_flag == TRUE) {
     cat(file=stderr(), paste0("  heat_map_title_list length: ", length(heat_map_title_list), "\n"))
     cat(file=stderr(), paste0("  dxdf440_for_heat length: ", length(dxdf440_for_heat), "\n"))
   }
 
-  # v93: SIMPLE HEATMAP IMPLEMENTATION
-  if (heat_flag == TRUE && length(dxdf440_for_heat) > 0) {
-    cat(file=stderr(), paste0("\n=== v97: ENTERING SIMPLIFIED HEATMAP CODE ===\n"))
+  # v98: Save a backup of p before heatmap for fallback recovery
+  tt <- p
 
-    # Scale tree x coordinates for better heatmap positioning
-    tt <- p
-    for (i in cc_totss) {
-      tt$data[tt$data$node[i], "x"] <- tt$data[tt$data$node[i], "x"] * 15
-    }
+  # v98: MANUAL HEATMAP IMPLEMENTATION using geom_tile
+  # Previous approach using gheatmap() was corrupting the plot's @mapping property
+  # causing "Problem while setting up geom" errors. This approach builds the heatmap
+  # manually using geom_tile for full control.
+  if (heat_flag == TRUE && length(dxdf440_for_heat) > 0) {
+    cat(file=stderr(), paste0("\n=== v98: ENTERING MANUAL HEATMAP CODE ===\n"))
 
     # Get the first heatmap data
     heat_data <- dxdf440_for_heat[[1]]
 
-    # v97: CRITICAL FIX - Validate and repair heatmap data before gheatmap
-    cat(file=stderr(), paste0("\n=== v97: HEATMAP DATA VALIDATION ===\n"))
+    # v98: Validate heatmap data
+    cat(file=stderr(), paste0("\n=== v98: HEATMAP DATA VALIDATION ===\n"))
     cat(file=stderr(), paste0("  Initial heat_data dimensions: ", nrow(heat_data), " x ", ncol(heat_data), "\n"))
 
-    # v97: Check if heat_data is valid
+    # v98: Check if heat_data is valid
     if (is.null(heat_data) || !is.data.frame(heat_data) || nrow(heat_data) == 0) {
       cat(file=stderr(), paste0("  ERROR: Invalid heatmap data - skipping heatmap\n"))
       heat_flag <- FALSE
     } else {
-      # v97: Get tree tip labels for matching
-      tree_tips <- subset(tt$data, isTip == TRUE)$label
+      # v98: Get tree tip labels and positions for matching
+      tip_data <- subset(p$data, isTip == TRUE)
+      tree_tips <- tip_data$label
       cat(file=stderr(), paste0("  Tree has ", length(tree_tips), " tips\n"))
       cat(file=stderr(), paste0("  Tree tips sample: ", paste(head(tree_tips, 5), collapse=", "), "\n"))
 
-      # v97: Check current row names
+      # v98: Check current row names
       current_rownames <- rownames(heat_data)
       cat(file=stderr(), paste0("  Current rownames: ", paste(head(current_rownames, 5), collapse=", "), "\n"))
 
-      # v97: Verify row names are valid and match tree tips
+      # v98: Verify row names are valid and match tree tips
       if (is.null(current_rownames) || all(current_rownames == as.character(1:nrow(heat_data)))) {
         cat(file=stderr(), paste0("  WARNING: Heat data has default numeric row names - cannot match to tree tips\n"))
-        # Try to skip heatmap gracefully
         cat(file=stderr(), paste0("  Skipping heatmap due to missing/invalid row names\n"))
         heat_flag <- FALSE
       } else {
-        # v97: Check how many row names match tree tips
+        # v98: Check how many row names match tree tips
         matching_tips <- sum(current_rownames %in% tree_tips)
         cat(file=stderr(), paste0("  Row names matching tree tips: ", matching_tips, " / ", nrow(heat_data), "\n"))
 
@@ -4581,98 +4581,120 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
           heat_flag <- FALSE
         } else if (matching_tips < nrow(heat_data)) {
           cat(file=stderr(), paste0("  WARNING: Only ", matching_tips, " row names match - filtering data\n"))
-          # Filter to only matching rows
           heat_data <- heat_data[current_rownames %in% tree_tips, , drop = FALSE]
           cat(file=stderr(), paste0("  After filtering: ", nrow(heat_data), " rows\n"))
         }
       }
     }
 
-    # v97: Continue only if we have valid data
+    # v98: Continue only if we have valid data
     if (heat_flag == TRUE && nrow(heat_data) > 0) {
       cat(file=stderr(), paste0("  heat_data dimensions: ", nrow(heat_data), " x ", ncol(heat_data), "\n"))
       cat(file=stderr(), paste0("  heat_data rownames sample: ", paste(head(rownames(heat_data), 5), collapse=", "), "\n"))
       cat(file=stderr(), paste0("  heat_data columns: ", paste(colnames(heat_data), collapse=", "), "\n"))
 
-      # Check data types
+      # v98: Get heatmap parameters
+      heat_param <- heat_display_params_list[[1]]
+      is_discrete <- ifelse(!is.null(heat_param) && !is.na(heat_param['is_discrete']),
+                            heat_param['is_discrete'] == TRUE, FALSE)
+      cat(file=stderr(), paste0("  is_discrete: ", is_discrete, "\n"))
+
+      # v98: Calculate heatmap positioning based on tree
+      tree_xmax <- max(p$data$x, na.rm = TRUE)
+      heatmap_offset <- tree_xmax * 0.05  # 5% offset from tree
+      tile_width <- tree_xmax * 0.03  # 3% of tree width per column
+      tile_height <- 0.8  # Height of each tile
+
+      cat(file=stderr(), paste0("  tree_xmax: ", tree_xmax, "\n"))
+      cat(file=stderr(), paste0("  heatmap_offset: ", heatmap_offset, "\n"))
+      cat(file=stderr(), paste0("  tile_width: ", tile_width, "\n"))
+
+      # v98: Build heatmap data frame for geom_tile
+      # We need: x (column position), y (tip position), fill (value)
+      cat(file=stderr(), paste0("\n=== v98: BUILDING HEATMAP TILE DATA ===\n"))
+
+      tile_data_list <- list()
       for (col_idx in 1:ncol(heat_data)) {
         col_name <- colnames(heat_data)[col_idx]
-        col_class <- class(heat_data[, col_idx])[1]
-        unique_vals <- length(unique(na.omit(heat_data[, col_idx])))
-        cat(file=stderr(), paste0("  Column '", col_name, "': class=", col_class, ", unique_values=", unique_vals, "\n"))
+
+        for (row_idx in 1:nrow(heat_data)) {
+          tip_label <- rownames(heat_data)[row_idx]
+          value <- heat_data[row_idx, col_idx]
+
+          # Find y position from tree tip data
+          tip_row <- tip_data[tip_data$label == tip_label, ]
+          if (nrow(tip_row) > 0) {
+            y_pos <- tip_row$y[1]
+            x_pos <- tree_xmax + heatmap_offset + (col_idx - 0.5) * tile_width
+
+            tile_data_list[[length(tile_data_list) + 1]] <- data.frame(
+              x = x_pos,
+              y = y_pos,
+              value = as.character(value),
+              column = col_name,
+              stringsAsFactors = FALSE
+            )
+          }
+        }
       }
 
-    # Get heatmap parameters
-    heat_param <- heat_display_params_list[[1]]
-    is_discrete <- ifelse(!is.null(heat_param) && !is.na(heat_param['is_discrete']),
-                          heat_param['is_discrete'] == TRUE, FALSE)
-    cat(file=stderr(), paste0("  is_discrete: ", is_discrete, "\n"))
+      if (length(tile_data_list) > 0) {
+        tile_df <- do.call(rbind, tile_data_list)
+        cat(file=stderr(), paste0("  Created tile_df with ", nrow(tile_df), " tiles\n"))
+        cat(file=stderr(), paste0("  x range: [", min(tile_df$x), ", ", max(tile_df$x), "]\n"))
+        cat(file=stderr(), paste0("  y range: [", min(tile_df$y), ", ", max(tile_df$y), "]\n"))
+        cat(file=stderr(), paste0("  Unique values: ", paste(unique(tile_df$value), collapse=", "), "\n"))
 
-    # Calculate offset and width
-    boudariestt <- func.find.plot.boundaries(tt, debug_mode)
-    new_heat_x <- 0.7
-    wi <- 1.4 * ncol(heat_data) / 23
+        # v98: Add heatmap tiles using geom_tile
+        cat(file=stderr(), paste0("\n=== v98: ADDING GEOM_TILE LAYER ===\n"))
 
-    cat(file=stderr(), paste0("  offset: ", new_heat_x, "\n"))
-    cat(file=stderr(), paste0("  width: ", wi, "\n"))
+        p <- tryCatch({
+          # Add tile layer with explicit aesthetics
+          p_with_tiles <- p + geom_tile(
+            data = tile_df,
+            aes(x = x, y = y, fill = value),
+            width = tile_width * 0.9,
+            height = tile_height,
+            inherit.aes = FALSE
+          )
 
-    # v93: SIMPLE GHEATMAP CALL - no duplicate calls, no complex logic
-    cat(file=stderr(), paste0("\n=== v93: CALLING GHEATMAP ===\n"))
+          cat(file=stderr(), paste0("  geom_tile added successfully\n"))
 
-    p <- tryCatch({
-      result <- gheatmap(
-        tt,
-        data = heat_data,
-        offset = new_heat_x,
-        width = wi,
-        font.size = 2,
-        colnames = TRUE,
-        colnames_angle = 0,
-        colnames_offset_y = 0.5,
-        legend_title = heat_map_title_list[[1]],
-        color = NA
-      )
-      cat(file=stderr(), paste0("  gheatmap call: SUCCESS\n"))
-      cat(file=stderr(), paste0("  Result layers: ", length(result$layers), "\n"))
+          # Add color scale
+          if (is_discrete) {
+            cat(file=stderr(), paste0("  Adding discrete color scale\n"))
+            p_with_tiles <- p_with_tiles + scale_fill_viridis_d(
+              name = heat_map_title_list[[1]],
+              na.value = "grey90"
+            )
+          } else {
+            cat(file=stderr(), paste0("  Adding continuous color scale\n"))
+            p_with_tiles <- p_with_tiles + scale_fill_viridis_c(
+              name = heat_map_title_list[[1]],
+              na.value = "grey90"
+            )
+          }
 
-      # v93: Add appropriate color scale - wrap in separate tryCatch
-      result <- tryCatch({
-        if (is_discrete) {
-          cat(file=stderr(), paste0("  Adding scale_fill_viridis_d for discrete data\n"))
-          result + scale_fill_viridis_d(name = heat_map_title_list[[1]], na.value = "white")
-        } else {
-          cat(file=stderr(), paste0("  Adding scale_fill_gradient2 for continuous data\n"))
-          low_col <- ifelse(!is.null(heat_param) && !is.na(heat_param['low']), heat_param['low'], "blue")
-          mid_col <- ifelse(!is.null(heat_param) && !is.na(heat_param['mid']), heat_param['mid'], "white")
-          high_col <- ifelse(!is.null(heat_param) && !is.na(heat_param['high']), heat_param['high'], "red")
-          result + scale_fill_gradient2(low = low_col, mid = mid_col, high = high_col,
-                                                   midpoint = 0.02, name = heat_map_title_list[[1]],
-                                                   na.value = "white")
-        }
-      }, error = function(e) {
-        cat(file=stderr(), paste0("  Color scale FAILED: ", e$message, "\n"))
-        cat(file=stderr(), paste0("  Continuing without custom color scale\n"))
-        result
-      })
+          cat(file=stderr(), paste0("  Color scale added successfully\n"))
+          cat(file=stderr(), paste0("  Final layers: ", length(p_with_tiles$layers), "\n"))
+          p_with_tiles
 
-      # v93: REMOVED hexpand() call - it was causing "Problem while computing aesthetics" error
-      # The gheatmap should handle layout expansion automatically
-      cat(file=stderr(), paste0("  v93: Skipping hexpand (was causing aesthetics error)\n"))
+        }, error = function(e) {
+          cat(file=stderr(), paste0("  ERROR adding heatmap: ", e$message, "\n"))
+          cat(file=stderr(), paste0("  Returning tree without heatmap\n"))
+          p
+        })
 
-      cat(file=stderr(), paste0("  Final plot layers: ", length(result$layers), "\n"))
-      result
-    }, error = function(e) {
-      cat(file=stderr(), paste0("  gheatmap FAILED: ", e$message, "\n"))
-      cat(file=stderr(), paste0("  Returning tree without heatmap\n"))
-      tt
-    })
+        cat(file=stderr(), paste0("=== v98: MANUAL HEATMAP COMPLETE ===\n"))
+        cat(file=stderr(), paste0("  p layers after heatmap: ", length(p$layers), "\n"))
+        cat(file=stderr(), paste0("  Layer types: ", paste(sapply(p$layers, function(l) class(l$geom)[1]), collapse=", "), "\n"))
 
-    cat(file=stderr(), paste0("=== v97: SIMPLIFIED HEATMAP COMPLETE ===\n"))
-    cat(file=stderr(), paste0("  p layers after heatmap: ", length(p$layers), "\n"))
-    cat(file=stderr(), paste0("  Layer types: ", paste(sapply(p$layers, function(l) class(l$geom)[1]), collapse=", "), "\n"))
-    } # End of v97 validation block (heat_flag == TRUE && nrow(heat_data) > 0)
+      } else {
+        cat(file=stderr(), paste0("  WARNING: No tile data created - skipping heatmap\n"))
+      }
+    } # End of v98 validation block
   }
-  # END v97 SIMPLIFIED HEATMAP
+  # END v98 MANUAL HEATMAP
 
   # v94: Track p right after heatmap block
   cat(file=stderr(), paste0("\n=== v94: Immediately after simplified heatmap block ===\n"))
@@ -5972,14 +5994,14 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v97 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v98 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("FIX: Add heatmap data validation to prevent 'invalid row.names' error"),
-                              tags$li("Validate row names match tree tips before calling gheatmap"),
-                              tags$li("Filter heatmap data to only include rows matching tree tips"),
-                              tags$li("Skip heatmap gracefully if data is invalid (prevents crash)")
+                              tags$li("FIX: Replace gheatmap() with manual geom_tile() to fix heatmap rendering"),
+                              tags$li("gheatmap() was corrupting plot mapping causing 'Problem while setting up geom' error"),
+                              tags$li("Manual tile-based heatmap preserves plot integrity"),
+                              tags$li("Heatmap now positioned relative to tree x-coordinates")
                             )
                      )
             )
