@@ -4605,8 +4605,9 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       tree_xmax <- max(p$data$x, na.rm = TRUE)
       tree_width <- abs(tree_xmax - tree_xmin)  # Total width of tree
 
-      # Use tree width for proper scaling (tree_xmax is ~0 for tips)
-      heatmap_offset <- tree_width * 0.02  # 2% offset from tree tips
+      # v101: Use slider input for heatmap distance from tree (default 0.02)
+      user_tree_distance <- if (!is.null(input$heatmap_tree_distance)) input$heatmap_tree_distance else 0.02
+      heatmap_offset <- tree_width * user_tree_distance  # User-controlled offset from tree tips
       tile_width <- tree_width * 0.03  # 3% of tree width per column
       tile_height <- 0.8  # Height of each tile
 
@@ -4685,20 +4686,40 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             cat(file=stderr(), paste0("  na_color: ", na_color, "\n"))
 
             if (man_define_colors && !is.null(custom_colors) && length(custom_colors) > 0) {
-              # v100: Use custom colors provided by user
+              # v101: Use custom colors provided by user
               cat(file=stderr(), paste0("  Using ", length(custom_colors), " custom colors from user\n"))
+
+              # v101: custom_colors is a named vector where names are the value labels
+              # Debug: show what we received
+              cat(file=stderr(), paste0("  custom_colors names: ", paste(names(custom_colors), collapse=", "), "\n"))
+              cat(file=stderr(), paste0("  custom_colors values: ", paste(custom_colors, collapse=", "), "\n"))
 
               # Get unique values from data (excluding NA) to match with colors
               unique_vals <- unique(tile_df$value)
               unique_vals <- unique_vals[!is.na(unique_vals)]
-              cat(file=stderr(), paste0("  Unique values: ", paste(unique_vals, collapse=", "), "\n"))
+              cat(file=stderr(), paste0("  Unique values in data: ", paste(unique_vals, collapse=", "), "\n"))
 
-              # Create named color vector matching values to colors
-              if (length(custom_colors) >= length(unique_vals)) {
-                color_vec <- setNames(custom_colors[1:length(unique_vals)], unique_vals)
+              # v101: Fix color mapping - custom_colors is already a named vector
+              # Match colors by value name, not by position
+              if (!is.null(names(custom_colors)) && length(names(custom_colors)) > 0) {
+                # Use the named vector directly - lookup by value name
+                color_vec <- custom_colors[unique_vals]
+                # For any values not in custom_colors, use a fallback color
+                missing_vals <- unique_vals[is.na(color_vec)]
+                if (length(missing_vals) > 0) {
+                  cat(file=stderr(), paste0("  WARNING: Missing colors for: ", paste(missing_vals, collapse=", "), "\n"))
+                  # Use grey for missing values
+                  color_vec[is.na(color_vec)] <- "grey50"
+                }
               } else {
-                # Recycle colors if we have more values than colors
-                color_vec <- setNames(rep(custom_colors, length.out = length(unique_vals)), unique_vals)
+                # Fallback: custom_colors is unnamed, use positional assignment (sorted order)
+                cat(file=stderr(), paste0("  custom_colors is unnamed, using positional assignment\n"))
+                sorted_vals <- sort(unique_vals)
+                if (length(custom_colors) >= length(sorted_vals)) {
+                  color_vec <- setNames(custom_colors[1:length(sorted_vals)], sorted_vals)
+                } else {
+                  color_vec <- setNames(rep(custom_colors, length.out = length(sorted_vals)), sorted_vals)
+                }
               }
               cat(file=stderr(), paste0("  Color mapping: ", paste(names(color_vec), "=", color_vec, collapse=", "), "\n"))
 
@@ -6077,15 +6098,13 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v100 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v101 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("FIX: Heatmap now uses user-selected custom colors instead of default viridis"),
-                              tags$li("Supports custom color picker values for discrete heatmaps"),
-                              tags$li("Supports RColorBrewer palette selection"),
-                              tags$li("Supports custom low/mid/high colors for continuous heatmaps"),
-                              tags$li("Phase 3 of Heatmap Rebuild Plan complete!")
+                              tags$li("FIX: Heatmap color mapping now correctly matches values to user-defined colors"),
+                              tags$li("NEW: 'Distance from Tree' slider to adjust heatmap position"),
+                              tags$li("FIX: NA color dropdown now visible (increased box height)")
                             )
                      )
             )
@@ -6510,17 +6529,22 @@ ui <- dashboardPage(
               
               # Global settings
               fluidRow(
-                column(4,
-                       sliderInput("heatmap_global_width", "Individual Heatmap Width", 
+                column(3,
+                       sliderInput("heatmap_global_width", "Individual Heatmap Width",
                                    min = 0.1, max = 3, value = 0.8, step = 0.1)
                 ),
-                column(4,
-                       sliderInput("heatmap_global_gap", "Gap Between Heatmaps", 
+                column(3,
+                       sliderInput("heatmap_global_gap", "Gap Between Heatmaps",
                                    min = 0, max = 1, value = 0.05, step = 0.01)
                 ),
-                column(4,
-                       sliderInput("heatmap_global_font", "Legend Font Size", 
+                column(3,
+                       sliderInput("heatmap_global_font", "Legend Font Size",
                                    min = 1, max = 10, value = 3.5, step = 0.1)
+                ),
+                # v101: Add slider for heatmap distance from tree
+                column(3,
+                       sliderInput("heatmap_tree_distance", "Distance from Tree",
+                                   min = 0, max = 0.2, value = 0.02, step = 0.005)
                 )
               ),
               
@@ -10280,8 +10304,9 @@ server <- function(input, output, session) {
           )
         )
 
+        # v101: Increased max-height from 300px to 400px so NA color dropdown is visible
         tags$div(
-          style = "max-height: 300px; overflow-y: auto; padding: 10px; background: white; border-radius: 3px; border: 1px solid #ddd;",
+          style = "max-height: 400px; overflow-y: auto; padding: 10px; background: white; border-radius: 3px; border: 1px solid #ddd;",
           tags$small(class = "text-muted", paste0(n_vals, " unique value(s) + NA color")),
           tags$hr(style = "margin: 5px 0;"),
           # v70: Header row
