@@ -5,7 +5,7 @@
 This document contains the step-by-step plan for rebuilding the heatmap functionality in EZLineagePlotter.
 The complex heatmap code (~800 lines) has been disabled in v91 and replaced with a simple proof-of-concept.
 
-**Current Status**: v103 - Phase 3 complete: Custom colors supported, tree distance slider working, NA dropdown visible
+**Current Status**: v104 - Phase 3 enhanced: Custom color value->color mapping fixed, per-heatmap distance slider, dropdown z-index fixed
 
 ## Why We Simplified
 

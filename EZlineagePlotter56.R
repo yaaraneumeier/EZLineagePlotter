@@ -2733,6 +2733,13 @@ func.print.lineage.tree <- function(conf_yaml_path,
                 param[['na_color']] <- "white"
               }
 
+              # v104: Get per-heatmap distance (default 0.02)
+              if ('distance' %in% names(heat_map_i_def)) {
+                param[['distance']] <- as.numeric(heat_map_i_def[['distance']])
+              } else {
+                param[['distance']] <- 0.02
+              }
+
             } else {
               #print("AAAAAAAAAAAA")
               # print("is discrete false")
@@ -2793,13 +2800,17 @@ func.print.lineage.tree <- function(conf_yaml_path,
               if ('midpoint' %in% names(heat_map_i_def)) {
                 param['midpoint'] <-as.numeric(heat_map_i_def$midpoint)
               }
-              
-              
-              
-            } 
-            
-            
-            
+
+              # v104: Get per-heatmap distance for continuous heatmaps too
+              if ('distance' %in% names(heat_map_i_def)) {
+                param[['distance']] <- as.numeric(heat_map_i_def[['distance']])
+              } else {
+                param[['distance']] <- 0.02
+              }
+            }
+
+
+
             heat_display_params_list[[indx_for_sav]] <- param
             # print("B12")
             
@@ -4608,10 +4619,10 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       tree_xmax <- max(p$data$x, na.rm = TRUE)
       tree_width <- abs(tree_xmax - tree_xmin)  # Total width of tree
 
-      # v103: Calculate heatmap offset from tree tips using slider value
-      # heatmap_tree_distance is passed from the UI slider (0-0.2, default 0.02)
-      heatmap_offset <- tree_width * heatmap_tree_distance
-      cat(file=stderr(), paste0("  heatmap_tree_distance (slider): ", heatmap_tree_distance, "\n"))
+      # v104: Use per-heatmap distance from heat_param (falls back to global slider if not set)
+      per_heatmap_distance <- if (!is.null(heat_param[['distance']])) heat_param[['distance']] else heatmap_tree_distance
+      heatmap_offset <- tree_width * per_heatmap_distance
+      cat(file=stderr(), paste0("  per_heatmap_distance: ", per_heatmap_distance, "\n"))
       tile_width <- tree_width * 0.03  # 3% of tree width per column
       tile_height <- 0.8  # Height of each tile
 
@@ -4683,7 +4694,16 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             man_define_colors <- !is.null(heat_param['man_define_colors']) &&
                                  !is.na(heat_param['man_define_colors']) &&
                                  heat_param['man_define_colors'] == TRUE
-            custom_colors <- heat_param[['color_scale_option']]
+            custom_colors_raw <- heat_param[['color_scale_option']]
+
+            # v104: Convert from list to named vector if needed (list preserves names through YAML)
+            if (is.list(custom_colors_raw) && !is.null(names(custom_colors_raw))) {
+              # Convert named list to named character vector
+              custom_colors <- unlist(custom_colors_raw)
+              cat(file=stderr(), paste0("  v104: Converted custom_colors from named list to named vector\n"))
+            } else {
+              custom_colors <- custom_colors_raw
+            }
 
             cat(file=stderr(), paste0("  man_define_colors: ", man_define_colors, "\n"))
             cat(file=stderr(), paste0("  custom_colors: ", paste(custom_colors, collapse=", "), "\n"))
@@ -4693,7 +4713,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
               # v101: Use custom colors provided by user
               cat(file=stderr(), paste0("  Using ", length(custom_colors), " custom colors from user\n"))
 
-              # v101: custom_colors is a named vector where names are the value labels
+              # v104: custom_colors should now be a named vector where names are the value labels
               # Debug: show what we received
               cat(file=stderr(), paste0("  custom_colors names: ", paste(names(custom_colors), collapse=", "), "\n"))
               cat(file=stderr(), paste0("  custom_colors values: ", paste(custom_colors, collapse=", "), "\n"))
@@ -6102,12 +6122,13 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v103 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v104 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("FIX: 'Distance from Tree' slider now works - controls heatmap position"),
-                              tags$li("FIX: NA color dropdown no longer hidden by palette box overflow")
+                              tags$li("FIX: Distance slider now per-heatmap (inside each heatmap box) with range 0-1.0"),
+                              tags$li("FIX: Custom color dropdowns now float above other elements (z-index fix)"),
+                              tags$li("FIX: Custom color value->color mapping now preserved correctly")
                             )
                      )
             )
@@ -7915,7 +7936,10 @@ server <- function(input, output, session) {
               # v70: Fixed bug - use man_define_colors (not use_custom_colors) and custom_colors (not colors)
               if (!is.null(heatmap_entry$man_define_colors) && heatmap_entry$man_define_colors) {
                 heatmap_item[[as.character(j)]]$man_define_colors <- "yes"
-                heatmap_item[[as.character(j)]]$color_scale_option <- heatmap_entry$custom_colors
+                # v104: Store custom colors as a list with explicit names to preserve value->color mapping
+                custom_colors_as_list <- as.list(heatmap_entry$custom_colors)
+                names(custom_colors_as_list) <- names(heatmap_entry$custom_colors)
+                heatmap_item[[as.character(j)]]$color_scale_option <- custom_colors_as_list
               } else {
                 heatmap_item[[as.character(j)]]$color_scale_option <- heatmap_entry$color_scheme
               }
@@ -7927,7 +7951,10 @@ server <- function(input, output, session) {
               heatmap_item[[as.character(j)]]$high <- heatmap_entry$high_color
               heatmap_item[[as.character(j)]]$midpoint <- if (!is.null(heatmap_entry$midpoint)) heatmap_entry$midpoint else 0
             }
-            
+
+            # v104: Add per-heatmap distance
+            heatmap_item[[as.character(j)]]$distance <- if (!is.null(heatmap_entry$distance)) heatmap_entry$distance else 0.02
+
             # Add columns - format must match expected YAML structure
             # Each column entry needs to be a named list like list("1" = "column_name")
             if (!is.null(heatmap_entry$columns)) {
@@ -7937,7 +7964,7 @@ server <- function(input, output, session) {
                 heatmap_item[[as.character(j)]]$according[[k]] <- column_entry
               }
             }
-            
+
             class_item[[as.character(i)]]$heatmap_display[[j]] <- heatmap_item
           }
         }
@@ -8065,8 +8092,12 @@ server <- function(input, output, session) {
             # v69: Check for custom colors (man_define_colors flag)
             if (!is.null(heatmap_entry$man_define_colors) && heatmap_entry$man_define_colors) {
               heatmap_item[[as.character(j)]]$man_define_colors <- "yes"
-              heatmap_item[[as.character(j)]]$color_scale_option <- heatmap_entry$custom_colors
-              cat(file=stderr(), paste0("    v69: Using ", length(heatmap_entry$custom_colors), " custom colors\n"))
+              # v104: Store custom colors as a list with explicit names to preserve value->color mapping
+              # Named vectors can lose their names when passed through list structures
+              custom_colors_as_list <- as.list(heatmap_entry$custom_colors)
+              names(custom_colors_as_list) <- names(heatmap_entry$custom_colors)
+              heatmap_item[[as.character(j)]]$color_scale_option <- custom_colors_as_list
+              cat(file=stderr(), paste0("    v104: Storing ", length(custom_colors_as_list), " custom colors with names: ", paste(names(custom_colors_as_list), collapse=", "), "\n"))
             } else {
               heatmap_item[[as.character(j)]]$color_scale_option <- heatmap_entry$color_scheme
             }
@@ -8078,6 +8109,9 @@ server <- function(input, output, session) {
             heatmap_item[[as.character(j)]]$high <- heatmap_entry$high_color
             heatmap_item[[as.character(j)]]$midpoint <- if (!is.null(heatmap_entry$midpoint)) heatmap_entry$midpoint else 0
           }
+
+          # v104: Add per-heatmap distance
+          heatmap_item[[as.character(j)]]$distance <- if (!is.null(heatmap_entry$distance)) heatmap_entry$distance else 0.02
 
           # Add columns - format must match expected YAML structure
           if (!is.null(heatmap_entry$columns)) {
@@ -9856,7 +9890,19 @@ server <- function(input, output, session) {
                              min = 0, max = 90, value = 45, step = 15)
           )
         ),
-        
+
+        # v104: Per-heatmap distance from tree slider
+        fluidRow(
+          column(6,
+                 sliderInput(paste0("heatmap_distance_", i), "Distance from Tree",
+                             min = 0, max = 1.0, value = 0.02, step = 0.01)
+          ),
+          column(6,
+                 tags$p(class = "text-muted", style = "padding-top: 25px; font-size: 11px;",
+                        "Controls how far this heatmap is from the tree tips")
+          )
+        ),
+
         # Discrete settings - v69: Improved UI similar to classification settings
         conditionalPanel(
           condition = paste0("(input.heatmap_auto_type_", i, " && '", detected_type, "' == 'discrete') || (!input.heatmap_auto_type_", i, " && input.heatmap_type_", i, " == 'discrete')"),
@@ -10033,7 +10079,14 @@ server <- function(input, output, session) {
           values$heatmap_configs[[i]]$colnames_angle <- input[[paste0("heatmap_colnames_angle_", i)]]
         }
       }, ignoreInit = TRUE)
-      
+
+      # v104: Per-heatmap distance from tree
+      observeEvent(input[[paste0("heatmap_distance_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          values$heatmap_configs[[i]]$distance <- input[[paste0("heatmap_distance_", i)]]
+        }
+      }, ignoreInit = TRUE)
+
       # Auto type change
       observeEvent(input[[paste0("heatmap_auto_type_", i)]], {
         if (i <= length(values$heatmap_configs)) {
@@ -10307,10 +10360,20 @@ server <- function(input, output, session) {
           )
         )
 
-        # v103: Restructured - NA color row moved OUTSIDE scrollable container
-        # so its dropdown is not clipped by overflow
+        # v104: Restructured with z-index fixes for dropdown menus
+        # All dropdowns now float above other elements when opened
         tags$div(
-          style = "padding: 10px; background: white; border-radius: 3px; border: 1px solid #ddd;",
+          style = "padding: 10px; background: white; border-radius: 3px; border: 1px solid #ddd; position: relative;",
+          # v104: CSS to make selectize dropdowns float above everything
+          tags$style(HTML(paste0("
+            #heatmap_discrete_colors_ui_", i, " .selectize-dropdown {
+              z-index: 10000 !important;
+              position: absolute !important;
+            }
+            #heatmap_discrete_colors_ui_", i, " .selectize-control {
+              position: relative;
+            }
+          "))),
           tags$small(class = "text-muted", paste0(n_vals, " unique value(s) + NA color")),
           tags$hr(style = "margin: 5px 0;"),
           # v70: Header row
@@ -10320,9 +10383,10 @@ server <- function(input, output, session) {
             column(4, "Color"),
             column(4, "R Color Name")
           ),
-          # v103: Only value color pickers inside scrollable container
+          # v104: Removed max-height constraint and overflow:auto to prevent dropdown clipping
+          # The scrollable container was causing dropdown menus to be hidden
           tags$div(
-            style = "max-height: 300px; overflow-y: auto;",
+            style = "max-height: 350px; overflow-y: visible; overflow-x: visible;",
             do.call(tagList, color_pickers)
           ),
           # v103: NA color row outside scrollable area - dropdown won't be clipped
@@ -10432,6 +10496,9 @@ server <- function(input, output, session) {
         actual_type <- if (is_numeric && unique_vals > 10) "continuous" else "discrete"
       }
       
+      # v104: Read distance from per-heatmap slider
+      current_distance <- input[[paste0("heatmap_distance_", i)]]
+
       heatmap_entry <- list(
         title = cfg$title,
         is_discrete = (actual_type == "discrete"),
@@ -10439,7 +10506,8 @@ server <- function(input, output, session) {
         width = input$heatmap_global_width,
         show_colnames = cfg$show_colnames,
         colnames_angle = if (!is.null(cfg$colnames_angle)) cfg$colnames_angle else 45,
-        font_size = input$heatmap_global_font
+        font_size = input$heatmap_global_font,
+        distance = if (!is.null(current_distance)) current_distance else 0.02  # v104: Per-heatmap distance
       )
       
       if (actual_type == "discrete") {
