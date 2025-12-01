@@ -2180,8 +2180,9 @@ func.print.lineage.tree <- function(conf_yaml_path,
                                     rowname_param="",
                                     heat_legend_replace=NA,
                                     tip_name_display_flag=TRUE,
-                                    bootstrap_label_size= 3.5) {
-  
+                                    bootstrap_label_size= 3.5,
+                                    heatmap_tree_distance= 0.02) {
+
   # === DEBUG CHECKPOINT 2: FUNCTION ENTRY ===
   # v53: cat(file=stderr(), "\nÃ°Å¸â€Â DEBUG CHECKPOINT 2: func.print.lineage.tree ENTRY\n")
   # v53: cat(file=stderr(), "Ã°Å¸â€Â node_number_font_size received:", node_number_font_size, "\n")
@@ -3635,10 +3636,11 @@ func.print.lineage.tree <- function(conf_yaml_path,
         heat_legend_replace,
         tip_name_display_flag=tip_name_display_flag,
         flag_make_newick_file=flag_make_newick_file,
-        bootstrap_label_size =bootstrap_label_size
+        bootstrap_label_size =bootstrap_label_size,
+        heatmap_tree_distance = heatmap_tree_distance
       )
       # }
-      
+
       #print("ou is")
       #print(class(ou))
       #print(ou)
@@ -3788,8 +3790,9 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
                                          flag_colnames, viridis_option_list, heat_legend_replace = NA,
                                          tip_name_display_flag = TRUE,
                                          flag_make_newick_file=FALSE,
-                                         bootstrap_label_size = 3.5) {
-  
+                                         bootstrap_label_size = 3.5,
+                                         heatmap_tree_distance = 0.02) {
+
   # === DEBUG CHECKPOINT 4: INNER FUNCTION ENTRY ===
   # v53: cat(file=stderr(), "\nÃ°Å¸â€Â DEBUG CHECKPOINT 4: func.make.plot.tree.heat.NEW ENTRY\n")
   # v53: cat(file=stderr(), "Ã°Å¸â€Â node_number_font_size:", node_number_font_size, "\n")
@@ -4605,11 +4608,10 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       tree_xmax <- max(p$data$x, na.rm = TRUE)
       tree_width <- abs(tree_xmax - tree_xmin)  # Total width of tree
 
-      # v102: Calculate heatmap offset from tree tips
-      # Note: The heatmap_tree_distance slider value would need to be passed as a parameter
-      # to this function for it to work. For now, use a default of 2% of tree width.
-      user_tree_distance <- 0.02  # Default: 2% of tree width
-      heatmap_offset <- tree_width * user_tree_distance
+      # v103: Calculate heatmap offset from tree tips using slider value
+      # heatmap_tree_distance is passed from the UI slider (0-0.2, default 0.02)
+      heatmap_offset <- tree_width * heatmap_tree_distance
+      cat(file=stderr(), paste0("  heatmap_tree_distance (slider): ", heatmap_tree_distance, "\n"))
       tile_width <- tree_width * 0.03  # 3% of tree width per column
       tile_height <- 0.8  # Height of each tile
 
@@ -6100,12 +6102,12 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v102 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v103 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("FIX: Resolved 'object input not found' error that prevented heatmap display"),
-                              tags$li("Note: 'Distance from Tree' slider uses default value (feature in progress)")
+                              tags$li("FIX: 'Distance from Tree' slider now works - controls heatmap position"),
+                              tags$li("FIX: NA color dropdown no longer hidden by palette box overflow")
                             )
                      )
             )
@@ -10305,9 +10307,10 @@ server <- function(input, output, session) {
           )
         )
 
-        # v101: Increased max-height from 300px to 400px so NA color dropdown is visible
+        # v103: Restructured - NA color row moved OUTSIDE scrollable container
+        # so its dropdown is not clipped by overflow
         tags$div(
-          style = "max-height: 400px; overflow-y: auto; padding: 10px; background: white; border-radius: 3px; border: 1px solid #ddd;",
+          style = "padding: 10px; background: white; border-radius: 3px; border: 1px solid #ddd;",
           tags$small(class = "text-muted", paste0(n_vals, " unique value(s) + NA color")),
           tags$hr(style = "margin: 5px 0;"),
           # v70: Header row
@@ -10317,7 +10320,12 @@ server <- function(input, output, session) {
             column(4, "Color"),
             column(4, "R Color Name")
           ),
-          do.call(tagList, color_pickers),
+          # v103: Only value color pickers inside scrollable container
+          tags$div(
+            style = "max-height: 300px; overflow-y: auto;",
+            do.call(tagList, color_pickers)
+          ),
+          # v103: NA color row outside scrollable area - dropdown won't be clipped
           na_color_row
         )
       })
@@ -11307,6 +11315,12 @@ server <- function(input, output, session) {
           input$bootstrap_label_size
         } else {
           3.5
+        },
+        # v103: Pass heatmap tree distance slider value
+        heatmap_tree_distance = if (!is.null(input$heatmap_tree_distance)) {
+          input$heatmap_tree_distance
+        } else {
+          0.02
         }
       ))
       
