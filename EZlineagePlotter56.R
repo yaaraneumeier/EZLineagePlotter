@@ -4667,19 +4667,95 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
           cat(file=stderr(), paste0("  geom_tile added successfully\n"))
 
-          # Add color scale
+          # v100: Add color scale using user-selected colors
+          na_color <- if (!is.null(heat_param[['na_color']])) heat_param[['na_color']] else "grey90"
+          heatmap_title <- if (length(heat_map_title_list) > 0) heat_map_title_list[[1]] else "Heatmap"
+
           if (is_discrete) {
             cat(file=stderr(), paste0("  Adding discrete color scale\n"))
-            p_with_tiles <- p_with_tiles + scale_fill_viridis_d(
-              name = heat_map_title_list[[1]],
-              na.value = "grey90"
-            )
+
+            # v100: Check for custom colors from user
+            man_define_colors <- !is.null(heat_param['man_define_colors']) &&
+                                 !is.na(heat_param['man_define_colors']) &&
+                                 heat_param['man_define_colors'] == TRUE
+            custom_colors <- heat_param[['color_scale_option']]
+
+            cat(file=stderr(), paste0("  man_define_colors: ", man_define_colors, "\n"))
+            cat(file=stderr(), paste0("  custom_colors: ", paste(custom_colors, collapse=", "), "\n"))
+            cat(file=stderr(), paste0("  na_color: ", na_color, "\n"))
+
+            if (man_define_colors && !is.null(custom_colors) && length(custom_colors) > 0) {
+              # v100: Use custom colors provided by user
+              cat(file=stderr(), paste0("  Using ", length(custom_colors), " custom colors from user\n"))
+
+              # Get unique values from data (excluding NA) to match with colors
+              unique_vals <- unique(tile_df$value)
+              unique_vals <- unique_vals[!is.na(unique_vals)]
+              cat(file=stderr(), paste0("  Unique values: ", paste(unique_vals, collapse=", "), "\n"))
+
+              # Create named color vector matching values to colors
+              if (length(custom_colors) >= length(unique_vals)) {
+                color_vec <- setNames(custom_colors[1:length(unique_vals)], unique_vals)
+              } else {
+                # Recycle colors if we have more values than colors
+                color_vec <- setNames(rep(custom_colors, length.out = length(unique_vals)), unique_vals)
+              }
+              cat(file=stderr(), paste0("  Color mapping: ", paste(names(color_vec), "=", color_vec, collapse=", "), "\n"))
+
+              p_with_tiles <- p_with_tiles + scale_fill_manual(
+                values = color_vec,
+                name = heatmap_title,
+                na.value = na_color
+              )
+            } else if (!is.null(custom_colors) && length(custom_colors) == 1 &&
+                       custom_colors %in% rownames(RColorBrewer::brewer.pal.info)) {
+              # v100: Use RColorBrewer palette
+              cat(file=stderr(), paste0("  Using RColorBrewer palette: ", custom_colors, "\n"))
+              p_with_tiles <- p_with_tiles + scale_fill_brewer(
+                palette = custom_colors,
+                name = heatmap_title,
+                na.value = na_color
+              )
+            } else {
+              # v100: Fallback to viridis
+              cat(file=stderr(), paste0("  Using default viridis palette\n"))
+              p_with_tiles <- p_with_tiles + scale_fill_viridis_d(
+                name = heatmap_title,
+                na.value = na_color
+              )
+            }
           } else {
             cat(file=stderr(), paste0("  Adding continuous color scale\n"))
-            p_with_tiles <- p_with_tiles + scale_fill_viridis_c(
-              name = heat_map_title_list[[1]],
-              na.value = "grey90"
-            )
+
+            # v100: Get continuous scale colors from parameters
+            low_color <- if (!is.null(heat_param['low']) && !is.na(heat_param['low'])) heat_param['low'] else "beige"
+            mid_color <- if (!is.null(heat_param['mid']) && !is.na(heat_param['mid'])) heat_param['mid'] else "seashell2"
+            high_color <- if (!is.null(heat_param['high']) && !is.na(heat_param['high'])) heat_param['high'] else "firebrick4"
+            midpoint <- if (!is.null(heat_param['midpoint']) && !is.na(heat_param['midpoint'])) as.numeric(heat_param['midpoint']) else 0.02
+            limits <- heat_param[['limits']]
+
+            cat(file=stderr(), paste0("  Colors: low=", low_color, ", mid=", mid_color, ", high=", high_color, "\n"))
+            cat(file=stderr(), paste0("  Midpoint: ", midpoint, "\n"))
+
+            # Convert values to numeric for continuous scale
+            tile_df$value <- as.numeric(tile_df$value)
+
+            if (!is.null(limits) && !all(is.na(limits))) {
+              p_with_tiles <- p_with_tiles + scale_fill_gradient2(
+                low = low_color, mid = mid_color, high = high_color,
+                midpoint = midpoint,
+                name = heatmap_title,
+                na.value = na_color,
+                limits = limits
+              )
+            } else {
+              p_with_tiles <- p_with_tiles + scale_fill_gradient2(
+                low = low_color, mid = mid_color, high = high_color,
+                midpoint = midpoint,
+                name = heatmap_title,
+                na.value = na_color
+              )
+            }
           }
 
           cat(file=stderr(), paste0("  Color scale added successfully\n"))
@@ -6001,14 +6077,15 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v99 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v100 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("FIX: Calculate heatmap position using tree_width instead of tree_xmax"),
-                              tags$li("Tree tips are at x=0, so tree_xmax was returning 0"),
-                              tags$li("Now using tree_width = abs(max(x) - min(x)) for proper tile sizing"),
-                              tags$li("Heatmap tiles should now appear to the right of tree tips")
+                              tags$li("FIX: Heatmap now uses user-selected custom colors instead of default viridis"),
+                              tags$li("Supports custom color picker values for discrete heatmaps"),
+                              tags$li("Supports RColorBrewer palette selection"),
+                              tags$li("Supports custom low/mid/high colors for continuous heatmaps"),
+                              tags$li("Phase 3 of Heatmap Rebuild Plan complete!")
                             )
                      )
             )
