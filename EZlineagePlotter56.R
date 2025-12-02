@@ -2747,6 +2747,13 @@ func.print.lineage.tree <- function(conf_yaml_path,
                 param[['height']] <- 0.8
               }
 
+              # v109: Get colnames_angle (default 45)
+              if ('colnames_angle' %in% names(heat_map_i_def)) {
+                param[['colnames_angle']] <- as.numeric(heat_map_i_def[['colnames_angle']])
+              } else {
+                param[['colnames_angle']] <- 45
+              }
+
               # v105: Get row labels settings
               if ('show_row_labels' %in% names(heat_map_i_def)) {
                 param[['show_row_labels']] <- func.check.bin.val.from.conf(heat_map_i_def[['show_row_labels']])
@@ -2848,6 +2855,13 @@ func.print.lineage.tree <- function(conf_yaml_path,
                 param[['height']] <- as.numeric(heat_map_i_def[['height']])
               } else {
                 param[['height']] <- 0.8
+              }
+
+              # v109: Get colnames_angle (default 45) for continuous heatmaps too
+              if ('colnames_angle' %in% names(heat_map_i_def)) {
+                param[['colnames_angle']] <- as.numeric(heat_map_i_def[['colnames_angle']])
+              } else {
+                param[['colnames_angle']] <- 45
               }
 
               # v105: Get row labels settings for continuous heatmaps too
@@ -4745,15 +4759,18 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
         p <- tryCatch({
           # Add tile layer with explicit aesthetics
-          # v108: Fixed width/height confusion in coord_flip context:
-          # - After coord_flip, 'width' controls visual vertical extent (row thickness)
-          # - After coord_flip, 'height' controls visual horizontal extent (tile span)
-          # So we use tile_height for 'width' to control visual row thickness
+          # v109: Fixed row height slider to have visible effect
+          # In coord_flip context:
+          # - geom_tile 'width' (data x direction) -> visual y (vertical height)
+          # - geom_tile 'height' (data y direction) -> visual x (horizontal span across tips)
+          # For "row height" slider to control visual height of bands:
+          # - width = tile_width (column spacing, independent of slider)
+          # - height = tile_height (slider directly controls row span)
           p_with_tiles <- p + geom_tile(
             data = tile_df,
             aes(x = x, y = y, fill = value),
-            width = tile_width * tile_height,  # v108: Scale column width by height slider
-            height = tile_height,              # v108: Keep tile height as-is for horizontal span
+            width = tile_width,     # v109: Column spacing (fixed per column count)
+            height = tile_height,   # v109: Row span controlled by slider (0.2-2.0)
             inherit.aes = FALSE
           )
 
@@ -4917,14 +4934,19 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
             cat(file=stderr(), paste0("  Row labels: ", paste(labels_to_use, collapse=", "), "\n"))
 
-            # v108: Fixed row labels positioning to appear on RIGHT side of heatmap
+            # v109: Fixed row labels to appear on RIGHT side of heatmap (not overlapping)
             # In coord_flip:
-            # - x (column position) becomes VERTICAL position in visual
-            # - y (tip position) becomes HORIZONTAL position in visual
-            # So for labels to appear at the RIGHT side, they need max(y) + offset
+            # - data x -> visual y (vertical position)
+            # - data y -> visual x (horizontal position)
+            # Labels should be at the RIGHT of all tips, which means high data y values
+            # After coord_flip, this becomes the right side horizontally
 
-            # Calculate the rightmost y position (after coord_flip, this is the right edge)
-            max_y <- max(tile_df$y) + 1.5  # Offset from rightmost tip
+            # Calculate the rightmost y position (max tip y + offset to clear tiles)
+            # tile_height affects how far tiles extend, so account for it
+            max_y <- max(tile_df$y) + max(tile_height, 1) + 1.0  # Ensure clearance
+
+            # v109: Get colnames angle from heat_param if available
+            colnames_angle <- if (!is.null(heat_param[['colnames_angle']])) heat_param[['colnames_angle']] else 0
 
             # Create label data - one label per column (visual "row")
             label_df <- data.frame(
@@ -4944,15 +4966,19 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             }
 
             # Add text labels
+            # v109: With coord_flip, hjust controls visual vertical alignment, vjust controls horizontal
+            # Using vjust=0 makes text extend to the right (in visual x direction)
             p_with_tiles <- p_with_tiles + geom_text(
               data = label_df,
               aes(x = x, y = y, label = label),
               size = row_label_font_size,
-              hjust = 0,  # Left-align text (which appears as top-align after flip)
-              vjust = 0.5, # Center vertically within each row
+              hjust = 0.5,  # Center text vertically (visual)
+              vjust = 0,    # Text extends to the right (visual)
+              angle = colnames_angle,  # v109: Support angle rotation
               inherit.aes = FALSE
             )
             cat(file=stderr(), paste0("  Row labels added successfully\n"))
+            cat(file=stderr(), paste0("  Label position: max_y=", max_y, ", angle=", colnames_angle, "\n"))
           }
 
           cat(file=stderr(), paste0("  Final layers: ", length(p_with_tiles$layers), "\n"))
@@ -6273,14 +6299,16 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v108 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v109 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("FIX: Color settings now show immediately when columns are selected"),
-                              tags$li("FIX: Row height slider now properly affects heatmap tile size"),
-                              tags$li("FIX: Row labels now appear on the right side of heatmap (not in the middle)"),
-                              tags$li("NEW: Custom label mapping - map each column name to a custom label individually")
+                              tags$li("FIX: Row height slider now properly affects heatmap tile height"),
+                              tags$li("FIX: Row labels now positioned to the right of heatmap (not overlapping)"),
+                              tags$li("FIX: Column name angle slider now works for row labels"),
+                              tags$li("FIX: Label font size slider max increased to 12"),
+                              tags$li("FIX: Improved auto-detect type - numeric columns with decimals now correctly detected as continuous"),
+                              tags$li("REMOVED: Duplicate 'Show column names' checkbox (use 'Show row labels' instead)")
                             )
                      )
             )
@@ -8115,6 +8143,9 @@ server <- function(input, output, session) {
             # v105: Add per-heatmap height
             heatmap_item[[as.character(j)]]$height <- if (!is.null(heatmap_entry$height)) heatmap_entry$height else 0.8
 
+            # v109: Add colnames_angle
+            heatmap_item[[as.character(j)]]$colnames_angle <- if (!is.null(heatmap_entry$colnames_angle)) heatmap_entry$colnames_angle else 45
+
             # v105: Add row labels settings
             heatmap_item[[as.character(j)]]$show_row_labels <- if (!is.null(heatmap_entry$show_row_labels) && heatmap_entry$show_row_labels) "yes" else "no"
             heatmap_item[[as.character(j)]]$row_label_source <- if (!is.null(heatmap_entry$row_label_source)) heatmap_entry$row_label_source else "colnames"
@@ -8285,6 +8316,9 @@ server <- function(input, output, session) {
 
           # v105: Add per-heatmap height
           heatmap_item[[as.character(j)]]$height <- if (!is.null(heatmap_entry$height)) heatmap_entry$height else 0.8
+
+          # v109: Add colnames_angle
+          heatmap_item[[as.character(j)]]$colnames_angle <- if (!is.null(heatmap_entry$colnames_angle)) heatmap_entry$colnames_angle else 45
 
           # v105: Add row labels settings
           heatmap_item[[as.character(j)]]$show_row_labels <- if (!is.null(heatmap_entry$show_row_labels) && heatmap_entry$show_row_labels) "yes" else "no"
@@ -10053,12 +10087,10 @@ server <- function(input, output, session) {
                    }
                  )
           ),
-          column(4,
-                 checkboxInput(paste0("heatmap_show_colnames_", i), "Show column names", 
-                               value = if (!is.null(cfg$show_colnames)) cfg$show_colnames else TRUE)
-          )
+          # v109: Removed duplicate "Show column names" checkbox - use "Show row labels" instead
+          column(4)
         ),
-        
+
         # Type override and settings
         fluidRow(
           column(4,
@@ -10118,7 +10150,7 @@ server <- function(input, output, session) {
             ),
             column(4,
                    sliderInput(paste0("heatmap_row_label_font_size_", i), "Label font size",
-                               min = 1, max = 8,
+                               min = 1, max = 12,  # v109: Increased max from 8 to 12
                                value = if (!is.null(cfg$row_label_font_size)) cfg$row_label_font_size else 2.5,
                                step = 0.5)
             )
@@ -10900,7 +10932,8 @@ server <- function(input, output, session) {
       # Update config with current columns
       cfg$columns <- current_columns
       
-      # v105: Improved auto-detect logic for discrete vs continuous
+      # v109: Improved auto-detect logic for discrete vs continuous
+      # Priority: decimals = continuous, non-numeric = discrete, then check unique values
       actual_type <- cfg$type
       first_col <- cfg$columns[1]
       if (cfg$auto_type && !is.null(values$csv_data) && first_col %in% names(values$csv_data)) {
@@ -10909,24 +10942,34 @@ server <- function(input, output, session) {
         unique_vals <- length(unique(col_data_clean))
         is_numeric <- is.numeric(col_data)
 
-        # v105: Better heuristic for continuous vs discrete:
-        # - If not numeric -> discrete
-        # - If numeric with <= 10 unique values -> discrete (likely categorical codes)
-        # - If numeric but all values are integers AND <= 20 unique -> likely discrete
-        # - If numeric with many unique values AND has decimals -> continuous
+        # v109: Better heuristic - prioritize decimal detection for continuous
         if (!is_numeric) {
+          # Non-numeric data is always discrete
           actual_type <- "discrete"
-        } else if (unique_vals <= 10) {
-          actual_type <- "discrete"
-        } else if (unique_vals <= 20 && all(col_data_clean == as.integer(col_data_clean))) {
-          # All integers with 11-20 unique values - likely discrete codes
-          actual_type <- "discrete"
-        } else if (unique_vals > 20) {
-          actual_type <- "continuous"
         } else {
-          # Check if values have decimals (truly continuous)
-          has_decimals <- any(col_data_clean != as.integer(col_data_clean))
-          actual_type <- if (has_decimals) "continuous" else "discrete"
+          # Check for decimal values first - decimals strongly indicate continuous data
+          has_decimals <- any(col_data_clean != floor(col_data_clean))
+
+          if (has_decimals) {
+            # Decimal values = continuous (measurements, percentages, etc.)
+            actual_type <- "continuous"
+          } else if (unique_vals > 20) {
+            # Many unique integer values = likely continuous (counts, scores, etc.)
+            actual_type <- "continuous"
+          } else if (unique_vals <= 5) {
+            # Very few unique values (0,1,2 or similar) = discrete codes
+            actual_type <- "discrete"
+          } else {
+            # 6-20 unique integer values - check the range
+            val_range <- max(col_data_clean) - min(col_data_clean)
+            # If values span a wide range relative to unique count, likely continuous
+            # If values are clustered (like codes 1,2,3,4,5), likely discrete
+            if (val_range > unique_vals * 2) {
+              actual_type <- "continuous"
+            } else {
+              actual_type <- "discrete"
+            }
+          }
         }
       }
 
