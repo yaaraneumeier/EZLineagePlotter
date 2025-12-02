@@ -2817,6 +2817,33 @@ func.print.lineage.tree <- function(conf_yaml_path,
                 param[['label_mapping']] <- list()
               }
 
+              # v117: Get tip guide line settings (for discrete heatmaps)
+              if ('show_guides' %in% names(heat_map_i_def)) {
+                param[['show_guides']] <- func.check.bin.val.from.conf(heat_map_i_def[['show_guides']])
+              } else {
+                param[['show_guides']] <- FALSE
+              }
+              if ('guide_color1' %in% names(heat_map_i_def)) {
+                param[['guide_color1']] <- heat_map_i_def[['guide_color1']]
+              } else {
+                param[['guide_color1']] <- "#CCCCCC"
+              }
+              if ('guide_color2' %in% names(heat_map_i_def)) {
+                param[['guide_color2']] <- heat_map_i_def[['guide_color2']]
+              } else {
+                param[['guide_color2']] <- "#EEEEEE"
+              }
+              if ('guide_alpha' %in% names(heat_map_i_def)) {
+                param[['guide_alpha']] <- as.numeric(heat_map_i_def[['guide_alpha']])
+              } else {
+                param[['guide_alpha']] <- 0.3
+              }
+              if ('guide_width' %in% names(heat_map_i_def)) {
+                param[['guide_width']] <- as.numeric(heat_map_i_def[['guide_width']])
+              } else {
+                param[['guide_width']] <- 0.5
+              }
+
             } else {
               #print("AAAAAAAAAAAA")
               # print("is discrete false")
@@ -2967,6 +2994,33 @@ func.print.lineage.tree <- function(conf_yaml_path,
                 param[['label_mapping']] <- heat_map_i_def[['label_mapping']]
               } else {
                 param[['label_mapping']] <- list()
+              }
+
+              # v117: Get tip guide line settings (for continuous heatmaps)
+              if ('show_guides' %in% names(heat_map_i_def)) {
+                param[['show_guides']] <- func.check.bin.val.from.conf(heat_map_i_def[['show_guides']])
+              } else {
+                param[['show_guides']] <- FALSE
+              }
+              if ('guide_color1' %in% names(heat_map_i_def)) {
+                param[['guide_color1']] <- heat_map_i_def[['guide_color1']]
+              } else {
+                param[['guide_color1']] <- "#CCCCCC"
+              }
+              if ('guide_color2' %in% names(heat_map_i_def)) {
+                param[['guide_color2']] <- heat_map_i_def[['guide_color2']]
+              } else {
+                param[['guide_color2']] <- "#EEEEEE"
+              }
+              if ('guide_alpha' %in% names(heat_map_i_def)) {
+                param[['guide_alpha']] <- as.numeric(heat_map_i_def[['guide_alpha']])
+              } else {
+                param[['guide_alpha']] <- 0.3
+              }
+              if ('guide_width' %in% names(heat_map_i_def)) {
+                param[['guide_width']] <- as.numeric(heat_map_i_def[['guide_width']])
+              } else {
+                param[['guide_width']] <- 0.5
               }
             }
 
@@ -6599,14 +6653,14 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v116 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v117 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("NEW: Tip Guide Lines - vertical lines with alternating colors that run through heatmap to help identify which tip corresponds to which row"),
-                              tags$li("FIX: Row height now uses MINIMUM tip spacing (not median) to prevent default overlap"),
-                              tags$li("FIX: Auto-detect for numeric columns improved - now checks string representation for decimals even for already-numeric data (e.g., 15.7, 16.8)"),
-                              tags$li("FIX: Both auto-detect sections (UI display and heatmap config) now have consistent logic")
+                              tags$li("FIX: Tip Guide Lines now work - added missing parameter extraction from YAML config"),
+                              tags$li("FIX: Row Height slider now properly affects heatmap (values < 1 create gaps, = 1 tiles touch, > 1 tiles overlap)"),
+                              tags$li("Note: Row Height > 1 causes tile overlap but no visible change (tiles stack on each other)"),
+                              tags$li("FIX: Auto-detect improved - handles 'NA' strings vs R's NA properly")
                             )
                      )
             )
@@ -10986,13 +11040,18 @@ server <- function(input, output, session) {
         unique_vals <- length(unique(na.omit(col_data)))
         is_numeric <- is.numeric(col_data)
 
-        # v116: Check for decimals in string representation BEFORE conversion
+        # v117: Check for decimals in string representation BEFORE conversion
         # This catches values like "15.7" that might lose precision
         # Also check originally numeric data by converting to string
+        # IMPORTANT: Filter out "NA" strings which are not R's NA
         has_decimal_in_string <- FALSE
         if (is.character(col_data) || is.factor(col_data)) {
           char_data <- as.character(na.omit(col_data))
-          has_decimal_in_string <- any(grepl("\\.[0-9]+", char_data))
+          # v117: Remove "NA" strings (case-insensitive) that are NOT R's NA
+          char_data <- char_data[!toupper(trimws(char_data)) %in% c("NA", "N/A", "NULL", "")]
+          if (length(char_data) > 0) {
+            has_decimal_in_string <- any(grepl("\\.[0-9]+", char_data))
+          }
         } else if (is.numeric(col_data)) {
           # v116: For originally numeric data, convert to string and check for decimals
           char_data <- as.character(na.omit(col_data))
@@ -11002,9 +11061,12 @@ server <- function(input, output, session) {
         # v111: Better detection - also try to convert character columns to numeric
         originally_numeric <- is_numeric  # v112: Track if originally numeric
         if (!is_numeric && is.character(col_data)) {
+          # v117: Filter out NA-like strings before attempting conversion
+          clean_col_data <- col_data
+          clean_col_data[toupper(trimws(clean_col_data)) %in% c("NA", "N/A", "NULL", "")] <- NA
           # Try converting to numeric - see what proportion succeeds
-          numeric_attempt <- suppressWarnings(as.numeric(col_data))
-          non_na_original <- sum(!is.na(col_data))
+          numeric_attempt <- suppressWarnings(as.numeric(clean_col_data))
+          non_na_original <- sum(!is.na(clean_col_data))  # v117: Count after cleaning NA strings
           non_na_converted <- sum(!is.na(numeric_attempt))
           # v116: Lower threshold to 50% for consistency with heatmap config
           if (non_na_original > 0 && (non_na_converted / non_na_original) >= 0.5) {
@@ -11438,25 +11500,34 @@ server <- function(input, output, session) {
         converted_to_numeric <- FALSE
         originally_numeric <- is_numeric
 
-        # v116: Check for decimal points in string representation FIRST
+        # v117: Check for decimal points in string representation FIRST
         # This catches cases like "23.6" that might get converted to numeric
         # Also check originally numeric data by converting to string
+        # IMPORTANT: Filter out "NA" strings which are not R's NA
         has_decimal_in_string <- FALSE
         if (is.character(col_data) || is.factor(col_data)) {
           char_data <- as.character(na.omit(col_data))
-          has_decimal_in_string <- any(grepl("\\.[0-9]+", char_data))
+          # v117: Remove "NA" strings (case-insensitive) that are NOT R's NA
+          char_data <- char_data[!toupper(trimws(char_data)) %in% c("NA", "N/A", "NULL", "")]
+          if (length(char_data) > 0) {
+            has_decimal_in_string <- any(grepl("\\.[0-9]+", char_data))
+          }
         } else if (is.numeric(col_data)) {
           # v116: For originally numeric data, convert to string and check for decimals
           # This catches values like 15.7 that are already loaded as numeric
           char_data <- as.character(na.omit(col_data))
           has_decimal_in_string <- any(grepl("\\.[0-9]+", char_data))
         }
-        cat(file=stderr(), paste0("  v116 AUTO-DETECT: has_decimal_in_string=", has_decimal_in_string, "\n"))
+        cat(file=stderr(), paste0("  v117 AUTO-DETECT: has_decimal_in_string=", has_decimal_in_string, "\n"))
 
-        # v115: More aggressive conversion - try to convert any non-numeric column to numeric
+        # v117: More aggressive conversion - try to convert any non-numeric column to numeric
+        # First clean up NA-like strings
         if (!is_numeric) {
-          numeric_attempt <- suppressWarnings(as.numeric(as.character(col_data)))
-          non_na_original <- sum(!is.na(col_data))
+          clean_col_data <- as.character(col_data)
+          # v117: Convert NA-like strings to actual NA
+          clean_col_data[toupper(trimws(clean_col_data)) %in% c("NA", "N/A", "NULL", "")] <- NA
+          numeric_attempt <- suppressWarnings(as.numeric(clean_col_data))
+          non_na_original <- sum(!is.na(clean_col_data))  # v117: Count after cleaning NA strings
           non_na_converted <- sum(!is.na(numeric_attempt))
           # v115: Lower threshold to 50% for numeric detection (was 80%)
           if (non_na_original > 0 && (non_na_converted / non_na_original) >= 0.5) {
@@ -11467,53 +11538,53 @@ server <- function(input, output, session) {
           }
         }
 
-        # v116: Debug output for auto-detect troubleshooting
-        cat(file=stderr(), paste0("  v116 AUTO-DETECT: column=", first_col,
+        # v117: Debug output for auto-detect troubleshooting
+        cat(file=stderr(), paste0("  v117 AUTO-DETECT: column=", first_col,
                                    ", is_numeric=", is_numeric,
                                    ", originally_numeric=", originally_numeric,
                                    ", converted=", converted_to_numeric,
                                    ", unique_vals=", unique_vals, "\n"))
 
-        # v116: Better heuristic - decimals ALWAYS mean continuous
+        # v117: Better heuristic - decimals ALWAYS mean continuous
         if (!is_numeric) {
           # Non-numeric data is always discrete
           actual_type <- "discrete"
-          cat(file=stderr(), paste0("  v116 AUTO-DETECT: Result=discrete (non-numeric)\n"))
+          cat(file=stderr(), paste0("  v117 AUTO-DETECT: Result=discrete (non-numeric)\n"))
         } else {
-          # v116: Check for decimal values with tolerance for floating-point precision
+          # v117: Check for decimal values with tolerance for floating-point precision
           epsilon <- 1e-6
           has_decimals <- any(abs(col_data_clean - floor(col_data_clean)) > epsilon, na.rm = TRUE)
 
-          # v116: Also use the string-based detection result
+          # v117: Also use the string-based detection result
           if (!has_decimals && has_decimal_in_string) {
             has_decimals <- TRUE
-            cat(file=stderr(), paste0("  v116 AUTO-DETECT: decimal detected via string check\n"))
+            cat(file=stderr(), paste0("  v117 AUTO-DETECT: decimal detected via string check\n"))
           }
 
-          cat(file=stderr(), paste0("  v116 AUTO-DETECT: has_decimals=", has_decimals, "\n"))
+          cat(file=stderr(), paste0("  v117 AUTO-DETECT: has_decimals=", has_decimals, "\n"))
 
-          # v116: Decimals ALWAYS mean continuous (measurements, percentages, etc.)
+          # v117: Decimals ALWAYS mean continuous (measurements, percentages, etc.)
           if (has_decimals) {
             actual_type <- "continuous"
-            cat(file=stderr(), paste0("  v116 AUTO-DETECT: Result=continuous (has decimals)\n"))
+            cat(file=stderr(), paste0("  v117 AUTO-DETECT: Result=continuous (has decimals)\n"))
           } else if (unique_vals > 20) {
             # Many unique integer values = likely continuous (counts, scores, etc.)
             actual_type <- "continuous"
-            cat(file=stderr(), paste0("  v116 AUTO-DETECT: Result=continuous (>20 unique values)\n"))
+            cat(file=stderr(), paste0("  v117 AUTO-DETECT: Result=continuous (>20 unique values)\n"))
           } else if (unique_vals <= 5) {
             # Very few unique values (0,1,2 or similar) = discrete codes
             actual_type <- "discrete"
-            cat(file=stderr(), paste0("  v116 AUTO-DETECT: Result=discrete (<=5 unique values)\n"))
+            cat(file=stderr(), paste0("  v117 AUTO-DETECT: Result=discrete (<=5 unique values)\n"))
           } else {
             # 6-20 unique integer values - check the range
             val_range <- max(col_data_clean, na.rm = TRUE) - min(col_data_clean, na.rm = TRUE)
             # If values span a wide range relative to unique count, likely continuous
             if (val_range > unique_vals * 2) {
               actual_type <- "continuous"
-              cat(file=stderr(), paste0("  v116 AUTO-DETECT: Result=continuous (wide range)\n"))
+              cat(file=stderr(), paste0("  v117 AUTO-DETECT: Result=continuous (wide range)\n"))
             } else {
               actual_type <- "discrete"
-              cat(file=stderr(), paste0("  v116 AUTO-DETECT: Result=discrete (clustered values)\n"))
+              cat(file=stderr(), paste0("  v117 AUTO-DETECT: Result=discrete (clustered values)\n"))
             }
           }
         }
