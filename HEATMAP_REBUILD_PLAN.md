@@ -5,7 +5,7 @@
 This document contains the step-by-step plan for rebuilding the heatmap functionality in EZLineagePlotter.
 The complex heatmap code (~800 lines) has been disabled in v91 and replaced with a simple proof-of-concept.
 
-**Current Status**: v113 - Row height and column width are now independent (row height slider directly controls tile height, column width controls column spacing). Grid display improved with better boolean handling. Auto-detect type even more aggressive for numeric columns. NA color for continuous heatmaps has debug output. Bootstrap position slider precision increased to 0.01 steps. Label alignment and offset have debug output for troubleshooting.
+**Current Status**: v114 - Fixed major bug where row_height, grid settings, label offset/alignment, and NA color for continuous heatmaps were NOT being passed from UI to rendering in the DEFAULT classification code path (only worked for non-default classifications). Bootstrap position slider precision increased to 0.001 steps. Auto-detect improved with epsilon tolerance for decimal detection and string-based decimal point checking.
 
 ## Why We Simplified
 

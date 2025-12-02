@@ -6458,17 +6458,15 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v113 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v114 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("FIX: Row height now independent from column width - direct control over row height"),
-                              tags$li("FIX: Column width slider now correctly controls column spacing"),
-                              tags$li("FIX: Label alignment and offset now work correctly with debug output"),
-                              tags$li("FIX: Grid display around tiles - improved boolean handling"),
-                              tags$li("FIX: Auto-detect type even more aggressive - numeric columns default to continuous unless boolean-like"),
-                              tags$li("FIX: NA color for continuous heatmaps now has debug output"),
-                              tags$li("FIX: Bootstrap position slider precision increased to 0.01 steps")
+                              tags$li("FIX: Row height, grid, and label settings now work for DEFAULT classification (was only working for non-default)"),
+                              tags$li("FIX: NA color for continuous heatmaps now properly passed from UI"),
+                              tags$li("FIX: Auto-detect improved - checks for decimal points in string data, more robust epsilon comparison"),
+                              tags$li("FIX: Bootstrap position slider precision increased to 0.001 steps"),
+                              tags$li("Added debug output for auto-detect decisions")
                             )
                      )
             )
@@ -6728,13 +6726,13 @@ ui <- dashboardPage(
                           value = 3,
                           step = 0.5,
                           width = "100%"),
-              # v113: Bootstrap position adjustment slider - even more precise range with 0.01 step
+              # v114: Bootstrap position adjustment slider - finest precision with 0.001 step
               sliderInput("man_boot_x_offset",
                           "Bootstrap Position (higher/lower):",
                           min = -0.5,
                           max = 0.5,
                           value = 0,
-                          step = 0.01,
+                          step = 0.001,
                           width = "100%")
             )
           ),
@@ -8498,6 +8496,8 @@ server <- function(input, output, session) {
             heatmap_item[[as.character(j)]]$mid <- if (!is.null(heatmap_entry$mid_color)) heatmap_entry$mid_color else heatmap_entry$low_color
             heatmap_item[[as.character(j)]]$high <- heatmap_entry$high_color
             heatmap_item[[as.character(j)]]$midpoint <- if (!is.null(heatmap_entry$midpoint)) heatmap_entry$midpoint else 0
+            # v114: Add NA color for continuous heatmaps (was missing in default classification path)
+            heatmap_item[[as.character(j)]]$na_color <- if (!is.null(heatmap_entry$na_color)) heatmap_entry$na_color else "grey90"
           }
 
           # v104: Add per-heatmap distance
@@ -8506,6 +8506,14 @@ server <- function(input, output, session) {
           # v105: Add per-heatmap height
           heatmap_item[[as.character(j)]]$height <- if (!is.null(heatmap_entry$height)) heatmap_entry$height else 0.8
 
+          # v114: Add per-heatmap row height (was missing in default classification path)
+          heatmap_item[[as.character(j)]]$row_height <- if (!is.null(heatmap_entry$row_height)) heatmap_entry$row_height else 1.0
+
+          # v114: Add grid settings (were missing in default classification path)
+          heatmap_item[[as.character(j)]]$show_grid <- if (!is.null(heatmap_entry$show_grid) && heatmap_entry$show_grid) "yes" else "no"
+          heatmap_item[[as.character(j)]]$grid_color <- if (!is.null(heatmap_entry$grid_color)) heatmap_entry$grid_color else "#000000"
+          heatmap_item[[as.character(j)]]$grid_size <- if (!is.null(heatmap_entry$grid_size)) heatmap_entry$grid_size else 0.5
+
           # v109: Add colnames_angle
           heatmap_item[[as.character(j)]]$colnames_angle <- if (!is.null(heatmap_entry$colnames_angle)) heatmap_entry$colnames_angle else 45
 
@@ -8513,6 +8521,9 @@ server <- function(input, output, session) {
           heatmap_item[[as.character(j)]]$show_row_labels <- if (!is.null(heatmap_entry$show_row_labels) && heatmap_entry$show_row_labels) "yes" else "no"
           heatmap_item[[as.character(j)]]$row_label_source <- if (!is.null(heatmap_entry$row_label_source)) heatmap_entry$row_label_source else "colnames"
           heatmap_item[[as.character(j)]]$row_label_font_size <- if (!is.null(heatmap_entry$row_label_font_size)) heatmap_entry$row_label_font_size else 2.5
+          # v114: Add row label offset and alignment (were missing in default classification path)
+          heatmap_item[[as.character(j)]]$row_label_offset <- if (!is.null(heatmap_entry$row_label_offset)) heatmap_entry$row_label_offset else 1.0
+          heatmap_item[[as.character(j)]]$row_label_align <- if (!is.null(heatmap_entry$row_label_align)) heatmap_entry$row_label_align else "left"
           heatmap_item[[as.character(j)]]$custom_row_labels <- if (!is.null(heatmap_entry$custom_row_labels)) heatmap_entry$custom_row_labels else ""
           # v108: Add label mapping
           if (!is.null(heatmap_entry$label_mapping) && length(heatmap_entry$label_mapping) > 0) {
@@ -11223,7 +11234,7 @@ server <- function(input, output, session) {
       # Update config with current columns
       cfg$columns <- current_columns
       
-      # v109/v111: Improved auto-detect logic for discrete vs continuous
+      # v114: Improved auto-detect logic for discrete vs continuous
       # Priority: decimals = continuous, non-numeric = discrete, then check unique values
       actual_type <- cfg$type
       first_col <- cfg$columns[1]
@@ -11232,45 +11243,69 @@ server <- function(input, output, session) {
         col_data_clean <- na.omit(col_data)
         unique_vals <- length(unique(col_data_clean))
         is_numeric <- is.numeric(col_data)
+        converted_to_numeric <- FALSE
 
-        # v111: Try to convert character columns to numeric
-        if (!is_numeric && is.character(col_data)) {
+        # v114: More aggressive conversion - try to convert any non-numeric column to numeric
+        if (!is_numeric) {
           numeric_attempt <- suppressWarnings(as.numeric(col_data))
           non_na_original <- sum(!is.na(col_data))
           non_na_converted <- sum(!is.na(numeric_attempt))
-          # If at least 80% of non-NA values convert successfully, treat as numeric
-          if (non_na_original > 0 && (non_na_converted / non_na_original) >= 0.8) {
+          # v114: Lower threshold to 50% for numeric detection (was 80%)
+          if (non_na_original > 0 && (non_na_converted / non_na_original) >= 0.5) {
             is_numeric <- TRUE
+            converted_to_numeric <- TRUE
             col_data_clean <- na.omit(numeric_attempt)
           }
         }
 
-        # v109/v111: Better heuristic - prioritize decimal detection for continuous
+        # v114: Debug output for auto-detect troubleshooting
+        cat(file=stderr(), paste0("  v114 AUTO-DETECT: column=", first_col,
+                                   ", is_numeric=", is_numeric,
+                                   ", converted=", converted_to_numeric,
+                                   ", unique_vals=", unique_vals, "\n"))
+
+        # v114: Better heuristic - prioritize decimal detection for continuous
         if (!is_numeric) {
           # Non-numeric data is always discrete
           actual_type <- "discrete"
+          cat(file=stderr(), paste0("  v114 AUTO-DETECT: Result=discrete (non-numeric)\n"))
         } else {
-          # Check for decimal values first - decimals strongly indicate continuous data
-          has_decimals <- any(col_data_clean != floor(col_data_clean))
+          # v114: Check for decimal values with tolerance to handle floating-point precision issues
+          # Use a small epsilon to compare against floor
+          epsilon <- 1e-9
+          has_decimals <- any(abs(col_data_clean - floor(col_data_clean)) > epsilon, na.rm = TRUE)
+
+          # v114: Also check if original data contains decimal points in string representation
+          if (!has_decimals && is.character(values$csv_data[[first_col]])) {
+            char_data <- na.omit(values$csv_data[[first_col]])
+            has_decimals <- any(grepl("\\.", char_data))
+          }
+
+          cat(file=stderr(), paste0("  v114 AUTO-DETECT: has_decimals=", has_decimals, "\n"))
 
           if (has_decimals) {
             # Decimal values = continuous (measurements, percentages, etc.)
             actual_type <- "continuous"
+            cat(file=stderr(), paste0("  v114 AUTO-DETECT: Result=continuous (has decimals)\n"))
           } else if (unique_vals > 20) {
             # Many unique integer values = likely continuous (counts, scores, etc.)
             actual_type <- "continuous"
+            cat(file=stderr(), paste0("  v114 AUTO-DETECT: Result=continuous (>20 unique values)\n"))
           } else if (unique_vals <= 5) {
             # Very few unique values (0,1,2 or similar) = discrete codes
             actual_type <- "discrete"
+            cat(file=stderr(), paste0("  v114 AUTO-DETECT: Result=discrete (<=5 unique values)\n"))
           } else {
             # 6-20 unique integer values - check the range
-            val_range <- max(col_data_clean) - min(col_data_clean)
+            val_range <- max(col_data_clean, na.rm = TRUE) - min(col_data_clean, na.rm = TRUE)
             # If values span a wide range relative to unique count, likely continuous
             # If values are clustered (like codes 1,2,3,4,5), likely discrete
             if (val_range > unique_vals * 2) {
               actual_type <- "continuous"
+              cat(file=stderr(), paste0("  v114 AUTO-DETECT: Result=continuous (wide range)\n"))
             } else {
               actual_type <- "discrete"
+              cat(file=stderr(), paste0("  v114 AUTO-DETECT: Result=discrete (clustered values)\n"))
             }
           }
         }
