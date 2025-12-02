@@ -4784,26 +4784,33 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       per_heatmap_distance <- if (!is.null(heat_param[['distance']])) heat_param[['distance']] else heatmap_tree_distance
       heatmap_offset <- tree_width * per_heatmap_distance
       cat(file=stderr(), paste0("  per_heatmap_distance: ", per_heatmap_distance, "\n"))
-      # v112: Fixed row height slider to actually control row height
-      # In coord_flip context:
-      # - geom_tile 'width' (data x) -> visual y (column spacing/width)
-      # - geom_tile 'height' (data y) -> visual x (row height/span)
-      # So Row Height slider should affect 'height' parameter, not 'width'
+      # v113: Fixed row height and column width to be INDEPENDENT
+      # In coord_flip context with ggtree:
+      # - Data y (tip indices 1,2,3...) becomes visual x after flip
+      # - Data x (column positions) becomes visual y after flip
+      # So:
+      # - geom_tile 'height' (data y extent) -> controls visual row height
+      # - geom_tile 'width' (data x extent) -> controls visual column width
 
-      # v105: Use per-heatmap height from heat_param (this is "Column Width")
-      base_column_width <- if (!is.null(heat_param[['height']])) heat_param[['height']] else 0.8
+      # Column Width slider controls how wide each heatmap column appears
+      column_width_value <- if (!is.null(heat_param[['height']])) heat_param[['height']] else 0.8
 
-      # v112: Row height multiplier now applied to tile_height (which becomes visual row height after flip)
-      row_height_mult <- if (!is.null(heat_param[['row_height']])) heat_param[['row_height']] else 1.0
-      tile_height <- base_column_width * row_height_mult  # Apply row_height to the base
+      # Row Height slider controls how tall each row (tip strip) appears
+      # Values: 0.5 = half height (gaps between rows), 1.0 = full (touching), 2.0 = overlapping
+      row_height_value <- if (!is.null(heat_param[['row_height']])) heat_param[['row_height']] else 1.0
 
-      # Column spacing (tile_width) is fixed per column count
-      tile_width <- tree_width * 0.03  # Fixed 3% of tree width per column
+      # tile_width: controls column spacing (data x units)
+      # Base is 3% of tree width, scaled by Column Width slider
+      tile_width <- tree_width * 0.03 * column_width_value
 
-      cat(file=stderr(), paste0("  base_column_width: ", base_column_width, "\n"))
-      cat(file=stderr(), paste0("  row_height_mult: ", row_height_mult, "\n"))
-      cat(file=stderr(), paste0("  tile_height (row height): ", tile_height, "\n"))
+      # tile_height: controls row height (data y units)
+      # Tip indices are 1,2,3... so height=1.0 means tiles touch, <1 means gaps, >1 means overlap
+      tile_height <- row_height_value
+
+      cat(file=stderr(), paste0("  column_width_value: ", column_width_value, "\n"))
+      cat(file=stderr(), paste0("  row_height_value: ", row_height_value, "\n"))
       cat(file=stderr(), paste0("  tile_width (column spacing): ", tile_width, "\n"))
+      cat(file=stderr(), paste0("  tile_height (row height): ", tile_height, "\n"))
 
       cat(file=stderr(), paste0("  tree_xmin: ", tree_xmin, "\n"))
       cat(file=stderr(), paste0("  tree_xmax: ", tree_xmax, "\n"))
@@ -4873,12 +4880,19 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
           # - width = tile_width (fixed column spacing)
           # - height = tile_height (Row Height slider * base)
 
-          # v111: Get grid settings
+          # v113: Get grid settings with debug output
           show_grid <- if (!is.null(heat_param[['show_grid']])) heat_param[['show_grid']] else FALSE
           grid_color <- if (!is.null(heat_param[['grid_color']])) heat_param[['grid_color']] else "#000000"
-          grid_size <- if (!is.null(heat_param[['grid_size']])) heat_param[['grid_size']] else 0.5
+          grid_size <- if (!is.null(heat_param[['grid_size']])) as.numeric(heat_param[['grid_size']]) else 0.5
 
-          if (show_grid) {
+          cat(file=stderr(), paste0("  v113: show_grid=", show_grid, " (class: ", class(show_grid), ")\n"))
+          cat(file=stderr(), paste0("  v113: grid_color=", grid_color, ", grid_size=", grid_size, "\n"))
+
+          # v113: Ensure show_grid is properly evaluated as boolean
+          show_grid_bool <- isTRUE(show_grid) || identical(show_grid, TRUE) || identical(show_grid, "yes") || identical(show_grid, "TRUE")
+          cat(file=stderr(), paste0("  v113: show_grid_bool=", show_grid_bool, "\n"))
+
+          if (show_grid_bool) {
             p_with_tiles <- p + geom_tile(
               data = tile_df,
               aes(x = x, y = y, fill = value),
@@ -4996,8 +5010,11 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             midpoint <- if (!is.null(heat_param['midpoint']) && !is.na(heat_param['midpoint'])) as.numeric(heat_param['midpoint']) else 0.02
             limits <- heat_param[['limits']]
 
+            # v113: Debug output for continuous scale colors including NA color
             cat(file=stderr(), paste0("  Colors: low=", low_color, ", mid=", mid_color, ", high=", high_color, "\n"))
             cat(file=stderr(), paste0("  Midpoint: ", midpoint, "\n"))
+            cat(file=stderr(), paste0("  v113: na_color for continuous: ", na_color, "\n"))
+            cat(file=stderr(), paste0("  v113: heat_param na_color value: ", ifelse(is.null(heat_param[['na_color']]), "NULL", heat_param[['na_color']]), "\n"))
 
             # v111: Values should already be numeric from tile building above
             # No need to convert here as the geom already has the numeric data
@@ -5058,27 +5075,29 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
             cat(file=stderr(), paste0("  Row labels: ", paste(labels_to_use, collapse=", "), "\n"))
 
-            # v110/v111: Fixed row labels positioning for scale_y_reverse()
-            # With scale_y_reverse:
-            # - HIGH y values appear on the LEFT (low visual x)
-            # - LOW y values appear on the RIGHT (high visual x)
-            # So labels should be at LOW y values to appear on the RIGHT side
+            # v113: Improved row labels positioning
+            # Labels appear below the heatmap (at lower y values than the tips)
+            # With scale_y_reverse + coord_flip, this places them visually to the right
 
-            # v111: Get row label offset and alignment from heat_param
-            row_label_offset <- if (!is.null(heat_param[['row_label_offset']])) heat_param[['row_label_offset']] else 1.0
+            # v113: Get row label offset and alignment from heat_param
+            row_label_offset <- if (!is.null(heat_param[['row_label_offset']])) as.numeric(heat_param[['row_label_offset']]) else 1.0
             row_label_align <- if (!is.null(heat_param[['row_label_align']])) heat_param[['row_label_align']] else "left"
 
-            # Calculate the leftmost y position (min tip y - offset to clear tiles)
-            # v111: Use row_label_offset to control how far the labels are from the heatmap
-            min_y <- min(tile_df$y) - max(tile_height, 1) - row_label_offset
+            cat(file=stderr(), paste0("  v113: row_label_offset from heat_param: ", row_label_offset, "\n"))
+            cat(file=stderr(), paste0("  v113: row_label_align from heat_param: ", row_label_align, "\n"))
+
+            # v113: Calculate label y position based on offset
+            # Labels go below minimum tip y (which is typically 1)
+            # Offset controls how far below: 0 = at the edge of tiles, 5 = far from tiles
+            label_y_pos <- min(tile_df$y) - (tile_height / 2) - row_label_offset
 
             # v109: Get colnames angle from heat_param if available
-            colnames_angle <- if (!is.null(heat_param[['colnames_angle']])) heat_param[['colnames_angle']] else 0
+            colnames_angle <- if (!is.null(heat_param[['colnames_angle']])) as.numeric(heat_param[['colnames_angle']]) else 0
 
             # Create label data - one label per column (visual "row")
             label_df <- data.frame(
               x = numeric(ncol(heat_data)),  # Will be set per column
-              y = min_y,                      # All labels at right side (low y due to scale_y_reverse)
+              y = label_y_pos,               # All labels at same y position
               label = labels_to_use,
               stringsAsFactors = FALSE
             )
@@ -5092,28 +5111,33 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
               }
             }
 
-            # v111: Determine hjust based on alignment setting
-            # left = 0, center = 0.5, right = 1
+            # v113: Determine hjust based on alignment setting
+            # In coord_flip context with angle=0:
+            # - hjust controls visual horizontal alignment
+            # - left=0 (text starts at anchor), center=0.5, right=1 (text ends at anchor)
+            # In coord_flip context with angle=90 or angle=45:
+            # - vjust becomes more relevant for visual positioning
             hjust_val <- switch(row_label_align,
                                 "left" = 0,
                                 "center" = 0.5,
                                 "right" = 1,
                                 0)  # default to left
 
+            # v113: For angled text, also adjust vjust for better alignment
+            vjust_val <- if (colnames_angle == 0) 0.5 else if (colnames_angle > 0) 1 else 0
+
             # Add text labels
-            # v110/v111: With scale_y_reverse + coord_flip:
-            # - vjust = 1 makes text extend to the right (toward lower y values in data space)
             p_with_tiles <- p_with_tiles + geom_text(
               data = label_df,
               aes(x = x, y = y, label = label),
               size = row_label_font_size,
-              hjust = hjust_val,  # v111: Use alignment from settings
-              vjust = 1,    # v110: Text extends to the right (toward lower y, which is visual right due to scale_y_reverse)
-              angle = colnames_angle,  # v109: Support angle rotation
+              hjust = hjust_val,
+              vjust = vjust_val,
+              angle = colnames_angle,
               inherit.aes = FALSE
             )
             cat(file=stderr(), paste0("  Row labels added successfully\n"))
-            cat(file=stderr(), paste0("  Label position: min_y=", min_y, ", angle=", colnames_angle, "\n"))
+            cat(file=stderr(), paste0("  Label position: label_y_pos=", label_y_pos, ", angle=", colnames_angle, ", hjust=", hjust_val, ", vjust=", vjust_val, "\n"))
           }
 
           cat(file=stderr(), paste0("  Final layers: ", length(p_with_tiles$layers), "\n"))
@@ -6434,16 +6458,17 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v112 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v113 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("FIX: Row height slider now actually controls row height (was affecting column width)"),
-                              tags$li("FIX: Bootstrap position slider now responds immediately to changes"),
-                              tags$li("FIX: Bootstrap position slider range reduced for finer control (-0.5 to 0.5)"),
-                              tags$li("FIX: Auto-detect type improved - originally numeric columns now default to continuous"),
-                              tags$li("NEW: NA color option added for continuous heatmaps"),
-                              tags$li("FIX: Label alignment and offset controls now function correctly")
+                              tags$li("FIX: Row height now independent from column width - direct control over row height"),
+                              tags$li("FIX: Column width slider now correctly controls column spacing"),
+                              tags$li("FIX: Label alignment and offset now work correctly with debug output"),
+                              tags$li("FIX: Grid display around tiles - improved boolean handling"),
+                              tags$li("FIX: Auto-detect type even more aggressive - numeric columns default to continuous unless boolean-like"),
+                              tags$li("FIX: NA color for continuous heatmaps now has debug output"),
+                              tags$li("FIX: Bootstrap position slider precision increased to 0.01 steps")
                             )
                      )
             )
@@ -6703,13 +6728,13 @@ ui <- dashboardPage(
                           value = 3,
                           step = 0.5,
                           width = "100%"),
-              # v112: Bootstrap position adjustment slider - adjusted to smaller, more precise range
+              # v113: Bootstrap position adjustment slider - even more precise range with 0.01 step
               sliderInput("man_boot_x_offset",
                           "Bootstrap Position (higher/lower):",
                           min = -0.5,
                           max = 0.5,
                           value = 0,
-                          step = 0.02,
+                          step = 0.01,
                           width = "100%")
             )
           ),
@@ -10800,18 +10825,20 @@ server <- function(input, output, session) {
           # Check the range of values
           val_range <- if (length(non_na_vals) > 0) diff(range(non_na_vals)) else 0
 
-          # v112: More aggressive detection for continuous:
-          # - If originally numeric type (not converted from character), default to continuous
-          # - If has decimals, it's continuous
-          # - If many unique values (>10), it's continuous
-          # - If the range is large (>10), it's more likely continuous
-          # Only treat as discrete if: converted from character AND integers AND few unique values AND small range
+          # v113: Even more aggressive detection for continuous data:
+          # - If originally numeric type: almost always treat as continuous
+          # - Only treat as discrete if it looks like a boolean (0/1) or very small categorical set
+          # - If has decimals, always continuous
+          # - If range > 1 and originally numeric, treat as continuous
           if (originally_numeric) {
-            # Originally numeric - default to continuous unless clearly categorical (very few distinct integers)
-            detected_type <- if (has_decimals || unique_numeric_vals > 5 || val_range > 5) "continuous" else "discrete"
+            # Originally numeric - default to continuous unless clearly boolean-like
+            # Treat as discrete only if: no decimals AND (0/1 values OR ≤3 unique values with range ≤2)
+            is_boolean_like <- unique_numeric_vals <= 2 && val_range <= 1
+            is_small_categorical <- unique_numeric_vals <= 3 && val_range <= 2 && !has_decimals
+            detected_type <- if (has_decimals || !(is_boolean_like || is_small_categorical)) "continuous" else "discrete"
           } else {
             # Converted from character - be more conservative, might be categorical codes
-            detected_type <- if (has_decimals || unique_numeric_vals > 10 || val_range > 20) "continuous" else "discrete"
+            detected_type <- if (has_decimals || unique_numeric_vals > 8 || val_range > 10) "continuous" else "discrete"
           }
         } else {
           detected_type <- "discrete"
