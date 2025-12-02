@@ -2878,6 +2878,13 @@ func.print.lineage.tree <- function(conf_yaml_path,
                 param['midpoint'] <-as.numeric(heat_map_i_def$midpoint)
               }
 
+              # v112: Get NA color for continuous heatmaps (default grey90)
+              if ('na_color' %in% names(heat_map_i_def)) {
+                param[['na_color']] <- heat_map_i_def[['na_color']]
+              } else {
+                param[['na_color']] <- "grey90"
+              }
+
               # v104: Get per-heatmap distance for continuous heatmaps too
               if ('distance' %in% names(heat_map_i_def)) {
                 param[['distance']] <- as.numeric(heat_map_i_def[['distance']])
@@ -4777,14 +4784,26 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       per_heatmap_distance <- if (!is.null(heat_param[['distance']])) heat_param[['distance']] else heatmap_tree_distance
       heatmap_offset <- tree_width * per_heatmap_distance
       cat(file=stderr(), paste0("  per_heatmap_distance: ", per_heatmap_distance, "\n"))
-      # v110: tile_width controls visual row height (after coord_flip)
-      # Use row_height parameter to scale the base tile width
+      # v112: Fixed row height slider to actually control row height
+      # In coord_flip context:
+      # - geom_tile 'width' (data x) -> visual y (column spacing/width)
+      # - geom_tile 'height' (data y) -> visual x (row height/span)
+      # So Row Height slider should affect 'height' parameter, not 'width'
+
+      # v105: Use per-heatmap height from heat_param (this is "Column Width")
+      base_column_width <- if (!is.null(heat_param[['height']])) heat_param[['height']] else 0.8
+
+      # v112: Row height multiplier now applied to tile_height (which becomes visual row height after flip)
       row_height_mult <- if (!is.null(heat_param[['row_height']])) heat_param[['row_height']] else 1.0
-      tile_width <- tree_width * 0.03 * row_height_mult  # Base 3% of tree width, scaled by row_height
+      tile_height <- base_column_width * row_height_mult  # Apply row_height to the base
+
+      # Column spacing (tile_width) is fixed per column count
+      tile_width <- tree_width * 0.03  # Fixed 3% of tree width per column
+
+      cat(file=stderr(), paste0("  base_column_width: ", base_column_width, "\n"))
       cat(file=stderr(), paste0("  row_height_mult: ", row_height_mult, "\n"))
-      # v105/v110: Use per-heatmap height from heat_param (this is now "Column Width")
-      tile_height <- if (!is.null(heat_param[['height']])) heat_param[['height']] else 0.8
-      cat(file=stderr(), paste0("  tile_height (column width): ", tile_height, "\n"))
+      cat(file=stderr(), paste0("  tile_height (row height): ", tile_height, "\n"))
+      cat(file=stderr(), paste0("  tile_width (column spacing): ", tile_width, "\n"))
 
       cat(file=stderr(), paste0("  tree_xmin: ", tree_xmin, "\n"))
       cat(file=stderr(), paste0("  tree_xmax: ", tree_xmax, "\n"))
@@ -4846,14 +4865,13 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
         cat(file=stderr(), paste0("\n=== v99: ADDING GEOM_TILE LAYER ===\n"))
 
         p <- tryCatch({
-          # Add tile layer with explicit aesthetics
-          # v109: Fixed row height slider to have visible effect
+          # v112: Add tile layer with explicit aesthetics
           # In coord_flip context:
-          # - geom_tile 'width' (data x direction) -> visual y (vertical height)
-          # - geom_tile 'height' (data y direction) -> visual x (horizontal span across tips)
-          # For "row height" slider to control visual height of bands:
-          # - width = tile_width (column spacing, independent of slider)
-          # - height = tile_height (slider directly controls row span)
+          # - geom_tile 'width' (data x) -> visual y (column spacing/width)
+          # - geom_tile 'height' (data y) -> visual x (row height/span)
+          # So:
+          # - width = tile_width (fixed column spacing)
+          # - height = tile_height (Row Height slider * base)
 
           # v111: Get grid settings
           show_grid <- if (!is.null(heat_param[['show_grid']])) heat_param[['show_grid']] else FALSE
@@ -4864,8 +4882,8 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             p_with_tiles <- p + geom_tile(
               data = tile_df,
               aes(x = x, y = y, fill = value),
-              width = tile_width,     # v109: Column spacing (fixed per column count)
-              height = tile_height,   # v109: Row span controlled by slider (0.2-2.0)
+              width = tile_width,     # v112: Column spacing (fixed)
+              height = tile_height,   # v112: Row height (slider-controlled)
               color = grid_color,     # v111: Grid/border color
               linewidth = grid_size,  # v111: Grid/border width
               inherit.aes = FALSE
@@ -4874,8 +4892,8 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             p_with_tiles <- p + geom_tile(
               data = tile_df,
               aes(x = x, y = y, fill = value),
-              width = tile_width,     # v109: Column spacing (fixed per column count)
-              height = tile_height,   # v109: Row span controlled by slider (0.2-2.0)
+              width = tile_width,     # v112: Column spacing (fixed)
+              height = tile_height,   # v112: Row height (slider-controlled)
               inherit.aes = FALSE
             )
           }
@@ -6416,18 +6434,16 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v111 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v112 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("FIX: Row height slider now works correctly"),
-                              tags$li("FIX: Bootstrap position slider now works"),
-                              tags$li("FIX: Continuous heatmaps now render correctly (no 'discrete value' error)"),
-                              tags$li("FIX: Auto-detect type now recognizes numeric strings (e.g., columns with #N/A values)"),
-                              tags$li("NEW: Row label offset slider - control distance of labels from heatmap"),
-                              tags$li("NEW: Row label alignment options (left/center/right)"),
-                              tags$li("NEW: Grid option for heatmap tiles - show borders around each square"),
-                              tags$li("REMOVED: Unnecessary 'Data Columns Count' display")
+                              tags$li("FIX: Row height slider now actually controls row height (was affecting column width)"),
+                              tags$li("FIX: Bootstrap position slider now responds immediately to changes"),
+                              tags$li("FIX: Bootstrap position slider range reduced for finer control (-0.5 to 0.5)"),
+                              tags$li("FIX: Auto-detect type improved - originally numeric columns now default to continuous"),
+                              tags$li("NEW: NA color option added for continuous heatmaps"),
+                              tags$li("FIX: Label alignment and offset controls now function correctly")
                             )
                      )
             )
@@ -6687,13 +6703,13 @@ ui <- dashboardPage(
                           value = 3,
                           step = 0.5,
                           width = "100%"),
-              # v110: Bootstrap position adjustment slider
+              # v112: Bootstrap position adjustment slider - adjusted to smaller, more precise range
               sliderInput("man_boot_x_offset",
                           "Bootstrap Position (higher/lower):",
-                          min = -2,
-                          max = 2,
+                          min = -0.5,
+                          max = 0.5,
                           value = 0,
-                          step = 0.1,
+                          step = 0.02,
                           width = "100%")
             )
           ),
@@ -7295,7 +7311,15 @@ server <- function(input, output, session) {
     req(values$plot_ready, input$show_bootstrap == TRUE)
     generate_plot()
   }, ignoreInit = TRUE)
-  
+
+  # v112: Bootstrap position offset observer - makes slider immediately responsive
+  observeEvent(input$man_boot_x_offset, {
+    cat(file=stderr(), "\n===observeEvent man_boot_x_offset FIRED===\n")
+    cat(file=stderr(), "New value:", input$man_boot_x_offset, "\n")
+    req(values$plot_ready, input$show_bootstrap == TRUE)
+    generate_plot()
+  }, ignoreInit = TRUE)
+
   # Process YAML configuration when loaded
   observeEvent(input$yaml_config, {
     req(input$yaml_config)
@@ -8262,6 +8286,8 @@ server <- function(input, output, session) {
               heatmap_item[[as.character(j)]]$mid <- if (!is.null(heatmap_entry$mid_color)) heatmap_entry$mid_color else heatmap_entry$low_color
               heatmap_item[[as.character(j)]]$high <- heatmap_entry$high_color
               heatmap_item[[as.character(j)]]$midpoint <- if (!is.null(heatmap_entry$midpoint)) heatmap_entry$midpoint else 0
+              # v112: Add NA color for continuous heatmaps (default grey90)
+              heatmap_item[[as.character(j)]]$na_color <- if (!is.null(heatmap_entry$na_color)) heatmap_entry$na_color else "grey90"
             }
 
             # v104: Add per-heatmap distance
@@ -10749,6 +10775,7 @@ server <- function(input, output, session) {
         is_numeric <- is.numeric(col_data)
 
         # v111: Better detection - also try to convert character columns to numeric
+        originally_numeric <- is_numeric  # v112: Track if originally numeric
         if (!is_numeric && is.character(col_data)) {
           # Try converting to numeric - see what proportion succeeds
           numeric_attempt <- suppressWarnings(as.numeric(col_data))
@@ -10761,13 +10788,31 @@ server <- function(input, output, session) {
           }
         }
 
-        # v110/v111: Better detection for numeric columns
+        # v112: Better detection for numeric columns
         if (is_numeric) {
-          # Check if values have decimals (not all integers)
+          # Recalculate unique values after numeric conversion (important!)
           non_na_vals <- na.omit(col_data)
+          unique_numeric_vals <- length(unique(non_na_vals))
+
+          # Check if values have decimals (not all integers)
           has_decimals <- any(non_na_vals != floor(non_na_vals), na.rm = TRUE)
-          # Numeric with decimals = continuous, or many unique values = continuous
-          detected_type <- if (has_decimals || unique_vals > 10) "continuous" else "discrete"
+
+          # Check the range of values
+          val_range <- if (length(non_na_vals) > 0) diff(range(non_na_vals)) else 0
+
+          # v112: More aggressive detection for continuous:
+          # - If originally numeric type (not converted from character), default to continuous
+          # - If has decimals, it's continuous
+          # - If many unique values (>10), it's continuous
+          # - If the range is large (>10), it's more likely continuous
+          # Only treat as discrete if: converted from character AND integers AND few unique values AND small range
+          if (originally_numeric) {
+            # Originally numeric - default to continuous unless clearly categorical (very few distinct integers)
+            detected_type <- if (has_decimals || unique_numeric_vals > 5 || val_range > 5) "continuous" else "discrete"
+          } else {
+            # Converted from character - be more conservative, might be categorical codes
+            detected_type <- if (has_decimals || unique_numeric_vals > 10 || val_range > 20) "continuous" else "discrete"
+          }
         } else {
           detected_type <- "discrete"
         }
@@ -10849,6 +10894,15 @@ server <- function(input, output, session) {
                                     step = 0.1)
                      )
               )
+            ),
+            # v112: NA color for continuous heatmaps
+            fluidRow(
+              column(4,
+                     colourInput(paste0("heatmap_", i, "_cont_na_color"), "NA Color",
+                                 value = if (!is.null(cfg$na_color)) cfg$na_color else "#BEBEBE",
+                                 showColour = "background")
+              ),
+              column(8)
             )
           )
         }
@@ -11282,8 +11336,11 @@ server <- function(input, output, session) {
           heatmap_entry$mid_color <- cfg$mid_color
           heatmap_entry$midpoint <- cfg$midpoint
         }
+        # v112: Get NA color for continuous heatmaps from input (default to grey90)
+        cont_na_color_input <- input[[paste0("heatmap_", i, "_cont_na_color")]]
+        heatmap_entry$na_color <- if (!is.null(cont_na_color_input)) cont_na_color_input else "grey90"
       }
-      
+
       heatmap_entry
     })
     
