@@ -2740,6 +2740,35 @@ func.print.lineage.tree <- function(conf_yaml_path,
                 param[['distance']] <- 0.02
               }
 
+              # v105: Get per-heatmap height (default 0.8)
+              if ('height' %in% names(heat_map_i_def)) {
+                param[['height']] <- as.numeric(heat_map_i_def[['height']])
+              } else {
+                param[['height']] <- 0.8
+              }
+
+              # v105: Get row labels settings
+              if ('show_row_labels' %in% names(heat_map_i_def)) {
+                param[['show_row_labels']] <- func.check.bin.val.from.conf(heat_map_i_def[['show_row_labels']])
+              } else {
+                param[['show_row_labels']] <- FALSE
+              }
+              if ('row_label_source' %in% names(heat_map_i_def)) {
+                param[['row_label_source']] <- heat_map_i_def[['row_label_source']]
+              } else {
+                param[['row_label_source']] <- "colnames"
+              }
+              if ('row_label_font_size' %in% names(heat_map_i_def)) {
+                param[['row_label_font_size']] <- as.numeric(heat_map_i_def[['row_label_font_size']])
+              } else {
+                param[['row_label_font_size']] <- 2.5
+              }
+              if ('custom_row_labels' %in% names(heat_map_i_def)) {
+                param[['custom_row_labels']] <- heat_map_i_def[['custom_row_labels']]
+              } else {
+                param[['custom_row_labels']] <- ""
+              }
+
             } else {
               #print("AAAAAAAAAAAA")
               # print("is discrete false")
@@ -2806,6 +2835,35 @@ func.print.lineage.tree <- function(conf_yaml_path,
                 param[['distance']] <- as.numeric(heat_map_i_def[['distance']])
               } else {
                 param[['distance']] <- 0.02
+              }
+
+              # v105: Get per-heatmap height (default 0.8) for continuous heatmaps too
+              if ('height' %in% names(heat_map_i_def)) {
+                param[['height']] <- as.numeric(heat_map_i_def[['height']])
+              } else {
+                param[['height']] <- 0.8
+              }
+
+              # v105: Get row labels settings for continuous heatmaps too
+              if ('show_row_labels' %in% names(heat_map_i_def)) {
+                param[['show_row_labels']] <- func.check.bin.val.from.conf(heat_map_i_def[['show_row_labels']])
+              } else {
+                param[['show_row_labels']] <- FALSE
+              }
+              if ('row_label_source' %in% names(heat_map_i_def)) {
+                param[['row_label_source']] <- heat_map_i_def[['row_label_source']]
+              } else {
+                param[['row_label_source']] <- "colnames"
+              }
+              if ('row_label_font_size' %in% names(heat_map_i_def)) {
+                param[['row_label_font_size']] <- as.numeric(heat_map_i_def[['row_label_font_size']])
+              } else {
+                param[['row_label_font_size']] <- 2.5
+              }
+              if ('custom_row_labels' %in% names(heat_map_i_def)) {
+                param[['custom_row_labels']] <- heat_map_i_def[['custom_row_labels']]
+              } else {
+                param[['custom_row_labels']] <- ""
               }
             }
 
@@ -4624,7 +4682,9 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       heatmap_offset <- tree_width * per_heatmap_distance
       cat(file=stderr(), paste0("  per_heatmap_distance: ", per_heatmap_distance, "\n"))
       tile_width <- tree_width * 0.03  # 3% of tree width per column
-      tile_height <- 0.8  # Height of each tile
+      # v105: Use per-heatmap height from heat_param
+      tile_height <- if (!is.null(heat_param[['height']])) heat_param[['height']] else 0.8
+      cat(file=stderr(), paste0("  tile_height: ", tile_height, "\n"))
 
       cat(file=stderr(), paste0("  tree_xmin: ", tree_xmin, "\n"))
       cat(file=stderr(), paste0("  tree_xmax: ", tree_xmax, "\n"))
@@ -4804,6 +4864,63 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
           }
 
           cat(file=stderr(), paste0("  Color scale added successfully\n"))
+
+          # v105: Add row labels if enabled
+          show_row_labels <- if (!is.null(heat_param[['show_row_labels']])) heat_param[['show_row_labels']] else FALSE
+          if (show_row_labels) {
+            cat(file=stderr(), paste0("  Adding row labels...\n"))
+
+            row_label_source <- if (!is.null(heat_param[['row_label_source']])) heat_param[['row_label_source']] else "colnames"
+            row_label_font_size <- if (!is.null(heat_param[['row_label_font_size']])) heat_param[['row_label_font_size']] else 2.5
+            custom_row_labels <- if (!is.null(heat_param[['custom_row_labels']])) heat_param[['custom_row_labels']] else ""
+
+            # Determine labels to use
+            if (row_label_source == "custom" && nchar(custom_row_labels) > 0) {
+              labels_to_use <- trimws(strsplit(custom_row_labels, ",")[[1]])
+              # Pad or truncate to match number of columns
+              if (length(labels_to_use) < ncol(heat_data)) {
+                labels_to_use <- c(labels_to_use, rep("", ncol(heat_data) - length(labels_to_use)))
+              } else if (length(labels_to_use) > ncol(heat_data)) {
+                labels_to_use <- labels_to_use[1:ncol(heat_data)]
+              }
+            } else {
+              # Use column names
+              labels_to_use <- colnames(heat_data)
+            }
+
+            cat(file=stderr(), paste0("  Row labels: ", paste(labels_to_use, collapse=", "), "\n"))
+
+            # Calculate x position for labels (after all heatmap columns)
+            max_x <- max(tile_df$x) + tile_width * 0.6
+
+            # Create label data - one label per column, positioned at column center
+            label_df <- data.frame(
+              x = max_x,
+              y = 1:ncol(heat_data),  # Dummy y, will be recalculated
+              label = labels_to_use,
+              stringsAsFactors = FALSE
+            )
+
+            # Calculate actual x position for each column label (at right edge of that column)
+            for (col_idx in 1:ncol(heat_data)) {
+              col_tiles <- tile_df[tile_df$column == colnames(heat_data)[col_idx], ]
+              if (nrow(col_tiles) > 0) {
+                label_df$x[col_idx] <- max(col_tiles$x) + tile_width * 0.6
+                label_df$y[col_idx] <- mean(col_tiles$y)  # Center vertically
+              }
+            }
+
+            # Add text labels
+            p_with_tiles <- p_with_tiles + geom_text(
+              data = label_df,
+              aes(x = x, y = y, label = label),
+              size = row_label_font_size,
+              hjust = 0,
+              inherit.aes = FALSE
+            )
+            cat(file=stderr(), paste0("  Row labels added successfully\n"))
+          }
+
           cat(file=stderr(), paste0("  Final layers: ", length(p_with_tiles$layers), "\n"))
           p_with_tiles
 
@@ -6122,13 +6239,15 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v104 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v105 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("FIX: Distance slider now per-heatmap (inside each heatmap box) with range 0-1.0"),
-                              tags$li("FIX: Custom color dropdowns now float above other elements (z-index fix)"),
-                              tags$li("FIX: Custom color value->color mapping now preserved correctly")
+                              tags$li("FIX: Removed duplicate global 'Distance from Tree' slider - now only per-heatmap"),
+                              tags$li("FIX: Per-heatmap distance slider now works correctly and persists values"),
+                              tags$li("NEW: Row labels feature - show text next to each heatmap line"),
+                              tags$li("NEW: Per-heatmap height slider (renamed from width)"),
+                              tags$li("FIX: Improved auto-detect type for numerical columns")
                             )
                      )
             )
@@ -6552,23 +6671,19 @@ ui <- dashboardPage(
               hr(),
               
               # Global settings
+              # v105: Removed global Distance from Tree slider - now per-heatmap only
               fluidRow(
-                column(3,
-                       sliderInput("heatmap_global_width", "Individual Heatmap Width",
-                                   min = 0.1, max = 3, value = 0.8, step = 0.1)
-                ),
-                column(3,
+                column(4,
                        sliderInput("heatmap_global_gap", "Gap Between Heatmaps",
                                    min = 0, max = 1, value = 0.05, step = 0.01)
                 ),
-                column(3,
+                column(4,
                        sliderInput("heatmap_global_font", "Legend Font Size",
                                    min = 1, max = 10, value = 3.5, step = 0.1)
                 ),
-                # v101: Add slider for heatmap distance from tree
-                column(3,
-                       sliderInput("heatmap_tree_distance", "Distance from Tree",
-                                   min = 0, max = 0.2, value = 0.02, step = 0.005)
+                column(4,
+                       tags$p(class = "text-muted", style = "padding-top: 20px;",
+                              "Per-heatmap settings (distance, height, labels) are in each heatmap box below")
                 )
               ),
               
@@ -7955,6 +8070,15 @@ server <- function(input, output, session) {
             # v104: Add per-heatmap distance
             heatmap_item[[as.character(j)]]$distance <- if (!is.null(heatmap_entry$distance)) heatmap_entry$distance else 0.02
 
+            # v105: Add per-heatmap height
+            heatmap_item[[as.character(j)]]$height <- if (!is.null(heatmap_entry$height)) heatmap_entry$height else 0.8
+
+            # v105: Add row labels settings
+            heatmap_item[[as.character(j)]]$show_row_labels <- if (!is.null(heatmap_entry$show_row_labels) && heatmap_entry$show_row_labels) "yes" else "no"
+            heatmap_item[[as.character(j)]]$row_label_source <- if (!is.null(heatmap_entry$row_label_source)) heatmap_entry$row_label_source else "colnames"
+            heatmap_item[[as.character(j)]]$row_label_font_size <- if (!is.null(heatmap_entry$row_label_font_size)) heatmap_entry$row_label_font_size else 2.5
+            heatmap_item[[as.character(j)]]$custom_row_labels <- if (!is.null(heatmap_entry$custom_row_labels)) heatmap_entry$custom_row_labels else ""
+
             # Add columns - format must match expected YAML structure
             # Each column entry needs to be a named list like list("1" = "column_name")
             if (!is.null(heatmap_entry$columns)) {
@@ -8112,6 +8236,15 @@ server <- function(input, output, session) {
 
           # v104: Add per-heatmap distance
           heatmap_item[[as.character(j)]]$distance <- if (!is.null(heatmap_entry$distance)) heatmap_entry$distance else 0.02
+
+          # v105: Add per-heatmap height
+          heatmap_item[[as.character(j)]]$height <- if (!is.null(heatmap_entry$height)) heatmap_entry$height else 0.8
+
+          # v105: Add row labels settings
+          heatmap_item[[as.character(j)]]$show_row_labels <- if (!is.null(heatmap_entry$show_row_labels) && heatmap_entry$show_row_labels) "yes" else "no"
+          heatmap_item[[as.character(j)]]$row_label_source <- if (!is.null(heatmap_entry$row_label_source)) heatmap_entry$row_label_source else "colnames"
+          heatmap_item[[as.character(j)]]$row_label_font_size <- if (!is.null(heatmap_entry$row_label_font_size)) heatmap_entry$row_label_font_size else 2.5
+          heatmap_item[[as.character(j)]]$custom_row_labels <- if (!is.null(heatmap_entry$custom_row_labels)) heatmap_entry$custom_row_labels else ""
 
           # Add columns - format must match expected YAML structure
           if (!is.null(heatmap_entry$columns)) {
@@ -9891,15 +10024,56 @@ server <- function(input, output, session) {
           )
         ),
 
-        # v104: Per-heatmap distance from tree slider
+        # v105: Per-heatmap distance and height sliders
         fluidRow(
-          column(6,
+          column(4,
                  sliderInput(paste0("heatmap_distance_", i), "Distance from Tree",
-                             min = 0, max = 1.0, value = 0.02, step = 0.01)
+                             min = 0, max = 1.0,
+                             value = if (!is.null(cfg$distance)) cfg$distance else 0.02,
+                             step = 0.01)
           ),
-          column(6,
+          column(4,
+                 sliderInput(paste0("heatmap_height_", i), "Row Height",
+                             min = 0.2, max = 2.0,
+                             value = if (!is.null(cfg$height)) cfg$height else 0.8,
+                             step = 0.1)
+          ),
+          column(4,
                  tags$p(class = "text-muted", style = "padding-top: 25px; font-size: 11px;",
-                        "Controls how far this heatmap is from the tree tips")
+                        "Distance: gap from tree. Height: tile size.")
+          )
+        ),
+
+        # v105: Row labels settings
+        tags$div(
+          style = "background-color: #fff9e6; padding: 10px; border-radius: 5px; margin-top: 10px; margin-bottom: 10px;",
+          tags$h5(icon("font"), " Row Labels (next to heatmap)"),
+          fluidRow(
+            column(4,
+                   checkboxInput(paste0("heatmap_show_row_labels_", i), "Show row labels",
+                                 value = if (!is.null(cfg$show_row_labels)) cfg$show_row_labels else FALSE)
+            ),
+            column(4,
+                   selectInput(paste0("heatmap_row_label_source_", i), "Label source",
+                               choices = c("Column names" = "colnames", "Custom text" = "custom"),
+                               selected = if (!is.null(cfg$row_label_source)) cfg$row_label_source else "colnames")
+            ),
+            column(4,
+                   sliderInput(paste0("heatmap_row_label_font_size_", i), "Label font size",
+                               min = 1, max = 8,
+                               value = if (!is.null(cfg$row_label_font_size)) cfg$row_label_font_size else 2.5,
+                               step = 0.5)
+            )
+          ),
+          conditionalPanel(
+            condition = paste0("input.heatmap_row_label_source_", i, " == 'custom'"),
+            fluidRow(
+              column(12,
+                     textInput(paste0("heatmap_custom_row_labels_", i), "Custom labels (comma-separated)",
+                               value = if (!is.null(cfg$custom_row_labels)) cfg$custom_row_labels else "",
+                               placeholder = "Label1, Label2, Label3...")
+              )
+            )
           )
         ),
 
@@ -10080,12 +10254,44 @@ server <- function(input, output, session) {
         }
       }, ignoreInit = TRUE)
 
-      # v104: Per-heatmap distance from tree
+      # v105: Per-heatmap distance from tree (removed ignoreInit to capture initial value)
       observeEvent(input[[paste0("heatmap_distance_", i)]], {
         if (i <= length(values$heatmap_configs)) {
           values$heatmap_configs[[i]]$distance <- input[[paste0("heatmap_distance_", i)]]
         }
-      }, ignoreInit = TRUE)
+      }, ignoreInit = FALSE)
+
+      # v105: Per-heatmap height
+      observeEvent(input[[paste0("heatmap_height_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          values$heatmap_configs[[i]]$height <- input[[paste0("heatmap_height_", i)]]
+        }
+      }, ignoreInit = FALSE)
+
+      # v105: Row labels settings
+      observeEvent(input[[paste0("heatmap_show_row_labels_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          values$heatmap_configs[[i]]$show_row_labels <- input[[paste0("heatmap_show_row_labels_", i)]]
+        }
+      }, ignoreInit = FALSE)
+
+      observeEvent(input[[paste0("heatmap_row_label_source_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          values$heatmap_configs[[i]]$row_label_source <- input[[paste0("heatmap_row_label_source_", i)]]
+        }
+      }, ignoreInit = FALSE)
+
+      observeEvent(input[[paste0("heatmap_row_label_font_size_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          values$heatmap_configs[[i]]$row_label_font_size <- input[[paste0("heatmap_row_label_font_size_", i)]]
+        }
+      }, ignoreInit = FALSE)
+
+      observeEvent(input[[paste0("heatmap_custom_row_labels_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          values$heatmap_configs[[i]]$custom_row_labels <- input[[paste0("heatmap_custom_row_labels_", i)]]
+        }
+      }, ignoreInit = FALSE)
 
       # Auto type change
       observeEvent(input[[paste0("heatmap_auto_type_", i)]], {
@@ -10486,28 +10692,57 @@ server <- function(input, output, session) {
       # Update config with current columns
       cfg$columns <- current_columns
       
-      # Determine actual type based on first column
+      # v105: Improved auto-detect logic for discrete vs continuous
       actual_type <- cfg$type
       first_col <- cfg$columns[1]
       if (cfg$auto_type && !is.null(values$csv_data) && first_col %in% names(values$csv_data)) {
         col_data <- values$csv_data[[first_col]]
-        unique_vals <- length(unique(na.omit(col_data)))
+        col_data_clean <- na.omit(col_data)
+        unique_vals <- length(unique(col_data_clean))
         is_numeric <- is.numeric(col_data)
-        actual_type <- if (is_numeric && unique_vals > 10) "continuous" else "discrete"
+
+        # v105: Better heuristic for continuous vs discrete:
+        # - If not numeric -> discrete
+        # - If numeric with <= 10 unique values -> discrete (likely categorical codes)
+        # - If numeric but all values are integers AND <= 20 unique -> likely discrete
+        # - If numeric with many unique values AND has decimals -> continuous
+        if (!is_numeric) {
+          actual_type <- "discrete"
+        } else if (unique_vals <= 10) {
+          actual_type <- "discrete"
+        } else if (unique_vals <= 20 && all(col_data_clean == as.integer(col_data_clean))) {
+          # All integers with 11-20 unique values - likely discrete codes
+          actual_type <- "discrete"
+        } else if (unique_vals > 20) {
+          actual_type <- "continuous"
+        } else {
+          # Check if values have decimals (truly continuous)
+          has_decimals <- any(col_data_clean != as.integer(col_data_clean))
+          actual_type <- if (has_decimals) "continuous" else "discrete"
+        }
       }
-      
-      # v104: Read distance from per-heatmap slider
+
+      # v105: Read per-heatmap settings
       current_distance <- input[[paste0("heatmap_distance_", i)]]
+      current_height <- input[[paste0("heatmap_height_", i)]]
+      show_row_labels <- input[[paste0("heatmap_show_row_labels_", i)]]
+      row_label_source <- input[[paste0("heatmap_row_label_source_", i)]]
+      row_label_font_size <- input[[paste0("heatmap_row_label_font_size_", i)]]
+      custom_row_labels <- input[[paste0("heatmap_custom_row_labels_", i)]]
 
       heatmap_entry <- list(
         title = cfg$title,
         is_discrete = (actual_type == "discrete"),
         columns = cfg$columns,  # v56: Now supports multiple columns
-        width = input$heatmap_global_width,
         show_colnames = cfg$show_colnames,
         colnames_angle = if (!is.null(cfg$colnames_angle)) cfg$colnames_angle else 45,
         font_size = input$heatmap_global_font,
-        distance = if (!is.null(current_distance)) current_distance else 0.02  # v104: Per-heatmap distance
+        distance = if (!is.null(current_distance)) current_distance else 0.02,
+        height = if (!is.null(current_height)) current_height else 0.8,  # v105: Per-heatmap height
+        show_row_labels = if (!is.null(show_row_labels)) show_row_labels else FALSE,
+        row_label_source = if (!is.null(row_label_source)) row_label_source else "colnames",
+        row_label_font_size = if (!is.null(row_label_font_size)) row_label_font_size else 2.5,
+        custom_row_labels = if (!is.null(custom_row_labels)) custom_row_labels else ""
       )
       
       if (actual_type == "discrete") {
