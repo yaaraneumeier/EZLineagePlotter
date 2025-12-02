@@ -5,7 +5,7 @@
 This document contains the step-by-step plan for rebuilding the heatmap functionality in EZLineagePlotter.
 The complex heatmap code (~800 lines) has been disabled in v91 and replaced with a simple proof-of-concept.
 
-**Current Status**: v115 - Fixed row height to calculate actual tip spacing (was assuming fixed 1,2,3 positions). Label offset range expanded to -8 to 8. Grid lines now drawn explicitly with geom_segment (fixes missing vertical line issue). Auto-detect improved - checks string representation for decimals BEFORE numeric conversion. Removed non-functional Shade option from bootstrap tab.
+**Current Status**: v116 - Added Tip Guide Lines feature (alternating colored lines through heatmap to identify which tip corresponds to which row). Fixed row height to use MINIMUM tip spacing (not median) to prevent default overlap. Auto-detect improved - now checks string representation for decimals even for already-numeric data (e.g., 15.7, 16.8). Both auto-detect sections (UI display and heatmap config) now have consistent logic.
 
 ## Why We Simplified
 

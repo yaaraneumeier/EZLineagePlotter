@@ -4803,23 +4803,30 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       # Base is 3% of tree width, scaled by Column Width slider
       tile_width <- tree_width * 0.03 * column_width_value
 
-      # v115: Calculate actual tip spacing for row height
+      # v116: Calculate actual tip spacing for row height
       # Tip y-positions are NOT always at 1,2,3... - they depend on tree topology
-      # We calculate the median spacing between adjacent tips and use that as base
+      # We calculate the MINIMUM spacing to prevent overlap at row_height_value=1.0
       tip_y_positions <- sort(unique(tip_data$y))
       if (length(tip_y_positions) > 1) {
         tip_spacings <- diff(tip_y_positions)
-        base_tip_spacing <- median(tip_spacings)
+        base_tip_spacing <- min(tip_spacings)  # v116: Use minimum to prevent default overlap
+        mean_spacing <- mean(tip_spacings)
+        median_spacing <- median(tip_spacings)
+        cat(file=stderr(), paste0("  v116: tip spacing stats: min=", base_tip_spacing,
+                                   ", median=", median_spacing,
+                                   ", mean=", mean_spacing, "\n"))
       } else {
         base_tip_spacing <- 1.0  # Fallback for single tip
       }
 
       # tile_height: controls row height (data y units)
-      # row_height_value=1.0 means tiles touch, <1 means gaps, >1 means overlap
+      # row_height_value=1.0 means tiles touch at minimum spacing (no overlap)
+      # <1 means gaps, >1 means overlap
       tile_height <- base_tip_spacing * row_height_value
 
-      cat(file=stderr(), paste0("  v115: tip_y range: [", min(tip_y_positions), ", ", max(tip_y_positions), "]\n"))
-      cat(file=stderr(), paste0("  v115: base_tip_spacing (median): ", base_tip_spacing, "\n"))
+      cat(file=stderr(), paste0("  v116: tip_y range: [", min(tip_y_positions), ", ", max(tip_y_positions), "]\n"))
+      cat(file=stderr(), paste0("  v116: n_tips: ", length(tip_y_positions), "\n"))
+      cat(file=stderr(), paste0("  v116: base_tip_spacing (min): ", base_tip_spacing, "\n"))
 
       cat(file=stderr(), paste0("  column_width_value: ", column_width_value, "\n"))
       cat(file=stderr(), paste0("  row_height_value: ", row_height_value, "\n"))
@@ -5212,6 +5219,66 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             )
             cat(file=stderr(), paste0("  Row labels added successfully\n"))
             cat(file=stderr(), paste0("  Label position: label_y_pos=", label_y_pos, ", angle=", colnames_angle, ", hjust=", hjust_val, ", vjust=", vjust_val, "\n"))
+          }
+
+          # v116: Add tip guide lines (vertical lines from tips through heatmap)
+          show_guides <- if (!is.null(heat_param[['show_guides']])) heat_param[['show_guides']] else FALSE
+          show_guides_bool <- isTRUE(show_guides) || identical(show_guides, TRUE) || identical(show_guides, "yes") || identical(show_guides, "TRUE")
+
+          if (show_guides_bool) {
+            cat(file=stderr(), paste0("\n=== v116: ADDING TIP GUIDE LINES ===\n"))
+
+            # Get guide line settings
+            guide_color1 <- if (!is.null(heat_param[['guide_color1']])) heat_param[['guide_color1']] else "#CCCCCC"
+            guide_color2 <- if (!is.null(heat_param[['guide_color2']])) heat_param[['guide_color2']] else "#EEEEEE"
+            guide_alpha <- if (!is.null(heat_param[['guide_alpha']])) as.numeric(heat_param[['guide_alpha']]) else 0.3
+            guide_width <- if (!is.null(heat_param[['guide_width']])) as.numeric(heat_param[['guide_width']]) else 0.5
+
+            cat(file=stderr(), paste0("  guide_color1: ", guide_color1, "\n"))
+            cat(file=stderr(), paste0("  guide_color2: ", guide_color2, "\n"))
+            cat(file=stderr(), paste0("  guide_alpha: ", guide_alpha, "\n"))
+            cat(file=stderr(), paste0("  guide_width: ", guide_width, "\n"))
+
+            # Get all unique tip y-positions from the tile data
+            tip_y_values <- sort(unique(tile_df$y))
+            n_tips <- length(tip_y_values)
+            cat(file=stderr(), paste0("  Number of tips: ", n_tips, "\n"))
+
+            # Calculate x-range for guide lines (spanning the entire heatmap width)
+            x_min <- min(tile_df$x) - tile_width / 2
+            x_max <- max(tile_df$x) + tile_width / 2
+
+            # Build guide lines data - alternating colors
+            guide_lines_df <- data.frame(
+              x = x_min,
+              xend = x_max,
+              y = tip_y_values,
+              yend = tip_y_values,
+              color_idx = seq_len(n_tips) %% 2  # 0 for even, 1 for odd
+            )
+
+            # Apply transparency to the colors
+            guide_color1_alpha <- adjustcolor(guide_color1, alpha.f = guide_alpha)
+            guide_color2_alpha <- adjustcolor(guide_color2, alpha.f = guide_alpha)
+
+            # Add the guide lines as a layer
+            p_with_tiles <- p_with_tiles +
+              geom_segment(
+                data = guide_lines_df[guide_lines_df$color_idx == 0, ],
+                aes(x = x, xend = xend, y = y, yend = yend),
+                color = guide_color1_alpha,
+                linewidth = guide_width,
+                inherit.aes = FALSE
+              ) +
+              geom_segment(
+                data = guide_lines_df[guide_lines_df$color_idx == 1, ],
+                aes(x = x, xend = xend, y = y, yend = yend),
+                color = guide_color2_alpha,
+                linewidth = guide_width,
+                inherit.aes = FALSE
+              )
+
+            cat(file=stderr(), paste0("  v116: Added ", n_tips, " tip guide lines\n"))
           }
 
           cat(file=stderr(), paste0("  Final layers: ", length(p_with_tiles$layers), "\n"))
@@ -6532,15 +6599,14 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v115 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v116 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("FIX: Row height now works correctly - calculates actual tip spacing instead of assuming fixed 1,2,3 positions"),
-                              tags$li("FIX: Label offset range expanded to -8 to 8 (was 0 to 5)"),
-                              tags$li("FIX: Grid lines now drawn explicitly with geom_segment (fixes missing vertical line between first columns)"),
-                              tags$li("FIX: Auto-detect improved - checks for decimal points in string representation BEFORE numeric conversion"),
-                              tags$li("REMOVED: Shade option from bootstrap tab (was not implemented)")
+                              tags$li("NEW: Tip Guide Lines - vertical lines with alternating colors that run through heatmap to help identify which tip corresponds to which row"),
+                              tags$li("FIX: Row height now uses MINIMUM tip spacing (not median) to prevent default overlap"),
+                              tags$li("FIX: Auto-detect for numeric columns improved - now checks string representation for decimals even for already-numeric data (e.g., 15.7, 16.8)"),
+                              tags$li("FIX: Both auto-detect sections (UI display and heatmap config) now have consistent logic")
                             )
                      )
             )
@@ -10427,6 +10493,43 @@ server <- function(input, output, session) {
           )
         ),
 
+        # v116: Tip Guide Lines - vertical lines from tips through heatmap
+        tags$div(
+          style = "background-color: #e8f4f8; padding: 10px; border-radius: 5px; margin-top: 10px; margin-bottom: 10px;",
+          tags$h5(icon("grip-lines-vertical"), " Tip Guide Lines"),
+          fluidRow(
+            column(4,
+                   checkboxInput(paste0("heatmap_show_guides_", i), "Show vertical guide lines",
+                                 value = if (!is.null(cfg$show_guides)) cfg$show_guides else FALSE)
+            ),
+            column(4,
+                   colourInput(paste0("heatmap_guide_color1_", i), "Guide color 1",
+                               value = if (!is.null(cfg$guide_color1)) cfg$guide_color1 else "#CCCCCC",
+                               showColour = "background")
+            ),
+            column(4,
+                   colourInput(paste0("heatmap_guide_color2_", i), "Guide color 2",
+                               value = if (!is.null(cfg$guide_color2)) cfg$guide_color2 else "#EEEEEE",
+                               showColour = "background")
+            )
+          ),
+          fluidRow(
+            column(4,
+                   sliderInput(paste0("heatmap_guide_alpha_", i), "Guide transparency",
+                               min = 0.05, max = 1.0,
+                               value = if (!is.null(cfg$guide_alpha)) cfg$guide_alpha else 0.3,
+                               step = 0.05)
+            ),
+            column(4,
+                   sliderInput(paste0("heatmap_guide_width_", i), "Guide line width",
+                               min = 0.1, max = 3.0,
+                               value = if (!is.null(cfg$guide_width)) cfg$guide_width else 0.5,
+                               step = 0.1)
+            ),
+            column(4)
+          )
+        ),
+
         # v105/v108: Row labels settings with per-column mapping
         tags$div(
           style = "background-color: #fff9e6; padding: 10px; border-radius: 5px; margin-top: 10px; margin-bottom: 10px;",
@@ -10883,6 +10986,19 @@ server <- function(input, output, session) {
         unique_vals <- length(unique(na.omit(col_data)))
         is_numeric <- is.numeric(col_data)
 
+        # v116: Check for decimals in string representation BEFORE conversion
+        # This catches values like "15.7" that might lose precision
+        # Also check originally numeric data by converting to string
+        has_decimal_in_string <- FALSE
+        if (is.character(col_data) || is.factor(col_data)) {
+          char_data <- as.character(na.omit(col_data))
+          has_decimal_in_string <- any(grepl("\\.[0-9]+", char_data))
+        } else if (is.numeric(col_data)) {
+          # v116: For originally numeric data, convert to string and check for decimals
+          char_data <- as.character(na.omit(col_data))
+          has_decimal_in_string <- any(grepl("\\.[0-9]+", char_data))
+        }
+
         # v111: Better detection - also try to convert character columns to numeric
         originally_numeric <- is_numeric  # v112: Track if originally numeric
         if (!is_numeric && is.character(col_data)) {
@@ -10890,8 +11006,8 @@ server <- function(input, output, session) {
           numeric_attempt <- suppressWarnings(as.numeric(col_data))
           non_na_original <- sum(!is.na(col_data))
           non_na_converted <- sum(!is.na(numeric_attempt))
-          # If at least 80% of non-NA values convert successfully, treat as numeric
-          if (non_na_original > 0 && (non_na_converted / non_na_original) >= 0.8) {
+          # v116: Lower threshold to 50% for consistency with heatmap config
+          if (non_na_original > 0 && (non_na_converted / non_na_original) >= 0.5) {
             is_numeric <- TRUE
             col_data <- numeric_attempt  # Use converted data for further analysis
           }
@@ -10903,26 +11019,29 @@ server <- function(input, output, session) {
           non_na_vals <- na.omit(col_data)
           unique_numeric_vals <- length(unique(non_na_vals))
 
-          # Check if values have decimals (not all integers)
-          has_decimals <- any(non_na_vals != floor(non_na_vals), na.rm = TRUE)
+          # v116: More robust decimal detection with epsilon for floating-point precision
+          epsilon <- 1e-6
+          has_decimals <- any(abs(non_na_vals - floor(non_na_vals)) > epsilon, na.rm = TRUE)
+
+          # v116: Also use string-based detection as fallback
+          if (!has_decimals && has_decimal_in_string) {
+            has_decimals <- TRUE
+          }
 
           # Check the range of values
           val_range <- if (length(non_na_vals) > 0) diff(range(non_na_vals)) else 0
 
-          # v113: Even more aggressive detection for continuous data:
-          # - If originally numeric type: almost always treat as continuous
-          # - Only treat as discrete if it looks like a boolean (0/1) or very small categorical set
-          # - If has decimals, always continuous
-          # - If range > 1 and originally numeric, treat as continuous
-          if (originally_numeric) {
-            # Originally numeric - default to continuous unless clearly boolean-like
-            # Treat as discrete only if: no decimals AND (0/1 values OR ≤3 unique values with range ≤2)
+          # v116: Simplified logic - decimals ALWAYS mean continuous
+          if (has_decimals) {
+            detected_type <- "continuous"
+          } else if (originally_numeric) {
+            # Originally numeric without decimals
             is_boolean_like <- unique_numeric_vals <= 2 && val_range <= 1
-            is_small_categorical <- unique_numeric_vals <= 3 && val_range <= 2 && !has_decimals
-            detected_type <- if (has_decimals || !(is_boolean_like || is_small_categorical)) "continuous" else "discrete"
+            is_small_categorical <- unique_numeric_vals <= 3 && val_range <= 2
+            detected_type <- if (is_boolean_like || is_small_categorical) "discrete" else "continuous"
           } else {
-            # Converted from character - be more conservative, might be categorical codes
-            detected_type <- if (has_decimals || unique_numeric_vals > 8 || val_range > 10) "continuous" else "discrete"
+            # Converted from character without decimals - be more conservative
+            detected_type <- if (unique_numeric_vals > 8 || val_range > 10) "continuous" else "discrete"
           }
         } else {
           detected_type <- "discrete"
@@ -11307,7 +11426,7 @@ server <- function(input, output, session) {
       # Update config with current columns
       cfg$columns <- current_columns
       
-      # v115: Improved auto-detect logic for discrete vs continuous
+      # v116: Improved auto-detect logic for discrete vs continuous
       # Priority: decimals = continuous, non-numeric = discrete, then check unique values
       actual_type <- cfg$type
       first_col <- cfg$columns[1]
@@ -11317,21 +11436,22 @@ server <- function(input, output, session) {
         unique_vals <- length(unique(col_data_clean))
         is_numeric <- is.numeric(col_data)
         converted_to_numeric <- FALSE
+        originally_numeric <- is_numeric
 
-        # v115: Check for decimal points in string representation FIRST (before any conversion)
+        # v116: Check for decimal points in string representation FIRST
         # This catches cases like "23.6" that might get converted to numeric
+        # Also check originally numeric data by converting to string
         has_decimal_in_string <- FALSE
         if (is.character(col_data) || is.factor(col_data)) {
           char_data <- as.character(na.omit(col_data))
-          # Check if any value contains a decimal point followed by non-zero digit
-          # This avoids false positives from "23.0" type values
-          has_decimal_in_string <- any(grepl("\\.[0-9]*[1-9]", char_data))
-          if (!has_decimal_in_string) {
-            # Also check for any decimal point with digits after (even if trailing zeros)
-            has_decimal_in_string <- any(grepl("\\.[0-9]+", char_data))
-          }
-          cat(file=stderr(), paste0("  v115 AUTO-DETECT: has_decimal_in_string=", has_decimal_in_string, "\n"))
+          has_decimal_in_string <- any(grepl("\\.[0-9]+", char_data))
+        } else if (is.numeric(col_data)) {
+          # v116: For originally numeric data, convert to string and check for decimals
+          # This catches values like 15.7 that are already loaded as numeric
+          char_data <- as.character(na.omit(col_data))
+          has_decimal_in_string <- any(grepl("\\.[0-9]+", char_data))
         }
+        cat(file=stderr(), paste0("  v116 AUTO-DETECT: has_decimal_in_string=", has_decimal_in_string, "\n"))
 
         # v115: More aggressive conversion - try to convert any non-numeric column to numeric
         if (!is_numeric) {
@@ -11347,54 +11467,53 @@ server <- function(input, output, session) {
           }
         }
 
-        # v115: Debug output for auto-detect troubleshooting
-        cat(file=stderr(), paste0("  v115 AUTO-DETECT: column=", first_col,
+        # v116: Debug output for auto-detect troubleshooting
+        cat(file=stderr(), paste0("  v116 AUTO-DETECT: column=", first_col,
                                    ", is_numeric=", is_numeric,
+                                   ", originally_numeric=", originally_numeric,
                                    ", converted=", converted_to_numeric,
                                    ", unique_vals=", unique_vals, "\n"))
 
-        # v115: Better heuristic - prioritize decimal detection for continuous
+        # v116: Better heuristic - decimals ALWAYS mean continuous
         if (!is_numeric) {
           # Non-numeric data is always discrete
           actual_type <- "discrete"
-          cat(file=stderr(), paste0("  v115 AUTO-DETECT: Result=discrete (non-numeric)\n"))
+          cat(file=stderr(), paste0("  v116 AUTO-DETECT: Result=discrete (non-numeric)\n"))
         } else {
-          # v115: Check for decimal values with tolerance to handle floating-point precision issues
-          # Use a larger epsilon to catch more cases (1e-6 instead of 1e-9)
+          # v116: Check for decimal values with tolerance for floating-point precision
           epsilon <- 1e-6
           has_decimals <- any(abs(col_data_clean - floor(col_data_clean)) > epsilon, na.rm = TRUE)
 
-          # v115: Also use the string-based detection result from earlier
+          # v116: Also use the string-based detection result
           if (!has_decimals && has_decimal_in_string) {
             has_decimals <- TRUE
-            cat(file=stderr(), paste0("  v115 AUTO-DETECT: decimal detected via string check\n"))
+            cat(file=stderr(), paste0("  v116 AUTO-DETECT: decimal detected via string check\n"))
           }
 
-          cat(file=stderr(), paste0("  v115 AUTO-DETECT: has_decimals=", has_decimals, "\n"))
+          cat(file=stderr(), paste0("  v116 AUTO-DETECT: has_decimals=", has_decimals, "\n"))
 
+          # v116: Decimals ALWAYS mean continuous (measurements, percentages, etc.)
           if (has_decimals) {
-            # Decimal values = continuous (measurements, percentages, etc.)
             actual_type <- "continuous"
-            cat(file=stderr(), paste0("  v115 AUTO-DETECT: Result=continuous (has decimals)\n"))
+            cat(file=stderr(), paste0("  v116 AUTO-DETECT: Result=continuous (has decimals)\n"))
           } else if (unique_vals > 20) {
             # Many unique integer values = likely continuous (counts, scores, etc.)
             actual_type <- "continuous"
-            cat(file=stderr(), paste0("  v115 AUTO-DETECT: Result=continuous (>20 unique values)\n"))
+            cat(file=stderr(), paste0("  v116 AUTO-DETECT: Result=continuous (>20 unique values)\n"))
           } else if (unique_vals <= 5) {
             # Very few unique values (0,1,2 or similar) = discrete codes
             actual_type <- "discrete"
-            cat(file=stderr(), paste0("  v115 AUTO-DETECT: Result=discrete (<=5 unique values)\n"))
+            cat(file=stderr(), paste0("  v116 AUTO-DETECT: Result=discrete (<=5 unique values)\n"))
           } else {
             # 6-20 unique integer values - check the range
             val_range <- max(col_data_clean, na.rm = TRUE) - min(col_data_clean, na.rm = TRUE)
             # If values span a wide range relative to unique count, likely continuous
-            # If values are clustered (like codes 1,2,3,4,5), likely discrete
             if (val_range > unique_vals * 2) {
               actual_type <- "continuous"
-              cat(file=stderr(), paste0("  v115 AUTO-DETECT: Result=continuous (wide range)\n"))
+              cat(file=stderr(), paste0("  v116 AUTO-DETECT: Result=continuous (wide range)\n"))
             } else {
               actual_type <- "discrete"
-              cat(file=stderr(), paste0("  v115 AUTO-DETECT: Result=discrete (clustered values)\n"))
+              cat(file=stderr(), paste0("  v116 AUTO-DETECT: Result=discrete (clustered values)\n"))
             }
           }
         }
@@ -11408,6 +11527,12 @@ server <- function(input, output, session) {
       show_grid <- input[[paste0("heatmap_show_grid_", i)]]
       grid_color <- input[[paste0("heatmap_grid_color_", i)]]
       grid_size <- input[[paste0("heatmap_grid_size_", i)]]
+      # v116: Guide line settings
+      show_guides <- input[[paste0("heatmap_show_guides_", i)]]
+      guide_color1 <- input[[paste0("heatmap_guide_color1_", i)]]
+      guide_color2 <- input[[paste0("heatmap_guide_color2_", i)]]
+      guide_alpha <- input[[paste0("heatmap_guide_alpha_", i)]]
+      guide_width <- input[[paste0("heatmap_guide_width_", i)]]
       show_row_labels <- input[[paste0("heatmap_show_row_labels_", i)]]
       row_label_source <- input[[paste0("heatmap_row_label_source_", i)]]
       row_label_font_size <- input[[paste0("heatmap_row_label_font_size_", i)]]
@@ -11441,6 +11566,12 @@ server <- function(input, output, session) {
         show_grid = if (!is.null(show_grid)) show_grid else FALSE,  # v111: Grid around tiles
         grid_color = if (!is.null(grid_color)) grid_color else "#000000",  # v111
         grid_size = if (!is.null(grid_size)) grid_size else 0.5,  # v111
+        # v116: Guide lines
+        show_guides = if (!is.null(show_guides)) show_guides else FALSE,
+        guide_color1 = if (!is.null(guide_color1)) guide_color1 else "#CCCCCC",
+        guide_color2 = if (!is.null(guide_color2)) guide_color2 else "#EEEEEE",
+        guide_alpha = if (!is.null(guide_alpha)) guide_alpha else 0.3,
+        guide_width = if (!is.null(guide_width)) guide_width else 0.5,
         show_row_labels = if (!is.null(show_row_labels)) show_row_labels else FALSE,
         row_label_source = if (!is.null(row_label_source)) row_label_source else "colnames",
         row_label_font_size = if (!is.null(row_label_font_size)) row_label_font_size else 2.5,
