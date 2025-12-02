@@ -4191,7 +4191,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   space_vec <- rep("", tree_size)
   
   round_to <- 5
-  list_boot_display <- c('raw', 'numbered_colored', 'numbered_color', 'shade', 'percentage')
+  list_boot_display <- c('raw', 'numbered_colored', 'numbered_color', 'percentage')
   
   if (boot_values$'format' %in% list_boot_display) {
     if ('param' %in% names(boot_values)) {
@@ -4199,7 +4199,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     } 
   }
   
-  if (boot_values$'format' %in% c("numbered_colored", "shade", "numbered_color", 'percentage', 'percentage_color')) {
+  if (boot_values$'format' %in% c("numbered_colored", "numbered_color", 'percentage', 'percentage_color')) {
     round_to <- 1
   }
   #print("L")
@@ -4803,9 +4803,23 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       # Base is 3% of tree width, scaled by Column Width slider
       tile_width <- tree_width * 0.03 * column_width_value
 
+      # v115: Calculate actual tip spacing for row height
+      # Tip y-positions are NOT always at 1,2,3... - they depend on tree topology
+      # We calculate the median spacing between adjacent tips and use that as base
+      tip_y_positions <- sort(unique(tip_data$y))
+      if (length(tip_y_positions) > 1) {
+        tip_spacings <- diff(tip_y_positions)
+        base_tip_spacing <- median(tip_spacings)
+      } else {
+        base_tip_spacing <- 1.0  # Fallback for single tip
+      }
+
       # tile_height: controls row height (data y units)
-      # Tip indices are 1,2,3... so height=1.0 means tiles touch, <1 means gaps, >1 means overlap
-      tile_height <- row_height_value
+      # row_height_value=1.0 means tiles touch, <1 means gaps, >1 means overlap
+      tile_height <- base_tip_spacing * row_height_value
+
+      cat(file=stderr(), paste0("  v115: tip_y range: [", min(tip_y_positions), ", ", max(tip_y_positions), "]\n"))
+      cat(file=stderr(), paste0("  v115: base_tip_spacing (median): ", base_tip_spacing, "\n"))
 
       cat(file=stderr(), paste0("  column_width_value: ", column_width_value, "\n"))
       cat(file=stderr(), paste0("  row_height_value: ", row_height_value, "\n"))
@@ -4893,15 +4907,75 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
           cat(file=stderr(), paste0("  v113: show_grid_bool=", show_grid_bool, "\n"))
 
           if (show_grid_bool) {
+            # v115: Draw tiles WITHOUT borders first (to avoid overlapping border issues)
             p_with_tiles <- p + geom_tile(
               data = tile_df,
               aes(x = x, y = y, fill = value),
               width = tile_width,     # v112: Column spacing (fixed)
               height = tile_height,   # v112: Row height (slider-controlled)
-              color = grid_color,     # v111: Grid/border color
-              linewidth = grid_size,  # v111: Grid/border width
               inherit.aes = FALSE
             )
+
+            # v115: Draw explicit grid lines to ensure all borders appear
+            # Calculate grid line positions
+            n_cols <- ncol(heat_data)
+            col_x_positions <- unique(tile_df$x)
+            col_x_positions <- sort(col_x_positions)
+
+            # Calculate y-range for vertical lines (spanning all tips)
+            y_min <- min(tile_df$y) - tile_height / 2
+            y_max <- max(tile_df$y) + tile_height / 2
+
+            # Build vertical grid lines (n_cols + 1 lines: left edge, between columns, right edge)
+            v_lines_x <- c()
+            for (i in seq_along(col_x_positions)) {
+              # Left edge of this column
+              v_lines_x <- c(v_lines_x, col_x_positions[i] - tile_width / 2)
+            }
+            # Right edge of last column
+            if (length(col_x_positions) > 0) {
+              v_lines_x <- c(v_lines_x, col_x_positions[length(col_x_positions)] + tile_width / 2)
+            }
+            v_lines_x <- unique(v_lines_x)
+
+            # Create vertical line data
+            v_lines_df <- data.frame(
+              x = rep(v_lines_x, each = 1),
+              xend = rep(v_lines_x, each = 1),
+              y = y_min,
+              yend = y_max
+            )
+
+            # Build horizontal grid lines (for each row boundary)
+            tip_y_values <- sort(unique(tile_df$y))
+            h_lines_y <- c()
+            for (i in seq_along(tip_y_values)) {
+              # Top and bottom edge of each row
+              h_lines_y <- c(h_lines_y, tip_y_values[i] - tile_height / 2)
+              h_lines_y <- c(h_lines_y, tip_y_values[i] + tile_height / 2)
+            }
+            h_lines_y <- unique(h_lines_y)
+
+            # Calculate x-range for horizontal lines
+            x_min <- min(tile_df$x) - tile_width / 2
+            x_max <- max(tile_df$x) + tile_width / 2
+
+            # Create horizontal line data
+            h_lines_df <- data.frame(
+              x = x_min,
+              xend = x_max,
+              y = rep(h_lines_y, each = 1),
+              yend = rep(h_lines_y, each = 1)
+            )
+
+            # Add grid lines as separate geom_segment layers
+            p_with_tiles <- p_with_tiles +
+              geom_segment(data = v_lines_df, aes(x = x, xend = xend, y = y, yend = yend),
+                           color = grid_color, linewidth = grid_size, inherit.aes = FALSE) +
+              geom_segment(data = h_lines_df, aes(x = x, xend = xend, y = y, yend = yend),
+                           color = grid_color, linewidth = grid_size, inherit.aes = FALSE)
+
+            cat(file=stderr(), paste0("  v115: Added explicit grid lines: ", nrow(v_lines_df), " vertical, ", nrow(h_lines_df), " horizontal\n"))
           } else {
             p_with_tiles <- p + geom_tile(
               data = tile_df,
@@ -6458,15 +6532,15 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v114 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v115 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("FIX: Row height, grid, and label settings now work for DEFAULT classification (was only working for non-default)"),
-                              tags$li("FIX: NA color for continuous heatmaps now properly passed from UI"),
-                              tags$li("FIX: Auto-detect improved - checks for decimal points in string data, more robust epsilon comparison"),
-                              tags$li("FIX: Bootstrap position slider precision increased to 0.001 steps"),
-                              tags$li("Added debug output for auto-detect decisions")
+                              tags$li("FIX: Row height now works correctly - calculates actual tip spacing instead of assuming fixed 1,2,3 positions"),
+                              tags$li("FIX: Label offset range expanded to -8 to 8 (was 0 to 5)"),
+                              tags$li("FIX: Grid lines now drawn explicitly with geom_segment (fixes missing vertical line between first columns)"),
+                              tags$li("FIX: Auto-detect improved - checks for decimal points in string representation BEFORE numeric conversion"),
+                              tags$li("REMOVED: Shade option from bootstrap tab (was not implemented)")
                             )
                      )
             )
@@ -6714,8 +6788,7 @@ ui <- dashboardPage(
                              "Raw Values" = "raw",
                              "Percentage" = "percentage",
                              "Color-coded Numbers" = "numbered_color",
-                             "Color-coded Percentage" = "percentage_color",
-                             "Shade" = "shade"
+                             "Color-coded Percentage" = "percentage_color"
                            ), selected = "triangles"),
               sliderInput("bootstrap_param", "Bootstrap Precision (decimal places)", 
                           min = 1, max = 5, value = 1, step = 1),
@@ -10381,7 +10454,7 @@ server <- function(input, output, session) {
           fluidRow(
             column(4,
                    sliderInput(paste0("heatmap_row_label_offset_", i), "Label offset from heatmap",
-                               min = 0, max = 5,
+                               min = -8, max = 8,
                                value = if (!is.null(cfg$row_label_offset)) cfg$row_label_offset else 1.0,
                                step = 0.5)
             ),
@@ -11234,7 +11307,7 @@ server <- function(input, output, session) {
       # Update config with current columns
       cfg$columns <- current_columns
       
-      # v114: Improved auto-detect logic for discrete vs continuous
+      # v115: Improved auto-detect logic for discrete vs continuous
       # Priority: decimals = continuous, non-numeric = discrete, then check unique values
       actual_type <- cfg$type
       first_col <- cfg$columns[1]
@@ -11245,56 +11318,72 @@ server <- function(input, output, session) {
         is_numeric <- is.numeric(col_data)
         converted_to_numeric <- FALSE
 
-        # v114: More aggressive conversion - try to convert any non-numeric column to numeric
+        # v115: Check for decimal points in string representation FIRST (before any conversion)
+        # This catches cases like "23.6" that might get converted to numeric
+        has_decimal_in_string <- FALSE
+        if (is.character(col_data) || is.factor(col_data)) {
+          char_data <- as.character(na.omit(col_data))
+          # Check if any value contains a decimal point followed by non-zero digit
+          # This avoids false positives from "23.0" type values
+          has_decimal_in_string <- any(grepl("\\.[0-9]*[1-9]", char_data))
+          if (!has_decimal_in_string) {
+            # Also check for any decimal point with digits after (even if trailing zeros)
+            has_decimal_in_string <- any(grepl("\\.[0-9]+", char_data))
+          }
+          cat(file=stderr(), paste0("  v115 AUTO-DETECT: has_decimal_in_string=", has_decimal_in_string, "\n"))
+        }
+
+        # v115: More aggressive conversion - try to convert any non-numeric column to numeric
         if (!is_numeric) {
-          numeric_attempt <- suppressWarnings(as.numeric(col_data))
+          numeric_attempt <- suppressWarnings(as.numeric(as.character(col_data)))
           non_na_original <- sum(!is.na(col_data))
           non_na_converted <- sum(!is.na(numeric_attempt))
-          # v114: Lower threshold to 50% for numeric detection (was 80%)
+          # v115: Lower threshold to 50% for numeric detection (was 80%)
           if (non_na_original > 0 && (non_na_converted / non_na_original) >= 0.5) {
             is_numeric <- TRUE
             converted_to_numeric <- TRUE
             col_data_clean <- na.omit(numeric_attempt)
+            unique_vals <- length(unique(col_data_clean))
           }
         }
 
-        # v114: Debug output for auto-detect troubleshooting
-        cat(file=stderr(), paste0("  v114 AUTO-DETECT: column=", first_col,
+        # v115: Debug output for auto-detect troubleshooting
+        cat(file=stderr(), paste0("  v115 AUTO-DETECT: column=", first_col,
                                    ", is_numeric=", is_numeric,
                                    ", converted=", converted_to_numeric,
                                    ", unique_vals=", unique_vals, "\n"))
 
-        # v114: Better heuristic - prioritize decimal detection for continuous
+        # v115: Better heuristic - prioritize decimal detection for continuous
         if (!is_numeric) {
           # Non-numeric data is always discrete
           actual_type <- "discrete"
-          cat(file=stderr(), paste0("  v114 AUTO-DETECT: Result=discrete (non-numeric)\n"))
+          cat(file=stderr(), paste0("  v115 AUTO-DETECT: Result=discrete (non-numeric)\n"))
         } else {
-          # v114: Check for decimal values with tolerance to handle floating-point precision issues
-          # Use a small epsilon to compare against floor
-          epsilon <- 1e-9
+          # v115: Check for decimal values with tolerance to handle floating-point precision issues
+          # Use a larger epsilon to catch more cases (1e-6 instead of 1e-9)
+          epsilon <- 1e-6
           has_decimals <- any(abs(col_data_clean - floor(col_data_clean)) > epsilon, na.rm = TRUE)
 
-          # v114: Also check if original data contains decimal points in string representation
-          if (!has_decimals && is.character(values$csv_data[[first_col]])) {
-            char_data <- na.omit(values$csv_data[[first_col]])
-            has_decimals <- any(grepl("\\.", char_data))
+          # v115: Also use the string-based detection result from earlier
+          if (!has_decimals && has_decimal_in_string) {
+            has_decimals <- TRUE
+            cat(file=stderr(), paste0("  v115 AUTO-DETECT: decimal detected via string check\n"))
           }
 
-          cat(file=stderr(), paste0("  v114 AUTO-DETECT: has_decimals=", has_decimals, "\n"))
+          cat(file=stderr(), paste0("  v115 AUTO-DETECT: has_decimals=", has_decimals, "\n"))
 
           if (has_decimals) {
             # Decimal values = continuous (measurements, percentages, etc.)
             actual_type <- "continuous"
-            cat(file=stderr(), paste0("  v114 AUTO-DETECT: Result=continuous (has decimals)\n"))
+            cat(file=stderr(), paste0("  v115 AUTO-DETECT: Result=continuous (has decimals)\n"))
           } else if (unique_vals > 20) {
             # Many unique integer values = likely continuous (counts, scores, etc.)
             actual_type <- "continuous"
-            cat(file=stderr(), paste0("  v114 AUTO-DETECT: Result=continuous (>20 unique values)\n"))
+            cat(file=stderr(), paste0("  v115 AUTO-DETECT: Result=continuous (>20 unique values)\n"))
           } else if (unique_vals <= 5) {
             # Very few unique values (0,1,2 or similar) = discrete codes
             actual_type <- "discrete"
-            cat(file=stderr(), paste0("  v114 AUTO-DETECT: Result=discrete (<=5 unique values)\n"))
+            cat(file=stderr(), paste0("  v115 AUTO-DETECT: Result=discrete (<=5 unique values)\n"))
           } else {
             # 6-20 unique integer values - check the range
             val_range <- max(col_data_clean, na.rm = TRUE) - min(col_data_clean, na.rm = TRUE)
@@ -11302,10 +11391,10 @@ server <- function(input, output, session) {
             # If values are clustered (like codes 1,2,3,4,5), likely discrete
             if (val_range > unique_vals * 2) {
               actual_type <- "continuous"
-              cat(file=stderr(), paste0("  v114 AUTO-DETECT: Result=continuous (wide range)\n"))
+              cat(file=stderr(), paste0("  v115 AUTO-DETECT: Result=continuous (wide range)\n"))
             } else {
               actual_type <- "discrete"
-              cat(file=stderr(), paste0("  v114 AUTO-DETECT: Result=discrete (clustered values)\n"))
+              cat(file=stderr(), paste0("  v115 AUTO-DETECT: Result=discrete (clustered values)\n"))
             }
           }
         }
