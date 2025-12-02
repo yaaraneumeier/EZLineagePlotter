@@ -6239,13 +6239,14 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v106 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v107 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("FIX: Resolved infinite loop when using heatmap height/distance sliders"),
-                              tags$li("FIX: Added guards to prevent reactive loop in slider updates"),
-                              tags$li("Heatmap sliders now properly update without causing app to freeze")
+                              tags$li("FIX: Resolved reactive loop when selecting heatmap columns"),
+                              tags$li("FIX: UI now only regenerates when adding/removing heatmaps (not on every setting change)"),
+                              tags$li("FIX: Heatmap config now properly initialized with all default values"),
+                              tags$li("IMPROVEMENT: Removed large number of options warnings for heatmap column selector")
                             )
                      )
             )
@@ -6833,6 +6834,11 @@ server <- function(input, output, session) {
   
   classification_loading <- reactiveVal(FALSE)
 
+  # v107: Trigger for heatmap UI regeneration - only fires when we need to rebuild the UI
+  # (add/remove/reorder heatmaps, or when CSV data changes)
+  # This prevents the UI from rebuilding every time a slider or input changes
+  heatmap_ui_trigger <- reactiveVal(0)
+
   # v59: Helper functions to toggle status indicator via shinyjs (immediate UI updates)
   # Updated to toggle status indicators on ALL preview tabs (Tree Display, Classification, Bootstrap, Highlighting, Heatmap)
   show_status_waiting <- function() {
@@ -7138,7 +7144,9 @@ server <- function(input, output, session) {
       csv_file <- yaml_data$`Individual general definitions`$`mapping csv file`
       csv_data <- read.csv(csv_file)
       values$csv_data <- csv_data
-      
+      # v107: Trigger heatmap UI regeneration when CSV data changes (new column choices)
+      heatmap_ui_trigger(heatmap_ui_trigger() + 1)
+
       # Update ID column
       id_col <- yaml_data$`Mapping exl renaming titles`$`ID column`
       if (id_col %in% names(csv_data)) {
@@ -7451,7 +7459,9 @@ server <- function(input, output, session) {
     tryCatch({
       csv_data <- read.csv(csv_file$datapath)
       values$csv_data <- csv_data
-      
+      # v107: Trigger heatmap UI regeneration when CSV data changes (new column choices)
+      heatmap_ui_trigger(heatmap_ui_trigger() + 1)
+
       # Update ID column dropdown
       updateSelectInput(session, "id_column", choices = names(csv_data))
       
@@ -9883,8 +9893,14 @@ server <- function(input, output, session) {
   
   # Render heatmap cards UI
   output$heatmap_cards_ui <- renderUI({
-    configs <- values$heatmap_configs
-    
+    # v107: Use trigger to control when UI regenerates
+    # This prevents rebuilding UI on every property change (slider, color, etc.)
+    heatmap_ui_trigger()  # Take dependency on trigger only
+
+    # Use isolate() to get values without creating reactive dependencies
+    configs <- isolate(values$heatmap_configs)
+    csv_data_local <- isolate(values$csv_data)
+
     if (length(configs) == 0) {
       return(tags$div(
         class = "alert alert-info",
@@ -9892,22 +9908,22 @@ server <- function(input, output, session) {
         " No heatmaps configured. Click 'Add New Heatmap' to create one."
       ))
     }
-    
+
     # Build cards for each heatmap
     cards <- lapply(seq_along(configs), function(i) {
       cfg <- configs[[i]]
       card_id <- paste0("heatmap_card_", i)
-      
-      # Get column choices from CSV
-      col_choices <- if (!is.null(values$csv_data)) names(values$csv_data) else character(0)
+
+      # Get column choices from CSV (using isolated value)
+      col_choices <- if (!is.null(csv_data_local)) names(csv_data_local) else character(0)
       
       # v56: Determine detected type based on first column (if multiple, they should be same type)
       detected_type <- "unknown"
-      if (!is.null(cfg$columns) && length(cfg$columns) > 0 && !is.null(values$csv_data)) {
+      if (!is.null(cfg$columns) && length(cfg$columns) > 0 && !is.null(csv_data_local)) {
         # Check first column to determine type
         first_col <- cfg$columns[1]
-        if (first_col %in% names(values$csv_data)) {
-          col_data <- values$csv_data[[first_col]]
+        if (first_col %in% names(csv_data_local)) {
+          col_data <- csv_data_local[[first_col]]
           if (!is.null(col_data)) {
             unique_vals <- length(unique(na.omit(col_data)))
             is_numeric <- is.numeric(col_data)
@@ -10164,6 +10180,7 @@ server <- function(input, output, session) {
     }
     
     # v56: Add new empty config with columns (plural) for multiple column support
+    # v107: Added distance and height initialization to prevent reactive loops
     new_config <- list(
       columns = character(0),  # v56: Changed from column to columns
       title = paste0("Heatmap ", length(values$heatmap_configs) + 1),
@@ -10171,6 +10188,12 @@ server <- function(input, output, session) {
       type = "discrete",
       show_colnames = TRUE,
       colnames_angle = 45,
+      distance = 0.02,       # v107: Initialize distance
+      height = 0.8,          # v107: Initialize height
+      show_row_labels = FALSE,         # v107: Initialize row label settings
+      row_label_source = "colnames",
+      row_label_font_size = 2.5,
+      custom_row_labels = "",
       discrete_palette = "Set1",
       custom_discrete = FALSE,
       custom_colors = list(),
@@ -10183,21 +10206,25 @@ server <- function(input, output, session) {
     )
     
     values$heatmap_configs <- c(values$heatmap_configs, list(new_config))
+    # v107: Trigger UI regeneration when heatmap is added
+    heatmap_ui_trigger(heatmap_ui_trigger() + 1)
     showNotification(paste("Heatmap", length(values$heatmap_configs), "added"), type = "message")
   })
-  
+
   # Generic observer for heatmap removal buttons
   observe({
     lapply(1:6, function(i) {
       observeEvent(input[[paste0("heatmap_remove_", i)]], {
         if (i <= length(values$heatmap_configs)) {
           values$heatmap_configs <- values$heatmap_configs[-i]
+          # v107: Trigger UI regeneration when heatmap is removed
+          heatmap_ui_trigger(heatmap_ui_trigger() + 1)
           showNotification(paste("Heatmap", i, "removed"), type = "message")
         }
       }, ignoreInit = TRUE)
     })
   })
-  
+
   # Generic observer for move up buttons
   observe({
     lapply(2:6, function(i) {
@@ -10208,11 +10235,13 @@ server <- function(input, output, session) {
           configs[[i]] <- configs[[i-1]]
           configs[[i-1]] <- temp
           values$heatmap_configs <- configs
+          # v107: Trigger UI regeneration when heatmap is moved
+          heatmap_ui_trigger(heatmap_ui_trigger() + 1)
         }
       }, ignoreInit = TRUE)
     })
   })
-  
+
   # Generic observer for move down buttons
   observe({
     lapply(1:5, function(i) {
@@ -10223,6 +10252,8 @@ server <- function(input, output, session) {
           configs[[i]] <- configs[[i+1]]
           configs[[i+1]] <- temp
           values$heatmap_configs <- configs
+          # v107: Trigger UI regeneration when heatmap is moved
+          heatmap_ui_trigger(heatmap_ui_trigger() + 1)
         }
       }, ignoreInit = TRUE)
     })
@@ -10252,7 +10283,8 @@ server <- function(input, output, session) {
         }
       }, ignoreInit = TRUE)
 
-      # v106: Per-heatmap distance from tree (with guard to prevent reactive loop)
+      # v107: Per-heatmap distance from tree (with guard to prevent reactive loop)
+      # Changed ignoreInit to TRUE since values are now initialized in new_config
       observeEvent(input[[paste0("heatmap_distance_", i)]], {
         if (i <= length(values$heatmap_configs)) {
           new_val <- input[[paste0("heatmap_distance_", i)]]
@@ -10262,9 +10294,10 @@ server <- function(input, output, session) {
             values$heatmap_configs[[i]]$distance <- new_val
           }
         }
-      }, ignoreInit = FALSE)
+      }, ignoreInit = TRUE)
 
-      # v106: Per-heatmap height (with guard to prevent reactive loop)
+      # v107: Per-heatmap height (with guard to prevent reactive loop)
+      # Changed ignoreInit to TRUE since values are now initialized in new_config
       observeEvent(input[[paste0("heatmap_height_", i)]], {
         if (i <= length(values$heatmap_configs)) {
           new_val <- input[[paste0("heatmap_height_", i)]]
@@ -10274,9 +10307,10 @@ server <- function(input, output, session) {
             values$heatmap_configs[[i]]$height <- new_val
           }
         }
-      }, ignoreInit = FALSE)
+      }, ignoreInit = TRUE)
 
-      # v106: Row labels settings (with guards to prevent reactive loop)
+      # v107: Row labels settings (with guards to prevent reactive loop)
+      # Changed ignoreInit to TRUE since values are now initialized in new_config
       observeEvent(input[[paste0("heatmap_show_row_labels_", i)]], {
         if (i <= length(values$heatmap_configs)) {
           new_val <- input[[paste0("heatmap_show_row_labels_", i)]]
@@ -10285,7 +10319,7 @@ server <- function(input, output, session) {
             values$heatmap_configs[[i]]$show_row_labels <- new_val
           }
         }
-      }, ignoreInit = FALSE)
+      }, ignoreInit = TRUE)
 
       observeEvent(input[[paste0("heatmap_row_label_source_", i)]], {
         if (i <= length(values$heatmap_configs)) {
@@ -10295,7 +10329,7 @@ server <- function(input, output, session) {
             values$heatmap_configs[[i]]$row_label_source <- new_val
           }
         }
-      }, ignoreInit = FALSE)
+      }, ignoreInit = TRUE)
 
       observeEvent(input[[paste0("heatmap_row_label_font_size_", i)]], {
         if (i <= length(values$heatmap_configs)) {
@@ -10305,7 +10339,7 @@ server <- function(input, output, session) {
             values$heatmap_configs[[i]]$row_label_font_size <- new_val
           }
         }
-      }, ignoreInit = FALSE)
+      }, ignoreInit = TRUE)
 
       observeEvent(input[[paste0("heatmap_custom_row_labels_", i)]], {
         if (i <= length(values$heatmap_configs)) {
@@ -10315,7 +10349,7 @@ server <- function(input, output, session) {
             values$heatmap_configs[[i]]$custom_row_labels <- new_val
           }
         }
-      }, ignoreInit = FALSE)
+      }, ignoreInit = TRUE)
 
       # Auto type change
       observeEvent(input[[paste0("heatmap_auto_type_", i)]], {
