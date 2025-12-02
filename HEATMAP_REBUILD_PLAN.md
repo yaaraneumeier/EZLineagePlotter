@@ -5,7 +5,7 @@
 This document contains the step-by-step plan for rebuilding the heatmap functionality in EZLineagePlotter.
 The complex heatmap code (~800 lines) has been disabled in v91 and replaced with a simple proof-of-concept.
 
-**Current Status**: v105 - Phase 3+ enhanced: Fixed distance slider (per-heatmap only), added row labels feature, added per-heatmap height slider, improved auto-detect type logic
+**Current Status**: v106 - Phase 3+ enhanced: Fixed reactive loop in slider observers that caused app freeze when adjusting height/distance sliders
 
 ## Why We Simplified
 

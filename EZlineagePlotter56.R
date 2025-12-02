@@ -6239,15 +6239,13 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v105 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v106 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("FIX: Removed duplicate global 'Distance from Tree' slider - now only per-heatmap"),
-                              tags$li("FIX: Per-heatmap distance slider now works correctly and persists values"),
-                              tags$li("NEW: Row labels feature - show text next to each heatmap line"),
-                              tags$li("NEW: Per-heatmap height slider (renamed from width)"),
-                              tags$li("FIX: Improved auto-detect type for numerical columns")
+                              tags$li("FIX: Resolved infinite loop when using heatmap height/distance sliders"),
+                              tags$li("FIX: Added guards to prevent reactive loop in slider updates"),
+                              tags$li("Heatmap sliders now properly update without causing app to freeze")
                             )
                      )
             )
@@ -10254,42 +10252,68 @@ server <- function(input, output, session) {
         }
       }, ignoreInit = TRUE)
 
-      # v105: Per-heatmap distance from tree (removed ignoreInit to capture initial value)
+      # v106: Per-heatmap distance from tree (with guard to prevent reactive loop)
       observeEvent(input[[paste0("heatmap_distance_", i)]], {
         if (i <= length(values$heatmap_configs)) {
-          values$heatmap_configs[[i]]$distance <- input[[paste0("heatmap_distance_", i)]]
+          new_val <- input[[paste0("heatmap_distance_", i)]]
+          current_val <- values$heatmap_configs[[i]]$distance
+          # Only update if value actually changed (prevents reactive loop)
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$distance <- new_val
+          }
         }
       }, ignoreInit = FALSE)
 
-      # v105: Per-heatmap height
+      # v106: Per-heatmap height (with guard to prevent reactive loop)
       observeEvent(input[[paste0("heatmap_height_", i)]], {
         if (i <= length(values$heatmap_configs)) {
-          values$heatmap_configs[[i]]$height <- input[[paste0("heatmap_height_", i)]]
+          new_val <- input[[paste0("heatmap_height_", i)]]
+          current_val <- values$heatmap_configs[[i]]$height
+          # Only update if value actually changed (prevents reactive loop)
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$height <- new_val
+          }
         }
       }, ignoreInit = FALSE)
 
-      # v105: Row labels settings
+      # v106: Row labels settings (with guards to prevent reactive loop)
       observeEvent(input[[paste0("heatmap_show_row_labels_", i)]], {
         if (i <= length(values$heatmap_configs)) {
-          values$heatmap_configs[[i]]$show_row_labels <- input[[paste0("heatmap_show_row_labels_", i)]]
+          new_val <- input[[paste0("heatmap_show_row_labels_", i)]]
+          current_val <- values$heatmap_configs[[i]]$show_row_labels
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$show_row_labels <- new_val
+          }
         }
       }, ignoreInit = FALSE)
 
       observeEvent(input[[paste0("heatmap_row_label_source_", i)]], {
         if (i <= length(values$heatmap_configs)) {
-          values$heatmap_configs[[i]]$row_label_source <- input[[paste0("heatmap_row_label_source_", i)]]
+          new_val <- input[[paste0("heatmap_row_label_source_", i)]]
+          current_val <- values$heatmap_configs[[i]]$row_label_source
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$row_label_source <- new_val
+          }
         }
       }, ignoreInit = FALSE)
 
       observeEvent(input[[paste0("heatmap_row_label_font_size_", i)]], {
         if (i <= length(values$heatmap_configs)) {
-          values$heatmap_configs[[i]]$row_label_font_size <- input[[paste0("heatmap_row_label_font_size_", i)]]
+          new_val <- input[[paste0("heatmap_row_label_font_size_", i)]]
+          current_val <- values$heatmap_configs[[i]]$row_label_font_size
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$row_label_font_size <- new_val
+          }
         }
       }, ignoreInit = FALSE)
 
       observeEvent(input[[paste0("heatmap_custom_row_labels_", i)]], {
         if (i <= length(values$heatmap_configs)) {
-          values$heatmap_configs[[i]]$custom_row_labels <- input[[paste0("heatmap_custom_row_labels_", i)]]
+          new_val <- input[[paste0("heatmap_custom_row_labels_", i)]]
+          current_val <- values$heatmap_configs[[i]]$custom_row_labels
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$custom_row_labels <- new_val
+          }
         }
       }, ignoreInit = FALSE)
 
