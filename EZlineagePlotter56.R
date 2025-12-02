@@ -2747,6 +2747,30 @@ func.print.lineage.tree <- function(conf_yaml_path,
                 param[['height']] <- 0.8
               }
 
+              # v111: Get per-heatmap row_height (default 1.0)
+              if ('row_height' %in% names(heat_map_i_def)) {
+                param[['row_height']] <- as.numeric(heat_map_i_def[['row_height']])
+              } else {
+                param[['row_height']] <- 1.0
+              }
+
+              # v111: Get grid settings
+              if ('show_grid' %in% names(heat_map_i_def)) {
+                param[['show_grid']] <- func.check.bin.val.from.conf(heat_map_i_def[['show_grid']])
+              } else {
+                param[['show_grid']] <- FALSE
+              }
+              if ('grid_color' %in% names(heat_map_i_def)) {
+                param[['grid_color']] <- heat_map_i_def[['grid_color']]
+              } else {
+                param[['grid_color']] <- "#000000"
+              }
+              if ('grid_size' %in% names(heat_map_i_def)) {
+                param[['grid_size']] <- as.numeric(heat_map_i_def[['grid_size']])
+              } else {
+                param[['grid_size']] <- 0.5
+              }
+
               # v109: Get colnames_angle (default 45)
               if ('colnames_angle' %in% names(heat_map_i_def)) {
                 param[['colnames_angle']] <- as.numeric(heat_map_i_def[['colnames_angle']])
@@ -2774,6 +2798,17 @@ func.print.lineage.tree <- function(conf_yaml_path,
                 param[['custom_row_labels']] <- heat_map_i_def[['custom_row_labels']]
               } else {
                 param[['custom_row_labels']] <- ""
+              }
+              # v111: Get row label offset and alignment
+              if ('row_label_offset' %in% names(heat_map_i_def)) {
+                param[['row_label_offset']] <- as.numeric(heat_map_i_def[['row_label_offset']])
+              } else {
+                param[['row_label_offset']] <- 1.0
+              }
+              if ('row_label_align' %in% names(heat_map_i_def)) {
+                param[['row_label_align']] <- heat_map_i_def[['row_label_align']]
+              } else {
+                param[['row_label_align']] <- "left"
               }
               # v108: Get label mapping
               if ('label_mapping' %in% names(heat_map_i_def)) {
@@ -2857,6 +2892,30 @@ func.print.lineage.tree <- function(conf_yaml_path,
                 param[['height']] <- 0.8
               }
 
+              # v111: Get per-heatmap row_height (default 1.0) for continuous heatmaps too
+              if ('row_height' %in% names(heat_map_i_def)) {
+                param[['row_height']] <- as.numeric(heat_map_i_def[['row_height']])
+              } else {
+                param[['row_height']] <- 1.0
+              }
+
+              # v111: Get grid settings for continuous heatmaps too
+              if ('show_grid' %in% names(heat_map_i_def)) {
+                param[['show_grid']] <- func.check.bin.val.from.conf(heat_map_i_def[['show_grid']])
+              } else {
+                param[['show_grid']] <- FALSE
+              }
+              if ('grid_color' %in% names(heat_map_i_def)) {
+                param[['grid_color']] <- heat_map_i_def[['grid_color']]
+              } else {
+                param[['grid_color']] <- "#000000"
+              }
+              if ('grid_size' %in% names(heat_map_i_def)) {
+                param[['grid_size']] <- as.numeric(heat_map_i_def[['grid_size']])
+              } else {
+                param[['grid_size']] <- 0.5
+              }
+
               # v109: Get colnames_angle (default 45) for continuous heatmaps too
               if ('colnames_angle' %in% names(heat_map_i_def)) {
                 param[['colnames_angle']] <- as.numeric(heat_map_i_def[['colnames_angle']])
@@ -2884,6 +2943,17 @@ func.print.lineage.tree <- function(conf_yaml_path,
                 param[['custom_row_labels']] <- heat_map_i_def[['custom_row_labels']]
               } else {
                 param[['custom_row_labels']] <- ""
+              }
+              # v111: Get row label offset and alignment for continuous heatmaps too
+              if ('row_label_offset' %in% names(heat_map_i_def)) {
+                param[['row_label_offset']] <- as.numeric(heat_map_i_def[['row_label_offset']])
+              } else {
+                param[['row_label_offset']] <- 1.0
+              }
+              if ('row_label_align' %in% names(heat_map_i_def)) {
+                param[['row_label_align']] <- heat_map_i_def[['row_label_align']]
+              } else {
+                param[['row_label_align']] <- "left"
               }
               # v108: Get label mapping for continuous heatmaps too
               if ('label_mapping' %in% names(heat_map_i_def)) {
@@ -4740,10 +4810,24 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             y_pos <- tip_row$y[1]
             x_pos <- tree_xmax + heatmap_offset + (col_idx - 0.5) * tile_width
 
+            # v111: For continuous data, keep value as-is (numeric)
+            # For discrete data, convert to character
+            if (is_discrete) {
+              tile_value <- as.character(value)
+            } else {
+              # Try to convert to numeric, keep as character if fails
+              tile_value <- suppressWarnings(as.numeric(value))
+              if (is.na(tile_value) && !is.na(value)) {
+                # If conversion to numeric failed but original wasn't NA,
+                # this is likely a non-numeric value - treat as NA for continuous
+                tile_value <- NA_real_
+              }
+            }
+
             tile_data_list[[length(tile_data_list) + 1]] <- data.frame(
               x = x_pos,
               y = y_pos,
-              value = as.character(value),
+              value = if (is_discrete) tile_value else tile_value,
               column = col_name,
               stringsAsFactors = FALSE
             )
@@ -4770,13 +4854,31 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
           # For "row height" slider to control visual height of bands:
           # - width = tile_width (column spacing, independent of slider)
           # - height = tile_height (slider directly controls row span)
-          p_with_tiles <- p + geom_tile(
-            data = tile_df,
-            aes(x = x, y = y, fill = value),
-            width = tile_width,     # v109: Column spacing (fixed per column count)
-            height = tile_height,   # v109: Row span controlled by slider (0.2-2.0)
-            inherit.aes = FALSE
-          )
+
+          # v111: Get grid settings
+          show_grid <- if (!is.null(heat_param[['show_grid']])) heat_param[['show_grid']] else FALSE
+          grid_color <- if (!is.null(heat_param[['grid_color']])) heat_param[['grid_color']] else "#000000"
+          grid_size <- if (!is.null(heat_param[['grid_size']])) heat_param[['grid_size']] else 0.5
+
+          if (show_grid) {
+            p_with_tiles <- p + geom_tile(
+              data = tile_df,
+              aes(x = x, y = y, fill = value),
+              width = tile_width,     # v109: Column spacing (fixed per column count)
+              height = tile_height,   # v109: Row span controlled by slider (0.2-2.0)
+              color = grid_color,     # v111: Grid/border color
+              linewidth = grid_size,  # v111: Grid/border width
+              inherit.aes = FALSE
+            )
+          } else {
+            p_with_tiles <- p + geom_tile(
+              data = tile_df,
+              aes(x = x, y = y, fill = value),
+              width = tile_width,     # v109: Column spacing (fixed per column count)
+              height = tile_height,   # v109: Row span controlled by slider (0.2-2.0)
+              inherit.aes = FALSE
+            )
+          }
 
           cat(file=stderr(), paste0("  geom_tile added successfully\n"))
 
@@ -4879,8 +4981,8 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             cat(file=stderr(), paste0("  Colors: low=", low_color, ", mid=", mid_color, ", high=", high_color, "\n"))
             cat(file=stderr(), paste0("  Midpoint: ", midpoint, "\n"))
 
-            # Convert values to numeric for continuous scale
-            tile_df$value <- as.numeric(tile_df$value)
+            # v111: Values should already be numeric from tile building above
+            # No need to convert here as the geom already has the numeric data
 
             if (!is.null(limits) && !all(is.na(limits))) {
               p_with_tiles <- p_with_tiles + scale_fill_gradient2(
@@ -4938,14 +5040,19 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
             cat(file=stderr(), paste0("  Row labels: ", paste(labels_to_use, collapse=", "), "\n"))
 
-            # v110: Fixed row labels positioning for scale_y_reverse()
+            # v110/v111: Fixed row labels positioning for scale_y_reverse()
             # With scale_y_reverse:
             # - HIGH y values appear on the LEFT (low visual x)
             # - LOW y values appear on the RIGHT (high visual x)
             # So labels should be at LOW y values to appear on the RIGHT side
 
+            # v111: Get row label offset and alignment from heat_param
+            row_label_offset <- if (!is.null(heat_param[['row_label_offset']])) heat_param[['row_label_offset']] else 1.0
+            row_label_align <- if (!is.null(heat_param[['row_label_align']])) heat_param[['row_label_align']] else "left"
+
             # Calculate the leftmost y position (min tip y - offset to clear tiles)
-            min_y <- min(tile_df$y) - max(tile_height, 1) - 1.0  # Ensure clearance to the right
+            # v111: Use row_label_offset to control how far the labels are from the heatmap
+            min_y <- min(tile_df$y) - max(tile_height, 1) - row_label_offset
 
             # v109: Get colnames angle from heat_param if available
             colnames_angle <- if (!is.null(heat_param[['colnames_angle']])) heat_param[['colnames_angle']] else 0
@@ -4967,14 +5074,22 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
               }
             }
 
+            # v111: Determine hjust based on alignment setting
+            # left = 0, center = 0.5, right = 1
+            hjust_val <- switch(row_label_align,
+                                "left" = 0,
+                                "center" = 0.5,
+                                "right" = 1,
+                                0)  # default to left
+
             # Add text labels
-            # v110: With scale_y_reverse + coord_flip:
+            # v110/v111: With scale_y_reverse + coord_flip:
             # - vjust = 1 makes text extend to the right (toward lower y values in data space)
             p_with_tiles <- p_with_tiles + geom_text(
               data = label_df,
               aes(x = x, y = y, label = label),
               size = row_label_font_size,
-              hjust = 0.5,  # Center text vertically (visual)
+              hjust = hjust_val,  # v111: Use alignment from settings
               vjust = 1,    # v110: Text extends to the right (toward lower y, which is visual right due to scale_y_reverse)
               angle = colnames_angle,  # v109: Support angle rotation
               inherit.aes = FALSE
@@ -6301,16 +6416,18 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v110 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v111 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("FIX: Renamed 'Row Height' slider to 'Column Width' (controls column band width)"),
-                              tags$li("NEW: Added 'Row Height' slider for actual heatmap row height"),
-                              tags$li("FIX: Row labels now correctly positioned on the RIGHT side of heatmap (not covering it)"),
-                              tags$li("FIX: Clarified 'Data Columns Count' label (was 'Selected Columns')"),
-                              tags$li("FIX: Improved auto-detect type - numeric columns with decimal values now correctly detected as continuous"),
-                              tags$li("NEW: Bootstrap position slider to adjust bootstrap values higher/lower on the tree")
+                              tags$li("FIX: Row height slider now works correctly"),
+                              tags$li("FIX: Bootstrap position slider now works"),
+                              tags$li("FIX: Continuous heatmaps now render correctly (no 'discrete value' error)"),
+                              tags$li("FIX: Auto-detect type now recognizes numeric strings (e.g., columns with #N/A values)"),
+                              tags$li("NEW: Row label offset slider - control distance of labels from heatmap"),
+                              tags$li("NEW: Row label alignment options (left/center/right)"),
+                              tags$li("NEW: Grid option for heatmap tiles - show borders around each square"),
+                              tags$li("REMOVED: Unnecessary 'Data Columns Count' display")
                             )
                      )
             )
@@ -8156,6 +8273,11 @@ server <- function(input, output, session) {
             # v110: Add per-heatmap row height
             heatmap_item[[as.character(j)]]$row_height <- if (!is.null(heatmap_entry$row_height)) heatmap_entry$row_height else 1.0
 
+            # v111: Add grid settings
+            heatmap_item[[as.character(j)]]$show_grid <- if (!is.null(heatmap_entry$show_grid) && heatmap_entry$show_grid) "yes" else "no"
+            heatmap_item[[as.character(j)]]$grid_color <- if (!is.null(heatmap_entry$grid_color)) heatmap_entry$grid_color else "#000000"
+            heatmap_item[[as.character(j)]]$grid_size <- if (!is.null(heatmap_entry$grid_size)) heatmap_entry$grid_size else 0.5
+
             # v109: Add colnames_angle
             heatmap_item[[as.character(j)]]$colnames_angle <- if (!is.null(heatmap_entry$colnames_angle)) heatmap_entry$colnames_angle else 45
 
@@ -8163,6 +8285,9 @@ server <- function(input, output, session) {
             heatmap_item[[as.character(j)]]$show_row_labels <- if (!is.null(heatmap_entry$show_row_labels) && heatmap_entry$show_row_labels) "yes" else "no"
             heatmap_item[[as.character(j)]]$row_label_source <- if (!is.null(heatmap_entry$row_label_source)) heatmap_entry$row_label_source else "colnames"
             heatmap_item[[as.character(j)]]$row_label_font_size <- if (!is.null(heatmap_entry$row_label_font_size)) heatmap_entry$row_label_font_size else 2.5
+            # v111: Add row label offset and alignment
+            heatmap_item[[as.character(j)]]$row_label_offset <- if (!is.null(heatmap_entry$row_label_offset)) heatmap_entry$row_label_offset else 1.0
+            heatmap_item[[as.character(j)]]$row_label_align <- if (!is.null(heatmap_entry$row_label_align)) heatmap_entry$row_label_align else "left"
             heatmap_item[[as.character(j)]]$custom_row_labels <- if (!is.null(heatmap_entry$custom_row_labels)) heatmap_entry$custom_row_labels else ""
             # v108: Add label mapping
             if (!is.null(heatmap_entry$label_mapping) && length(heatmap_entry$label_mapping) > 0) {
@@ -10100,19 +10225,8 @@ server <- function(input, output, session) {
                    if (detected_type == "continuous") "Continuous (numeric)" else "Discrete (categorical)"
                  )
           ),
-          column(4,
-                 # v110: Clarified label - shows count of data columns selected above
-                 tags$label("Data Columns Count"),
-                 tags$div(
-                   style = "padding: 8px; background: #f5f5f5; border-radius: 3px;",
-                   if (!is.null(cfg$columns) && length(cfg$columns) > 0) {
-                     paste(length(cfg$columns), "column(s) selected")
-                   } else {
-                     tags$span(class = "text-muted", "Select columns above")
-                   }
-                 )
-          ),
-          # v109: Removed duplicate "Show column names" checkbox - use "Show row labels" instead
+          # v111: Removed "Data Columns Count" - not useful to the user
+          column(4),
           column(4)
         ),
 
@@ -10159,6 +10273,25 @@ server <- function(input, output, session) {
           )
         ),
 
+        # v111: Grid options for heatmap squares
+        fluidRow(
+          column(4,
+                 checkboxInput(paste0("heatmap_show_grid_", i), "Show grid around tiles",
+                               value = if (!is.null(cfg$show_grid)) cfg$show_grid else FALSE)
+          ),
+          column(4,
+                 colourInput(paste0("heatmap_grid_color_", i), "Grid color",
+                             value = if (!is.null(cfg$grid_color)) cfg$grid_color else "#000000",
+                             showColour = "background")
+          ),
+          column(4,
+                 sliderInput(paste0("heatmap_grid_size_", i), "Grid line width",
+                             min = 0.1, max = 2.0,
+                             value = if (!is.null(cfg$grid_size)) cfg$grid_size else 0.5,
+                             step = 0.1)
+          )
+        ),
+
         # v105/v108: Row labels settings with per-column mapping
         tags$div(
           style = "background-color: #fff9e6; padding: 10px; border-radius: 5px; margin-top: 10px; margin-bottom: 10px;",
@@ -10181,6 +10314,21 @@ server <- function(input, output, session) {
                                value = if (!is.null(cfg$row_label_font_size)) cfg$row_label_font_size else 2.5,
                                step = 0.5)
             )
+          ),
+          # v111: Row label offset and alignment options
+          fluidRow(
+            column(4,
+                   sliderInput(paste0("heatmap_row_label_offset_", i), "Label offset from heatmap",
+                               min = 0, max = 5,
+                               value = if (!is.null(cfg$row_label_offset)) cfg$row_label_offset else 1.0,
+                               step = 0.5)
+            ),
+            column(4,
+                   selectInput(paste0("heatmap_row_label_align_", i), "Label alignment",
+                               choices = c("Left" = "left", "Center" = "center", "Right" = "right"),
+                               selected = if (!is.null(cfg$row_label_align)) cfg$row_label_align else "left")
+            ),
+            column(4)
           ),
           # v108: Dynamic UI for custom labels - either mapping or comma-separated
           uiOutput(paste0("heatmap_custom_labels_ui_", i))
@@ -10600,11 +10748,24 @@ server <- function(input, output, session) {
         unique_vals <- length(unique(na.omit(col_data)))
         is_numeric <- is.numeric(col_data)
 
-        # v110: Better detection for numeric columns
+        # v111: Better detection - also try to convert character columns to numeric
+        if (!is_numeric && is.character(col_data)) {
+          # Try converting to numeric - see what proportion succeeds
+          numeric_attempt <- suppressWarnings(as.numeric(col_data))
+          non_na_original <- sum(!is.na(col_data))
+          non_na_converted <- sum(!is.na(numeric_attempt))
+          # If at least 80% of non-NA values convert successfully, treat as numeric
+          if (non_na_original > 0 && (non_na_converted / non_na_original) >= 0.8) {
+            is_numeric <- TRUE
+            col_data <- numeric_attempt  # Use converted data for further analysis
+          }
+        }
+
+        # v110/v111: Better detection for numeric columns
         if (is_numeric) {
           # Check if values have decimals (not all integers)
           non_na_vals <- na.omit(col_data)
-          has_decimals <- any(non_na_vals != floor(non_na_vals))
+          has_decimals <- any(non_na_vals != floor(non_na_vals), na.rm = TRUE)
           # Numeric with decimals = continuous, or many unique values = continuous
           detected_type <- if (has_decimals || unique_vals > 10) "continuous" else "discrete"
         } else {
@@ -10981,7 +11142,7 @@ server <- function(input, output, session) {
       # Update config with current columns
       cfg$columns <- current_columns
       
-      # v109: Improved auto-detect logic for discrete vs continuous
+      # v109/v111: Improved auto-detect logic for discrete vs continuous
       # Priority: decimals = continuous, non-numeric = discrete, then check unique values
       actual_type <- cfg$type
       first_col <- cfg$columns[1]
@@ -10991,7 +11152,19 @@ server <- function(input, output, session) {
         unique_vals <- length(unique(col_data_clean))
         is_numeric <- is.numeric(col_data)
 
-        # v109: Better heuristic - prioritize decimal detection for continuous
+        # v111: Try to convert character columns to numeric
+        if (!is_numeric && is.character(col_data)) {
+          numeric_attempt <- suppressWarnings(as.numeric(col_data))
+          non_na_original <- sum(!is.na(col_data))
+          non_na_converted <- sum(!is.na(numeric_attempt))
+          # If at least 80% of non-NA values convert successfully, treat as numeric
+          if (non_na_original > 0 && (non_na_converted / non_na_original) >= 0.8) {
+            is_numeric <- TRUE
+            col_data_clean <- na.omit(numeric_attempt)
+          }
+        }
+
+        # v109/v111: Better heuristic - prioritize decimal detection for continuous
         if (!is_numeric) {
           # Non-numeric data is always discrete
           actual_type <- "discrete"
@@ -11022,12 +11195,19 @@ server <- function(input, output, session) {
         }
       }
 
-      # v105: Read per-heatmap settings
+      # v105/v111: Read per-heatmap settings
       current_distance <- input[[paste0("heatmap_distance_", i)]]
       current_height <- input[[paste0("heatmap_height_", i)]]
+      current_row_height <- input[[paste0("heatmap_row_height_", i)]]  # v111: Add row_height
+      # v111: Grid settings
+      show_grid <- input[[paste0("heatmap_show_grid_", i)]]
+      grid_color <- input[[paste0("heatmap_grid_color_", i)]]
+      grid_size <- input[[paste0("heatmap_grid_size_", i)]]
       show_row_labels <- input[[paste0("heatmap_show_row_labels_", i)]]
       row_label_source <- input[[paste0("heatmap_row_label_source_", i)]]
       row_label_font_size <- input[[paste0("heatmap_row_label_font_size_", i)]]
+      row_label_offset <- input[[paste0("heatmap_row_label_offset_", i)]]  # v111: Label offset
+      row_label_align <- input[[paste0("heatmap_row_label_align_", i)]]  # v111: Label alignment
       custom_row_labels <- input[[paste0("heatmap_custom_row_labels_", i)]]
 
       # v108: Collect label mapping if using "mapping" source
@@ -11051,10 +11231,16 @@ server <- function(input, output, session) {
         colnames_angle = if (!is.null(cfg$colnames_angle)) cfg$colnames_angle else 45,
         font_size = input$heatmap_global_font,
         distance = if (!is.null(current_distance)) current_distance else 0.02,
-        height = if (!is.null(current_height)) current_height else 0.8,  # v105: Per-heatmap height
+        height = if (!is.null(current_height)) current_height else 0.8,  # v105: Per-heatmap height (column width)
+        row_height = if (!is.null(current_row_height)) current_row_height else 1.0,  # v111: Per-heatmap row height
+        show_grid = if (!is.null(show_grid)) show_grid else FALSE,  # v111: Grid around tiles
+        grid_color = if (!is.null(grid_color)) grid_color else "#000000",  # v111
+        grid_size = if (!is.null(grid_size)) grid_size else 0.5,  # v111
         show_row_labels = if (!is.null(show_row_labels)) show_row_labels else FALSE,
         row_label_source = if (!is.null(row_label_source)) row_label_source else "colnames",
         row_label_font_size = if (!is.null(row_label_font_size)) row_label_font_size else 2.5,
+        row_label_offset = if (!is.null(row_label_offset)) row_label_offset else 1.0,  # v111
+        row_label_align = if (!is.null(row_label_align)) row_label_align else "left",  # v111
         custom_row_labels = if (!is.null(custom_row_labels)) custom_row_labels else "",
         label_mapping = label_mapping  # v108: Per-column label mapping
       )
@@ -11932,6 +12118,12 @@ server <- function(input, output, session) {
           input$bootstrap_label_size
         } else {
           3.5
+        },
+        # v111: Pass bootstrap position offset slider value
+        man_boot_x_offset = if (!is.null(input$man_boot_x_offset)) {
+          input$man_boot_x_offset
+        } else {
+          0
         },
         # v103: Pass heatmap tree distance slider value
         heatmap_tree_distance = if (!is.null(input$heatmap_tree_distance)) {

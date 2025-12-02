@@ -5,7 +5,7 @@
 This document contains the step-by-step plan for rebuilding the heatmap functionality in EZLineagePlotter.
 The complex heatmap code (~800 lines) has been disabled in v91 and replaced with a simple proof-of-concept.
 
-**Current Status**: v109 - Fixed heatmap UI issues: row height slider actually affects tile size, row labels positioned to right of heatmap (not overlapping), column name angle works, improved auto-detect type for numeric columns
+**Current Status**: v111 - Multiple heatmap fixes: row height slider works, bootstrap position slider works, continuous heatmaps render correctly, improved auto-detect for numeric strings, added row label offset/alignment controls, added grid option for tiles
 
 ## Why We Simplified
 
