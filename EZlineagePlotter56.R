@@ -2768,6 +2768,12 @@ func.print.lineage.tree <- function(conf_yaml_path,
               } else {
                 param[['custom_row_labels']] <- ""
               }
+              # v108: Get label mapping
+              if ('label_mapping' %in% names(heat_map_i_def)) {
+                param[['label_mapping']] <- heat_map_i_def[['label_mapping']]
+              } else {
+                param[['label_mapping']] <- list()
+              }
 
             } else {
               #print("AAAAAAAAAAAA")
@@ -2864,6 +2870,12 @@ func.print.lineage.tree <- function(conf_yaml_path,
                 param[['custom_row_labels']] <- heat_map_i_def[['custom_row_labels']]
               } else {
                 param[['custom_row_labels']] <- ""
+              }
+              # v108: Get label mapping for continuous heatmaps too
+              if ('label_mapping' %in% names(heat_map_i_def)) {
+                param[['label_mapping']] <- heat_map_i_def[['label_mapping']]
+              } else {
+                param[['label_mapping']] <- list()
               }
             }
 
@@ -4733,11 +4745,15 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
         p <- tryCatch({
           # Add tile layer with explicit aesthetics
+          # v108: Fixed width/height confusion in coord_flip context:
+          # - After coord_flip, 'width' controls visual vertical extent (row thickness)
+          # - After coord_flip, 'height' controls visual horizontal extent (tile span)
+          # So we use tile_height for 'width' to control visual row thickness
           p_with_tiles <- p + geom_tile(
             data = tile_df,
             aes(x = x, y = y, fill = value),
-            width = tile_width * 0.9,
-            height = tile_height,
+            width = tile_width * tile_height,  # v108: Scale column width by height slider
+            height = tile_height,              # v108: Keep tile height as-is for horizontal span
             inherit.aes = FALSE
           )
 
@@ -4873,9 +4889,20 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             row_label_source <- if (!is.null(heat_param[['row_label_source']])) heat_param[['row_label_source']] else "colnames"
             row_label_font_size <- if (!is.null(heat_param[['row_label_font_size']])) heat_param[['row_label_font_size']] else 2.5
             custom_row_labels <- if (!is.null(heat_param[['custom_row_labels']])) heat_param[['custom_row_labels']] else ""
+            label_mapping <- if (!is.null(heat_param[['label_mapping']])) heat_param[['label_mapping']] else list()
 
             # Determine labels to use
-            if (row_label_source == "custom" && nchar(custom_row_labels) > 0) {
+            if (row_label_source == "mapping" && length(label_mapping) > 0) {
+              # v108: Use per-column label mapping
+              labels_to_use <- sapply(colnames(heat_data), function(col_name) {
+                if (!is.null(label_mapping[[col_name]]) && nchar(label_mapping[[col_name]]) > 0) {
+                  label_mapping[[col_name]]
+                } else {
+                  col_name  # Default to column name if not mapped
+                }
+              })
+              cat(file=stderr(), paste0("  Using label mapping for ", length(labels_to_use), " columns\n"))
+            } else if (row_label_source == "custom" && nchar(custom_row_labels) > 0) {
               labels_to_use <- trimws(strsplit(custom_row_labels, ",")[[1]])
               # Pad or truncate to match number of columns
               if (length(labels_to_use) < ncol(heat_data)) {
@@ -4890,23 +4917,29 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
             cat(file=stderr(), paste0("  Row labels: ", paste(labels_to_use, collapse=", "), "\n"))
 
-            # Calculate x position for labels (after all heatmap columns)
-            max_x <- max(tile_df$x) + tile_width * 0.6
+            # v108: Fixed row labels positioning to appear on RIGHT side of heatmap
+            # In coord_flip:
+            # - x (column position) becomes VERTICAL position in visual
+            # - y (tip position) becomes HORIZONTAL position in visual
+            # So for labels to appear at the RIGHT side, they need max(y) + offset
 
-            # Create label data - one label per column, positioned at column center
+            # Calculate the rightmost y position (after coord_flip, this is the right edge)
+            max_y <- max(tile_df$y) + 1.5  # Offset from rightmost tip
+
+            # Create label data - one label per column (visual "row")
             label_df <- data.frame(
-              x = max_x,
-              y = 1:ncol(heat_data),  # Dummy y, will be recalculated
+              x = numeric(ncol(heat_data)),  # Will be set per column
+              y = max_y,                      # All labels at right side
               label = labels_to_use,
               stringsAsFactors = FALSE
             )
 
-            # Calculate actual x position for each column label (at right edge of that column)
+            # Set x position for each label to match its column position
             for (col_idx in 1:ncol(heat_data)) {
               col_tiles <- tile_df[tile_df$column == colnames(heat_data)[col_idx], ]
               if (nrow(col_tiles) > 0) {
-                label_df$x[col_idx] <- max(col_tiles$x) + tile_width * 0.6
-                label_df$y[col_idx] <- mean(col_tiles$y)  # Center vertically
+                # Use the column's x position (all tiles in a column have same x)
+                label_df$x[col_idx] <- unique(col_tiles$x)[1]
               }
             }
 
@@ -4915,7 +4948,8 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
               data = label_df,
               aes(x = x, y = y, label = label),
               size = row_label_font_size,
-              hjust = 0,
+              hjust = 0,  # Left-align text (which appears as top-align after flip)
+              vjust = 0.5, # Center vertically within each row
               inherit.aes = FALSE
             )
             cat(file=stderr(), paste0("  Row labels added successfully\n"))
@@ -6239,14 +6273,14 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v107 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v108 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("FIX: Resolved reactive loop when selecting heatmap columns"),
-                              tags$li("FIX: UI now only regenerates when adding/removing heatmaps (not on every setting change)"),
-                              tags$li("FIX: Heatmap config now properly initialized with all default values"),
-                              tags$li("IMPROVEMENT: Removed large number of options warnings for heatmap column selector")
+                              tags$li("FIX: Color settings now show immediately when columns are selected"),
+                              tags$li("FIX: Row height slider now properly affects heatmap tile size"),
+                              tags$li("FIX: Row labels now appear on the right side of heatmap (not in the middle)"),
+                              tags$li("NEW: Custom label mapping - map each column name to a custom label individually")
                             )
                      )
             )
@@ -8086,6 +8120,10 @@ server <- function(input, output, session) {
             heatmap_item[[as.character(j)]]$row_label_source <- if (!is.null(heatmap_entry$row_label_source)) heatmap_entry$row_label_source else "colnames"
             heatmap_item[[as.character(j)]]$row_label_font_size <- if (!is.null(heatmap_entry$row_label_font_size)) heatmap_entry$row_label_font_size else 2.5
             heatmap_item[[as.character(j)]]$custom_row_labels <- if (!is.null(heatmap_entry$custom_row_labels)) heatmap_entry$custom_row_labels else ""
+            # v108: Add label mapping
+            if (!is.null(heatmap_entry$label_mapping) && length(heatmap_entry$label_mapping) > 0) {
+              heatmap_item[[as.character(j)]]$label_mapping <- heatmap_entry$label_mapping
+            }
 
             # Add columns - format must match expected YAML structure
             # Each column entry needs to be a named list like list("1" = "column_name")
@@ -8253,6 +8291,10 @@ server <- function(input, output, session) {
           heatmap_item[[as.character(j)]]$row_label_source <- if (!is.null(heatmap_entry$row_label_source)) heatmap_entry$row_label_source else "colnames"
           heatmap_item[[as.character(j)]]$row_label_font_size <- if (!is.null(heatmap_entry$row_label_font_size)) heatmap_entry$row_label_font_size else 2.5
           heatmap_item[[as.character(j)]]$custom_row_labels <- if (!is.null(heatmap_entry$custom_row_labels)) heatmap_entry$custom_row_labels else ""
+          # v108: Add label mapping
+          if (!is.null(heatmap_entry$label_mapping) && length(heatmap_entry$label_mapping) > 0) {
+            heatmap_item[[as.character(j)]]$label_mapping <- heatmap_entry$label_mapping
+          }
 
           # Add columns - format must match expected YAML structure
           if (!is.null(heatmap_entry$columns)) {
@@ -10058,7 +10100,7 @@ server <- function(input, output, session) {
           )
         ),
 
-        # v105: Row labels settings
+        # v105/v108: Row labels settings with per-column mapping
         tags$div(
           style = "background-color: #fff9e6; padding: 10px; border-radius: 5px; margin-top: 10px; margin-bottom: 10px;",
           tags$h5(icon("font"), " Row Labels (next to heatmap)"),
@@ -10069,7 +10111,9 @@ server <- function(input, output, session) {
             ),
             column(4,
                    selectInput(paste0("heatmap_row_label_source_", i), "Label source",
-                               choices = c("Column names" = "colnames", "Custom text" = "custom"),
+                               choices = c("Column names" = "colnames",
+                                           "Custom mapping" = "mapping",
+                                           "Comma-separated list" = "custom"),
                                selected = if (!is.null(cfg$row_label_source)) cfg$row_label_source else "colnames")
             ),
             column(4,
@@ -10079,93 +10123,13 @@ server <- function(input, output, session) {
                                step = 0.5)
             )
           ),
-          conditionalPanel(
-            condition = paste0("input.heatmap_row_label_source_", i, " == 'custom'"),
-            fluidRow(
-              column(12,
-                     textInput(paste0("heatmap_custom_row_labels_", i), "Custom labels (comma-separated)",
-                               value = if (!is.null(cfg$custom_row_labels)) cfg$custom_row_labels else "",
-                               placeholder = "Label1, Label2, Label3...")
-              )
-            )
-          )
+          # v108: Dynamic UI for custom labels - either mapping or comma-separated
+          uiOutput(paste0("heatmap_custom_labels_ui_", i))
         ),
 
-        # Discrete settings - v69: Improved UI similar to classification settings
-        conditionalPanel(
-          condition = paste0("(input.heatmap_auto_type_", i, " && '", detected_type, "' == 'discrete') || (!input.heatmap_auto_type_", i, " && input.heatmap_type_", i, " == 'discrete')"),
-          tags$div(
-            style = "background-color: #f9f9f9; padding: 10px; border-radius: 5px; margin-top: 10px;",
-            tags$h5(icon("palette"), " Discrete Color Settings"),
-            # v69: Palette selection with Apply button
-            tags$div(
-              style = "background-color: #f0f0f0; padding: 10px; margin-bottom: 10px; border-radius: 5px;",
-              fluidRow(
-                column(6,
-                       selectInput(paste0("heatmap_discrete_palette_", i), "Color Palette",
-                                   choices = discrete_palettes,
-                                   selected = if (!is.null(cfg$discrete_palette)) cfg$discrete_palette else "Set1")
-                ),
-                column(6, style = "padding-top: 25px;",
-                       actionButton(paste0("apply_heatmap_palette_", i), "Apply Palette to All",
-                                    icon = icon("palette"), class = "btn-info btn-sm")
-                )
-              ),
-              # v62: Add palette preview
-              uiOutput(paste0("heatmap_discrete_palette_preview_", i))
-            ),
-            # v69: Always show value-to-color mappings (no checkbox needed)
-            tags$h6("Value Colors:", style = "margin-top: 10px; margin-bottom: 5px;"),
-            uiOutput(paste0("heatmap_discrete_colors_ui_", i))
-          )
-        ),
-        
-        # Continuous settings
-        conditionalPanel(
-          condition = paste0("(input.heatmap_auto_type_", i, " && '", detected_type, "' == 'continuous') || (!input.heatmap_auto_type_", i, " && input.heatmap_type_", i, " == 'continuous')"),
-          tags$div(
-            style = "background-color: #f0f7ff; padding: 10px; border-radius: 5px; margin-top: 10px;",
-            tags$h5(icon("sliders-h"), " Continuous Color Settings"),
-            fluidRow(
-              column(4,
-                     selectInput(paste0("heatmap_cont_palette_", i), "Color Palette",
-                                 choices = continuous_palettes,
-                                 selected = if (!is.null(cfg$cont_palette)) cfg$cont_palette else "Blues"),
-                     # v62: Add palette preview
-                     uiOutput(paste0("heatmap_cont_palette_preview_", i))
-              ),
-              column(4,
-                     colourInput(paste0("heatmap_low_color_", i), "Low Color",
-                                 value = if (!is.null(cfg$low_color)) cfg$low_color else "#FFFFCC")
-              ),
-              column(4,
-                     colourInput(paste0("heatmap_high_color_", i), "High Color",
-                                 value = if (!is.null(cfg$high_color)) cfg$high_color else "#006837")
-              )
-            ),
-            fluidRow(
-              column(4,
-                     checkboxInput(paste0("heatmap_use_midpoint_", i), "Use midpoint color",
-                                   value = if (!is.null(cfg$use_midpoint)) cfg$use_midpoint else FALSE)
-              ),
-              column(4,
-                     conditionalPanel(
-                       condition = paste0("input.heatmap_use_midpoint_", i),
-                       colourInput(paste0("heatmap_mid_color_", i), "Mid Color",
-                                   value = if (!is.null(cfg$mid_color)) cfg$mid_color else "#FFFF99")
-                     )
-              ),
-              column(4,
-                     conditionalPanel(
-                       condition = paste0("input.heatmap_use_midpoint_", i),
-                       numericInput(paste0("heatmap_midpoint_", i), "Midpoint Value",
-                                    value = if (!is.null(cfg$midpoint)) cfg$midpoint else 0,
-                                    step = 0.1)
-                     )
-              )
-            )
-          )
-        )
+        # v108: Replaced conditionalPanels with uiOutput for reactive type detection
+        # This ensures the color settings show up immediately when columns are selected
+        uiOutput(paste0("heatmap_type_settings_ui_", i))
       )
     })
     
@@ -10539,6 +10503,192 @@ server <- function(input, output, session) {
     "crimson", "firebrick", "indianred", "hotpink", "deeppink"
   )
 
+  # v108: New reactive renderUI for type-specific settings (discrete vs continuous)
+  # This replaces the old conditionalPanels which used a hardcoded detected_type
+  observe({
+    lapply(1:6, function(i) {
+      output[[paste0("heatmap_type_settings_ui_", i)]] <- renderUI({
+        # Take dependency on column selection to reactively update when columns change
+        cols_selected <- input[[paste0("heatmap_columns_", i)]]
+        auto_type <- input[[paste0("heatmap_auto_type_", i)]]
+        forced_type <- input[[paste0("heatmap_type_", i)]]
+
+        # If no columns selected, show nothing
+        if (is.null(cols_selected) || length(cols_selected) == 0 || is.null(values$csv_data)) {
+          return(tags$p(class = "text-muted", style = "margin-top: 10px;",
+                        icon("info-circle"), " Select column(s) to see color settings"))
+        }
+
+        # Compute detected type from the first column
+        first_col <- cols_selected[1]
+        if (!(first_col %in% names(values$csv_data))) {
+          return(tags$p(class = "text-muted", "Column not found"))
+        }
+
+        col_data <- values$csv_data[[first_col]]
+        unique_vals <- length(unique(na.omit(col_data)))
+        is_numeric <- is.numeric(col_data)
+        detected_type <- if (is_numeric && unique_vals > 10) "continuous" else "discrete"
+
+        # Determine actual type based on auto-detect checkbox
+        actual_type <- if (isTRUE(auto_type) || is.null(auto_type)) detected_type else forced_type
+        if (is.null(actual_type)) actual_type <- "discrete"
+
+        # Get config for current values (isolated to prevent loops)
+        cfg <- isolate(values$heatmap_configs[[i]])
+
+        # Palette options
+        discrete_palettes <- c("Set1", "Set2", "Set3", "Paired", "Dark2", "Accent", "Pastel1", "Pastel2")
+        continuous_palettes <- c("Blues", "Greens", "Reds", "Purples", "Oranges",
+                                 "Viridis", "Plasma", "Inferno", "Magma",
+                                 "RdBu", "RdYlGn", "PiYG", "BrBG")
+
+        if (actual_type == "discrete") {
+          # Discrete settings UI
+          tags$div(
+            style = "background-color: #f9f9f9; padding: 10px; border-radius: 5px; margin-top: 10px;",
+            tags$h5(icon("palette"), " Discrete Color Settings"),
+            tags$div(
+              style = "background-color: #f0f0f0; padding: 10px; margin-bottom: 10px; border-radius: 5px;",
+              fluidRow(
+                column(6,
+                       selectInput(paste0("heatmap_discrete_palette_", i), "Color Palette",
+                                   choices = discrete_palettes,
+                                   selected = if (!is.null(cfg$discrete_palette)) cfg$discrete_palette else "Set1")
+                ),
+                column(6, style = "padding-top: 25px;",
+                       actionButton(paste0("apply_heatmap_palette_", i), "Apply Palette to All",
+                                    icon = icon("palette"), class = "btn-info btn-sm")
+                )
+              ),
+              uiOutput(paste0("heatmap_discrete_palette_preview_", i))
+            ),
+            tags$h6("Value Colors:", style = "margin-top: 10px; margin-bottom: 5px;"),
+            uiOutput(paste0("heatmap_discrete_colors_ui_", i))
+          )
+        } else {
+          # Continuous settings UI
+          tags$div(
+            style = "background-color: #f0f7ff; padding: 10px; border-radius: 5px; margin-top: 10px;",
+            tags$h5(icon("sliders-h"), " Continuous Color Settings"),
+            fluidRow(
+              column(4,
+                     selectInput(paste0("heatmap_cont_palette_", i), "Color Palette",
+                                 choices = continuous_palettes,
+                                 selected = if (!is.null(cfg$cont_palette)) cfg$cont_palette else "Blues"),
+                     uiOutput(paste0("heatmap_cont_palette_preview_", i))
+              ),
+              column(4,
+                     colourInput(paste0("heatmap_low_color_", i), "Low Color",
+                                 value = if (!is.null(cfg$low_color)) cfg$low_color else "#FFFFCC")
+              ),
+              column(4,
+                     colourInput(paste0("heatmap_high_color_", i), "High Color",
+                                 value = if (!is.null(cfg$high_color)) cfg$high_color else "#006837")
+              )
+            ),
+            fluidRow(
+              column(4,
+                     checkboxInput(paste0("heatmap_use_midpoint_", i), "Use midpoint color",
+                                   value = if (!is.null(cfg$use_midpoint)) cfg$use_midpoint else FALSE)
+              ),
+              column(4,
+                     conditionalPanel(
+                       condition = paste0("input.heatmap_use_midpoint_", i),
+                       colourInput(paste0("heatmap_mid_color_", i), "Mid Color",
+                                   value = if (!is.null(cfg$mid_color)) cfg$mid_color else "#FFFF99")
+                     )
+              ),
+              column(4,
+                     conditionalPanel(
+                       condition = paste0("input.heatmap_use_midpoint_", i),
+                       numericInput(paste0("heatmap_midpoint_", i), "Midpoint Value",
+                                    value = if (!is.null(cfg$midpoint)) cfg$midpoint else 0,
+                                    step = 0.1)
+                     )
+              )
+            )
+          )
+        }
+      })
+    })
+  })
+
+  # v108: Render custom labels UI (mapping or comma-separated)
+  observe({
+    lapply(1:6, function(i) {
+      output[[paste0("heatmap_custom_labels_ui_", i)]] <- renderUI({
+        # Depend on label source selection and column selection
+        label_source <- input[[paste0("heatmap_row_label_source_", i)]]
+        cols_selected <- input[[paste0("heatmap_columns_", i)]]
+
+        # Show nothing for "colnames" source
+        if (is.null(label_source) || label_source == "colnames") {
+          return(NULL)
+        }
+
+        # Show comma-separated text input for "custom" source
+        if (label_source == "custom") {
+          cfg <- isolate(values$heatmap_configs[[i]])
+          return(fluidRow(
+            column(12,
+                   textInput(paste0("heatmap_custom_row_labels_", i), "Custom labels (comma-separated)",
+                             value = if (!is.null(cfg$custom_row_labels)) cfg$custom_row_labels else "",
+                             placeholder = "Label1, Label2, Label3...")
+            )
+          ))
+        }
+
+        # Show per-column mapping UI for "mapping" source
+        if (label_source == "mapping") {
+          if (is.null(cols_selected) || length(cols_selected) == 0) {
+            return(tags$p(class = "text-muted",
+                          icon("info-circle"), " Select columns first to map labels"))
+          }
+
+          cfg <- isolate(values$heatmap_configs[[i]])
+          existing_mapping <- if (!is.null(cfg$label_mapping)) cfg$label_mapping else list()
+
+          # Create a text input for each column
+          mapping_rows <- lapply(seq_along(cols_selected), function(j) {
+            col_name <- cols_selected[j]
+            # Get existing mapping or default to column name
+            existing_label <- if (!is.null(existing_mapping[[col_name]])) existing_mapping[[col_name]] else col_name
+
+            fluidRow(
+              style = "margin-bottom: 5px; padding: 3px 0;",
+              column(5,
+                     tags$div(
+                       style = "padding-top: 7px; font-family: monospace; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;",
+                       title = col_name,
+                       col_name
+                     )
+              ),
+              column(1,
+                     tags$div(style = "padding-top: 7px; text-align: center;", icon("arrow-right"))
+              ),
+              column(6,
+                     textInput(paste0("heatmap_", i, "_label_", j), NULL,
+                               value = existing_label,
+                               placeholder = "Custom label...")
+              )
+            )
+          })
+
+          return(tags$div(
+            style = "background-color: #fff; padding: 10px; border-radius: 5px; border: 1px solid #e0e0e0;",
+            tags$h6("Column to Label Mapping:", style = "margin-top: 0; margin-bottom: 8px;"),
+            tags$small(class = "text-muted", paste0(length(cols_selected), " column(s) - edit labels on the right")),
+            tags$hr(style = "margin: 8px 0;"),
+            do.call(tagList, mapping_rows)
+          ))
+        }
+
+        return(NULL)
+      })
+    })
+  })
+
   # v70: Render discrete color pickers for each heatmap - with NA color and dropdown menus
   observe({
     lapply(1:6, function(i) {
@@ -10788,6 +10938,19 @@ server <- function(input, output, session) {
       row_label_font_size <- input[[paste0("heatmap_row_label_font_size_", i)]]
       custom_row_labels <- input[[paste0("heatmap_custom_row_labels_", i)]]
 
+      # v108: Collect label mapping if using "mapping" source
+      label_mapping <- list()
+      if (!is.null(row_label_source) && row_label_source == "mapping" && length(cfg$columns) > 0) {
+        for (j in seq_along(cfg$columns)) {
+          mapped_label <- input[[paste0("heatmap_", i, "_label_", j)]]
+          if (!is.null(mapped_label) && nchar(trimws(mapped_label)) > 0) {
+            label_mapping[[cfg$columns[j]]] <- mapped_label
+          } else {
+            label_mapping[[cfg$columns[j]]] <- cfg$columns[j]  # Default to column name
+          }
+        }
+      }
+
       heatmap_entry <- list(
         title = cfg$title,
         is_discrete = (actual_type == "discrete"),
@@ -10800,7 +10963,8 @@ server <- function(input, output, session) {
         show_row_labels = if (!is.null(show_row_labels)) show_row_labels else FALSE,
         row_label_source = if (!is.null(row_label_source)) row_label_source else "colnames",
         row_label_font_size = if (!is.null(row_label_font_size)) row_label_font_size else 2.5,
-        custom_row_labels = if (!is.null(custom_row_labels)) custom_row_labels else ""
+        custom_row_labels = if (!is.null(custom_row_labels)) custom_row_labels else "",
+        label_mapping = label_mapping  # v108: Per-column label mapping
       )
       
       if (actual_type == "discrete") {

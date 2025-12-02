@@ -5,7 +5,7 @@
 This document contains the step-by-step plan for rebuilding the heatmap functionality in EZLineagePlotter.
 The complex heatmap code (~800 lines) has been disabled in v91 and replaced with a simple proof-of-concept.
 
-**Current Status**: v107 - Fixed reactive loop in column selection and UI regeneration. UI now only rebuilds when adding/removing heatmaps, not on every property change
+**Current Status**: v108 - Fixed heatmap UI issues: color settings now show immediately when columns selected, row height slider works properly, row labels appear on right side, added per-column custom label mapping
 
 ## Why We Simplified
 
