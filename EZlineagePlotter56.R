@@ -4707,10 +4707,14 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       per_heatmap_distance <- if (!is.null(heat_param[['distance']])) heat_param[['distance']] else heatmap_tree_distance
       heatmap_offset <- tree_width * per_heatmap_distance
       cat(file=stderr(), paste0("  per_heatmap_distance: ", per_heatmap_distance, "\n"))
-      tile_width <- tree_width * 0.03  # 3% of tree width per column
-      # v105: Use per-heatmap height from heat_param
+      # v110: tile_width controls visual row height (after coord_flip)
+      # Use row_height parameter to scale the base tile width
+      row_height_mult <- if (!is.null(heat_param[['row_height']])) heat_param[['row_height']] else 1.0
+      tile_width <- tree_width * 0.03 * row_height_mult  # Base 3% of tree width, scaled by row_height
+      cat(file=stderr(), paste0("  row_height_mult: ", row_height_mult, "\n"))
+      # v105/v110: Use per-heatmap height from heat_param (this is now "Column Width")
       tile_height <- if (!is.null(heat_param[['height']])) heat_param[['height']] else 0.8
-      cat(file=stderr(), paste0("  tile_height: ", tile_height, "\n"))
+      cat(file=stderr(), paste0("  tile_height (column width): ", tile_height, "\n"))
 
       cat(file=stderr(), paste0("  tree_xmin: ", tree_xmin, "\n"))
       cat(file=stderr(), paste0("  tree_xmax: ", tree_xmax, "\n"))
@@ -4934,16 +4938,14 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
             cat(file=stderr(), paste0("  Row labels: ", paste(labels_to_use, collapse=", "), "\n"))
 
-            # v109: Fixed row labels to appear on RIGHT side of heatmap (not overlapping)
-            # In coord_flip:
-            # - data x -> visual y (vertical position)
-            # - data y -> visual x (horizontal position)
-            # Labels should be at the RIGHT of all tips, which means high data y values
-            # After coord_flip, this becomes the right side horizontally
+            # v110: Fixed row labels positioning for scale_y_reverse()
+            # With scale_y_reverse:
+            # - HIGH y values appear on the LEFT (low visual x)
+            # - LOW y values appear on the RIGHT (high visual x)
+            # So labels should be at LOW y values to appear on the RIGHT side
 
-            # Calculate the rightmost y position (max tip y + offset to clear tiles)
-            # tile_height affects how far tiles extend, so account for it
-            max_y <- max(tile_df$y) + max(tile_height, 1) + 1.0  # Ensure clearance
+            # Calculate the leftmost y position (min tip y - offset to clear tiles)
+            min_y <- min(tile_df$y) - max(tile_height, 1) - 1.0  # Ensure clearance to the right
 
             # v109: Get colnames angle from heat_param if available
             colnames_angle <- if (!is.null(heat_param[['colnames_angle']])) heat_param[['colnames_angle']] else 0
@@ -4951,7 +4953,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             # Create label data - one label per column (visual "row")
             label_df <- data.frame(
               x = numeric(ncol(heat_data)),  # Will be set per column
-              y = max_y,                      # All labels at right side
+              y = min_y,                      # All labels at right side (low y due to scale_y_reverse)
               label = labels_to_use,
               stringsAsFactors = FALSE
             )
@@ -4966,19 +4968,19 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             }
 
             # Add text labels
-            # v109: With coord_flip, hjust controls visual vertical alignment, vjust controls horizontal
-            # Using vjust=0 makes text extend to the right (in visual x direction)
+            # v110: With scale_y_reverse + coord_flip:
+            # - vjust = 1 makes text extend to the right (toward lower y values in data space)
             p_with_tiles <- p_with_tiles + geom_text(
               data = label_df,
               aes(x = x, y = y, label = label),
               size = row_label_font_size,
               hjust = 0.5,  # Center text vertically (visual)
-              vjust = 0,    # Text extends to the right (visual)
+              vjust = 1,    # v110: Text extends to the right (toward lower y, which is visual right due to scale_y_reverse)
               angle = colnames_angle,  # v109: Support angle rotation
               inherit.aes = FALSE
             )
             cat(file=stderr(), paste0("  Row labels added successfully\n"))
-            cat(file=stderr(), paste0("  Label position: max_y=", max_y, ", angle=", colnames_angle, "\n"))
+            cat(file=stderr(), paste0("  Label position: min_y=", min_y, ", angle=", colnames_angle, "\n"))
           }
 
           cat(file=stderr(), paste0("  Final layers: ", length(p_with_tiles$layers), "\n"))
@@ -6299,16 +6301,16 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v109 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v110 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("FIX: Row height slider now properly affects heatmap tile height"),
-                              tags$li("FIX: Row labels now positioned to the right of heatmap (not overlapping)"),
-                              tags$li("FIX: Column name angle slider now works for row labels"),
-                              tags$li("FIX: Label font size slider max increased to 12"),
-                              tags$li("FIX: Improved auto-detect type - numeric columns with decimals now correctly detected as continuous"),
-                              tags$li("REMOVED: Duplicate 'Show column names' checkbox (use 'Show row labels' instead)")
+                              tags$li("FIX: Renamed 'Row Height' slider to 'Column Width' (controls column band width)"),
+                              tags$li("NEW: Added 'Row Height' slider for actual heatmap row height"),
+                              tags$li("FIX: Row labels now correctly positioned on the RIGHT side of heatmap (not covering it)"),
+                              tags$li("FIX: Clarified 'Data Columns Count' label (was 'Selected Columns')"),
+                              tags$li("FIX: Improved auto-detect type - numeric columns with decimal values now correctly detected as continuous"),
+                              tags$li("NEW: Bootstrap position slider to adjust bootstrap values higher/lower on the tree")
                             )
                      )
             )
@@ -6567,6 +6569,14 @@ ui <- dashboardPage(
                           max = 10,
                           value = 3,
                           step = 0.5,
+                          width = "100%"),
+              # v110: Bootstrap position adjustment slider
+              sliderInput("man_boot_x_offset",
+                          "Bootstrap Position (higher/lower):",
+                          min = -2,
+                          max = 2,
+                          value = 0,
+                          step = 0.1,
                           width = "100%")
             )
           ),
@@ -8140,8 +8150,11 @@ server <- function(input, output, session) {
             # v104: Add per-heatmap distance
             heatmap_item[[as.character(j)]]$distance <- if (!is.null(heatmap_entry$distance)) heatmap_entry$distance else 0.02
 
-            # v105: Add per-heatmap height
+            # v105: Add per-heatmap height (now called Column Width in UI)
             heatmap_item[[as.character(j)]]$height <- if (!is.null(heatmap_entry$height)) heatmap_entry$height else 0.8
+
+            # v110: Add per-heatmap row height
+            heatmap_item[[as.character(j)]]$row_height <- if (!is.null(heatmap_entry$row_height)) heatmap_entry$row_height else 1.0
 
             # v109: Add colnames_angle
             heatmap_item[[as.character(j)]]$colnames_angle <- if (!is.null(heatmap_entry$colnames_angle)) heatmap_entry$colnames_angle else 45
@@ -9993,7 +10006,8 @@ server <- function(input, output, session) {
       # Get column choices from CSV (using isolated value)
       col_choices <- if (!is.null(csv_data_local)) names(csv_data_local) else character(0)
       
-      # v56: Determine detected type based on first column (if multiple, they should be same type)
+      # v56/v110: Determine detected type based on first column (if multiple, they should be same type)
+      # v110: Improved detection - numeric columns with decimal values are always continuous
       detected_type <- "unknown"
       if (!is.null(cfg$columns) && length(cfg$columns) > 0 && !is.null(csv_data_local)) {
         # Check first column to determine type
@@ -10003,7 +10017,17 @@ server <- function(input, output, session) {
           if (!is.null(col_data)) {
             unique_vals <- length(unique(na.omit(col_data)))
             is_numeric <- is.numeric(col_data)
-            detected_type <- if (is_numeric && unique_vals > 10) "continuous" else "discrete"
+
+            # v110: Better detection for numeric columns
+            if (is_numeric) {
+              # Check if values have decimals (not all integers)
+              non_na_vals <- na.omit(col_data)
+              has_decimals <- any(non_na_vals != floor(non_na_vals))
+              # Numeric with decimals = continuous, or many unique values = continuous
+              detected_type <- if (has_decimals || unique_vals > 10) "continuous" else "discrete"
+            } else {
+              detected_type <- "discrete"
+            }
           }
         }
       }
@@ -10077,13 +10101,14 @@ server <- function(input, output, session) {
                  )
           ),
           column(4,
-                 tags$label("Selected Columns"),
+                 # v110: Clarified label - shows count of data columns selected above
+                 tags$label("Data Columns Count"),
                  tags$div(
                    style = "padding: 8px; background: #f5f5f5; border-radius: 3px;",
                    if (!is.null(cfg$columns) && length(cfg$columns) > 0) {
-                     paste(length(cfg$columns), "column(s)")
+                     paste(length(cfg$columns), "column(s) selected")
                    } else {
-                     tags$span(class = "text-muted", "None selected")
+                     tags$span(class = "text-muted", "Select columns above")
                    }
                  )
           ),
@@ -10121,14 +10146,16 @@ server <- function(input, output, session) {
                              step = 0.01)
           ),
           column(4,
-                 sliderInput(paste0("heatmap_height_", i), "Row Height",
+                 sliderInput(paste0("heatmap_height_", i), "Column Width",
                              min = 0.2, max = 2.0,
                              value = if (!is.null(cfg$height)) cfg$height else 0.8,
                              step = 0.1)
           ),
           column(4,
-                 tags$p(class = "text-muted", style = "padding-top: 25px; font-size: 11px;",
-                        "Distance: gap from tree. Height: tile size.")
+                 sliderInput(paste0("heatmap_row_height_", i), "Row Height",
+                             min = 0.5, max = 3.0,
+                             value = if (!is.null(cfg$row_height)) cfg$row_height else 1.0,
+                             step = 0.1)
           )
         ),
 
@@ -10301,6 +10328,18 @@ server <- function(input, output, session) {
           # Only update if value actually changed (prevents reactive loop)
           if (is.null(current_val) || !identical(new_val, current_val)) {
             values$heatmap_configs[[i]]$height <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      # v110: Per-heatmap row height (controls visual height of each row)
+      observeEvent(input[[paste0("heatmap_row_height_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_row_height_", i)]]
+          current_val <- values$heatmap_configs[[i]]$row_height
+          # Only update if value actually changed (prevents reactive loop)
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$row_height <- new_val
           }
         }
       }, ignoreInit = TRUE)
@@ -10560,7 +10599,17 @@ server <- function(input, output, session) {
         col_data <- values$csv_data[[first_col]]
         unique_vals <- length(unique(na.omit(col_data)))
         is_numeric <- is.numeric(col_data)
-        detected_type <- if (is_numeric && unique_vals > 10) "continuous" else "discrete"
+
+        # v110: Better detection for numeric columns
+        if (is_numeric) {
+          # Check if values have decimals (not all integers)
+          non_na_vals <- na.omit(col_data)
+          has_decimals <- any(non_na_vals != floor(non_na_vals))
+          # Numeric with decimals = continuous, or many unique values = continuous
+          detected_type <- if (has_decimals || unique_vals > 10) "continuous" else "discrete"
+        } else {
+          detected_type <- "discrete"
+        }
 
         # Determine actual type based on auto-detect checkbox
         actual_type <- if (isTRUE(auto_type) || is.null(auto_type)) detected_type else forced_type
