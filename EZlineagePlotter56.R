@@ -3452,8 +3452,9 @@ func.print.lineage.tree <- function(conf_yaml_path,
       
       #print("B18")
       how_many_hi <- 0
-      
-      
+      high_alpha_list <- NULL  # v140: Initialize before highlight block to prevent 'object not found' error
+
+
       FLAG_BULK_DISPLAY <- FALSE
       
       if ('highlight' %in% att1) {
@@ -3930,6 +3931,7 @@ func.print.lineage.tree <- function(conf_yaml_path,
         high_vertical_offset,
         adjust_height_ecliplse,
         adjust_width_eclipse,
+        high_alpha_list = high_alpha_list,  # v140: Pass transparency list
         flag_colnames,
         viridis_option_list,
         heat_legend_replace,
@@ -4088,6 +4090,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
                                          manual_nodes_to_highlight = NA,
                                          flag_calc_scores_for_tree, individual, width_heatmap = NA,
                                          high_offset = 0, high_vertical_offset = 0, adjust_height_ecliplse, adjust_width_eclipse,
+                                         high_alpha_list = NULL,  # v140: Added for transparency control
                                          flag_colnames, viridis_option_list, heat_legend_replace = NA,
                                          tip_name_display_flag = TRUE,
                                          flag_make_newick_file=FALSE,
@@ -6841,14 +6844,12 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v139 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v140 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("Highlight tab: Fixed transparency slider to actually control ellipse transparency"),
-                              tags$li("Download tab: Fixed page orientation dropdown with better debug logging"),
-                              tags$li("Extra tab: Added processing indicator when applying settings"),
-                              tags$li("Fixed doubled highlight ellipses after adding heatmap (second highlight only applies when heatmap is present)")
+                              tags$li("Fixed 'object high_alpha_list not found' error when applying highlight"),
+                              tags$li("Transparency parameter now properly passed through all function layers")
                             )
                      )
             )
