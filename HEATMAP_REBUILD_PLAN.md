@@ -5,7 +5,11 @@
 This document contains the step-by-step plan for rebuilding the heatmap functionality in EZLineagePlotter.
 The complex heatmap code (~800 lines) has been disabled in v91 and replaced with a simple proof-of-concept.
 
-**Current Status**: v127 - Multiple bug fixes:
+**Current Status**: v130 - Multiple bug fixes:
+- v130: Fixed highlighting for default classification (removed undefined preview_highlight_active check)
+- v130: Bootstrap triangle default size reduced (slider default 3 → 1.5)
+- v130: Bootstrap legend text uses Legend tab font sizes (already implemented, verified)
+- v129: Added highlighting support to default classification path
 - v127: Auto-detect type display now updates dynamically when columns change
 - v127: Bootstrap legend now works even without heatmap (boudariestt initialized early)
 - v127: Legend tab now has processing/ready status indicators like other tabs

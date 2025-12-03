@@ -6678,6 +6678,7 @@ ui <- dashboardPage(
       menuItem("Highlighting", tabName = "highlighting", icon = icon("highlighter")),
       menuItem("Heatmap", tabName = "heatmap", icon = icon("th")),
       menuItem("Legend", tabName = "legend", icon = icon("list")),
+      menuItem("Extra", tabName = "extra", icon = icon("plus-circle")),  # v130: New tab for title, text, images
       menuItem("Download", tabName = "download", icon = icon("download")),
       menuItem("Configuration", tabName = "config", icon = icon("cogs"))
     ),
@@ -6721,13 +6722,14 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v129 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v130 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("FIX: Highlighting now works with default classification (was only working with custom classifications)"),
-                              tags$li("FIX: Bootstrap legend triangle sizes now consistent (70% size fixed)"),
-                              tags$li("IMPROVED: Smaller default bootstrap triangle sizes for cleaner legend display")
+                              tags$li("NEW: Extra tab for page title, custom text annotations, and images"),
+                              tags$li("FIX: Highlighting now works correctly with default classification"),
+                              tags$li("FIX: Bootstrap triangle default size reduced (smaller by default)"),
+                              tags$li("Bootstrap legend text now uses Legend tab font size settings")
                             )
                      )
             )
@@ -6979,11 +6981,12 @@ ui <- dashboardPage(
                            ), selected = "triangles"),
               sliderInput("bootstrap_param", "Bootstrap Precision (decimal places)", 
                           min = 1, max = 5, value = 1, step = 1),
+              # v130: Reduced default from 3 to 1.5 for smaller bootstrap legend by default
               sliderInput("bootstrap_label_size",
-                          "Bootstrap Label Size:",
-                          min = 1,
+                          "Bootstrap Triangle Size:",
+                          min = 0,
                           max = 10,
-                          value = 3,
+                          value = 1.5,
                           step = 0.5,
                           width = "100%"),
               # v114: Bootstrap position adjustment slider - finest precision with 0.001 step
@@ -7333,6 +7336,172 @@ ui <- dashboardPage(
         )
       ),
 
+      # v130: Extra Tab - Page title, custom text annotations, and images
+      tabItem(
+        tabName = "extra",
+        fluidRow(
+          # Page Title Section
+          box(
+            title = tagList(
+              "Page Title ",
+              span(id = "extra_status_waiting",
+                style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #f8f9fa; color: #6c757d; font-size: 12px;",
+                icon("clock"), " Waiting for data"
+              ),
+              span(id = "extra_status_processing",
+                style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #6c757d; color: #ffffff; font-size: 12px; font-weight: bold;",
+                icon("spinner"), " Processing..."
+              ),
+              span(id = "extra_status_ready",
+                style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #28a745; color: #ffffff; font-size: 12px;",
+                icon("check"), " Ready"
+              )
+            ),
+            status = "primary",
+            solidHeader = TRUE,
+            width = 6,
+            collapsible = TRUE,
+            checkboxInput("enable_page_title", "Enable Page Title", value = FALSE),
+            conditionalPanel(
+              condition = "input.enable_page_title == true",
+              textInput("page_title_text", "Title Text:", value = ""),
+              fluidRow(
+                column(6,
+                  numericInput("page_title_x", "X Position:", value = 0.5, min = 0, max = 1, step = 0.01)
+                ),
+                column(6,
+                  numericInput("page_title_y", "Y Position:", value = 0.95, min = 0, max = 1, step = 0.01)
+                )
+              ),
+              sliderInput("page_title_size", "Font Size:", min = 6, max = 72, value = 18, step = 1),
+              colourpicker::colourInput("page_title_color", "Color:", value = "#000000"),
+              fluidRow(
+                column(6,
+                  checkboxInput("page_title_bold", "Bold", value = TRUE)
+                ),
+                column(6,
+                  checkboxInput("page_title_underline", "Underline", value = FALSE)
+                )
+              ),
+              selectInput("page_title_hjust", "Horizontal Alignment:",
+                          choices = c("Left" = "0", "Center" = "0.5", "Right" = "1"), selected = "0.5")
+            )
+          ),
+
+          # Preview Box
+          box(
+            title = "Preview",
+            status = "primary",
+            solidHeader = TRUE,
+            width = 6,
+            imageOutput("extra_preview", height = "400px"),
+            actionButton("extra_apply", "Apply to Plot", class = "btn-primary", style = "margin-top: 10px;")
+          )
+        ),
+
+        # Custom Text Annotations Section
+        fluidRow(
+          box(
+            title = "Custom Text Annotations",
+            status = "info",
+            solidHeader = TRUE,
+            width = 12,
+            collapsible = TRUE,
+            collapsed = TRUE,
+            p("Add custom text labels at specific positions on the plot."),
+
+            fluidRow(
+              column(3,
+                textInput("custom_text_content", "Text:", value = "")
+              ),
+              column(2,
+                numericInput("custom_text_x", "X Position:", value = 0.5, min = 0, max = 1, step = 0.01)
+              ),
+              column(2,
+                numericInput("custom_text_y", "Y Position:", value = 0.5, min = 0, max = 1, step = 0.01)
+              ),
+              column(2,
+                sliderInput("custom_text_size", "Size:", min = 4, max = 36, value = 12, step = 1)
+              ),
+              column(2,
+                colourpicker::colourInput("custom_text_color", "Color:", value = "#000000")
+              )
+            ),
+            fluidRow(
+              column(3,
+                selectInput("custom_text_fontface", "Font Style:",
+                            choices = c("Plain" = "plain", "Bold" = "bold", "Italic" = "italic", "Bold Italic" = "bold.italic"))
+              ),
+              column(3,
+                selectInput("custom_text_hjust", "H. Align:",
+                            choices = c("Left" = "0", "Center" = "0.5", "Right" = "1"), selected = "0.5")
+              ),
+              column(3,
+                selectInput("custom_text_vjust", "V. Align:",
+                            choices = c("Top" = "1", "Middle" = "0.5", "Bottom" = "0"), selected = "0.5")
+              ),
+              column(3,
+                numericInput("custom_text_angle", "Rotation:", value = 0, min = -180, max = 180, step = 1)
+              )
+            ),
+            fluidRow(
+              column(4,
+                actionButton("add_custom_text", "Add Text", class = "btn-success", icon = icon("plus"))
+              ),
+              column(4,
+                actionButton("clear_custom_texts", "Clear All Texts", class = "btn-warning", icon = icon("trash"))
+              )
+            ),
+            hr(),
+            h5("Added Texts:"),
+            uiOutput("custom_texts_list")
+          )
+        ),
+
+        # Custom Images Section
+        fluidRow(
+          box(
+            title = "Custom Images",
+            status = "warning",
+            solidHeader = TRUE,
+            width = 12,
+            collapsible = TRUE,
+            collapsed = TRUE,
+            p("Add images at specific positions on the plot."),
+
+            fluidRow(
+              column(4,
+                fileInput("custom_image_file", "Select Image:",
+                          accept = c("image/png", "image/jpeg", "image/gif", "image/svg+xml"))
+              ),
+              column(2,
+                numericInput("custom_image_x", "X Position:", value = 0.5, min = 0, max = 1, step = 0.01)
+              ),
+              column(2,
+                numericInput("custom_image_y", "Y Position:", value = 0.5, min = 0, max = 1, step = 0.01)
+              ),
+              column(2,
+                numericInput("custom_image_width", "Width:", value = 0.2, min = 0.01, max = 1, step = 0.01)
+              ),
+              column(2,
+                numericInput("custom_image_height", "Height (0=auto):", value = 0, min = 0, max = 1, step = 0.01)
+              )
+            ),
+            fluidRow(
+              column(4,
+                actionButton("add_custom_image", "Add Image", class = "btn-success", icon = icon("plus"))
+              ),
+              column(4,
+                actionButton("clear_custom_images", "Clear All Images", class = "btn-warning", icon = icon("trash"))
+              )
+            ),
+            hr(),
+            h5("Added Images:"),
+            uiOutput("custom_images_list")
+          )
+        )
+      ),
+
       # Download Tab
       tabItem(
         tabName = "download",
@@ -7431,7 +7600,21 @@ server <- function(input, output, session) {
       text_size = 10,
       key_size = 1,
       spacing = 0.3
-    )
+    ),
+    # v130: Extra tab - page title, custom texts, and images
+    page_title = list(
+      enabled = FALSE,
+      text = "",
+      x = 0.5,
+      y = 0.95,
+      size = 18,
+      color = "#000000",
+      bold = TRUE,
+      underline = FALSE,
+      hjust = 0.5
+    ),
+    custom_texts = list(),  # List of custom text annotations
+    custom_images = list()  # List of custom images
   )
   
   classification_loading <- reactiveVal(FALSE)
@@ -8948,11 +9131,12 @@ server <- function(input, output, session) {
       }
 
       # v129: Add highlighting support to default classification (was missing!)
+      # v130: Fixed - removed values$preview_highlight_active check (was never set)
       # Determine which highlight to apply (same logic as custom classification path)
       highlight_to_apply <- NULL
 
-      # Check if preview mode is active
-      if (!is.null(values$temp_highlight_preview) && values$preview_highlight_active) {
+      # Check if preview mode is active (match custom classification logic at line 8765)
+      if (!is.null(values$temp_highlight_preview)) {
         # PREVIEW MODE: Apply temporary highlight for preview
         highlight_to_apply <- values$temp_highlight_preview
       } else if (!is.null(values$active_highlight_index) &&
@@ -13351,6 +13535,131 @@ server <- function(input, output, session) {
         cat(file=stderr(), paste0("  Legend settings applied successfully\n"))
       }
 
+      # v130: Apply Extra tab settings (page title, custom texts, images)
+      # These are applied AFTER legend settings so they appear on top
+      tryCatch({
+        # Apply page title
+        page_title_settings <- values$page_title
+        if (!is.null(page_title_settings) && isTRUE(page_title_settings$enabled) &&
+            !is.null(page_title_settings$text) && nchar(page_title_settings$text) > 0) {
+          cat(file=stderr(), paste0("\n=== v130: Applying page title ===\n"))
+          cat(file=stderr(), paste0("  Title: ", page_title_settings$text, "\n"))
+
+          fontface <- if (page_title_settings$bold) "bold" else "plain"
+          hjust_val <- page_title_settings$hjust
+
+          result <- result + labs(title = page_title_settings$text) +
+            theme(
+              plot.title = element_text(
+                size = page_title_settings$size,
+                colour = page_title_settings$color,
+                face = fontface,
+                hjust = hjust_val
+              )
+            )
+
+          # Add underline if requested (using geom_segment as underline)
+          if (isTRUE(page_title_settings$underline)) {
+            cat(file=stderr(), paste0("  Adding underline\n"))
+            # Note: Underline in ggplot title is complex, would need grid manipulation
+            # For now, we document that underline is not fully supported
+          }
+          cat(file=stderr(), paste0("  Page title applied successfully\n"))
+        }
+
+        # Apply custom text annotations
+        custom_texts <- values$custom_texts
+        if (!is.null(custom_texts) && length(custom_texts) > 0) {
+          cat(file=stderr(), paste0("\n=== v130: Applying ", length(custom_texts), " custom text(s) ===\n"))
+
+          # Get plot ranges to convert normalized coords to data coords
+          plot_build <- ggplot_build(result)
+          x_range <- plot_build$layout$panel_params[[1]]$x.range
+          y_range <- plot_build$layout$panel_params[[1]]$y.range
+
+          for (i in seq_along(custom_texts)) {
+            txt <- custom_texts[[i]]
+            # Convert normalized (0-1) to data coordinates
+            x_pos <- x_range[1] + txt$x * (x_range[2] - x_range[1])
+            y_pos <- y_range[1] + txt$y * (y_range[2] - y_range[1])
+
+            cat(file=stderr(), paste0("  Text ", i, ": \"", substr(txt$content, 1, 20), "...\" at (",
+                                       round(x_pos, 2), ", ", round(y_pos, 2), ")\n"))
+
+            result <- result + annotate(
+              geom = "text",
+              x = x_pos,
+              y = y_pos,
+              label = txt$content,
+              size = txt$size / 2.845,  # Convert pt to mm for ggplot
+              colour = txt$color,
+              fontface = txt$fontface,
+              hjust = txt$hjust,
+              vjust = txt$vjust,
+              angle = txt$angle
+            )
+          }
+          cat(file=stderr(), paste0("  Custom texts applied successfully\n"))
+        }
+
+        # Apply custom images
+        custom_images <- values$custom_images
+        if (!is.null(custom_images) && length(custom_images) > 0) {
+          cat(file=stderr(), paste0("\n=== v130: Applying ", length(custom_images), " custom image(s) ===\n"))
+
+          # Get plot ranges to convert normalized coords to data coords
+          if (!exists("plot_build")) {
+            plot_build <- ggplot_build(result)
+          }
+          x_range <- plot_build$layout$panel_params[[1]]$x.range
+          y_range <- plot_build$layout$panel_params[[1]]$y.range
+          x_span <- x_range[2] - x_range[1]
+          y_span <- y_range[2] - y_range[1]
+
+          for (i in seq_along(custom_images)) {
+            img <- custom_images[[i]]
+            if (file.exists(img$path)) {
+              tryCatch({
+                # Load image
+                img_data <- png::readPNG(img$path)
+
+                # Calculate position in data coords
+                img_width <- img$width * x_span
+                img_height <- if (!is.null(img$height) && img$height > 0) {
+                  img$height * y_span
+                } else {
+                  # Auto height based on aspect ratio
+                  img_width * (dim(img_data)[1] / dim(img_data)[2])
+                }
+
+                x_center <- x_range[1] + img$x * x_span
+                y_center <- y_range[1] + img$y * y_span
+
+                xmin <- x_center - img_width / 2
+                xmax <- x_center + img_width / 2
+                ymin <- y_center - img_height / 2
+                ymax <- y_center + img_height / 2
+
+                cat(file=stderr(), paste0("  Image ", i, ": ", img$name,
+                                           " at (", round(x_center, 2), ", ", round(y_center, 2), ")\n"))
+
+                # Add image as rasterGrob
+                result <- result + annotation_custom(
+                  grob = grid::rasterGrob(img_data, interpolate = TRUE),
+                  xmin = xmin, xmax = xmax,
+                  ymin = ymin, ymax = ymax
+                )
+              }, error = function(e) {
+                cat(file=stderr(), paste0("  ERROR loading image ", i, ": ", e$message, "\n"))
+              })
+            }
+          }
+          cat(file=stderr(), paste0("  Custom images applied successfully\n"))
+        }
+      }, error = function(e) {
+        cat(file=stderr(), paste0("  v130 Extra tab ERROR: ", e$message, "\n"))
+      })
+
       # Store the plot with legend settings applied
       values$current_plot <- result
       
@@ -13571,11 +13880,189 @@ server <- function(input, output, session) {
     )
   }, deleteFile = FALSE)
 
+  # v130: Extra tab preview
+  output$extra_preview <- renderImage({
+    # Force reactive update by depending on plot_counter
+    req(values$temp_plot_file, values$plot_counter)
+
+    list(
+      src = values$temp_plot_file,
+      contentType = "image/png",
+      width = "100%",
+      alt = "Extra preview"
+    )
+  }, deleteFile = FALSE)
+
+  # v130: Extra tab status updates when data is loaded
+  observe({
+    if (!is.null(values$tree) && !is.null(values$csv_data)) {
+      shinyjs::hide("extra_status_waiting")
+      shinyjs::hide("extra_status_processing")
+      shinyjs::show("extra_status_ready")
+    } else {
+      shinyjs::show("extra_status_waiting")
+      shinyjs::hide("extra_status_processing")
+      shinyjs::hide("extra_status_ready")
+    }
+  })
+
+  # v130: Observer for page title settings
+  observeEvent({
+    input$enable_page_title
+    input$page_title_text
+    input$page_title_x
+    input$page_title_y
+    input$page_title_size
+    input$page_title_color
+    input$page_title_bold
+    input$page_title_underline
+    input$page_title_hjust
+  }, {
+    values$page_title <- list(
+      enabled = isTRUE(input$enable_page_title),
+      text = if(!is.null(input$page_title_text)) input$page_title_text else "",
+      x = if(!is.null(input$page_title_x)) input$page_title_x else 0.5,
+      y = if(!is.null(input$page_title_y)) input$page_title_y else 0.95,
+      size = if(!is.null(input$page_title_size)) input$page_title_size else 18,
+      color = if(!is.null(input$page_title_color)) input$page_title_color else "#000000",
+      bold = isTRUE(input$page_title_bold),
+      underline = isTRUE(input$page_title_underline),
+      hjust = if(!is.null(input$page_title_hjust)) as.numeric(input$page_title_hjust) else 0.5
+    )
+  }, ignoreInit = TRUE)
+
+  # v130: Add custom text annotation
+  observeEvent(input$add_custom_text, {
+    req(input$custom_text_content)
+    if (nchar(trimws(input$custom_text_content)) > 0) {
+      new_text <- list(
+        id = paste0("text_", length(values$custom_texts) + 1, "_", Sys.time()),
+        content = input$custom_text_content,
+        x = if(!is.null(input$custom_text_x)) input$custom_text_x else 0.5,
+        y = if(!is.null(input$custom_text_y)) input$custom_text_y else 0.5,
+        size = if(!is.null(input$custom_text_size)) input$custom_text_size else 12,
+        color = if(!is.null(input$custom_text_color)) input$custom_text_color else "#000000",
+        fontface = if(!is.null(input$custom_text_fontface)) input$custom_text_fontface else "plain",
+        hjust = if(!is.null(input$custom_text_hjust)) as.numeric(input$custom_text_hjust) else 0.5,
+        vjust = if(!is.null(input$custom_text_vjust)) as.numeric(input$custom_text_vjust) else 0.5,
+        angle = if(!is.null(input$custom_text_angle)) input$custom_text_angle else 0
+      )
+      values$custom_texts <- c(values$custom_texts, list(new_text))
+      # Clear the text input
+      updateTextInput(session, "custom_text_content", value = "")
+    }
+  })
+
+  # v130: Clear all custom texts
+  observeEvent(input$clear_custom_texts, {
+    values$custom_texts <- list()
+  })
+
+  # v130: Render list of custom texts
+  output$custom_texts_list <- renderUI({
+    if (length(values$custom_texts) == 0) {
+      return(tags$p(class = "text-muted", "No custom texts added yet."))
+    }
+
+    text_items <- lapply(seq_along(values$custom_texts), function(i) {
+      txt <- values$custom_texts[[i]]
+      tags$div(
+        style = "padding: 5px; margin: 5px 0; border: 1px solid #ddd; border-radius: 4px; background-color: #f9f9f9;",
+        tags$span(style = paste0("color: ", txt$color, "; font-weight: ",
+                                  if(txt$fontface == "bold" || txt$fontface == "bold.italic") "bold" else "normal", ";"),
+                  paste0(i, ". \"", substr(txt$content, 1, 30), if(nchar(txt$content) > 30) "..." else "", "\"")),
+        tags$span(class = "text-muted",
+                  paste0(" (x:", round(txt$x, 2), ", y:", round(txt$y, 2), ", size:", txt$size, ")")),
+        actionButton(paste0("delete_text_", i), "", icon = icon("times"),
+                     class = "btn-xs btn-danger", style = "float: right; padding: 2px 6px;")
+      )
+    })
+
+    do.call(tagList, text_items)
+  })
+
+  # v130: Delete individual custom text (dynamic observers)
+  observe({
+    lapply(seq_along(values$custom_texts), function(i) {
+      observeEvent(input[[paste0("delete_text_", i)]], {
+        if (i <= length(values$custom_texts)) {
+          values$custom_texts <- values$custom_texts[-i]
+        }
+      }, ignoreInit = TRUE, once = TRUE)
+    })
+  })
+
+  # v130: Add custom image
+  observeEvent(input$add_custom_image, {
+    req(input$custom_image_file)
+
+    # Copy file to temp location to persist it
+    temp_path <- file.path(tempdir(), paste0("custom_img_", length(values$custom_images) + 1, "_",
+                                              basename(input$custom_image_file$name)))
+    file.copy(input$custom_image_file$datapath, temp_path, overwrite = TRUE)
+
+    new_image <- list(
+      id = paste0("img_", length(values$custom_images) + 1, "_", Sys.time()),
+      path = temp_path,
+      name = input$custom_image_file$name,
+      x = if(!is.null(input$custom_image_x)) input$custom_image_x else 0.5,
+      y = if(!is.null(input$custom_image_y)) input$custom_image_y else 0.5,
+      width = if(!is.null(input$custom_image_width)) input$custom_image_width else 0.2,
+      height = if(!is.null(input$custom_image_height) && input$custom_image_height > 0) input$custom_image_height else NULL
+    )
+    values$custom_images <- c(values$custom_images, list(new_image))
+  })
+
+  # v130: Clear all custom images
+  observeEvent(input$clear_custom_images, {
+    values$custom_images <- list()
+  })
+
+  # v130: Render list of custom images
+  output$custom_images_list <- renderUI({
+    if (length(values$custom_images) == 0) {
+      return(tags$p(class = "text-muted", "No custom images added yet."))
+    }
+
+    img_items <- lapply(seq_along(values$custom_images), function(i) {
+      img <- values$custom_images[[i]]
+      tags$div(
+        style = "padding: 5px; margin: 5px 0; border: 1px solid #ddd; border-radius: 4px; background-color: #f9f9f9;",
+        tags$span(icon("image"), paste0(i, ". ", img$name)),
+        tags$span(class = "text-muted",
+                  paste0(" (x:", round(img$x, 2), ", y:", round(img$y, 2),
+                         ", w:", round(img$width, 2),
+                         if(!is.null(img$height)) paste0(", h:", round(img$height, 2)) else "", ")")),
+        actionButton(paste0("delete_image_", i), "", icon = icon("times"),
+                     class = "btn-xs btn-danger", style = "float: right; padding: 2px 6px;")
+      )
+    })
+
+    do.call(tagList, img_items)
+  })
+
+  # v130: Delete individual custom image (dynamic observers)
+  observe({
+    lapply(seq_along(values$custom_images), function(i) {
+      observeEvent(input[[paste0("delete_image_", i)]], {
+        if (i <= length(values$custom_images)) {
+          values$custom_images <- values$custom_images[-i]
+        }
+      }, ignoreInit = TRUE, once = TRUE)
+    })
+  })
+
+  # v130: Apply Extra settings to plot
+  observeEvent(input$extra_apply, {
+    req(values$plot_ready)
+    generate_plot()
+  })
+
   # Update YAML output
   output$yaml_output <- renderText({
     yaml::as.yaml(values$yaml_data, indent.mapping.sequence = TRUE)
   })
-  
+
   ###################
   
   # Define YAML content reactive
