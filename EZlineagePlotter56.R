@@ -1628,52 +1628,53 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
   
   if (show_boot_flag == TRUE) {
     if (boot_values$'format' == 'triangles') {
-      # v131: Scale down bootstrap legend text to match other legends
-      # The size_title and size_text are in mm for annotate(), but values like 12-20 are too large
-      # Scale by 0.3 to get reasonable sizes (e.g., 12 * 0.3 = 3.6mm which is readable)
-      boot_title_size <- size_title * 0.3
-      boot_text_size <- size_text * 0.3
+      # v132: Bootstrap legend positioning and sizing fixes
+      # - Moved legend higher (y_off_base + 6 instead of +3 for title)
+      # - Reduced spacing between title and values (title +6, triangles +4, labels +2)
+      # - Scaled down font size (0.25 instead of 0.3) to better match other legends
+      boot_title_size <- size_title * 0.25
+      boot_text_size <- size_text * 0.25
 
       p <- p + annotate(
         geom = "text",
         label = "Bootstrap", size = boot_title_size,
         x = x22 - new_big_step + 2 * extra,
-        y = y_off_base + 3, hjust = 0, vjust = 0,
+        y = y_off_base + 6, hjust = 0, vjust = 0,
         fontface = "bold"
       ) + annotate(
         geom = "text",
         label = ">70%", size = boot_text_size,
         x = x22 - new_big_step - new_step + 3 * extra,
-        y = y_off_base - 2
+        y = y_off_base + 2
       ) + annotate(
         geom = "text",
         label = ">80%", size = boot_text_size,
         x = x22 - new_big_step - 2 * new_step + 3 * extra,
-        y = y_off_base - 2
+        y = y_off_base + 2
       ) + annotate(
         geom = "text",
         label = ">90%", size = boot_text_size,
         x = x22 - new_big_step - 3 * new_step + 3 * extra,
-        y = y_off_base - 2
+        y = y_off_base + 2
       ) + annotate(
-        geom = "point", 
-        shape = 24, size = size_90+bootstrap_label_size, 
-        x = x22 - new_big_step - 3 * new_step + 3 * extra, 
-        y = y_off_base + 1 + man_adjust_image_of_second_legend,  
-        fill = "grey36", colour = "grey20", alpha = 1/2
-      ) + annotate(
-        geom = "point", 
-        shape = 24, size = size_80+bootstrap_label_size, 
-        x = x22 - new_big_step - 2 * new_step + 3 * extra,
-        y = y_off_base + 1 + man_adjust_image_of_second_legend,  
+        geom = "point",
+        shape = 24, size = size_90+bootstrap_label_size,
+        x = x22 - new_big_step - 3 * new_step + 3 * extra,
+        y = y_off_base + 4 + man_adjust_image_of_second_legend,
         fill = "grey36", colour = "grey20", alpha = 1/2
       ) + annotate(
         geom = "point",
-        shape = 24, size = size_70 + bootstrap_label_size,  # v129: Fix inconsistency - add bootstrap_label_size like other sizes
-        x = x22 - new_big_step - new_step + 3 * extra,
-        y = y_off_base + 1 + man_adjust_image_of_second_legend,
+        shape = 24, size = size_80+bootstrap_label_size,
+        x = x22 - new_big_step - 2 * new_step + 3 * extra,
+        y = y_off_base + 4 + man_adjust_image_of_second_legend,
         fill = "grey36", colour = "grey20", alpha = 1/2
-      ) 
+      ) + annotate(
+        geom = "point",
+        shape = 24, size = size_70 + bootstrap_label_size,
+        x = x22 - new_big_step - new_step + 3 * extra,
+        y = y_off_base + 4 + man_adjust_image_of_second_legend,
+        fill = "grey36", colour = "grey20", alpha = 1/2
+      )
     }        
   }
   
@@ -4739,7 +4740,19 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   
   p <- pr440_short_tips_TRY_new_with_boot_more1
   b<-0
-  
+
+  # v132: Initialize boudariestt BEFORE highlight code - it's needed for ellipse sizing when heat_flag == TRUE
+  # Previously this was initialized at line ~4795 (after heatmap rendering), causing "object 'boudariestt' not found" error
+  tt_for_boundaries <- p
+  boudariestt <- tryCatch({
+    func.find.plot.boundaries(tt_for_boundaries, debug_mode)
+  }, error = function(e) {
+    cat(file=stderr(), paste0("  v132: Error computing boudariestt: ", e$message, "\n"))
+    # Return default values if computation fails
+    list(xmin = min(p$data$x, na.rm = TRUE), xmax = max(p$data$x, na.rm = TRUE))
+  })
+  cat(file=stderr(), paste0("  v132: boudariestt initialized early: xmin=", boudariestt$xmin, ", xmax=", boudariestt$xmax, "\n"))
+
   # Handle highlighting if requested
   if (FLAG_BULK_DISPLAY == TRUE) {
     x_adj_hi <- 0
@@ -4789,17 +4802,16 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   # v99: Save a backup of p before heatmap for fallback recovery
   tt <- p
 
-  # v127: Initialize boudariestt BEFORE heatmap rendering
-  # This is required by func.make.second.legend and func_highlight even when heat_flag == FALSE
-  # Previously it was only set inside the heat_flag == TRUE block, causing bootstrap legend to fail
+  # v132: Refresh boudariestt after highlighting changes (was already initialized at v132 block above)
+  # This ensures func.make.second.legend has current plot boundaries
   boudariestt <- tryCatch({
     func.find.plot.boundaries(tt, debug_mode)
   }, error = function(e) {
-    cat(file=stderr(), paste0("  v127: Error computing boudariestt: ", e$message, "\n"))
+    cat(file=stderr(), paste0("  v132: Error refreshing boudariestt: ", e$message, "\n"))
     # Return default values if computation fails
     list(xmin = min(p$data$x, na.rm = TRUE), xmax = max(p$data$x, na.rm = TRUE))
   })
-  cat(file=stderr(), paste0("  v127: boudariestt initialized: xmin=", boudariestt$xmin, ", xmax=", boudariestt$xmax, "\n"))
+  cat(file=stderr(), paste0("  v132: boudariestt refreshed: xmin=", boudariestt$xmin, ", xmax=", boudariestt$xmax, "\n"))
 
   # v122: MULTIPLE HEATMAPS IMPLEMENTATION
   # Refactored from v99 to support multiple heatmaps with spacing control
@@ -6311,11 +6323,22 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   # Default ellipse parameters if not set
   a <- 1
   b <- 1
-  
+
   if (!exists("high_title_list")) {
     high_title_list <- ""
   }
-  
+
+  # v132: Initialize/refresh boudariestt before highlight code - required for ellipse sizing when heat_flag == TRUE
+  if (!exists("boudariestt") || is.null(boudariestt)) {
+    boudariestt <- tryCatch({
+      func.find.plot.boundaries(p, debug_mode)
+    }, error = function(e) {
+      cat(file=stderr(), paste0("  v132: Error computing boudariestt (2nd block): ", e$message, "\n"))
+      list(xmin = min(p$data$x, na.rm = TRUE), xmax = max(p$data$x, na.rm = TRUE))
+    })
+    cat(file=stderr(), paste0("  v132: boudariestt initialized (2nd block): xmin=", boudariestt$xmin, ", xmax=", boudariestt$xmax, "\n"))
+  }
+
   # Apply highlighting again after heatmap if needed
   if (FLAG_BULK_DISPLAY == TRUE) {
     x_adj_hi <- 0
@@ -6728,13 +6751,14 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v131 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v132 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("DEBUG: Added tracing for highlight, page title issues"),
-                              tags$li("FIX: Bootstrap legend text scaled down (0.3x) for better visibility"),
-                              tags$li("Heatmap Rebuild Plan no longer needed - removed")
+                              tags$li("FIX: Highlight feature - 'boudariestt not found' error resolved"),
+                              tags$li("FIX: Bootstrap legend moved higher on right side"),
+                              tags$li("FIX: Bootstrap legend spacing reduced between title and values"),
+                              tags$li("FIX: Bootstrap legend font size reduced (0.25x) to match other legends")
                             )
                      )
             )
