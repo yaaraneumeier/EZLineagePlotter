@@ -1534,7 +1534,9 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
                                     # v133: New bootstrap legend settings
                                     bootstrap_x_offset = 0, bootstrap_y_offset = 0,
                                     bootstrap_title_size_mult = NULL, bootstrap_text_size_mult = NULL,
-                                    bootstrap_title_gap = 2, bootstrap_label_gap = 2) {
+                                    bootstrap_title_gap = 2, bootstrap_label_gap = 2,
+                                    # v138: Show/hide legend controls
+                                    show_highlight_legend = TRUE, show_bootstrap_legend = TRUE) {
   if (debug_mode == TRUE) {
     # v53: print("boudariestt is")
     # v53: print(boudariestt)
@@ -1590,7 +1592,8 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
   # v133: Apply highlight label gap to step calculation
   new_step_adjusted <- new_step * highlight_label_gap * 2  # Adjust spacing between labels
 
-  if (FLAG_BULK_DISPLAY == TRUE) {
+  # v138: Only draw highlight legend if show_highlight_legend is TRUE
+  if (FLAG_BULK_DISPLAY == TRUE && show_highlight_legend == TRUE) {
     for (index_high in 1:how_many_hi) {
       multiple_high_down_offset <- (index_high - 1) * stair
 
@@ -1639,9 +1642,10 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
         fill = high_color_list[[index_high]], alpha = 0.5, linetype = "blank", show.legend = FALSE
       )
     }
-  } 
-  
-  if (show_boot_flag == TRUE) {
+  }
+
+  # v138: Only draw bootstrap legend if show_bootstrap_legend is TRUE
+  if (show_boot_flag == TRUE && show_bootstrap_legend == TRUE) {
     if (boot_values$'format' == 'triangles') {
       # v133: Bootstrap legend settings controlled from Legend tab
       # Use custom sizes if provided, otherwise use scaled defaults
@@ -6436,9 +6440,13 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     bootstrap_text_sz <- legend_settings_local$bootstrap_text_size    # NULL is ok, will use default
     bootstrap_title_g <- if (!is.null(legend_settings_local$bootstrap_title_gap)) legend_settings_local$bootstrap_title_gap else 2
     bootstrap_label_g <- if (!is.null(legend_settings_local$bootstrap_label_gap)) legend_settings_local$bootstrap_label_gap else 2
+    # v138: Get show/hide settings for highlight and bootstrap legends
+    show_highlight_leg <- if (!is.null(legend_settings_local$show_highlight)) legend_settings_local$show_highlight else TRUE
+    show_bootstrap_leg <- if (!is.null(legend_settings_local$show_bootstrap)) legend_settings_local$show_bootstrap else TRUE
 
     cat(file=stderr(), paste0("  v133: highlight offsets - x:", highlight_x_off, ", y:", highlight_y_off, "\n"))
     cat(file=stderr(), paste0("  v133: bootstrap offsets - x:", bootstrap_x_off, ", y:", bootstrap_y_off, "\n"))
+    cat(file=stderr(), paste0("  v138: show_highlight_legend:", show_highlight_leg, ", show_bootstrap_legend:", show_bootstrap_leg, "\n"))
 
     # v95: Wrap in tryCatch to catch any errors
     p <- tryCatch({
@@ -6487,7 +6495,10 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
         bootstrap_title_size_mult = bootstrap_title_sz,
         bootstrap_text_size_mult = bootstrap_text_sz,
         bootstrap_title_gap = bootstrap_title_g,
-        bootstrap_label_gap = bootstrap_label_g
+        bootstrap_label_gap = bootstrap_label_g,
+        # v138: Show/hide legend controls
+        show_highlight_legend = show_highlight_leg,
+        show_bootstrap_legend = show_bootstrap_leg
       )
       cat(file=stderr(), paste0("  func.make.second.legend: SUCCESS\n"))
       result
@@ -6808,11 +6819,13 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v137 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v138 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("FIX: Heatmap 'object values not found' error - corrected legend_settings parameter passing through function chain")
+                              tags$li("Download tab: Added landscape/portrait page orientation option"),
+                              tags$li("Legend tab: Wired highlight and bootstrap legend show/hide checkboxes to actually control legend visibility"),
+                              tags$li("Legend tab: Changed default X offset for highlight and bootstrap legends to -2 to keep them within image boundaries")
                             )
                      )
             )
@@ -7390,8 +7403,9 @@ ui <- dashboardPage(
               tags$p(class = "text-muted", "Control highlight legend appearance:"),
               fluidRow(
                 column(6,
+                  # v138: Changed default from 0 to -2 to keep legend within image boundaries
                   sliderInput("highlight_legend_x_offset", "X Offset (Left/Right)",
-                              min = -5, max = 5, value = 0, step = 0.1)
+                              min = -5, max = 5, value = -2, step = 0.1)
                 ),
                 column(6,
                   sliderInput("highlight_legend_y_offset", "Y Offset (Up/Down)",
@@ -7432,8 +7446,9 @@ ui <- dashboardPage(
               tags$p(class = "text-muted", "Control bootstrap legend appearance:"),
               fluidRow(
                 column(6,
+                  # v138: Changed default from 0 to -2 to keep legend within image boundaries
                   sliderInput("bootstrap_legend_x_offset", "X Offset (Left/Right)",
-                              min = -5, max = 5, value = 0, step = 0.1)
+                              min = -5, max = 5, value = -2, step = 0.1)
                 ),
                 column(6,
                   sliderInput("bootstrap_legend_y_offset", "Y Offset (Up/Down)",
@@ -7679,8 +7694,12 @@ ui <- dashboardPage(
             solidHeader = TRUE,
             width = 4,
             textInput("individual_name", "Sample/Individual Name", value = "Sample1"),
-            selectInput("output_format", "File Format", 
+            selectInput("output_format", "File Format",
                         choices = c("pdf", "png", "tiff", "svg", "jpeg"), selected = "pdf"),
+            # v138: Page orientation option
+            selectInput("page_orientation", "Page Orientation",
+                        choices = c("Landscape" = "landscape", "Portrait" = "portrait"),
+                        selected = "landscape"),
             # v125: Default to A4 landscape size (297 x 210 mm)
             numericInput("output_width", "Width", value = 29.7),
             numericInput("output_height", "Height", value = 21),
@@ -12761,6 +12780,27 @@ server <- function(input, output, session) {
   # ============================================
   # END v121: LEGEND SETTINGS SYSTEM
   # ============================================
+
+  # v138: Observer to swap width/height when page orientation changes
+  observeEvent(input$page_orientation, {
+    if (input$page_orientation == "landscape") {
+      # Landscape: width > height
+      current_width <- isolate(input$output_width)
+      current_height <- isolate(input$output_height)
+      if (!is.null(current_width) && !is.null(current_height) && current_width < current_height) {
+        updateNumericInput(session, "output_width", value = current_height)
+        updateNumericInput(session, "output_height", value = current_width)
+      }
+    } else {
+      # Portrait: height > width
+      current_width <- isolate(input$output_width)
+      current_height <- isolate(input$output_height)
+      if (!is.null(current_width) && !is.null(current_height) && current_width > current_height) {
+        updateNumericInput(session, "output_width", value = current_height)
+        updateNumericInput(session, "output_height", value = current_width)
+      }
+    }
+  }, ignoreInit = TRUE)
 
   # Update Preview (without saving)
   observeEvent(input$update_classification_preview, {
