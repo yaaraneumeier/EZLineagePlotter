@@ -5,7 +5,7 @@
 This document contains the step-by-step plan for rebuilding the heatmap functionality in EZLineagePlotter.
 The complex heatmap code (~800 lines) has been disabled in v91 and replaced with a simple proof-of-concept.
 
-**Current Status**: v119 - Fixed Tip Guide Lines properly (added missing observers for guide settings - now settings are saved when UI changes). Improved auto-detect to handle string numbers (columns like "1", "2", "3.5" with >10 unique values now detect as continuous). Added missing observers for grid settings. Phase 2 already implemented via Distance and Column Width sliders.
+**Current Status**: v120 - Fixed Tip Guide Lines in default classification path (was missing guide settings transfer to YAML). Harmonized auto-detect logic between UI and Apply sections for consistent type detection. Removed unused "Advanced Mode" checkbox. Confirmed Phase 3 (custom color scales for discrete data) is already fully implemented.
 
 ## Why We Simplified
 

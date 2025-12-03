@@ -6615,10 +6615,7 @@ ui <- dashboardPage(
       menuItem("Download", tabName = "download", icon = icon("download")),
       menuItem("Configuration", tabName = "config", icon = icon("cogs"))
     ),
-    
-    # Add toggle for Basic/Advanced mode
-    checkboxInput("advanced_mode", "Advanced Mode", FALSE),
-    
+
     # Configuration file input
     fileInput("yaml_config", "Import YAML Configuration", 
               accept = c(".yaml", ".yml"))
@@ -6658,13 +6655,14 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v119 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v120 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("FIX: Tip Guide Lines now properly save settings - added missing observers for guide line UI elements"),
-                              tags$li("FIX: Auto-detect improved - numeric columns (including string numbers) with >10 unique values now detect as continuous"),
-                              tags$li("FEATURE: Phase 2 width/offset controls already implemented via per-heatmap Distance and Column Width sliders")
+                              tags$li("FIX: Tip Guide Lines now work in default classification path (was missing guide settings transfer)"),
+                              tags$li("FIX: Auto-detect logic harmonized between UI and Apply sections for consistent type detection"),
+                              tags$li("REMOVED: Unused 'Advanced Mode' checkbox from sidebar"),
+                              tags$li("CONFIRMED: Phase 3 (custom color scales) already fully implemented")
                             )
                      )
             )
@@ -8717,6 +8715,13 @@ server <- function(input, output, session) {
           heatmap_item[[as.character(j)]]$show_grid <- if (!is.null(heatmap_entry$show_grid) && heatmap_entry$show_grid) "yes" else "no"
           heatmap_item[[as.character(j)]]$grid_color <- if (!is.null(heatmap_entry$grid_color)) heatmap_entry$grid_color else "#000000"
           heatmap_item[[as.character(j)]]$grid_size <- if (!is.null(heatmap_entry$grid_size)) heatmap_entry$grid_size else 0.5
+
+          # v120: Add guide line settings (were missing in default classification path - caused tip guide lines not to work!)
+          heatmap_item[[as.character(j)]]$show_guides <- if (!is.null(heatmap_entry$show_guides) && heatmap_entry$show_guides) "yes" else "no"
+          heatmap_item[[as.character(j)]]$guide_color1 <- if (!is.null(heatmap_entry$guide_color1)) heatmap_entry$guide_color1 else "#CCCCCC"
+          heatmap_item[[as.character(j)]]$guide_color2 <- if (!is.null(heatmap_entry$guide_color2)) heatmap_entry$guide_color2 else "#EEEEEE"
+          heatmap_item[[as.character(j)]]$guide_alpha <- if (!is.null(heatmap_entry$guide_alpha)) heatmap_entry$guide_alpha else 0.3
+          heatmap_item[[as.character(j)]]$guide_width <- if (!is.null(heatmap_entry$guide_width)) heatmap_entry$guide_width else 0.5
 
           # v109: Add colnames_angle
           heatmap_item[[as.character(j)]]$colnames_angle <- if (!is.null(heatmap_entry$colnames_angle)) heatmap_entry$colnames_angle else 45
@@ -11671,30 +11676,36 @@ server <- function(input, output, session) {
             cat(file=stderr(), paste0("  v117 AUTO-DETECT: decimal detected via string check\n"))
           }
 
-          cat(file=stderr(), paste0("  v117 AUTO-DETECT: has_decimals=", has_decimals, "\n"))
+          cat(file=stderr(), paste0("  v120 AUTO-DETECT: has_decimals=", has_decimals, "\n"))
 
-          # v117: Decimals ALWAYS mean continuous (measurements, percentages, etc.)
+          # v120: Harmonized logic with UI section for consistent detection
+          # Get value range for range-based checks
+          val_range <- if (length(col_data_clean) > 0) diff(range(col_data_clean, na.rm = TRUE)) else 0
+
+          # v120: Decimals ALWAYS mean continuous (measurements, percentages, etc.)
           if (has_decimals) {
             actual_type <- "continuous"
-            cat(file=stderr(), paste0("  v117 AUTO-DETECT: Result=continuous (has decimals)\n"))
-          } else if (unique_vals > 20) {
-            # Many unique integer values = likely continuous (counts, scores, etc.)
-            actual_type <- "continuous"
-            cat(file=stderr(), paste0("  v117 AUTO-DETECT: Result=continuous (>20 unique values)\n"))
-          } else if (unique_vals <= 5) {
-            # Very few unique values (0,1,2 or similar) = discrete codes
-            actual_type <- "discrete"
-            cat(file=stderr(), paste0("  v117 AUTO-DETECT: Result=discrete (<=5 unique values)\n"))
-          } else {
-            # 6-20 unique integer values - check the range
-            val_range <- max(col_data_clean, na.rm = TRUE) - min(col_data_clean, na.rm = TRUE)
-            # If values span a wide range relative to unique count, likely continuous
-            if (val_range > unique_vals * 2) {
+            cat(file=stderr(), paste0("  v120 AUTO-DETECT: Result=continuous (has decimals)\n"))
+          } else if (originally_numeric) {
+            # v120: Originally numeric without decimals - match UI section logic
+            is_boolean_like <- unique_vals <= 2 && val_range <= 1
+            is_small_categorical <- unique_vals <= 3 && val_range <= 2
+            if (is_boolean_like || is_small_categorical) {
+              actual_type <- "discrete"
+              cat(file=stderr(), paste0("  v120 AUTO-DETECT: Result=discrete (boolean-like or small categorical)\n"))
+            } else {
               actual_type <- "continuous"
-              cat(file=stderr(), paste0("  v117 AUTO-DETECT: Result=continuous (wide range)\n"))
+              cat(file=stderr(), paste0("  v120 AUTO-DETECT: Result=continuous (originally numeric, many values)\n"))
+            }
+          } else {
+            # v120: Converted from character without decimals - be more conservative
+            # Match UI section: >8 unique values OR range >10 → continuous
+            if (unique_vals > 8 || val_range > 10) {
+              actual_type <- "continuous"
+              cat(file=stderr(), paste0("  v120 AUTO-DETECT: Result=continuous (>8 unique or wide range)\n"))
             } else {
               actual_type <- "discrete"
-              cat(file=stderr(), paste0("  v117 AUTO-DETECT: Result=discrete (clustered values)\n"))
+              cat(file=stderr(), paste0("  v120 AUTO-DETECT: Result=discrete (few unique, narrow range)\n"))
             }
           }
         }
