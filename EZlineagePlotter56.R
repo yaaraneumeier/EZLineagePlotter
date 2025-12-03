@@ -5275,9 +5275,14 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             cat(file=stderr(), paste0("  Label position: label_y_pos=", label_y_pos, ", angle=", colnames_angle, ", hjust=", hjust_val, ", vjust=", vjust_val, "\n"))
           }
 
-          # v116: Add tip guide lines (vertical lines from tips through heatmap)
+          # v116/v119: Add tip guide lines (vertical lines from tips through heatmap)
           show_guides <- if (!is.null(heat_param[['show_guides']])) heat_param[['show_guides']] else FALSE
           show_guides_bool <- isTRUE(show_guides) || identical(show_guides, TRUE) || identical(show_guides, "yes") || identical(show_guides, "TRUE")
+
+          # v119: Debug output to trace guide line settings
+          cat(file=stderr(), paste0("\n=== v119: TIP GUIDE LINES CHECK ===\n"))
+          cat(file=stderr(), paste0("  show_guides raw value: ", show_guides, " (class: ", class(show_guides), ")\n"))
+          cat(file=stderr(), paste0("  show_guides_bool: ", show_guides_bool, "\n"))
 
           if (show_guides_bool) {
             cat(file=stderr(), paste0("\n=== v116: ADDING TIP GUIDE LINES ===\n"))
@@ -6653,14 +6658,13 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v118 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v119 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("FIX: Tip Guide Lines now work from UI - added missing guide line settings to heatmap item conversion"),
-                              tags$li("FIX: Swapped Row Height and Column Width labels (they were reversed due to coord_flip)"),
-                              tags$li("FIX: Row Height slider range now 0.1-3.0 (was 0.2-2.0)"),
-                              tags$li("FIX: Auto-detect now handles '#N/A' as NA-like string")
+                              tags$li("FIX: Tip Guide Lines now properly save settings - added missing observers for guide line UI elements"),
+                              tags$li("FIX: Auto-detect improved - numeric columns (including string numbers) with >10 unique values now detect as continuous"),
+                              tags$li("FEATURE: Phase 2 width/offset controls already implemented via per-heatmap Distance and Column Width sliders")
                             )
                      )
             )
@@ -10393,8 +10397,8 @@ server <- function(input, output, session) {
       # Get column choices from CSV (using isolated value)
       col_choices <- if (!is.null(csv_data_local)) names(csv_data_local) else character(0)
       
-      # v56/v110: Determine detected type based on first column (if multiple, they should be same type)
-      # v110: Improved detection - numeric columns with decimal values are always continuous
+      # v56/v110/v119: Determine detected type based on first column (if multiple, they should be same type)
+      # v119: Improved detection - also try to convert string columns to numeric
       detected_type <- "unknown"
       if (!is.null(cfg$columns) && length(cfg$columns) > 0 && !is.null(csv_data_local)) {
         # Check first column to determine type
@@ -10402,13 +10406,26 @@ server <- function(input, output, session) {
         if (first_col %in% names(csv_data_local)) {
           col_data <- csv_data_local[[first_col]]
           if (!is.null(col_data)) {
-            unique_vals <- length(unique(na.omit(col_data)))
+            non_na_vals <- na.omit(col_data)
+            unique_vals <- length(unique(non_na_vals))
             is_numeric <- is.numeric(col_data)
 
-            # v110: Better detection for numeric columns
-            if (is_numeric) {
+            # v119: If not already numeric, try to convert (handles "1", "2", "3.5" etc.)
+            if (!is_numeric && length(non_na_vals) > 0) {
+              # Try converting to numeric
+              converted <- suppressWarnings(as.numeric(as.character(non_na_vals)))
+              # Check if most values converted successfully (at least 80%)
+              conversion_rate <- sum(!is.na(converted)) / length(non_na_vals)
+              if (conversion_rate >= 0.8) {
+                is_numeric <- TRUE
+                non_na_vals <- converted[!is.na(converted)]
+                unique_vals <- length(unique(non_na_vals))
+              }
+            }
+
+            # v110/v119: Better detection for numeric columns
+            if (is_numeric && length(non_na_vals) > 0) {
               # Check if values have decimals (not all integers)
-              non_na_vals <- na.omit(col_data)
               has_decimals <- any(non_na_vals != floor(non_na_vals))
               # Numeric with decimals = continuous, or many unique values = continuous
               detected_type <- if (has_decimals || unique_vals > 10) "continuous" else "discrete"
@@ -10787,6 +10804,88 @@ server <- function(input, output, session) {
           # Only update if value actually changed (prevents reactive loop)
           if (is.null(current_val) || !identical(new_val, current_val)) {
             values$heatmap_configs[[i]]$row_height <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      # v119: Grid settings observers (were missing)
+      observeEvent(input[[paste0("heatmap_show_grid_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_show_grid_", i)]]
+          current_val <- values$heatmap_configs[[i]]$show_grid
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$show_grid <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      observeEvent(input[[paste0("heatmap_grid_color_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_grid_color_", i)]]
+          current_val <- values$heatmap_configs[[i]]$grid_color
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$grid_color <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      observeEvent(input[[paste0("heatmap_grid_size_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_grid_size_", i)]]
+          current_val <- values$heatmap_configs[[i]]$grid_size
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$grid_size <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      # v119: Guide line settings observers (were missing - caused guide lines to not work)
+      observeEvent(input[[paste0("heatmap_show_guides_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_show_guides_", i)]]
+          current_val <- values$heatmap_configs[[i]]$show_guides
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$show_guides <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      observeEvent(input[[paste0("heatmap_guide_color1_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_guide_color1_", i)]]
+          current_val <- values$heatmap_configs[[i]]$guide_color1
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$guide_color1 <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      observeEvent(input[[paste0("heatmap_guide_color2_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_guide_color2_", i)]]
+          current_val <- values$heatmap_configs[[i]]$guide_color2
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$guide_color2 <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      observeEvent(input[[paste0("heatmap_guide_alpha_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_guide_alpha_", i)]]
+          current_val <- values$heatmap_configs[[i]]$guide_alpha
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$guide_alpha <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      observeEvent(input[[paste0("heatmap_guide_width_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_guide_width_", i)]]
+          current_val <- values$heatmap_configs[[i]]$guide_width
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$guide_width <- new_val
           }
         }
       }, ignoreInit = TRUE)

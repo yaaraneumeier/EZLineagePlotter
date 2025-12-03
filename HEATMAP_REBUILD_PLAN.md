@@ -5,7 +5,7 @@
 This document contains the step-by-step plan for rebuilding the heatmap functionality in EZLineagePlotter.
 The complex heatmap code (~800 lines) has been disabled in v91 and replaced with a simple proof-of-concept.
 
-**Current Status**: v118 - Fixed Tip Guide Lines from UI (was missing guide line settings in heatmap item conversion). Swapped Row Height/Column Width labels (were reversed due to coord_flip). Row Height range now 0.1-3.0. Auto-detect now handles "#N/A" as NA-like string.
+**Current Status**: v119 - Fixed Tip Guide Lines properly (added missing observers for guide settings - now settings are saved when UI changes). Improved auto-detect to handle string numbers (columns like "1", "2", "3.5" with >10 unique values now detect as continuous). Added missing observers for grid settings. Phase 2 already implemented via Distance and Column Width sliders.
 
 ## Why We Simplified
 
