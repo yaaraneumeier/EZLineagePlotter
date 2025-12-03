@@ -1526,7 +1526,7 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
                                     man_multiply_elipse, man_space_second_legend,
                                     man_space_second_legend_multiplier, man_offset_for_highlight_legend_x,
                                     debug_mode = FALSE, boot_values = NA, man_offset_second_legend = 0, width,
-                                    bootstrap_label_size = 3.5) {
+                                    bootstrap_label_size = 1.5) {  # v129: Reduced from 3.5 for smaller default legend
   if (debug_mode == TRUE) {
     # v53: print("boudariestt is")
     # v53: print(boudariestt)
@@ -1662,10 +1662,10 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
         y = y_off_base + 1 + man_adjust_image_of_second_legend,  
         fill = "grey36", colour = "grey20", alpha = 1/2
       ) + annotate(
-        geom = "point", 
-        shape = 24, size = size_70, 
+        geom = "point",
+        shape = 24, size = size_70 + bootstrap_label_size,  # v129: Fix inconsistency - add bootstrap_label_size like other sizes
         x = x22 - new_big_step - new_step + 3 * extra,
-        y = y_off_base + 1 + man_adjust_image_of_second_legend,  
+        y = y_off_base + 1 + man_adjust_image_of_second_legend,
         fill = "grey36", colour = "grey20", alpha = 1/2
       ) 
     }        
@@ -2180,7 +2180,7 @@ func.print.lineage.tree <- function(conf_yaml_path,
                                     rowname_param="",
                                     heat_legend_replace=NA,
                                     tip_name_display_flag=TRUE,
-                                    bootstrap_label_size= 3.5,
+                                    bootstrap_label_size= 1.5,  # v129: Reduced from 3.5 for smaller default legend
                                     heatmap_tree_distance= 0.02,
                                     heatmap_global_gap = 0.05) {  # v125: Gap between multiple heatmaps
 
@@ -4032,7 +4032,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
                                          flag_colnames, viridis_option_list, heat_legend_replace = NA,
                                          tip_name_display_flag = TRUE,
                                          flag_make_newick_file=FALSE,
-                                         bootstrap_label_size = 3.5,
+                                         bootstrap_label_size = 1.5,  # v129: Reduced from 3.5 for smaller default legend
                                          heatmap_tree_distance = 0.02,
                                          heatmap_global_gap = 0.05) {  # v125: Gap between multiple heatmaps
 
@@ -6721,13 +6721,13 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v128 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v129 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("FIX: Bootstrap legend now uses Legend tab font size settings"),
-                              tags$li("FIX: Bootstrap legend title size now matches other legend titles"),
-                              tags$li("IMPROVED: Smaller default bootstrap legend size (controlled via Legend tab)")
+                              tags$li("FIX: Highlighting now works with default classification (was only working with custom classifications)"),
+                              tags$li("FIX: Bootstrap legend triangle sizes now consistent (70% size fixed)"),
+                              tags$li("IMPROVED: Smaller default bootstrap triangle sizes for cleaner legend display")
                             )
                      )
             )
@@ -8945,6 +8945,57 @@ server <- function(input, output, session) {
 
           default_classification[["1"]]$heatmap_display[[j]] <- heatmap_item
         }
+      }
+
+      # v129: Add highlighting support to default classification (was missing!)
+      # Determine which highlight to apply (same logic as custom classification path)
+      highlight_to_apply <- NULL
+
+      # Check if preview mode is active
+      if (!is.null(values$temp_highlight_preview) && values$preview_highlight_active) {
+        # PREVIEW MODE: Apply temporary highlight for preview
+        highlight_to_apply <- values$temp_highlight_preview
+      } else if (!is.null(values$active_highlight_index) &&
+                 !is.null(values$highlights) &&
+                 length(values$highlights) >= values$active_highlight_index) {
+        # SAVED MODE: User selected a saved highlight
+        highlight_to_apply <- values$highlights[[values$active_highlight_index]]
+      }
+
+      # Apply highlight to default classification
+      if (!is.null(highlight_to_apply)) {
+        cat(file=stderr(), paste0("\n=== v129: Adding highlight to DEFAULT classification ===\n"))
+
+        # Build highlight YAML structure
+        highlight_yaml <- list(
+          display = "yes",
+          offset = highlight_to_apply$offset,
+          vertical_offset = if(!is.null(highlight_to_apply$vertical_offset)) highlight_to_apply$vertical_offset else 0,
+          adjust_height = highlight_to_apply$adjust_height,
+          adjust_width = highlight_to_apply$adjust_width,
+          according = list()
+        )
+
+        # Add each highlighted value
+        for (j in seq_along(highlight_to_apply$items)) {
+          item <- highlight_to_apply$items[[j]]
+          acc_item <- list()
+          acc_item[[as.character(j)]] <- list(
+            title1 = highlight_to_apply$column,
+            value1 = item$value,
+            display_name = item$display_name,
+            color = item$color,
+            display_title = highlight_to_apply$title
+          )
+          highlight_yaml$according <- c(highlight_yaml$according, list(acc_item))
+        }
+
+        # ADD TO DEFAULT CLASSIFICATION
+        default_classification[["1"]]$highlight <- highlight_yaml
+        cat(file=stderr(), paste0("  Highlight added with ", length(highlight_to_apply$items), " items\n"))
+      } else {
+        # No highlight - disable it
+        default_classification[["1"]]$highlight <- list(display = "no")
       }
 
       values$yaml_data$`visual definitions`$classification <- list(default_classification)
