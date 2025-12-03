@@ -6653,14 +6653,14 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v117 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v118 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("FIX: Tip Guide Lines now work - added missing parameter extraction from YAML config"),
-                              tags$li("FIX: Row Height slider now properly affects heatmap (values < 1 create gaps, = 1 tiles touch, > 1 tiles overlap)"),
-                              tags$li("Note: Row Height > 1 causes tile overlap but no visible change (tiles stack on each other)"),
-                              tags$li("FIX: Auto-detect improved - handles 'NA' strings vs R's NA properly")
+                              tags$li("FIX: Tip Guide Lines now work from UI - added missing guide line settings to heatmap item conversion"),
+                              tags$li("FIX: Swapped Row Height and Column Width labels (they were reversed due to coord_flip)"),
+                              tags$li("FIX: Row Height slider range now 0.1-3.0 (was 0.2-2.0)"),
+                              tags$li("FIX: Auto-detect now handles '#N/A' as NA-like string")
                             )
                      )
             )
@@ -8519,6 +8519,13 @@ server <- function(input, output, session) {
             heatmap_item[[as.character(j)]]$show_grid <- if (!is.null(heatmap_entry$show_grid) && heatmap_entry$show_grid) "yes" else "no"
             heatmap_item[[as.character(j)]]$grid_color <- if (!is.null(heatmap_entry$grid_color)) heatmap_entry$grid_color else "#000000"
             heatmap_item[[as.character(j)]]$grid_size <- if (!is.null(heatmap_entry$grid_size)) heatmap_entry$grid_size else 0.5
+
+            # v118: Add guide line settings (was missing - this caused tip guide lines not to work!)
+            heatmap_item[[as.character(j)]]$show_guides <- if (!is.null(heatmap_entry$show_guides) && heatmap_entry$show_guides) "yes" else "no"
+            heatmap_item[[as.character(j)]]$guide_color1 <- if (!is.null(heatmap_entry$guide_color1)) heatmap_entry$guide_color1 else "#CCCCCC"
+            heatmap_item[[as.character(j)]]$guide_color2 <- if (!is.null(heatmap_entry$guide_color2)) heatmap_entry$guide_color2 else "#EEEEEE"
+            heatmap_item[[as.character(j)]]$guide_alpha <- if (!is.null(heatmap_entry$guide_alpha)) heatmap_entry$guide_alpha else 0.3
+            heatmap_item[[as.character(j)]]$guide_width <- if (!is.null(heatmap_entry$guide_width)) heatmap_entry$guide_width else 0.5
 
             # v109: Add colnames_angle
             heatmap_item[[as.character(j)]]$colnames_angle <- if (!is.null(heatmap_entry$colnames_angle)) heatmap_entry$colnames_angle else 45
@@ -10515,13 +10522,13 @@ server <- function(input, output, session) {
                              step = 0.01)
           ),
           column(4,
-                 sliderInput(paste0("heatmap_height_", i), "Column Width",
-                             min = 0.2, max = 2.0,
+                 sliderInput(paste0("heatmap_height_", i), "Row Height",
+                             min = 0.1, max = 3.0,
                              value = if (!is.null(cfg$height)) cfg$height else 0.8,
                              step = 0.1)
           ),
           column(4,
-                 sliderInput(paste0("heatmap_row_height_", i), "Row Height",
+                 sliderInput(paste0("heatmap_row_height_", i), "Column Width",
                              min = 0.5, max = 3.0,
                              value = if (!is.null(cfg$row_height)) cfg$row_height else 1.0,
                              step = 0.1)
@@ -11048,7 +11055,8 @@ server <- function(input, output, session) {
         if (is.character(col_data) || is.factor(col_data)) {
           char_data <- as.character(na.omit(col_data))
           # v117: Remove "NA" strings (case-insensitive) that are NOT R's NA
-          char_data <- char_data[!toupper(trimws(char_data)) %in% c("NA", "N/A", "NULL", "")]
+          # v118: Added #N/A to the list of NA-like strings
+          char_data <- char_data[!toupper(trimws(char_data)) %in% c("NA", "N/A", "#N/A", "NULL", "")]
           if (length(char_data) > 0) {
             has_decimal_in_string <- any(grepl("\\.[0-9]+", char_data))
           }
@@ -11062,8 +11070,9 @@ server <- function(input, output, session) {
         originally_numeric <- is_numeric  # v112: Track if originally numeric
         if (!is_numeric && is.character(col_data)) {
           # v117: Filter out NA-like strings before attempting conversion
+          # v118: Added #N/A to the list of NA-like strings
           clean_col_data <- col_data
-          clean_col_data[toupper(trimws(clean_col_data)) %in% c("NA", "N/A", "NULL", "")] <- NA
+          clean_col_data[toupper(trimws(clean_col_data)) %in% c("NA", "N/A", "#N/A", "NULL", "")] <- NA
           # Try converting to numeric - see what proportion succeeds
           numeric_attempt <- suppressWarnings(as.numeric(clean_col_data))
           non_na_original <- sum(!is.na(clean_col_data))  # v117: Count after cleaning NA strings
@@ -11508,7 +11517,8 @@ server <- function(input, output, session) {
         if (is.character(col_data) || is.factor(col_data)) {
           char_data <- as.character(na.omit(col_data))
           # v117: Remove "NA" strings (case-insensitive) that are NOT R's NA
-          char_data <- char_data[!toupper(trimws(char_data)) %in% c("NA", "N/A", "NULL", "")]
+          # v118: Added #N/A to the list of NA-like strings
+          char_data <- char_data[!toupper(trimws(char_data)) %in% c("NA", "N/A", "#N/A", "NULL", "")]
           if (length(char_data) > 0) {
             has_decimal_in_string <- any(grepl("\\.[0-9]+", char_data))
           }
@@ -11525,7 +11535,8 @@ server <- function(input, output, session) {
         if (!is_numeric) {
           clean_col_data <- as.character(col_data)
           # v117: Convert NA-like strings to actual NA
-          clean_col_data[toupper(trimws(clean_col_data)) %in% c("NA", "N/A", "NULL", "")] <- NA
+          # v118: Added #N/A to the list of NA-like strings
+          clean_col_data[toupper(trimws(clean_col_data)) %in% c("NA", "N/A", "#N/A", "NULL", "")] <- NA
           numeric_attempt <- suppressWarnings(as.numeric(clean_col_data))
           non_na_original <- sum(!is.na(clean_col_data))  # v117: Count after cleaning NA strings
           non_na_converted <- sum(!is.na(numeric_attempt))
