@@ -1627,28 +1627,34 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
   } 
   
   if (show_boot_flag == TRUE) {
-    if (boot_values$'format' == 'triangles') {  
+    if (boot_values$'format' == 'triangles') {
+      # v131: Scale down bootstrap legend text to match other legends
+      # The size_title and size_text are in mm for annotate(), but values like 12-20 are too large
+      # Scale by 0.3 to get reasonable sizes (e.g., 12 * 0.3 = 3.6mm which is readable)
+      boot_title_size <- size_title * 0.3
+      boot_text_size <- size_text * 0.3
+
       p <- p + annotate(
-        geom = "text", 
-        label = "Bootstrap", size = size_title, 
-        x = x22 - new_big_step + 2 * extra, 
+        geom = "text",
+        label = "Bootstrap", size = boot_title_size,
+        x = x22 - new_big_step + 2 * extra,
         y = y_off_base + 3, hjust = 0, vjust = 0,
         fontface = "bold"
       ) + annotate(
-        geom = "text", 
-        label = ">70%", size = size_text, 
-        x = x22 - new_big_step - new_step + 3 * extra, 
-        y = y_off_base - 2  
+        geom = "text",
+        label = ">70%", size = boot_text_size,
+        x = x22 - new_big_step - new_step + 3 * extra,
+        y = y_off_base - 2
       ) + annotate(
-        geom = "text", 
-        label = ">80%", size = size_text, 
-        x = x22 - new_big_step - 2 * new_step + 3 * extra, 
-        y = y_off_base - 2  
+        geom = "text",
+        label = ">80%", size = boot_text_size,
+        x = x22 - new_big_step - 2 * new_step + 3 * extra,
+        y = y_off_base - 2
       ) + annotate(
-        geom = "text", 
-        label = ">90%", size = size_text, 
-        x = x22 - new_big_step - 3 * new_step + 3 * extra, 
-        y = y_off_base - 2  
+        geom = "text",
+        label = ">90%", size = boot_text_size,
+        x = x22 - new_big_step - 3 * new_step + 3 * extra,
+        y = y_off_base - 2
       ) + annotate(
         geom = "point", 
         shape = 24, size = size_90+bootstrap_label_size, 
@@ -6722,14 +6728,13 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v130 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v131 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("NEW: Extra tab for page title, custom text annotations, and images"),
-                              tags$li("FIX: Highlighting now works correctly with default classification"),
-                              tags$li("FIX: Bootstrap triangle default size reduced (smaller by default)"),
-                              tags$li("Bootstrap legend text now uses Legend tab font size settings")
+                              tags$li("DEBUG: Added tracing for highlight, page title issues"),
+                              tags$li("FIX: Bootstrap legend text scaled down (0.3x) for better visibility"),
+                              tags$li("Heatmap Rebuild Plan no longer needed - removed")
                             )
                      )
             )
@@ -8942,7 +8947,13 @@ server <- function(input, output, session) {
         # *** KEY FIX: MOVED HERE - BEFORE adding class_item to YAML ***
         # ========================================================
         highlight_to_apply <- NULL
-        
+
+        # v131: DEBUG - trace highlight decision
+        cat(file=stderr(), paste0("\n=== v131: HIGHLIGHT DECISION (classification ", i, ") ===\n"))
+        cat(file=stderr(), paste0("  temp_highlight_preview is NULL: ", is.null(values$temp_highlight_preview), "\n"))
+        cat(file=stderr(), paste0("  active_highlight_index: ", values$active_highlight_index, "\n"))
+        cat(file=stderr(), paste0("  highlights length: ", length(values$highlights), "\n"))
+
         # v53: cat(file=stderr(), "\n📝 === ADDING HIGHLIGHT TO CLASSIFICATION", i, "===\n")
         
         if (!is.null(values$temp_highlight_preview)) {
@@ -8958,10 +8969,13 @@ server <- function(input, output, session) {
           # SAVED MODE: User selected a saved highlight
           # v53: cat(file=stderr(), "Ã°Å¸â€Ëœ Using saved highlight #", values$active_highlight_index, "\n")
           highlight_to_apply <- values$highlights[[values$active_highlight_index]]
+        } else {
+          cat(file=stderr(), "  NO highlight source found (will set display='no')\n")
         }
-        
+
         # Apply highlight to THIS classification
         if (!is.null(highlight_to_apply)) {
+          cat(file=stderr(), paste0("  APPLYING highlight with ", length(highlight_to_apply$items), " items (display='yes')\n"))
           # v53: cat(file=stderr(), "Ã¢Å“â€œ Applying highlight to class_item\n")
           
           # Build highlight YAML structure
@@ -9135,6 +9149,12 @@ server <- function(input, output, session) {
       # Determine which highlight to apply (same logic as custom classification path)
       highlight_to_apply <- NULL
 
+      # v131: DEBUG - trace highlight decision for default classification
+      cat(file=stderr(), paste0("\n=== v131: HIGHLIGHT DECISION (DEFAULT classification) ===\n"))
+      cat(file=stderr(), paste0("  temp_highlight_preview is NULL: ", is.null(values$temp_highlight_preview), "\n"))
+      cat(file=stderr(), paste0("  active_highlight_index: ", values$active_highlight_index, "\n"))
+      cat(file=stderr(), paste0("  highlights length: ", length(values$highlights), "\n"))
+
       # Check if preview mode is active (match custom classification logic at line 8765)
       if (!is.null(values$temp_highlight_preview)) {
         # PREVIEW MODE: Apply temporary highlight for preview
@@ -9179,6 +9199,7 @@ server <- function(input, output, session) {
         cat(file=stderr(), paste0("  Highlight added with ", length(highlight_to_apply$items), " items\n"))
       } else {
         # No highlight - disable it
+        cat(file=stderr(), "  NO highlight to apply (setting display='no')\n")
         default_classification[["1"]]$highlight <- list(display = "no")
       }
 
@@ -10069,14 +10090,14 @@ server <- function(input, output, session) {
     # v53: cat(file=stderr(), "Ã°Å¸â€Â´ =====================================\n\n")
     
     
-    # v53: cat(file=stderr(), "ðŸŸ¢ RIGHT BEFORE generate_plot() call:\n")
-    # v53: cat(file=stderr(), "ðŸŸ¢ temp_highlight_preview is NULL:", is.null(values$temp_highlight_preview), "\n")
+    # v131: DEBUG - confirm temp_highlight_preview is set before generate_plot()
+    cat(file=stderr(), "\n=== v131: HIGHLIGHT BUTTON - BEFORE generate_plot() ===\n")
+    cat(file=stderr(), paste0("  temp_highlight_preview is NULL: ", is.null(values$temp_highlight_preview), "\n"))
     if (!is.null(values$temp_highlight_preview)) {
-      # v53: cat(file=stderr(), "ðŸŸ¢ temp_highlight_preview column:", values$temp_highlight_preview$column, "\n")
-      # v53: cat(file=stderr(), "ðŸŸ¢ temp_highlight_preview items:", length(values$temp_highlight_preview$items), "\n")
+      cat(file=stderr(), paste0("  temp_highlight_preview column: ", values$temp_highlight_preview$column, "\n"))
+      cat(file=stderr(), paste0("  temp_highlight_preview items: ", length(values$temp_highlight_preview$items), "\n"))
     }
-    # v53: cat(file=stderr(), "\n")
-    # v53: cat(file=stderr(), "ðŸŸ¢ðŸŸ¢ðŸŸ¢ CALLING generate_plot() FROM HIGHLIGHT BUTTON\n")
+    cat(file=stderr(), "  CALLING generate_plot() NOW...\n")
     values$debug_trace_id <- "HIGHLIGHT_BUTTON_PREVIEW"
     generate_plot()
     values$debug_trace_id <- NULL
@@ -13540,10 +13561,22 @@ server <- function(input, output, session) {
       tryCatch({
         # Apply page title
         page_title_settings <- values$page_title
+
+        # v131: DEBUG - trace page title settings
+        cat(file=stderr(), paste0("\n=== v131: PAGE TITLE CHECK ===\n"))
+        cat(file=stderr(), paste0("  page_title_settings is NULL: ", is.null(page_title_settings), "\n"))
+        if (!is.null(page_title_settings)) {
+          cat(file=stderr(), paste0("  enabled: ", page_title_settings$enabled, "\n"))
+          cat(file=stderr(), paste0("  text: '", page_title_settings$text, "'\n"))
+          cat(file=stderr(), paste0("  text length: ", nchar(page_title_settings$text), "\n"))
+        }
+
         if (!is.null(page_title_settings) && isTRUE(page_title_settings$enabled) &&
             !is.null(page_title_settings$text) && nchar(page_title_settings$text) > 0) {
-          cat(file=stderr(), paste0("\n=== v130: Applying page title ===\n"))
+          cat(file=stderr(), paste0("\n=== v131: Applying page title ===\n"))
           cat(file=stderr(), paste0("  Title: ", page_title_settings$text, "\n"))
+          cat(file=stderr(), paste0("  Size: ", page_title_settings$size, "\n"))
+          cat(file=stderr(), paste0("  Color: ", page_title_settings$color, "\n"))
 
           fontface <- if (page_title_settings$bold) "bold" else "plain"
           hjust_val <- page_title_settings$hjust
@@ -13565,6 +13598,8 @@ server <- function(input, output, session) {
             # For now, we document that underline is not fully supported
           }
           cat(file=stderr(), paste0("  Page title applied successfully\n"))
+        } else {
+          cat(file=stderr(), paste0("  Page title NOT applied (condition not met)\n"))
         }
 
         # Apply custom text annotations
