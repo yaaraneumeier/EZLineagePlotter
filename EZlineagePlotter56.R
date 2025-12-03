@@ -6838,14 +6838,16 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v141 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v142 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("Fixed double highlight when adding heatmap to plot with highlight"),
-                              tags$li("Page orientation now updates preview immediately when changed"),
-                              tags$li("Increased maximum heatmaps from 6 to 10"),
-                              tags$li("Redesigned Extra tab: plot positioning + text overlay (text doesn't push plot)")
+                              tags$li("Extra tab: Plot position controls now have larger range and more noticeable effect"),
+                              tags$li("Extra tab: Text overlay is now a true overlay (doesn't push/move the plot)"),
+                              tags$li("Download tab: Added Ready/Processing indicator next to preview title"),
+                              tags$li("Download tab: Page orientation now properly updates preview aspect ratio"),
+                              tags$li("Legend tab: Reduced default highlight legend title size (was too big)"),
+                              tags$li("Legend tab: Improved default positioning for highlight/bootstrap legends (below main legend)")
                             )
                      )
             )
@@ -7420,7 +7422,7 @@ ui <- dashboardPage(
               collapsible = TRUE,
               collapsed = TRUE,
               tags$h4(icon("highlighter"), " Highlight Legend Settings", style = "margin-top: 0;"),
-              tags$p(class = "text-muted", "Control highlight legend appearance:"),
+              tags$p(class = "text-muted", "Control highlight legend appearance (positioned below main legend):"),
               fluidRow(
                 column(6,
                   # v138: Changed default from 0 to -2 to keep legend within image boundaries
@@ -7428,18 +7430,19 @@ ui <- dashboardPage(
                               min = -5, max = 5, value = -2, step = 0.1)
                 ),
                 column(6,
+                  # v142: Changed default from 0 to -3 to position below main legend
                   sliderInput("highlight_legend_y_offset", "Y Offset (Up/Down)",
-                              min = -10, max = 10, value = 0, step = 0.5)
+                              min = -10, max = 10, value = -3, step = 0.5)
                 )
               ),
               fluidRow(
                 column(6,
                   sliderInput("highlight_legend_title_size", "Title Size",
-                              min = 0.5, max = 10, value = 2, step = 0.1)  # v133: smaller default
+                              min = 0.5, max = 10, value = 1, step = 0.1)  # v142: smaller default (was 2)
                 ),
                 column(6,
                   sliderInput("highlight_legend_text_size", "Label Text Size",
-                              min = 0.3, max = 8, value = 1.5, step = 0.1)  # v133: smaller default
+                              min = 0.3, max = 8, value = 1, step = 0.1)  # v142: smaller default (was 1.5)
                 )
               ),
               fluidRow(
@@ -7463,7 +7466,7 @@ ui <- dashboardPage(
               collapsible = TRUE,
               collapsed = TRUE,
               tags$h4(icon("chart-line"), " Bootstrap Legend Settings", style = "margin-top: 0;"),
-              tags$p(class = "text-muted", "Control bootstrap legend appearance:"),
+              tags$p(class = "text-muted", "Control bootstrap legend appearance (positioned below highlight legend):"),
               fluidRow(
                 column(6,
                   # v138: Changed default from 0 to -2 to keep legend within image boundaries
@@ -7471,8 +7474,9 @@ ui <- dashboardPage(
                               min = -5, max = 5, value = -2, step = 0.1)
                 ),
                 column(6,
+                  # v142: Changed default from 0 to -6 to position below highlight legend
                   sliderInput("bootstrap_legend_y_offset", "Y Offset (Up/Down)",
-                              min = -10, max = 10, value = 0, step = 0.5)
+                              min = -10, max = 10, value = -6, step = 0.5)
                 )
               ),
               fluidRow(
@@ -7571,12 +7575,12 @@ ui <- dashboardPage(
             fluidRow(
               column(6,
                 sliderInput("plot_offset_x", "Horizontal Position:",
-                           min = -0.5, max = 0.5, value = 0, step = 0.01,
+                           min = -2, max = 2, value = 0, step = 0.05,
                            post = " (left/right)")
               ),
               column(6,
                 sliderInput("plot_offset_y", "Vertical Position:",
-                           min = -0.5, max = 0.5, value = 0, step = 0.01,
+                           min = -2, max = 2, value = 0, step = 0.05,
                            post = " (down/up)")
               )
             ),
@@ -7778,7 +7782,22 @@ ui <- dashboardPage(
           ),
           
           box(
-            title = "Final Preview",
+            title = tagList(
+              "Final Preview ",
+              # v142: Status indicators for Download tab
+              span(id = "download_status_waiting",
+                style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #f8f9fa; color: #6c757d; font-size: 12px;",
+                icon("clock"), " Waiting for data"
+              ),
+              span(id = "download_status_processing",
+                style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #6c757d; color: #ffffff; font-size: 12px; font-weight: bold;",
+                icon("spinner", class = "fa-spin"), " Processing..."
+              ),
+              span(id = "download_status_ready",
+                style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #28a745; color: #ffffff; font-size: 12px; font-weight: bold;",
+                icon("check-circle"), " Ready"
+              )
+            ),
             status = "primary",
             solidHeader = TRUE,
             width = 8,
@@ -7908,6 +7927,10 @@ server <- function(input, output, session) {
     shinyjs::show("legend_status_waiting")
     shinyjs::hide("legend_status_processing")
     shinyjs::hide("legend_status_ready")
+    # v142: Download tab
+    shinyjs::show("download_status_waiting")
+    shinyjs::hide("download_status_processing")
+    shinyjs::hide("download_status_ready")
   }
 
   show_status_processing <- function() {
@@ -7940,6 +7963,10 @@ server <- function(input, output, session) {
     shinyjs::hide("legend_status_waiting")
     shinyjs::show("legend_status_processing")
     shinyjs::hide("legend_status_ready")
+    # v142: Download tab
+    shinyjs::hide("download_status_waiting")
+    shinyjs::show("download_status_processing")
+    shinyjs::hide("download_status_ready")
   }
 
   show_status_ready <- function() {
@@ -7972,6 +7999,10 @@ server <- function(input, output, session) {
     shinyjs::hide("legend_status_waiting")
     shinyjs::hide("legend_status_processing")
     shinyjs::show("legend_status_ready")
+    # v142: Download tab
+    shinyjs::hide("download_status_waiting")
+    shinyjs::hide("download_status_processing")
+    shinyjs::show("download_status_ready")
   }
 
   show_status_click_to_generate <- function() {
@@ -13878,15 +13909,16 @@ server <- function(input, output, session) {
         plot_off_y <- if (!is.null(values$plot_offset_y)) values$plot_offset_y else 0
 
         if (plot_off_x != 0 || plot_off_y != 0) {
-          cat(file=stderr(), paste0("\n=== v141: APPLYING PLOT POSITION OFFSETS ===\n"))
+          cat(file=stderr(), paste0("\n=== v142: APPLYING PLOT POSITION OFFSETS ===\n"))
           cat(file=stderr(), paste0("  X offset: ", plot_off_x, " (positive = right)\n"))
           cat(file=stderr(), paste0("  Y offset: ", plot_off_y, " (positive = up)\n"))
 
-          # Convert offset to margin units (cm)
+          # v142: Convert offset to margin units (cm)
+          # Using larger scale for more noticeable movement
           # Positive X offset = more left margin = plot moves right
           # Positive Y offset = more bottom margin = plot moves up
-          base_margin <- 0.5  # Base margin in cm
-          margin_scale <- 10  # Scale factor for offset
+          base_margin <- 1  # Base margin in cm
+          margin_scale <- 5  # Scale factor for offset (larger values = bigger movement)
 
           # Calculate margins: margin(top, right, bottom, left)
           # Positive X offset -> increase left margin, decrease right margin
@@ -13896,17 +13928,17 @@ server <- function(input, output, session) {
           top_margin <- base_margin - (plot_off_y * margin_scale)
           bottom_margin <- base_margin + (plot_off_y * margin_scale)
 
-          # Ensure margins don't go negative
-          left_margin <- max(0, left_margin)
-          right_margin <- max(0, right_margin)
-          top_margin <- max(0, top_margin)
-          bottom_margin <- max(0, bottom_margin)
+          # Ensure margins don't go negative (minimum 0.1 cm)
+          left_margin <- max(0.1, left_margin)
+          right_margin <- max(0.1, right_margin)
+          top_margin <- max(0.1, top_margin)
+          bottom_margin <- max(0.1, bottom_margin)
 
           result <- result + theme(
             plot.margin = margin(t = top_margin, r = right_margin,
                                 b = bottom_margin, l = left_margin, unit = "cm")
           )
-          cat(file=stderr(), paste0("  Margins applied: t=", round(top_margin, 2),
+          cat(file=stderr(), paste0("  v142: Margins applied: t=", round(top_margin, 2),
                                     ", r=", round(right_margin, 2),
                                     ", b=", round(bottom_margin, 2),
                                     ", l=", round(left_margin, 2), " cm\n"))
@@ -13955,15 +13987,19 @@ server <- function(input, output, session) {
           cat(file=stderr(), paste0("  Page title NOT applied (condition not met)\n"))
         }
 
-        # Apply custom text annotations
+        # v142: Apply custom text annotations as TRUE overlays
+        # These don't expand plot limits - they overlay on top without moving the plot
         custom_texts <- values$custom_texts
         if (!is.null(custom_texts) && length(custom_texts) > 0) {
-          cat(file=stderr(), paste0("\n=== v130: Applying ", length(custom_texts), " custom text(s) ===\n"))
+          cat(file=stderr(), paste0("\n=== v142: Applying ", length(custom_texts), " custom text(s) as OVERLAY ===\n"))
 
-          # Get plot ranges to convert normalized coords to data coords
+          # Get plot ranges BEFORE adding text - these will be preserved
           plot_build <- ggplot_build(result)
           x_range <- plot_build$layout$panel_params[[1]]$x.range
           y_range <- plot_build$layout$panel_params[[1]]$y.range
+
+          cat(file=stderr(), paste0("  Original plot limits: x=[", round(x_range[1], 2), ", ", round(x_range[2], 2),
+                                    "], y=[", round(y_range[1], 2), ", ", round(y_range[2], 2), "]\n"))
 
           for (i in seq_along(custom_texts)) {
             txt <- custom_texts[[i]]
@@ -13987,6 +14023,12 @@ server <- function(input, output, session) {
               angle = txt$angle
             )
           }
+
+          # v142: CRITICAL - Lock the coordinate limits to prevent text from expanding the plot
+          # This makes the text a true overlay that doesn't push the plot content around
+          result <- result + coord_cartesian(xlim = x_range, ylim = y_range, clip = "off")
+
+          cat(file=stderr(), paste0("  v142: Coordinate limits locked - text is now a true overlay\n"))
           cat(file=stderr(), paste0("  Custom texts applied successfully\n"))
         }
 
@@ -14066,15 +14108,34 @@ server <- function(input, output, session) {
       
       tryCatch({
         # Save the plot as PNG
+        # v142: Use output dimensions for preview to show correct orientation
+        # Scale down for preview but maintain aspect ratio
+        preview_width <- 20
+        preview_height <- 10
+
+        # Get user-specified dimensions if available
+        if (!is.null(input$output_width) && !is.null(input$output_height) &&
+            input$output_width > 0 && input$output_height > 0) {
+          # Calculate aspect ratio from user dimensions
+          user_aspect <- input$output_width / input$output_height
+          # Set preview width fixed at 20in, calculate height to match aspect ratio
+          preview_width <- 20
+          preview_height <- 20 / user_aspect
+          cat(file=stderr(), paste0("  v142: Preview using aspect ratio from user dimensions (",
+                                    input$output_width, "x", input$output_height, ")\n"))
+          cat(file=stderr(), paste0("  v142: Preview dimensions: ", preview_width, " x ",
+                                    round(preview_height, 2), " in\n"))
+        }
+
         # v53: cat(file=stderr(), "Calling ggsave...\n")
         # v54: Wrap in suppressWarnings to suppress scale warnings
         suppressWarnings(ggsave(
-          filename = temp_plot_file, 
-          plot = result, 
-          width = 20, 
-          height = 10, 
-          units = "in", 
-          dpi = 150, 
+          filename = temp_plot_file,
+          plot = result,
+          width = preview_width,
+          height = preview_height,
+          units = "in",
+          dpi = 150,
           limitsize = FALSE
         ))
         
