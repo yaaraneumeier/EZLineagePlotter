@@ -1526,7 +1526,15 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
                                     man_multiply_elipse, man_space_second_legend,
                                     man_space_second_legend_multiplier, man_offset_for_highlight_legend_x,
                                     debug_mode = FALSE, boot_values = NA, man_offset_second_legend = 0, width,
-                                    bootstrap_label_size = 1.5) {  # v129: Reduced from 3.5 for smaller default legend
+                                    bootstrap_label_size = 1.5,  # v129: Reduced from 3.5 for smaller default legend
+                                    # v133: New highlight legend settings
+                                    highlight_x_offset = 0, highlight_y_offset = 0,
+                                    highlight_title_size = NULL, highlight_text_size = NULL,
+                                    highlight_title_gap = 1, highlight_label_gap = 0.5,
+                                    # v133: New bootstrap legend settings
+                                    bootstrap_x_offset = 0, bootstrap_y_offset = 0,
+                                    bootstrap_title_size_mult = NULL, bootstrap_text_size_mult = NULL,
+                                    bootstrap_title_gap = 2, bootstrap_label_gap = 2) {
   if (debug_mode == TRUE) {
     # v53: print("boudariestt is")
     # v53: print(boudariestt)
@@ -1571,20 +1579,25 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
   }
   
   norm <- 0.8
-  size_title <- size_font_legend_title * man_multiply_second_legend_text
-  size_text <- size_font_legend_text * man_multiply_second_legend * norm
-  
-  x11 <- new_base_for_second_legend_normalized
-  x22 <- new_base_for_second_legend_normalized - new_step
-  
-  if (FLAG_BULK_DISPLAY == TRUE) {        
+  # v133: Use custom highlight legend sizes if provided, otherwise use defaults
+  size_title <- if (!is.null(highlight_title_size)) highlight_title_size else (size_font_legend_title * man_multiply_second_legend_text)
+  size_text <- if (!is.null(highlight_text_size)) highlight_text_size else (size_font_legend_text * man_multiply_second_legend * norm)
+
+  # v133: Apply highlight legend offsets
+  x11 <- new_base_for_second_legend_normalized + highlight_x_offset
+  x22 <- new_base_for_second_legend_normalized - new_step + highlight_x_offset
+
+  # v133: Apply highlight label gap to step calculation
+  new_step_adjusted <- new_step * highlight_label_gap * 2  # Adjust spacing between labels
+
+  if (FLAG_BULK_DISPLAY == TRUE) {
     for (index_high in 1:how_many_hi) {
       multiple_high_down_offset <- (index_high - 1) * stair
-      
+
       if (index_high == 1) {
-        x11 <- new_base_for_second_legend_normalized
-        x22 <- new_base_for_second_legend_normalized - index_high * (new_step)
-        
+        x11 <- new_base_for_second_legend_normalized + highlight_x_offset
+        x22 <- new_base_for_second_legend_normalized - index_high * (new_step_adjusted) + highlight_x_offset
+
         if (debug_mode == TRUE) {
           # v53: print("man_multiply_second_legend_text is")
           # v53: print(man_multiply_second_legend_text)
@@ -1593,33 +1606,35 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
           # v53: print("y_off_base is")
           # v53: print(y_off_base)
         }
-        
+
+        # v133: Title position with highlight_y_offset
         p <- p + annotate(
-          geom = "text", 
-          label = high_title_list[[index_high]], size = size_title, 
+          geom = "text",
+          label = high_title_list[[index_high]], size = size_title,
           x = x11,
-          y = y_off_base + 0.7 + (width / 400) + man_adjust_image_of_second_legend, 
+          y = y_off_base + 0.7 + (width / 400) + man_adjust_image_of_second_legend + highlight_y_offset,
           hjust = 0, vjust = 0,
           fontface = "bold"
         )
-        
+
         if (how_many_hi > 1) {
           p <- p + geom_ellipse(
-            aes(x0 = x22, y0 = y_off_base + 0.7 + (width / 400) + man_adjust_image_of_second_legend, 
+            aes(x0 = x22, y0 = y_off_base + 0.7 + (width / 400) + man_adjust_image_of_second_legend + highlight_y_offset,
                 a = a, b = b, angle = 0),
             fill = high_color_list[[index_high]], alpha = 0.5, linetype = "blank", show.legend = FALSE
           )
         }
       }
-      
+
+      # v133: Label position with offsets and title_gap
       p <- p + annotate(
-        geom = "text", 
-        label = high_label_list[[index_high]], size = size_text, 
+        geom = "text",
+        label = high_label_list[[index_high]], size = size_text,
         x = x22 + extra,
-        y = y_off_base - 3.2
+        y = y_off_base - 3.2 - highlight_title_gap + highlight_y_offset
       ) + geom_ellipse(
         aes(x0 = x22 + extra,
-            y0 = y_off_base + 1 + man_adjust_image_of_second_legend, 
+            y0 = y_off_base + 1 + man_adjust_image_of_second_legend + highlight_y_offset,
             a = a * man_multiply_elipse, b = b + 0.3, angle = 0),
         fill = high_color_list[[index_high]], alpha = 0.5, linetype = "blank", show.legend = FALSE
       )
@@ -1628,51 +1643,58 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
   
   if (show_boot_flag == TRUE) {
     if (boot_values$'format' == 'triangles') {
-      # v132: Bootstrap legend positioning and sizing fixes
-      # - Moved legend higher (y_off_base + 6 instead of +3 for title)
-      # - Reduced spacing between title and values (title +6, triangles +4, labels +2)
-      # - Scaled down font size (0.25 instead of 0.3) to better match other legends
-      boot_title_size <- size_title * 0.25
-      boot_text_size <- size_text * 0.25
+      # v133: Bootstrap legend settings controlled from Legend tab
+      # Use custom sizes if provided, otherwise use scaled defaults
+      boot_title_size <- if (!is.null(bootstrap_title_size_mult)) bootstrap_title_size_mult else (size_title * 0.25)
+      boot_text_size <- if (!is.null(bootstrap_text_size_mult)) bootstrap_text_size_mult else (size_text * 0.25)
+
+      # v133: Apply bootstrap offsets to base positions
+      boot_x_base <- x22 - new_big_step + bootstrap_x_offset
+      boot_y_base <- y_off_base + bootstrap_y_offset
+
+      # v133: Title position with y_offset and title_gap controls the distance to triangles
+      boot_title_y <- boot_y_base + 6
+      boot_triangles_y <- boot_y_base + 6 - bootstrap_title_gap  # Triangles below title
+      boot_labels_y <- boot_y_base + 6 - bootstrap_title_gap - bootstrap_label_gap  # Labels below triangles
 
       p <- p + annotate(
         geom = "text",
         label = "Bootstrap", size = boot_title_size,
-        x = x22 - new_big_step + 2 * extra,
-        y = y_off_base + 6, hjust = 0, vjust = 0,
+        x = boot_x_base + 2 * extra,
+        y = boot_title_y, hjust = 0, vjust = 0,
         fontface = "bold"
       ) + annotate(
         geom = "text",
         label = ">70%", size = boot_text_size,
-        x = x22 - new_big_step - new_step + 3 * extra,
-        y = y_off_base + 2
+        x = boot_x_base - new_step + 3 * extra,
+        y = boot_labels_y
       ) + annotate(
         geom = "text",
         label = ">80%", size = boot_text_size,
-        x = x22 - new_big_step - 2 * new_step + 3 * extra,
-        y = y_off_base + 2
+        x = boot_x_base - 2 * new_step + 3 * extra,
+        y = boot_labels_y
       ) + annotate(
         geom = "text",
         label = ">90%", size = boot_text_size,
-        x = x22 - new_big_step - 3 * new_step + 3 * extra,
-        y = y_off_base + 2
+        x = boot_x_base - 3 * new_step + 3 * extra,
+        y = boot_labels_y
       ) + annotate(
         geom = "point",
-        shape = 24, size = size_90+bootstrap_label_size,
-        x = x22 - new_big_step - 3 * new_step + 3 * extra,
-        y = y_off_base + 4 + man_adjust_image_of_second_legend,
+        shape = 24, size = size_90 + bootstrap_label_size,
+        x = boot_x_base - 3 * new_step + 3 * extra,
+        y = boot_triangles_y + man_adjust_image_of_second_legend,
         fill = "grey36", colour = "grey20", alpha = 1/2
       ) + annotate(
         geom = "point",
-        shape = 24, size = size_80+bootstrap_label_size,
-        x = x22 - new_big_step - 2 * new_step + 3 * extra,
-        y = y_off_base + 4 + man_adjust_image_of_second_legend,
+        shape = 24, size = size_80 + bootstrap_label_size,
+        x = boot_x_base - 2 * new_step + 3 * extra,
+        y = boot_triangles_y + man_adjust_image_of_second_legend,
         fill = "grey36", colour = "grey20", alpha = 1/2
       ) + annotate(
         geom = "point",
         shape = 24, size = size_70 + bootstrap_label_size,
-        x = x22 - new_big_step - new_step + 3 * extra,
-        y = y_off_base + 4 + man_adjust_image_of_second_legend,
+        x = boot_x_base - new_step + 3 * extra,
+        y = boot_triangles_y + man_adjust_image_of_second_legend,
         fill = "grey36", colour = "grey20", alpha = 1/2
       )
     }        
@@ -6396,6 +6418,24 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       cat(file=stderr(), paste0("  WARNING: boudariestt is NULL or doesn't exist!\n"))
     }
 
+    # v133: Get legend settings for highlight and bootstrap legends
+    legend_settings_local <- values$legend_settings
+    highlight_x_off <- if (!is.null(legend_settings_local$highlight_x_offset)) legend_settings_local$highlight_x_offset else 0
+    highlight_y_off <- if (!is.null(legend_settings_local$highlight_y_offset)) legend_settings_local$highlight_y_offset else 0
+    highlight_title_sz <- legend_settings_local$highlight_title_size  # NULL is ok, will use default
+    highlight_text_sz <- legend_settings_local$highlight_text_size    # NULL is ok, will use default
+    highlight_title_g <- if (!is.null(legend_settings_local$highlight_title_gap)) legend_settings_local$highlight_title_gap else 1
+    highlight_label_g <- if (!is.null(legend_settings_local$highlight_label_gap)) legend_settings_local$highlight_label_gap else 0.5
+    bootstrap_x_off <- if (!is.null(legend_settings_local$bootstrap_x_offset)) legend_settings_local$bootstrap_x_offset else 0
+    bootstrap_y_off <- if (!is.null(legend_settings_local$bootstrap_y_offset)) legend_settings_local$bootstrap_y_offset else 0
+    bootstrap_title_sz <- legend_settings_local$bootstrap_title_size  # NULL is ok, will use default
+    bootstrap_text_sz <- legend_settings_local$bootstrap_text_size    # NULL is ok, will use default
+    bootstrap_title_g <- if (!is.null(legend_settings_local$bootstrap_title_gap)) legend_settings_local$bootstrap_title_gap else 2
+    bootstrap_label_g <- if (!is.null(legend_settings_local$bootstrap_label_gap)) legend_settings_local$bootstrap_label_gap else 2
+
+    cat(file=stderr(), paste0("  v133: highlight offsets - x:", highlight_x_off, ", y:", highlight_y_off, "\n"))
+    cat(file=stderr(), paste0("  v133: bootstrap offsets - x:", bootstrap_x_off, ", y:", bootstrap_y_off, "\n"))
+
     # v95: Wrap in tryCatch to catch any errors
     p <- tryCatch({
       result <- func.make.second.legend(
@@ -6430,7 +6470,20 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
         boot_values,
         man_offset_second_legend,
         width,
-        bootstrap_label_size
+        bootstrap_label_size,
+        # v133: New highlight and bootstrap legend settings
+        highlight_x_offset = highlight_x_off,
+        highlight_y_offset = highlight_y_off,
+        highlight_title_size = highlight_title_sz,
+        highlight_text_size = highlight_text_sz,
+        highlight_title_gap = highlight_title_g,
+        highlight_label_gap = highlight_label_g,
+        bootstrap_x_offset = bootstrap_x_off,
+        bootstrap_y_offset = bootstrap_y_off,
+        bootstrap_title_size_mult = bootstrap_title_sz,
+        bootstrap_text_size_mult = bootstrap_text_sz,
+        bootstrap_title_gap = bootstrap_title_g,
+        bootstrap_label_gap = bootstrap_label_g
       )
       cat(file=stderr(), paste0("  func.make.second.legend: SUCCESS\n"))
       result
@@ -6751,14 +6804,14 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v132 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v133 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("FIX: Highlight feature - 'boudariestt not found' error resolved"),
-                              tags$li("FIX: Bootstrap legend moved higher on right side"),
-                              tags$li("FIX: Bootstrap legend spacing reduced between title and values"),
-                              tags$li("FIX: Bootstrap legend font size reduced (0.25x) to match other legends")
+                              tags$li("NEW: Separate controls for Highlight Legend (position, sizes, gaps)"),
+                              tags$li("NEW: Separate controls for Bootstrap Legend (position, sizes, gaps)"),
+                              tags$li("NEW: Control X/Y offset, title size, text size for each legend"),
+                              tags$li("NEW: Collapsible settings panels in Legend tab for cleaner UI")
                             )
                      )
             )
@@ -7322,6 +7375,90 @@ ui <- dashboardPage(
                           min = 0.1, max = 5, value = 1, step = 0.1),  # v122: Increased max from 2 to 5
               sliderInput("legend_spacing", "Legend Spacing",
                           min = 0.05, max = 3, value = 0.3, step = 0.05)  # v122: Increased max from 1 to 3
+            ),
+
+            # v133: Highlight Legend Settings box
+            box(
+              title = NULL,
+              status = "warning",
+              solidHeader = FALSE,
+              width = 12,
+              collapsible = TRUE,
+              collapsed = TRUE,
+              tags$h4(icon("highlighter"), " Highlight Legend Settings", style = "margin-top: 0;"),
+              tags$p(class = "text-muted", "Control highlight legend appearance:"),
+              fluidRow(
+                column(6,
+                  sliderInput("highlight_legend_x_offset", "X Offset (Left/Right)",
+                              min = -5, max = 5, value = 0, step = 0.1)
+                ),
+                column(6,
+                  sliderInput("highlight_legend_y_offset", "Y Offset (Up/Down)",
+                              min = -10, max = 10, value = 0, step = 0.5)
+                )
+              ),
+              fluidRow(
+                column(6,
+                  sliderInput("highlight_legend_title_size", "Title Size",
+                              min = 0.5, max = 10, value = 2, step = 0.1)  # v133: smaller default
+                ),
+                column(6,
+                  sliderInput("highlight_legend_text_size", "Label Text Size",
+                              min = 0.3, max = 8, value = 1.5, step = 0.1)  # v133: smaller default
+                )
+              ),
+              fluidRow(
+                column(6,
+                  sliderInput("highlight_legend_title_gap", "Gap: Title to Labels",
+                              min = -5, max = 10, value = 1, step = 0.25)
+                ),
+                column(6,
+                  sliderInput("highlight_legend_label_gap", "Gap: Between Labels",
+                              min = 0.01, max = 3, value = 0.5, step = 0.05)
+                )
+              )
+            ),
+
+            # v133: Bootstrap Legend Settings box
+            box(
+              title = NULL,
+              status = "info",
+              solidHeader = FALSE,
+              width = 12,
+              collapsible = TRUE,
+              collapsed = TRUE,
+              tags$h4(icon("chart-line"), " Bootstrap Legend Settings", style = "margin-top: 0;"),
+              tags$p(class = "text-muted", "Control bootstrap legend appearance:"),
+              fluidRow(
+                column(6,
+                  sliderInput("bootstrap_legend_x_offset", "X Offset (Left/Right)",
+                              min = -5, max = 5, value = 0, step = 0.1)
+                ),
+                column(6,
+                  sliderInput("bootstrap_legend_y_offset", "Y Offset (Up/Down)",
+                              min = -10, max = 10, value = 0, step = 0.5)
+                )
+              ),
+              fluidRow(
+                column(6,
+                  sliderInput("bootstrap_legend_title_size", "Title Size",
+                              min = 0.1, max = 5, value = 0.8, step = 0.05)
+                ),
+                column(6,
+                  sliderInput("bootstrap_legend_text_size", "Label Text Size",
+                              min = 0.1, max = 4, value = 0.6, step = 0.05)
+                )
+              ),
+              fluidRow(
+                column(6,
+                  sliderInput("bootstrap_legend_title_gap", "Gap: Title to Triangles",
+                              min = -5, max = 10, value = 2, step = 0.25)  # v133: smaller default gap
+                ),
+                column(6,
+                  sliderInput("bootstrap_legend_label_gap", "Gap: Labels to Triangles",
+                              min = -5, max = 10, value = 2, step = 0.25)
+                )
+              )
             ),
 
             # Apply button
@@ -12572,7 +12709,7 @@ server <- function(input, output, session) {
 
   # Observer for Apply Legend Settings button
   observeEvent(input$apply_legend_settings, {
-    cat(file=stderr(), "\n=== v121: APPLYING LEGEND SETTINGS ===\n")
+    cat(file=stderr(), "\n=== v133: APPLYING LEGEND SETTINGS ===\n")
 
     # Update legend settings in reactive values
     values$legend_settings <- list(
@@ -12584,7 +12721,21 @@ server <- function(input, output, session) {
       title_size = input$legend_title_size,
       text_size = input$legend_text_size,
       key_size = input$legend_key_size,
-      spacing = input$legend_spacing
+      spacing = input$legend_spacing,
+      # v133: Highlight legend settings
+      highlight_x_offset = input$highlight_legend_x_offset,
+      highlight_y_offset = input$highlight_legend_y_offset,
+      highlight_title_size = input$highlight_legend_title_size,
+      highlight_text_size = input$highlight_legend_text_size,
+      highlight_title_gap = input$highlight_legend_title_gap,
+      highlight_label_gap = input$highlight_legend_label_gap,
+      # v133: Bootstrap legend settings
+      bootstrap_x_offset = input$bootstrap_legend_x_offset,
+      bootstrap_y_offset = input$bootstrap_legend_y_offset,
+      bootstrap_title_size = input$bootstrap_legend_title_size,
+      bootstrap_text_size = input$bootstrap_legend_text_size,
+      bootstrap_title_gap = input$bootstrap_legend_title_gap,
+      bootstrap_label_gap = input$bootstrap_legend_label_gap
     )
 
     cat(file=stderr(), paste0("  Position: ", input$legend_position, "\n"))
@@ -12594,6 +12745,10 @@ server <- function(input, output, session) {
     cat(file=stderr(), paste0("  Show heatmap: ", input$legend_show_heatmap, "\n"))
     cat(file=stderr(), paste0("  Title size: ", input$legend_title_size, "\n"))
     cat(file=stderr(), paste0("  Text size: ", input$legend_text_size, "\n"))
+    cat(file=stderr(), paste0("  v133: Highlight legend - x_offset: ", input$highlight_legend_x_offset,
+                               ", y_offset: ", input$highlight_legend_y_offset, "\n"))
+    cat(file=stderr(), paste0("  v133: Bootstrap legend - x_offset: ", input$bootstrap_legend_x_offset,
+                               ", y_offset: ", input$bootstrap_legend_y_offset, "\n"))
     cat(file=stderr(), "======================================\n\n")
 
     # Regenerate plot with new legend settings
