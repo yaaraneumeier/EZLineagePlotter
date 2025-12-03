@@ -5,7 +5,7 @@
 This document contains the step-by-step plan for rebuilding the heatmap functionality in EZLineagePlotter.
 The complex heatmap code (~800 lines) has been disabled in v91 and replaced with a simple proof-of-concept.
 
-**Current Status**: v122 - **Phase 5 COMPLETE!** Implemented multiple heatmaps support - up to 6 heatmaps side by side with individual colors, types, and spacing. Each heatmap can have its own distance parameter to control spacing from the previous heatmap. Uses `new_scale_fill()` for multiple color scales. Also fixed: guide lines now extend from tree tips to heatmap edge, auto-detection properly reads current checkbox state, Legend tab has plot preview and increased slider ranges.
+**Current Status**: v123 - **Phase 5 COMPLETE!** Multiple heatmaps now work correctly after fixing the scale conflict issue (`new_scale_fill()` must be called BEFORE geom_tile, not after). Also fixed: guide lines now extend INTO the tree (negative x) to visually connect with tips, guide line width slider expanded to 10.0 max, auto-detection is more lenient for numeric columns (>=5 unique values = continuous).
 
 ## Why We Simplified
 

@@ -4988,6 +4988,13 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
           show_grid_bool <- isTRUE(show_grid) || identical(show_grid, TRUE) || identical(show_grid, "yes") || identical(show_grid, "TRUE")
           cat(file=stderr(), paste0("  v113: show_grid_bool=", show_grid_bool, "\n"))
 
+          # v123: For heatmaps after the first, add new_scale_fill() BEFORE adding geom_tile
+          # This is critical - the scale must be reset before the new layer that uses fill
+          if (heat_idx > 1) {
+            cat(file=stderr(), paste0("  v123: Adding new_scale_fill() BEFORE geom_tile for heatmap ", heat_idx, "\n"))
+            p <- p + ggnewscale::new_scale_fill()
+          }
+
           if (show_grid_bool) {
             # v115: Draw tiles WITHOUT borders first (to avoid overlapping border issues)
             p_with_tiles <- p + geom_tile(
@@ -5075,11 +5082,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
           # v122: Use heat_idx to get the correct heatmap title
           heatmap_title <- if (heat_idx <= length(heat_map_title_list)) heat_map_title_list[[heat_idx]] else paste0("Heatmap ", heat_idx)
 
-          # v122: For heatmaps after the first, add new_scale_fill() before adding color scale
-          if (heat_idx > 1) {
-            cat(file=stderr(), paste0("  v122: Adding new_scale_fill() for heatmap ", heat_idx, "\n"))
-            p_with_tiles <- p_with_tiles + ggnewscale::new_scale_fill()
-          }
+          # v123: new_scale_fill() is now added BEFORE geom_tile (see line ~4993)
 
           if (is_discrete) {
             cat(file=stderr(), paste0("  Adding discrete color scale\n"))
@@ -5331,11 +5334,12 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             n_tips <- length(tip_y_values)
             cat(file=stderr(), paste0("  Number of tips: ", n_tips, "\n"))
 
-            # v122: Calculate x-range for guide lines - from tree tips (x=0) to end of heatmap
-            # The heatmap is to the RIGHT of the tree tips, so guides extend from 0 to heatmap end
-            x_min <- 0  # Start at tree tips
+            # v123: Calculate x-range for guide lines - extend INTO tree to connect visually with tips
+            # The heatmap is to the RIGHT of the tree tips (x=0), but we extend guides
+            # slightly into the tree (negative x) to ensure visual connection
+            x_min <- tree_xmax - 0.05 * tree_width  # Start slightly inside tree area
             x_max <- max(tile_df$x) + tile_width / 2  # End at right edge of heatmap
-            cat(file=stderr(), paste0("  v122: Guide line x range: [", x_min, ", ", x_max, "]\n"))
+            cat(file=stderr(), paste0("  v123: Guide line x range: [", x_min, ", ", x_max, "] (tree_xmax=", tree_xmax, ")\n"))
 
             # Build guide lines data - alternating colors
             guide_lines_df <- data.frame(
@@ -6692,16 +6696,14 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v122 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v123 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("NEW: Multiple heatmaps support - add up to 6 heatmaps side by side"),
-                              tags$li("NEW: Each heatmap can have its own colors, type, and spacing"),
-                              tags$li("NEW: Heatmap distance controls spacing between heatmaps"),
-                              tags$li("FIX: Guide lines now extend from tree tips to heatmap edge"),
-                              tags$li("FIX: Auto-detection reads current checkbox state properly"),
-                              tags$li("NEW: Legend tab - plot preview, increased slider ranges, improved layout")
+                              tags$li("FIX: Multiple heatmaps now work correctly - fixed scale conflict"),
+                              tags$li("FIX: Guide lines extend into tree to visually connect with tips"),
+                              tags$li("FIX: Guide line width slider expanded to 10.0 max"),
+                              tags$li("FIX: Auto-detection more lenient for numeric columns (>=5 unique values = continuous)")
                             )
                      )
             )
@@ -10773,7 +10775,7 @@ server <- function(input, output, session) {
             ),
             column(4,
                    sliderInput(paste0("heatmap_guide_width_", i), "Guide line width",
-                               min = 0.1, max = 3.0,
+                               min = 0.1, max = 10.0,
                                value = if (!is.null(cfg$guide_width)) cfg$guide_width else 0.5,
                                step = 0.1)
             ),
@@ -11942,14 +11944,15 @@ server <- function(input, output, session) {
               cat(file=stderr(), paste0("  v120 AUTO-DETECT: Result=continuous (originally numeric, many values)\n"))
             }
           } else {
-            # v120: Converted from character without decimals - be more conservative
-            # Match UI section: >8 unique values OR range >10 → continuous
-            if (unique_vals > 8 || val_range > 10) {
+            # v123: Converted from character without decimals - more lenient for numeric-like data
+            # If >=5 unique values OR range >=5 → treat as continuous
+            # This catches integer sequences like 1,2,3,4,5 which are typically counts/scores
+            if (unique_vals >= 5 || val_range >= 5) {
               actual_type <- "continuous"
-              cat(file=stderr(), paste0("  v120 AUTO-DETECT: Result=continuous (>8 unique or wide range)\n"))
+              cat(file=stderr(), paste0("  v123 AUTO-DETECT: Result=continuous (>=5 unique or range>=5)\n"))
             } else {
               actual_type <- "discrete"
-              cat(file=stderr(), paste0("  v120 AUTO-DETECT: Result=discrete (few unique, narrow range)\n"))
+              cat(file=stderr(), paste0("  v123 AUTO-DETECT: Result=discrete (few unique, narrow range)\n"))
             }
           }
         }
