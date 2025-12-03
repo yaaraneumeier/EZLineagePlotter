@@ -4783,6 +4783,18 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   # v99: Save a backup of p before heatmap for fallback recovery
   tt <- p
 
+  # v127: Initialize boudariestt BEFORE heatmap rendering
+  # This is required by func.make.second.legend and func_highlight even when heat_flag == FALSE
+  # Previously it was only set inside the heat_flag == TRUE block, causing bootstrap legend to fail
+  boudariestt <- tryCatch({
+    func.find.plot.boundaries(tt, debug_mode)
+  }, error = function(e) {
+    cat(file=stderr(), paste0("  v127: Error computing boudariestt: ", e$message, "\n"))
+    # Return default values if computation fails
+    list(xmin = min(p$data$x, na.rm = TRUE), xmax = max(p$data$x, na.rm = TRUE))
+  })
+  cat(file=stderr(), paste0("  v127: boudariestt initialized: xmin=", boudariestt$xmin, ", xmax=", boudariestt$xmax, "\n"))
+
   # v122: MULTIPLE HEATMAPS IMPLEMENTATION
   # Refactored from v99 to support multiple heatmaps with spacing control
   # Each heatmap can have its own colors, type (discrete/continuous), and parameters
@@ -6709,11 +6721,13 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v126 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v127 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("FIX: Tree plot now renders correctly (reverted bootstrap legend change that broke scale_size_manual)")
+                              tags$li("FIX: Auto-detect type display now updates dynamically when columns change"),
+                              tags$li("FIX: Bootstrap legend now works even without heatmap (boudariestt initialized early)"),
+                              tags$li("NEW: Legend tab now has processing/ready status indicators like other tabs")
                             )
                      )
             )
@@ -7290,10 +7304,26 @@ ui <- dashboardPage(
             )
           ),
 
-          # v124: Plot preview on right (8 columns) - using imageOutput like other tabs
+          # v127: Plot preview on right (8 columns) - using imageOutput like other tabs
+          # Added processing/ready status indicators like other tabs have
           column(8,
             box(
-              title = "Legend Preview",
+              title = tagList(
+                "Legend Preview ",
+                # v127: Static status indicators for immediate shinyjs updates
+                span(id = "legend_status_waiting",
+                  style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #f8f9fa; color: #6c757d; font-size: 12px;",
+                  icon("clock"), " Waiting for data"
+                ),
+                span(id = "legend_status_processing",
+                  style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #6c757d; color: #ffffff; font-size: 12px; font-weight: bold;",
+                  icon("spinner", class = "fa-spin"), " Processing..."
+                ),
+                span(id = "legend_status_ready",
+                  style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #28a745; color: #ffffff; font-size: 12px; font-weight: bold;",
+                  icon("check-circle"), " Ready"
+                )
+              ),
               status = "primary",
               solidHeader = TRUE,
               width = 12,
@@ -7439,6 +7469,10 @@ server <- function(input, output, session) {
     shinyjs::hide("heat_status_processing")
     shinyjs::hide("heat_status_ready")
     shinyjs::hide("heat_status_click_to_generate")
+    # v127: Legend tab
+    shinyjs::show("legend_status_waiting")
+    shinyjs::hide("legend_status_processing")
+    shinyjs::hide("legend_status_ready")
   }
 
   show_status_processing <- function() {
@@ -7467,6 +7501,10 @@ server <- function(input, output, session) {
     shinyjs::show("heat_status_processing")
     shinyjs::hide("heat_status_ready")
     shinyjs::hide("heat_status_click_to_generate")
+    # v127: Legend tab
+    shinyjs::hide("legend_status_waiting")
+    shinyjs::show("legend_status_processing")
+    shinyjs::hide("legend_status_ready")
   }
 
   show_status_ready <- function() {
@@ -7495,6 +7533,10 @@ server <- function(input, output, session) {
     shinyjs::hide("heat_status_processing")
     shinyjs::show("heat_status_ready")
     shinyjs::hide("heat_status_click_to_generate")
+    # v127: Legend tab
+    shinyjs::hide("legend_status_waiting")
+    shinyjs::hide("legend_status_processing")
+    shinyjs::show("legend_status_ready")
   }
 
   show_status_click_to_generate <- function() {
@@ -7523,6 +7565,10 @@ server <- function(input, output, session) {
     shinyjs::hide("heat_status_processing")
     shinyjs::hide("heat_status_ready")
     shinyjs::show("heat_status_click_to_generate")
+    # v127: Legend tab (no click_to_generate status, just show waiting)
+    shinyjs::show("legend_status_waiting")
+    shinyjs::hide("legend_status_processing")
+    shinyjs::hide("legend_status_ready")
   }
 
   # Initialize YAML data structure immediately
@@ -10701,14 +10747,11 @@ server <- function(input, output, session) {
           )
         ),
 
+        # v127: Dynamic detected type display - updates when columns change
         fluidRow(
           column(4,
                  tags$label("Detected Type"),
-                 tags$div(
-                   class = if (detected_type == "continuous") "label label-info" else "label label-success",
-                   style = "display: block; padding: 8px; text-align: center; margin-top: 0;",
-                   if (detected_type == "continuous") "Continuous (numeric)" else "Discrete (categorical)"
-                 )
+                 uiOutput(paste0("heatmap_detected_type_display_", i))
           ),
           # v111: Removed "Data Columns Count" - not useful to the user
           column(4),
@@ -11391,6 +11434,103 @@ server <- function(input, output, session) {
     # Reds/Pinks
     "crimson", "firebrick", "indianred", "hotpink", "deeppink"
   )
+
+  # v127: Dynamic detected type display - updates when column selection changes
+  # This replaces the static label that was set at UI render time
+  observe({
+    lapply(1:6, function(i) {
+      output[[paste0("heatmap_detected_type_display_", i)]] <- renderUI({
+        # Take dependency on column selection to reactively update
+        cols_selected <- input[[paste0("heatmap_columns_", i)]]
+
+        # If no columns selected, show placeholder
+        if (is.null(cols_selected) || length(cols_selected) == 0 || is.null(values$csv_data)) {
+          return(tags$div(
+            class = "label label-default",
+            style = "display: block; padding: 8px; text-align: center; margin-top: 0;",
+            "Select column first"
+          ))
+        }
+
+        # Compute detected type from the first column (same logic as heatmap_type_settings_ui_)
+        first_col <- cols_selected[1]
+        if (!(first_col %in% names(values$csv_data))) {
+          return(tags$div(
+            class = "label label-warning",
+            style = "display: block; padding: 8px; text-align: center; margin-top: 0;",
+            "Column not found"
+          ))
+        }
+
+        col_data <- values$csv_data[[first_col]]
+        unique_vals <- length(unique(na.omit(col_data)))
+        is_numeric <- is.numeric(col_data)
+
+        # v127: Check for decimals in string representation BEFORE conversion
+        has_decimal_in_string <- FALSE
+        if (is.character(col_data) || is.factor(col_data)) {
+          char_data <- as.character(na.omit(col_data))
+          char_data <- char_data[!toupper(trimws(char_data)) %in% c("NA", "N/A", "#N/A", "NULL", "")]
+          if (length(char_data) > 0) {
+            has_decimal_in_string <- any(grepl("\\.[0-9]+", char_data))
+          }
+        } else if (is.numeric(col_data)) {
+          char_data <- as.character(na.omit(col_data))
+          has_decimal_in_string <- any(grepl("\\.[0-9]+", char_data))
+        }
+
+        # Try to convert character columns to numeric
+        originally_numeric <- is_numeric
+        if (!is_numeric && is.character(col_data)) {
+          clean_col_data <- col_data
+          clean_col_data[toupper(trimws(clean_col_data)) %in% c("NA", "N/A", "#N/A", "NULL", "")] <- NA
+          numeric_attempt <- suppressWarnings(as.numeric(clean_col_data))
+          non_na_original <- sum(!is.na(clean_col_data))
+          non_na_converted <- sum(!is.na(numeric_attempt))
+          if (non_na_original > 0 && (non_na_converted / non_na_original) >= 0.5) {
+            is_numeric <- TRUE
+            col_data <- numeric_attempt
+          }
+        }
+
+        # Determine type
+        detected_type <- "discrete"
+        if (is_numeric) {
+          non_na_vals <- na.omit(col_data)
+          unique_numeric_vals <- length(unique(non_na_vals))
+          epsilon <- 1e-6
+          has_decimals <- any(abs(non_na_vals - floor(non_na_vals)) > epsilon, na.rm = TRUE)
+
+          if (!has_decimals && has_decimal_in_string) {
+            has_decimals <- TRUE
+          }
+
+          val_range <- if (length(non_na_vals) > 0) diff(range(non_na_vals)) else 0
+
+          if (has_decimals) {
+            detected_type <- "continuous"
+          } else if (originally_numeric) {
+            is_boolean_like <- unique_numeric_vals <= 2 && val_range <= 1
+            is_small_categorical <- unique_numeric_vals <= 3 && val_range <= 2
+            detected_type <- if (is_boolean_like || is_small_categorical) "discrete" else "continuous"
+          } else {
+            detected_type <- if (unique_numeric_vals > 8 || val_range > 10) "continuous" else "discrete"
+          }
+        }
+
+        # Debug output to console
+        cat(file=stderr(), paste0("  v127 DETECTED TYPE DISPLAY: column=", first_col,
+                                   ", detected=", detected_type, "\n"))
+
+        # Return the styled label
+        tags$div(
+          class = if (detected_type == "continuous") "label label-info" else "label label-success",
+          style = "display: block; padding: 8px; text-align: center; margin-top: 0;",
+          if (detected_type == "continuous") "Continuous (numeric)" else "Discrete (categorical)"
+        )
+      })
+    })
+  })
 
   # v108: New reactive renderUI for type-specific settings (discrete vs continuous)
   # This replaces the old conditionalPanels which used a hardcoded detected_type
