@@ -2181,7 +2181,8 @@ func.print.lineage.tree <- function(conf_yaml_path,
                                     heat_legend_replace=NA,
                                     tip_name_display_flag=TRUE,
                                     bootstrap_label_size= 3.5,
-                                    heatmap_tree_distance= 0.02) {
+                                    heatmap_tree_distance= 0.02,
+                                    heatmap_global_gap = 0.05) {  # v125: Gap between multiple heatmaps
 
   # === DEBUG CHECKPOINT 2: FUNCTION ENTRY ===
   # v53: cat(file=stderr(), "\nÃ°Å¸â€Â DEBUG CHECKPOINT 2: func.print.lineage.tree ENTRY\n")
@@ -3877,7 +3878,8 @@ func.print.lineage.tree <- function(conf_yaml_path,
         tip_name_display_flag=tip_name_display_flag,
         flag_make_newick_file=flag_make_newick_file,
         bootstrap_label_size =bootstrap_label_size,
-        heatmap_tree_distance = heatmap_tree_distance
+        heatmap_tree_distance = heatmap_tree_distance,
+        heatmap_global_gap = heatmap_global_gap  # v125: Gap between multiple heatmaps
       )
       # }
 
@@ -4031,7 +4033,8 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
                                          tip_name_display_flag = TRUE,
                                          flag_make_newick_file=FALSE,
                                          bootstrap_label_size = 3.5,
-                                         heatmap_tree_distance = 0.02) {
+                                         heatmap_tree_distance = 0.02,
+                                         heatmap_global_gap = 0.05) {  # v125: Gap between multiple heatmaps
 
   # === DEBUG CHECKPOINT 4: INNER FUNCTION ENTRY ===
   # v53: cat(file=stderr(), "\nÃ°Å¸â€Â DEBUG CHECKPOINT 4: func.make.plot.tree.heat.NEW ENTRY\n")
@@ -4798,8 +4801,9 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     # current_heatmap_x_end will be updated after each heatmap
     current_heatmap_x_start <- tree_xmax
 
-    # v122: Default spacing between heatmaps (can be overridden per-heatmap via 'distance')
-    heatmap_spacing <- 0.02 * tree_width
+    # v125: Use global gap setting for spacing between multiple heatmaps
+    heatmap_spacing <- heatmap_global_gap * tree_width
+    cat(file=stderr(), paste0("  v125: heatmap_global_gap=", heatmap_global_gap, ", heatmap_spacing=", heatmap_spacing, "\n"))
 
     # v122: Loop through all heatmaps
     for (heat_idx in 1:length(dxdf440_for_heat)) {
@@ -5329,26 +5333,33 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             cat(file=stderr(), paste0("  guide_alpha: ", guide_alpha, "\n"))
             cat(file=stderr(), paste0("  guide_width: ", guide_width, "\n"))
 
-            # Get all unique tip y-positions from the tile data
-            tip_y_values <- sort(unique(tile_df$y))
-            n_tips <- length(tip_y_values)
+            # v125: Get tip positions from tip_data to start guide lines at actual tip locations
+            # Each tip may have a different x position based on branch lengths
+            n_tips <- nrow(tip_data)
             cat(file=stderr(), paste0("  Number of tips: ", n_tips, "\n"))
 
-            # v123: Calculate x-range for guide lines - extend INTO tree to connect visually with tips
-            # The heatmap is to the RIGHT of the tree tips (x=0), but we extend guides
-            # slightly into the tree (negative x) to ensure visual connection
-            x_min <- tree_xmax - 0.05 * tree_width  # Start slightly inside tree area
+            # v125: Calculate x-end (right edge of heatmap)
             x_max <- max(tile_df$x) + tile_width / 2  # End at right edge of heatmap
-            cat(file=stderr(), paste0("  v123: Guide line x range: [", x_min, ", ", x_max, "] (tree_xmax=", tree_xmax, ")\n"))
 
-            # Build guide lines data - alternating colors
-            guide_lines_df <- data.frame(
-              x = x_min,
-              xend = x_max,
-              y = tip_y_values,
-              yend = tip_y_values,
-              color_idx = seq_len(n_tips) %% 2  # 0 for even, 1 for odd
-            )
+            # v125: Build guide lines data using each tip's actual x position
+            # This connects each guide line directly to its tree tip
+            guide_lines_list <- lapply(seq_len(nrow(tip_data)), function(tip_idx) {
+              tip_label <- tip_data$label[tip_idx]
+              tip_x <- tip_data$x[tip_idx]  # Actual x position of this tip
+              tip_y <- tip_data$y[tip_idx]  # Actual y position of this tip
+
+              data.frame(
+                x = tip_x,  # v125: Start at actual tip x position
+                xend = x_max,
+                y = tip_y,
+                yend = tip_y,
+                color_idx = tip_idx %% 2  # 0 for even, 1 for odd
+              )
+            })
+            guide_lines_df <- do.call(rbind, guide_lines_list)
+
+            cat(file=stderr(), paste0("  v125: Guide lines from individual tip x positions to x_max=", x_max, "\n"))
+            cat(file=stderr(), paste0("  v125: Tip x range: [", min(tip_data$x), ", ", max(tip_data$x), "]\n"))
 
             # Apply transparency to the colors
             guide_color1_alpha <- adjustcolor(guide_color1, alpha.f = guide_alpha)
@@ -5387,11 +5398,11 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
         cat(file=stderr(), paste0("  p layers after heatmap: ", length(p$layers), "\n"))
         cat(file=stderr(), paste0("  Layer types: ", paste(sapply(p$layers, function(l) class(l$geom)[1]), collapse=", "), "\n"))
 
-        # v122: Update current_heatmap_x_start for next heatmap
-        # Calculate the rightmost x position of this heatmap
+        # v125: Update current_heatmap_x_start for next heatmap
+        # Calculate the rightmost x position of this heatmap + global gap
         this_heatmap_x_end <- max(tile_df$x) + tile_width / 2
-        current_heatmap_x_start <- this_heatmap_x_end
-        cat(file=stderr(), paste0("  v122: Updated current_heatmap_x_start to ", current_heatmap_x_start, "\n"))
+        current_heatmap_x_start <- this_heatmap_x_end + heatmap_spacing  # v125: Add gap between heatmaps
+        cat(file=stderr(), paste0("  v125: Updated current_heatmap_x_start to ", current_heatmap_x_start, " (added gap=", heatmap_spacing, ")\n"))
 
       } else {
         cat(file=stderr(), paste0("  WARNING: No tile data created - skipping heatmap ", heat_idx, "\n"))
@@ -6414,26 +6425,33 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   if (bootstrap_triangles_enabled && !is.null(bootstrap_triangles_params)) {
     cat(file=stderr(), paste0("\n=== v90: Adding bootstrap triangles after heatmap ===\n"))
     tryCatch({
+      # v125: Create bootstrap category for legend display
+      # Add a bootstrap_category column to enable legend
+      p$data$bootstrap_category <- NA_character_
+      p$data$bootstrap_category[!is.na(p$data$boot_val) & p$data$boot_val >= 0.9] <- "≥90%"
+      p$data$bootstrap_category[!is.na(p$data$boot_val) & p$data$boot_val >= 0.8 & p$data$boot_val < 0.9] <- "80-89%"
+      p$data$bootstrap_category[!is.na(p$data$boot_val) & p$data$boot_val >= 0.7 & p$data$boot_val < 0.8] <- "70-79%"
+      p$data$bootstrap_category <- factor(p$data$bootstrap_category, levels = c("≥90%", "80-89%", "70-79%"))
+
+      # v125: Map size to bootstrap category for legend
+      boot_sizes <- c("≥90%" = bootstrap_triangles_params$size_90,
+                      "80-89%" = bootstrap_triangles_params$size_80,
+                      "70-79%" = bootstrap_triangles_params$size_70)
+
       p <- p +
         geom_nodepoint(
           position = position_nudge(x = bootstrap_triangles_params$man_boot_x_offset, y = 0),
-          aes(subset = boot_val >= 0.9),
-          size = bootstrap_triangles_params$size_90, shape = 24, fill = "grey36", colour = "grey20",
-          show.legend = FALSE, alpha = 1/2
+          aes(subset = !is.na(bootstrap_category), size = bootstrap_category),
+          shape = 24, fill = "grey36", colour = "grey20",
+          show.legend = TRUE, alpha = 1/2
         ) +
-        geom_nodepoint(
-          position = position_nudge(x = bootstrap_triangles_params$man_boot_x_offset, y = 0),
-          aes(subset = boot_val >= 0.8 & boot_val < 0.9),
-          size = bootstrap_triangles_params$size_80, shape = 24, fill = "grey36", colour = "grey20",
-          show.legend = FALSE, alpha = 1/2
-        ) +
-        geom_nodepoint(
-          position = position_nudge(x = bootstrap_triangles_params$man_boot_x_offset, y = 0),
-          aes(subset = boot_val >= 0.7 & boot_val < 0.8),
-          size = bootstrap_triangles_params$size_70, shape = 24, fill = "grey36", colour = "grey20",
-          show.legend = FALSE, alpha = 1/2
+        scale_size_manual(
+          name = "Bootstrap",
+          values = boot_sizes,
+          na.translate = FALSE,
+          guide = guide_legend(override.aes = list(shape = 24, fill = "grey36", colour = "grey20", alpha = 0.5))
         )
-      cat(file=stderr(), paste0("  Bootstrap triangles added successfully\n"))
+      cat(file=stderr(), paste0("  v125: Bootstrap triangles with legend added successfully\n"))
     }, error = function(e) {
       cat(file=stderr(), paste0("  v96 ERROR adding bootstrap triangles: ", e$message, "\n"))
       cat(file=stderr(), paste0("  Continuing without bootstrap triangles\n"))
@@ -6696,12 +6714,19 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v124 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v125 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("FIX: Auto-detection harmonized between UI and apply sections"),
-                              tags$li("FIX: Legend tab preview now uses same rendering as other tabs (no distortion)")
+                              tags$li("FIX: Guide lines now connect to actual tree tips (not offset)"),
+                              tags$li("FIX: Unique values error now uses patient-specific data only"),
+                              tags$li("FIX: Gap Between Heatmaps slider now works"),
+                              tags$li("FIX: Bootstrap legend now shows when enabled"),
+                              tags$li("FIX: Download tab preview matches other tab previews"),
+                              tags$li("FIX: Default paper size set to A4 landscape"),
+                              tags$li("FIX: Legend layout improved for top/bottom positions"),
+                              tags$li("REMOVED: Duplicate Legend Font Size slider from Heatmap tab"),
+                              tags$li("ADDED: Auto-detection debug output in console")
                             )
                      )
             )
@@ -7134,17 +7159,13 @@ ui <- dashboardPage(
               # Global settings
               # v105: Removed global Distance from Tree slider - now per-heatmap only
               fluidRow(
-                column(4,
+                column(6,
                        sliderInput("heatmap_global_gap", "Gap Between Heatmaps",
                                    min = 0, max = 1, value = 0.05, step = 0.01)
                 ),
-                column(4,
-                       sliderInput("heatmap_global_font", "Legend Font Size",
-                                   min = 1, max = 10, value = 3.5, step = 0.1)
-                ),
-                column(4,
+                column(6,
                        tags$p(class = "text-muted", style = "padding-top: 20px;",
-                              "Per-heatmap settings (distance, height, labels) are in each heatmap box below")
+                              "Legend font size is controlled in the Legend tab. Per-heatmap settings are in each heatmap box below.")
                 )
               ),
               
@@ -7307,8 +7328,9 @@ ui <- dashboardPage(
             textInput("individual_name", "Sample/Individual Name", value = "Sample1"),
             selectInput("output_format", "File Format", 
                         choices = c("pdf", "png", "tiff", "svg", "jpeg"), selected = "pdf"),
-            numericInput("output_width", "Width", value = 170),
-            numericInput("output_height", "Height", value = 60),
+            # v125: Default to A4 landscape size (297 x 210 mm)
+            numericInput("output_width", "Width", value = 29.7),
+            numericInput("output_height", "Height", value = 21),
             selectInput("output_units", "Units", choices = c("cm", "mm", "in"), selected = "cm"),
             textInput("output_path", "Output Directory", value = "./"),
             checkboxInput("replace_name", "Use Custom File Name", value = FALSE),
@@ -7322,10 +7344,11 @@ ui <- dashboardPage(
           
           box(
             title = "Final Preview",
-            status = "primary", 
+            status = "primary",
             solidHeader = TRUE,
             width = 8,
-            plotOutput("final_preview", height = "600px"),
+            # v125: Changed to imageOutput to match other previews
+            imageOutput("final_preview", height = "auto"),
             downloadButton("download_plot", "Download Plot", class = "btn-primary"),
             downloadButton("download_yaml", "Download YAML Configuration", class = "btn-success")
           )
@@ -8903,7 +8926,12 @@ server <- function(input, output, session) {
       heat_map_title = 25,
       heat_map_legend = if(!is.null(input$heatmap_font_size)) input$heatmap_font_size else 3.8
     )
-    
+
+    # v125: Add heatmap global settings (gap between heatmaps)
+    values$yaml_data$`visual definitions`$heatmap_global <- list(
+      gap = if(!is.null(values$heatmap_global_gap)) values$heatmap_global_gap else 0.05
+    )
+
     # Add compare_two_trees flag (always FALSE for Shiny app)
     values$yaml_data$`visual definitions`$compare_two_trees <- "no"
     
@@ -11658,7 +11686,20 @@ server <- function(input, output, session) {
           return(tags$p(class = "text-muted", "Column not found"))
         }
 
-        unique_vals <- sort(unique(na.omit(values$csv_data[[first_col]])))
+        # v125: Filter to only patient-specific data (rows matching tree tips)
+        # This prevents "Too many unique values" error when CSV has more values than tree tips
+        filtered_data <- values$csv_data
+        if (!is.null(values$tree) && !is.null(input$id_column) && input$id_column %in% names(values$csv_data)) {
+          tree_tips <- values$tree$tip.label
+          id_col_data <- as.character(values$csv_data[[input$id_column]])
+          matching_rows <- id_col_data %in% tree_tips
+          if (any(matching_rows)) {
+            filtered_data <- values$csv_data[matching_rows, , drop = FALSE]
+            cat(file=stderr(), paste0("v125: Filtered unique values from ", nrow(values$csv_data), " to ", nrow(filtered_data), " rows (tree tips)\n"))
+          }
+        }
+
+        unique_vals <- sort(unique(na.omit(filtered_data[[first_col]])))
         n_vals <- length(unique_vals)
 
         if (n_vals == 0) {
@@ -12090,6 +12131,9 @@ server <- function(input, output, session) {
     }
     
     values$heatmaps <- heatmaps_list
+
+    # v125: Store global gap setting for use in plotting
+    values$heatmap_global_gap <- if (!is.null(input$heatmap_global_gap)) input$heatmap_global_gap else 0.05
 
     # v56c: DEBUG - Print heatmap structure being applied
     cat(file=stderr(), "\n=== v56c HEATMAP APPLY DEBUG ===\n")
@@ -12964,6 +13008,12 @@ server <- function(input, output, session) {
           input$heatmap_tree_distance
         } else {
           0.02
+        },
+        # v125: Pass global gap between heatmaps
+        heatmap_global_gap = if (!is.null(values$heatmap_global_gap)) {
+          values$heatmap_global_gap
+        } else {
+          0.05
         }
       ))
       
@@ -13075,17 +13125,28 @@ server <- function(input, output, session) {
         cat(file=stderr(), paste0("\n=== v121: Applying legend settings to plot ===\n"))
         cat(file=stderr(), paste0("  Position: ", legend_settings$position, "\n"))
 
+        # v125: Determine legend layout based on position
+        # For top/bottom: legends arranged horizontally, but each legend has title above values
+        # For left/right: legends arranged vertically, with title next to values
+        is_horizontal_position <- legend_settings$position %in% c("top", "bottom")
+
         # Build theme modifications for legend
         legend_theme <- theme(
           legend.position = legend_settings$position,
           legend.title = element_text(size = legend_settings$title_size, face = "bold"),
           legend.text = element_text(size = legend_settings$text_size),
           legend.key.size = unit(legend_settings$key_size, "lines"),
-          legend.spacing = unit(legend_settings$spacing, "cm")
+          legend.spacing = unit(legend_settings$spacing, "cm"),
+          # v125: For top/bottom, arrange legends horizontally but stack items vertically
+          legend.box = if (is_horizontal_position) "horizontal" else "vertical",
+          legend.direction = if (is_horizontal_position) "vertical" else "vertical"
         )
 
         # Apply the legend theme
         result <- result + legend_theme
+
+        cat(file=stderr(), paste0("  v125: Legend box=", if (is_horizontal_position) "horizontal" else "vertical",
+                                   ", direction=vertical\n"))
 
         # Apply visibility controls using guides()
         guides_list <- list()
@@ -13302,17 +13363,18 @@ server <- function(input, output, session) {
     )
   }, deleteFile = FALSE)
   
-  output$final_preview <- renderPlot({
-    req(values$current_plot)
-    tryCatch({
-      values$current_plot
-    }, error = function(e) {
-      # v53: cat(file=stderr(), "Error rendering final preview:", e$message, "\n")
-      plot(c(0,1), c(0,1), type="n", xlab="", ylab="", 
-           main="Preview Error", axes=FALSE)
-      text(0.5, 0.5, "Failed to render plot.\nCheck console for details.", cex=1.2)
-    })
-  }, height = 600)
+  # v125: Final preview - using renderImage like other tabs for consistent aspect ratio
+  output$final_preview <- renderImage({
+    # Force reactive update by depending on plot_counter
+    req(values$temp_plot_file, values$plot_counter)
+
+    list(
+      src = values$temp_plot_file,
+      contentType = "image/png",
+      width = "100%",
+      alt = "Final preview"
+    )
+  }, deleteFile = FALSE)
 
   # v124: Legend preview - using renderImage like other tabs for consistent aspect ratio
   output$legend_preview <- renderImage({

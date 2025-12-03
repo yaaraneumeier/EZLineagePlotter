@@ -5,7 +5,16 @@
 This document contains the step-by-step plan for rebuilding the heatmap functionality in EZLineagePlotter.
 The complex heatmap code (~800 lines) has been disabled in v91 and replaced with a simple proof-of-concept.
 
-**Current Status**: v124 - **Phase 5 COMPLETE!** Multiple heatmaps now work correctly after fixing the scale conflict issue (`new_scale_fill()` must be called BEFORE geom_tile, not after). Also fixed: guide lines now extend INTO the tree (negative x) to visually connect with tips, guide line width slider expanded to 10.0 max, auto-detection harmonized between UI and apply sections, Legend tab preview now uses renderImage like other tabs (fixes distortion).
+**Current Status**: v125 - Bug fixes release:
+- Guide lines now start from actual tree tip x positions (each tip's position, not a single offset)
+- Unique values error now filters to patient-specific data (tree tips only)
+- Gap Between Heatmaps slider now works (passes value through to plotting function)
+- Bootstrap legend now displays when enabled (uses mapped aesthetic with scale_size_manual)
+- Download tab preview uses renderImage like other tabs
+- Default paper size set to A4 landscape (29.7cm × 21cm)
+- Legend layout improved for top/bottom positions (horizontal box, vertical direction)
+- Removed duplicate Legend Font Size slider from Heatmap tab (Legend tab has this)
+- Added debug output for auto-detection in console
 
 ## Why We Simplified
 
