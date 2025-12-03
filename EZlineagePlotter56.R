@@ -6804,14 +6804,13 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v133 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v134 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("NEW: Separate controls for Highlight Legend (position, sizes, gaps)"),
-                              tags$li("NEW: Separate controls for Bootstrap Legend (position, sizes, gaps)"),
-                              tags$li("NEW: Control X/Y offset, title size, text size for each legend"),
-                              tags$li("NEW: Collapsible settings panels in Legend tab for cleaner UI")
+                              tags$li("FIX: Downloaded files now match the final preview exactly"),
+                              tags$li("FIX: Heatmaps, highlights, and all layers are included in downloads"),
+                              tags$li("Download uses ggsave with the actual generated plot instead of basic tree")
                             )
                      )
             )
@@ -14399,7 +14398,7 @@ server <- function(input, output, session) {
     }
   )
   
-  # Download plot
+  # Download plot - v134: Use the actual generated plot (with heatmaps) instead of basic tree
   output$download_plot <- downloadHandler(
     filename = function() {
       if (input$replace_name) {
@@ -14409,17 +14408,66 @@ server <- function(input, output, session) {
       }
     },
     content = function(file) {
-      # Here we would generate the plot and save it to the file
-      # For now, just create a simple plot
-      if (input$output_format %in% c("pdf", "svg")) {
-        pdf(file, width = input$output_width/2.54, height = input$output_height/2.54)
+      # v134: Use the actual generated plot stored in values$current_plot
+      # This includes all layers: tree, heatmaps, highlights, bootstrap, etc.
+
+      # Check if we have a valid generated plot
+      if (!is.null(values$current_plot)) {
+        # Use ggsave for ggplot objects - handles all formats correctly
+
+        # Determine width/height - convert to inches based on units
+        width_val <- input$output_width
+        height_val <- input$output_height
+
+        # Convert to inches if needed (ggsave needs consistent units)
+        if (input$output_units == "cm") {
+          width_in <- width_val / 2.54
+          height_in <- height_val / 2.54
+        } else if (input$output_units == "mm") {
+          width_in <- width_val / 25.4
+          height_in <- height_val / 25.4
+        } else {
+          width_in <- width_val
+          height_in <- height_val
+        }
+
+        # Set DPI based on format
+        dpi_val <- if (input$output_format %in% c("pdf", "svg")) 300 else 300
+
+        tryCatch({
+          suppressWarnings(ggsave(
+            filename = file,
+            plot = values$current_plot,
+            width = width_in,
+            height = height_in,
+            units = "in",
+            dpi = dpi_val,
+            device = input$output_format,
+            limitsize = FALSE
+          ))
+          cat(file=stderr(), paste0("v134: Download saved successfully: ", file, "\n"))
+        }, error = function(e) {
+          cat(file=stderr(), paste0("v134: Error saving download: ", e$message, "\n"))
+          # Fallback to basic plot if ggsave fails
+          if (input$output_format %in% c("pdf", "svg")) {
+            pdf(file, width = width_in, height = height_in)
+          } else {
+            png(file, width = width_val, height = height_val, units = input$output_units, res = 300)
+          }
+          plot(values$tree, main = "Tree Visualization")
+          dev.off()
+        })
       } else {
-        png(file, width = input$output_width, height = input$output_height, units = input$output_units, res = 300)
+        # Fallback if no generated plot available
+        cat(file=stderr(), "v134: No current_plot available, using basic tree plot\n")
+        if (input$output_format %in% c("pdf", "svg")) {
+          pdf(file, width = input$output_width/2.54, height = input$output_height/2.54)
+        } else {
+          png(file, width = input$output_width, height = input$output_height, units = input$output_units, res = 300)
+        }
+        plot(values$tree, main = "Tree Visualization")
+        dev.off()
       }
-      
-      plot(values$tree, main = "Tree Visualization")
-      
-      dev.off()
     }
   )
   
