@@ -3909,7 +3909,8 @@ func.print.lineage.tree <- function(conf_yaml_path,
         flag_make_newick_file=flag_make_newick_file,
         bootstrap_label_size =bootstrap_label_size,
         heatmap_tree_distance = heatmap_tree_distance,
-        heatmap_global_gap = heatmap_global_gap  # v125: Gap between multiple heatmaps
+        heatmap_global_gap = heatmap_global_gap,  # v125: Gap between multiple heatmaps
+        legend_settings = values$legend_settings  # v136: Pass legend settings for highlight/bootstrap legends
       )
       # }
 
@@ -4064,7 +4065,8 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
                                          flag_make_newick_file=FALSE,
                                          bootstrap_label_size = 1.5,  # v129: Reduced from 3.5 for smaller default legend
                                          heatmap_tree_distance = 0.02,
-                                         heatmap_global_gap = 0.05) {  # v125: Gap between multiple heatmaps
+                                         heatmap_global_gap = 0.05,  # v125: Gap between multiple heatmaps
+                                         legend_settings = NULL) {  # v136: Legend settings for highlight/bootstrap legends
 
   # === DEBUG CHECKPOINT 4: INNER FUNCTION ENTRY ===
   # v53: cat(file=stderr(), "\nÃ°Å¸â€Â DEBUG CHECKPOINT 4: func.make.plot.tree.heat.NEW ENTRY\n")
@@ -6806,11 +6808,11 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v135 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v136 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("FIX: Heatmap 'object values not found' error - legend_settings now passed correctly to plot function")
+                              tags$li("FIX: Heatmap 'object legend_settings not found' error - added missing legend_settings parameter to func.make.plot.tree.heat.NEW function signature and call site")
                             )
                      )
             )
