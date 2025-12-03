@@ -1546,7 +1546,9 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
                                     highlight_title_size = NULL, highlight_text_size = NULL,
                                     highlight_title_gap = 1, highlight_label_gap = 0.5,
                                     # v133: New bootstrap legend settings
+                                    # v143: Added bootstrap_title_x_offset for moving title to the right
                                     bootstrap_x_offset = 0, bootstrap_y_offset = 0,
+                                    bootstrap_title_x_offset = 2,  # v143: Extra offset for title (moves it right)
                                     bootstrap_title_size_mult = NULL, bootstrap_text_size_mult = NULL,
                                     bootstrap_title_gap = 2, bootstrap_label_gap = 2,
                                     # v138: Show/hide legend controls
@@ -1675,10 +1677,11 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
       boot_triangles_y <- boot_y_base + 6 - bootstrap_title_gap  # Triangles below title
       boot_labels_y <- boot_y_base + 6 - bootstrap_title_gap - bootstrap_label_gap  # Labels below triangles
 
+      # v143: bootstrap_title_x_offset moves the title further to the right
       p <- p + annotate(
         geom = "text",
         label = "Bootstrap", size = boot_title_size,
-        x = boot_x_base + 2 * extra,
+        x = boot_x_base + 2 * extra + bootstrap_title_x_offset,
         y = boot_title_y, hjust = 0, vjust = 0,
         fontface = "bold"
       ) + annotate(
@@ -6455,6 +6458,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     highlight_label_g <- if (!is.null(legend_settings_local$highlight_label_gap)) legend_settings_local$highlight_label_gap else 0.5
     bootstrap_x_off <- if (!is.null(legend_settings_local$bootstrap_x_offset)) legend_settings_local$bootstrap_x_offset else 0
     bootstrap_y_off <- if (!is.null(legend_settings_local$bootstrap_y_offset)) legend_settings_local$bootstrap_y_offset else 0
+    bootstrap_title_x_off <- if (!is.null(legend_settings_local$bootstrap_title_x_offset)) legend_settings_local$bootstrap_title_x_offset else 2  # v143
     bootstrap_title_sz <- legend_settings_local$bootstrap_title_size  # NULL is ok, will use default
     bootstrap_text_sz <- legend_settings_local$bootstrap_text_size    # NULL is ok, will use default
     bootstrap_title_g <- if (!is.null(legend_settings_local$bootstrap_title_gap)) legend_settings_local$bootstrap_title_gap else 2
@@ -6511,6 +6515,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
         highlight_label_gap = highlight_label_g,
         bootstrap_x_offset = bootstrap_x_off,
         bootstrap_y_offset = bootstrap_y_off,
+        bootstrap_title_x_offset = bootstrap_title_x_off,  # v143
         bootstrap_title_size_mult = bootstrap_title_sz,
         bootstrap_text_size_mult = bootstrap_text_sz,
         bootstrap_title_gap = bootstrap_title_g,
@@ -6838,16 +6843,15 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v142 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v143 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("Extra tab: Plot position controls now have larger range and more noticeable effect"),
-                              tags$li("Extra tab: Text overlay is now a true overlay (doesn't push/move the plot)"),
-                              tags$li("Download tab: Added Ready/Processing indicator next to preview title"),
-                              tags$li("Download tab: Page orientation now properly updates preview aspect ratio"),
-                              tags$li("Legend tab: Reduced default highlight legend title size (was too big)"),
-                              tags$li("Legend tab: Improved default positioning for highlight/bootstrap legends (below main legend)")
+                              tags$li("Extra tab: Vertical position range greatly expanded (now -10 to +5)"),
+                              tags$li("Extra tab: Text overlay is now a TRUE overlay using grid::textGrob (doesn't move the figure at all)"),
+                              tags$li("Download tab: Page orientation change now properly regenerates preview with correct proportions"),
+                              tags$li("Legend tab: Highlight legend title size default reduced further (0.5)"),
+                              tags$li("Legend tab: Added Bootstrap Title X Offset control to move title to the right")
                             )
                      )
             )
@@ -7438,7 +7442,7 @@ ui <- dashboardPage(
               fluidRow(
                 column(6,
                   sliderInput("highlight_legend_title_size", "Title Size",
-                              min = 0.5, max = 10, value = 1, step = 0.1)  # v142: smaller default (was 2)
+                              min = 0.3, max = 10, value = 0.5, step = 0.1)  # v143: even smaller default (was 1)
                 ),
                 column(6,
                   sliderInput("highlight_legend_text_size", "Label Text Size",
@@ -7491,9 +7495,16 @@ ui <- dashboardPage(
               ),
               fluidRow(
                 column(6,
+                  # v143: New control to move bootstrap title further right
+                  sliderInput("bootstrap_legend_title_x_offset", "Title X Offset (Left/Right)",
+                              min = -5, max = 10, value = 2, step = 0.5)
+                ),
+                column(6,
                   sliderInput("bootstrap_legend_title_gap", "Gap: Title to Triangles",
                               min = -5, max = 10, value = 2, step = 0.25)  # v133: smaller default gap
-                ),
+                )
+              ),
+              fluidRow(
                 column(6,
                   sliderInput("bootstrap_legend_label_gap", "Gap: Labels to Triangles",
                               min = -5, max = 10, value = 2, step = 0.25)
@@ -7575,12 +7586,12 @@ ui <- dashboardPage(
             fluidRow(
               column(6,
                 sliderInput("plot_offset_x", "Horizontal Position:",
-                           min = -2, max = 2, value = 0, step = 0.05,
+                           min = -5, max = 5, value = 0, step = 0.1,
                            post = " (left/right)")
               ),
               column(6,
                 sliderInput("plot_offset_y", "Vertical Position:",
-                           min = -2, max = 2, value = 0, step = 0.05,
+                           min = -10, max = 5, value = 0, step = 0.1,
                            post = " (down/up)")
               )
             ),
@@ -12850,8 +12861,10 @@ server <- function(input, output, session) {
       highlight_title_gap = input$highlight_legend_title_gap,
       highlight_label_gap = input$highlight_legend_label_gap,
       # v133: Bootstrap legend settings
+      # v143: Added bootstrap_title_x_offset for moving title to the right
       bootstrap_x_offset = input$bootstrap_legend_x_offset,
       bootstrap_y_offset = input$bootstrap_legend_y_offset,
+      bootstrap_title_x_offset = input$bootstrap_legend_title_x_offset,  # v143
       bootstrap_title_size = input$bootstrap_legend_title_size,
       bootstrap_text_size = input$bootstrap_legend_text_size,
       bootstrap_title_gap = input$bootstrap_legend_title_gap,
@@ -12917,10 +12930,13 @@ server <- function(input, output, session) {
     }
     cat(file=stderr(), "=== END PAGE ORIENTATION ===\n")
 
-    # v141: Regenerate plot to show the orientation change visually
+    # v143: Regenerate plot after a small delay to ensure new dimensions are available
+    # updateNumericInput doesn't update input$ values immediately - they need a flush cycle
     if (!is.null(values$tree_data)) {
-      generate_plot()
-      cat(file=stderr(), "  v141: Plot regenerated for orientation preview\n")
+      shinyjs::delay(100, {
+        generate_plot()
+        cat(file=stderr(), "  v143: Plot regenerated for orientation preview (after delay)\n")
+      })
     }
   }, ignoreInit = TRUE)
 
@@ -13987,49 +14003,53 @@ server <- function(input, output, session) {
           cat(file=stderr(), paste0("  Page title NOT applied (condition not met)\n"))
         }
 
-        # v142: Apply custom text annotations as TRUE overlays
-        # These don't expand plot limits - they overlay on top without moving the plot
+        # v143: Apply custom text annotations as TRUE overlays using annotation_custom
+        # annotation_custom with grid::textGrob is a true overlay that never affects plot limits
+        # Unlike annotate() + coord_cartesian which can override ggtree's coordinate system
         custom_texts <- values$custom_texts
         if (!is.null(custom_texts) && length(custom_texts) > 0) {
-          cat(file=stderr(), paste0("\n=== v142: Applying ", length(custom_texts), " custom text(s) as OVERLAY ===\n"))
-
-          # Get plot ranges BEFORE adding text - these will be preserved
-          plot_build <- ggplot_build(result)
-          x_range <- plot_build$layout$panel_params[[1]]$x.range
-          y_range <- plot_build$layout$panel_params[[1]]$y.range
-
-          cat(file=stderr(), paste0("  Original plot limits: x=[", round(x_range[1], 2), ", ", round(x_range[2], 2),
-                                    "], y=[", round(y_range[1], 2), ", ", round(y_range[2], 2), "]\n"))
+          cat(file=stderr(), paste0("\n=== v143: Applying ", length(custom_texts), " custom text(s) as TRUE OVERLAY ===\n"))
+          cat(file=stderr(), paste0("  Using annotation_custom with grid::textGrob (never affects plot limits)\n"))
 
           for (i in seq_along(custom_texts)) {
             txt <- custom_texts[[i]]
-            # Convert normalized (0-1) to data coordinates
-            x_pos <- x_range[1] + txt$x * (x_range[2] - x_range[1])
-            y_pos <- y_range[1] + txt$y * (y_range[2] - y_range[1])
 
-            cat(file=stderr(), paste0("  Text ", i, ": \"", substr(txt$content, 1, 20), "...\" at (",
-                                       round(x_pos, 2), ", ", round(y_pos, 2), ")\n"))
+            cat(file=stderr(), paste0("  Text ", i, ": \"", substr(txt$content, 1, 20), "...\" at normalized (",
+                                       round(txt$x, 2), ", ", round(txt$y, 2), ")\n"))
 
-            result <- result + annotate(
-              geom = "text",
-              x = x_pos,
-              y = y_pos,
+            # Create a text grob with proper formatting
+            fontface_val <- switch(txt$fontface,
+              "plain" = 1,
+              "bold" = 2,
+              "italic" = 3,
+              "bold.italic" = 4,
+              1  # default to plain
+            )
+
+            text_grob <- grid::textGrob(
               label = txt$content,
-              size = txt$size / 2.845,  # Convert pt to mm for ggplot
-              colour = txt$color,
-              fontface = txt$fontface,
+              x = grid::unit(txt$x, "npc"),
+              y = grid::unit(txt$y, "npc"),
+              gp = grid::gpar(
+                fontsize = txt$size,
+                col = txt$color,
+                fontface = fontface_val
+              ),
               hjust = txt$hjust,
               vjust = txt$vjust,
-              angle = txt$angle
+              rot = txt$angle
+            )
+
+            # annotation_custom with -Inf/Inf places in normalized page coordinates
+            # The grob's own x/y units (npc) handle the actual positioning
+            result <- result + annotation_custom(
+              grob = text_grob,
+              xmin = -Inf, xmax = Inf,
+              ymin = -Inf, ymax = Inf
             )
           }
 
-          # v142: CRITICAL - Lock the coordinate limits to prevent text from expanding the plot
-          # This makes the text a true overlay that doesn't push the plot content around
-          result <- result + coord_cartesian(xlim = x_range, ylim = y_range, clip = "off")
-
-          cat(file=stderr(), paste0("  v142: Coordinate limits locked - text is now a true overlay\n"))
-          cat(file=stderr(), paste0("  Custom texts applied successfully\n"))
+          cat(file=stderr(), paste0("  v143: Text overlays applied - plot coordinates unchanged\n"))
         }
 
         # Apply custom images
