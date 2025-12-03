@@ -6425,33 +6425,28 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   if (bootstrap_triangles_enabled && !is.null(bootstrap_triangles_params)) {
     cat(file=stderr(), paste0("\n=== v90: Adding bootstrap triangles after heatmap ===\n"))
     tryCatch({
-      # v125: Create bootstrap category for legend display
-      # Add a bootstrap_category column to enable legend
-      p$data$bootstrap_category <- NA_character_
-      p$data$bootstrap_category[!is.na(p$data$boot_val) & p$data$boot_val >= 0.9] <- "≥90%"
-      p$data$bootstrap_category[!is.na(p$data$boot_val) & p$data$boot_val >= 0.8 & p$data$boot_val < 0.9] <- "80-89%"
-      p$data$bootstrap_category[!is.na(p$data$boot_val) & p$data$boot_val >= 0.7 & p$data$boot_val < 0.8] <- "70-79%"
-      p$data$bootstrap_category <- factor(p$data$bootstrap_category, levels = c("≥90%", "80-89%", "70-79%"))
-
-      # v125: Map size to bootstrap category for legend
-      boot_sizes <- c("≥90%" = bootstrap_triangles_params$size_90,
-                      "80-89%" = bootstrap_triangles_params$size_80,
-                      "70-79%" = bootstrap_triangles_params$size_70)
-
+      # v126: Reverted to v124 approach - separate geom_nodepoint for each bootstrap level
+      # Using scale_size_manual with mapped size was conflicting with tree edge width scale
       p <- p +
         geom_nodepoint(
           position = position_nudge(x = bootstrap_triangles_params$man_boot_x_offset, y = 0),
-          aes(subset = !is.na(bootstrap_category), size = bootstrap_category),
-          shape = 24, fill = "grey36", colour = "grey20",
-          show.legend = TRUE, alpha = 1/2
+          aes(subset = boot_val >= 0.9),
+          size = bootstrap_triangles_params$size_90, shape = 24, fill = "grey36", colour = "grey20",
+          show.legend = FALSE, alpha = 1/2
         ) +
-        scale_size_manual(
-          name = "Bootstrap",
-          values = boot_sizes,
-          na.translate = FALSE,
-          guide = guide_legend(override.aes = list(shape = 24, fill = "grey36", colour = "grey20", alpha = 0.5))
+        geom_nodepoint(
+          position = position_nudge(x = bootstrap_triangles_params$man_boot_x_offset, y = 0),
+          aes(subset = boot_val >= 0.8 & boot_val < 0.9),
+          size = bootstrap_triangles_params$size_80, shape = 24, fill = "grey36", colour = "grey20",
+          show.legend = FALSE, alpha = 1/2
+        ) +
+        geom_nodepoint(
+          position = position_nudge(x = bootstrap_triangles_params$man_boot_x_offset, y = 0),
+          aes(subset = boot_val >= 0.7 & boot_val < 0.8),
+          size = bootstrap_triangles_params$size_70, shape = 24, fill = "grey36", colour = "grey20",
+          show.legend = FALSE, alpha = 1/2
         )
-      cat(file=stderr(), paste0("  v125: Bootstrap triangles with legend added successfully\n"))
+      cat(file=stderr(), paste0("  Bootstrap triangles added successfully\n"))
     }, error = function(e) {
       cat(file=stderr(), paste0("  v96 ERROR adding bootstrap triangles: ", e$message, "\n"))
       cat(file=stderr(), paste0("  Continuing without bootstrap triangles\n"))
@@ -6714,19 +6709,11 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v125 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v126 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("FIX: Guide lines now connect to actual tree tips (not offset)"),
-                              tags$li("FIX: Unique values error now uses patient-specific data only"),
-                              tags$li("FIX: Gap Between Heatmaps slider now works"),
-                              tags$li("FIX: Bootstrap legend now shows when enabled"),
-                              tags$li("FIX: Download tab preview matches other tab previews"),
-                              tags$li("FIX: Default paper size set to A4 landscape"),
-                              tags$li("FIX: Legend layout improved for top/bottom positions"),
-                              tags$li("REMOVED: Duplicate Legend Font Size slider from Heatmap tab"),
-                              tags$li("ADDED: Auto-detection debug output in console")
+                              tags$li("FIX: Tree plot now renders correctly (reverted bootstrap legend change that broke scale_size_manual)")
                             )
                      )
             )
