@@ -1395,11 +1395,18 @@ func.make.leaves_id_ordered_for_df440 <- function(leaves_id_from_tree1, dxdf440_
 
 
 # Function to handle highlighting
+# v139: Added high_alpha_list parameter for transparency control
 func_highlight <- function(p, how_many_hi, heat_flag, high_color_list, a, b, man_adjust_elipse, pr440_short_tips_TRY,
-                           boudariestt, debug_mode = FALSE, high_offset = 0, high_vertical_offset = 0) {
+                           boudariestt, debug_mode = FALSE, high_offset = 0, high_vertical_offset = 0,
+                           high_alpha_list = NULL) {
   up_offset <- -1 # -3
   y_off_base <- -8
-  
+
+  # v139: Default alpha list if not provided
+  if (is.null(high_alpha_list)) {
+    high_alpha_list <- rep(0.5, how_many_hi)
+  }
+
   # Debug output for Bug #11
   # v53: cat(file=stderr(), "🔵 func_highlight ENTRY:\n")
   # v53: cat(file=stderr(), paste0("🔵   how_many_hi: ", how_many_hi, "\n"))
@@ -1446,35 +1453,42 @@ func_highlight <- function(p, how_many_hi, heat_flag, high_color_list, a, b, man
       # v53: cat(file=stderr(), paste0("🔵 Ellipse positioning: man_adjust_elipse=", man_adjust_elipse, 
       #                            " (inverted), max_x=", max(pr440_short_tips_TRY$data[,'x']), "\n"))
       
+      # v139: Use high_alpha_list for transparency instead of hardcoded 0.5
+      alpha_val <- if (length(high_alpha_list) >= 1 && !is.null(high_alpha_list[[1]])) high_alpha_list[[1]] else 0.5
+
       if (heat_flag == FALSE) {
         p <- p +
           geom_ellipse(data = high_nodes_table1,
                        aes(x0 = ((max(pr440_short_tips_TRY$data[,'x']) - x) * (-1) - man_adjust_elipse),
                            y0 = y + high_vertical_offset, a = a, b = b, angle = 0),
-                       fill = high_color_list[[1]], alpha = 0.5, linetype = "blank", show.legend = FALSE)
+                       fill = high_color_list[[1]], alpha = alpha_val, linetype = "blank", show.legend = FALSE)
       } else {
         p <- p +
           geom_ellipse(data = high_nodes_table1,
                        aes(x0 = ((max(p$data[,'x']) - x) * (-15.4) - man_adjust_elipse - boudariestt$xmax - boudariestt$xmin),
                            y0 = y + high_vertical_offset, a = a, b = b, angle = 0),
-                       fill = high_color_list[[1]], alpha = 0.5, linetype = "blank", show.legend = FALSE)
+                       fill = high_color_list[[1]], alpha = alpha_val, linetype = "blank", show.legend = FALSE)
       }
     } else if (index_high == 2) {
       high_nodes_table2 <- p$data[p$data$high2 == TRUE,]
-      
+      # v139: Use high_alpha_list for transparency
+      alpha_val2 <- if (length(high_alpha_list) >= 2 && !is.null(high_alpha_list[[2]])) high_alpha_list[[2]] else 0.5
+
       p <- p +
         geom_ellipse(data = high_nodes_table2,
-                     aes(x0 = ((max(p$data[,'x']) - x) * (x_range_min)), 
+                     aes(x0 = ((max(p$data[,'x']) - x) * (x_range_min)),
                          y0 = y, a = a, b = b, angle = 0),
-                     fill = high_color_list[[2]], alpha = 0.5, linetype = "blank", show.legend = FALSE)
+                     fill = high_color_list[[2]], alpha = alpha_val2, linetype = "blank", show.legend = FALSE)
     } else if (index_high == 3) {
       high_nodes_table3 <- p$data[tree_TRY$data$high3 == TRUE,]
-      
+      # v139: Use high_alpha_list for transparency
+      alpha_val3 <- if (length(high_alpha_list) >= 3 && !is.null(high_alpha_list[[3]])) high_alpha_list[[3]] else 0.5
+
       p <- p +
         geom_ellipse(data = high_nodes_table3,
-                     aes(x0 = ((max(pr440_short_tips_TRY$data[,'x']) - x) * (x_range_min)), 
+                     aes(x0 = ((max(pr440_short_tips_TRY$data[,'x']) - x) * (x_range_min)),
                          y0 = y, a = a, b = b, angle = 0),
-                     fill = high_color_list[[3]], alpha = 0.5, linetype = "blank", show.legend = FALSE)
+                     fill = high_color_list[[3]], alpha = alpha_val3, linetype = "blank", show.legend = FALSE)
     }
   }
   
@@ -1783,7 +1797,15 @@ func.make.highlight.params.NEW <- function(yaml_file, title.id, ids_list, tree44
   for (in_hi in indexes_hi) {
     high_color_list[[in_hi]] <- hi_def$according[[in_hi]][[as.character(in_hi)]]$color
   }
-  
+
+  # v139: Extract transparency (alpha) for each highlight
+  high_alpha_list <- c()
+  for (in_hi in indexes_hi) {
+    alpha_val <- hi_def$according[[in_hi]][[as.character(in_hi)]]$transparency
+    # Default to 0.5 if transparency not specified
+    high_alpha_list[[in_hi]] <- if (!is.null(alpha_val)) alpha_val else 0.5
+  }
+
   high_title_list <- c()
   for (in_hi in indexes_hi) {
     high_title_list[[in_hi]] <- hi_def$according[[in_hi]][[as.character(in_hi)]]$display_title
@@ -1920,13 +1942,14 @@ func.make.highlight.params.NEW <- function(yaml_file, title.id, ids_list, tree44
   highlight.params.NEW$how_many_hi <- how_many_hi
   highlight.params.NEW$high_label_list <- high_label_list
   highlight.params.NEW$high_color_list <- high_color_list
+  highlight.params.NEW$high_alpha_list <- high_alpha_list  # v139: Add alpha list
   highlight.params.NEW$high_title_list <- high_title_list
   highlight.params.NEW$lists_list_hi <- lists_list_hi
   highlight.params.NEW$offset_hi <- offset_hi
   highlight.params.NEW$vertical_offset_hi <- vertical_offset_hi
   highlight.params.NEW$adjust_height_ecliplse <- adjust_height_ecliplse
   highlight.params.NEW$adjust_width_eclipse <- adjust_width_eclipse
-  
+
   return(highlight.params.NEW)
 }
 
@@ -3459,6 +3482,7 @@ func.print.lineage.tree <- function(conf_yaml_path,
           how_many_hi <- highlight.params.NEW$how_many_hi
           high_label_list<- highlight.params.NEW$high_label_list
           high_color_list<- highlight.params.NEW$high_color_list
+          high_alpha_list<- highlight.params.NEW$high_alpha_list  # v139: Extract alpha list
           high_title_list<- highlight.params.NEW$high_title_list
           lists_list_hi<- highlight.params.NEW$lists_list_hi
           high_offset<- highlight.params.NEW$offset_hi
@@ -4808,12 +4832,14 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       b <- base_b * adjust_width_eclipse
     }   
     
+    # v139: Pass high_alpha_list for transparency
     p <- func_highlight(
       p, how_many_hi, heat_flag, high_color_list, a, b, man_adjust_elipse,
-      pr440_short_tips_TRY, boudariestt, debug_mode, high_offset, high_vertical_offset
+      pr440_short_tips_TRY, boudariestt, debug_mode, high_offset, high_vertical_offset,
+      high_alpha_list
     )
   }
-  
+
   if (length(b) == 0) {
     b <- 0.2
   }
@@ -6368,10 +6394,12 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     cat(file=stderr(), paste0("  v132: boudariestt initialized (2nd block): xmin=", boudariestt$xmin, ", xmax=", boudariestt$xmax, "\n"))
   }
 
-  # Apply highlighting again after heatmap if needed
-  if (FLAG_BULK_DISPLAY == TRUE) {
+  # v139: Apply highlighting ONLY after heatmap (when heat_flag == TRUE)
+  # The heatmap changes the coordinate system, so highlights need to be recalculated
+  # When there's no heatmap, the first func_highlight call (line ~4835) is sufficient
+  if (FLAG_BULK_DISPLAY == TRUE && heat_flag == TRUE) {
     x_adj_hi <- 0
-    
+
     # Calculate tip length for ellipse sizing
     # If trimming is disabled (id_tip_trim_end is NA), use the max tip label length
     tip_length <- if (is.na(id_tip_trim_end)) {
@@ -6379,24 +6407,18 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     } else {
       id_tip_trim_end
     }
-    
-    if (heat_flag == FALSE) {
-      # v50: Use multiplicative scaling for height and width sliders
-      base_a <- tip_length * size_tip_text / 800 + man_adjust_elipse_a
-      base_b <- 0.12 + man_adjust_elipse_b
-      a <- base_a * adjust_height_ecliplse  # Slider value is now a multiplier (1.0 = no change)
-      b <- base_b * adjust_width_eclipse    # Slider value is now a multiplier
-    } else {
-      # v50: Use multiplicative scaling for height and width sliders  
-      base_a <- tip_length * size_tip_text / (5.1 * boudariestt$xmax) + man_adjust_elipse_a
-      base_b <- 0.12 + man_adjust_elipse_b
-      a <- base_a * adjust_height_ecliplse
-      b <- base_b * adjust_width_eclipse
-    }   
-    
+
+    # v50: Use multiplicative scaling for height and width sliders
+    base_a <- tip_length * size_tip_text / (5.1 * boudariestt$xmax) + man_adjust_elipse_a
+    base_b <- 0.12 + man_adjust_elipse_b
+    a <- base_a * adjust_height_ecliplse
+    b <- base_b * adjust_width_eclipse
+
+    # v139: Pass high_alpha_list for transparency
     p <- func_highlight(
-      p, how_many_hi, heat_flag, high_color_list, a, b, man_adjust_elipse, 
-      pr440_short_tips_TRY, boudariestt, debug_mode, high_offset, high_vertical_offset
+      p, how_many_hi, heat_flag, high_color_list, a, b, man_adjust_elipse,
+      pr440_short_tips_TRY, boudariestt, debug_mode, high_offset, high_vertical_offset,
+      high_alpha_list
     )
   }
   
@@ -6819,13 +6841,14 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v138 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v139 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("Download tab: Added landscape/portrait page orientation option"),
-                              tags$li("Legend tab: Wired highlight and bootstrap legend show/hide checkboxes to actually control legend visibility"),
-                              tags$li("Legend tab: Changed default X offset for highlight and bootstrap legends to -2 to keep them within image boundaries")
+                              tags$li("Highlight tab: Fixed transparency slider to actually control ellipse transparency"),
+                              tags$li("Download tab: Fixed page orientation dropdown with better debug logging"),
+                              tags$li("Extra tab: Added processing indicator when applying settings"),
+                              tags$li("Fixed doubled highlight ellipses after adding heatmap (second highlight only applies when heatmap is present)")
                             )
                      )
             )
@@ -9178,6 +9201,7 @@ server <- function(input, output, session) {
               value1 = item$value,
               display_name = item$display_name,
               color = item$color,
+              transparency = if (!is.null(item$transparency)) item$transparency else 0.5,  # v139: Add transparency
               display_title = highlight_to_apply$title
             )
             highlight_yaml$according <- c(highlight_yaml$according, list(acc_item))
@@ -9370,6 +9394,7 @@ server <- function(input, output, session) {
             value1 = item$value,
             display_name = item$display_name,
             color = item$color,
+            transparency = if (!is.null(item$transparency)) item$transparency else 0.5,  # v139: Add transparency
             display_title = highlight_to_apply$title
           )
           highlight_yaml$according <- c(highlight_yaml$according, list(acc_item))
@@ -12781,25 +12806,40 @@ server <- function(input, output, session) {
   # END v121: LEGEND SETTINGS SYSTEM
   # ============================================
 
-  # v138: Observer to swap width/height when page orientation changes
+  # v139: Observer to swap width/height when page orientation changes
+  # Changed to always swap dimensions when orientation changes (not just when they don't match)
   observeEvent(input$page_orientation, {
-    if (input$page_orientation == "landscape") {
-      # Landscape: width > height
-      current_width <- isolate(input$output_width)
-      current_height <- isolate(input$output_height)
-      if (!is.null(current_width) && !is.null(current_height) && current_width < current_height) {
-        updateNumericInput(session, "output_width", value = current_height)
-        updateNumericInput(session, "output_height", value = current_width)
+    current_width <- isolate(input$output_width)
+    current_height <- isolate(input$output_height)
+
+    cat(file=stderr(), paste0("\n=== v139: PAGE ORIENTATION CHANGED ===\n"))
+    cat(file=stderr(), paste0("  Orientation: ", input$page_orientation, "\n"))
+    cat(file=stderr(), paste0("  Current width: ", current_width, ", height: ", current_height, "\n"))
+
+    if (!is.null(current_width) && !is.null(current_height)) {
+      if (input$page_orientation == "landscape") {
+        # Landscape: width should be > height
+        if (current_width < current_height) {
+          cat(file=stderr(), paste0("  Swapping to landscape: width=", current_height, ", height=", current_width, "\n"))
+          updateNumericInput(session, "output_width", value = current_height)
+          updateNumericInput(session, "output_height", value = current_width)
+        } else {
+          cat(file=stderr(), "  Already in landscape orientation (width >= height)\n")
+        }
+      } else {
+        # Portrait: height should be > width
+        if (current_width > current_height) {
+          cat(file=stderr(), paste0("  Swapping to portrait: width=", current_height, ", height=", current_width, "\n"))
+          updateNumericInput(session, "output_width", value = current_height)
+          updateNumericInput(session, "output_height", value = current_width)
+        } else {
+          cat(file=stderr(), "  Already in portrait orientation (height >= width)\n")
+        }
       }
     } else {
-      # Portrait: height > width
-      current_width <- isolate(input$output_width)
-      current_height <- isolate(input$output_height)
-      if (!is.null(current_width) && !is.null(current_height) && current_width > current_height) {
-        updateNumericInput(session, "output_width", value = current_height)
-        updateNumericInput(session, "output_height", value = current_width)
-      }
+      cat(file=stderr(), "  WARNING: width or height is NULL, cannot swap\n")
     }
+    cat(file=stderr(), "=== END PAGE ORIENTATION ===\n")
   }, ignoreInit = TRUE)
 
   # Update Preview (without saving)
@@ -14310,9 +14350,24 @@ server <- function(input, output, session) {
   })
 
   # v130: Apply Extra settings to plot
+  # v139: Added processing indicator
   observeEvent(input$extra_apply, {
     req(values$plot_ready)
-    generate_plot()
+
+    # Show processing indicator
+    shinyjs::hide("extra_status_waiting")
+    shinyjs::show("extra_status_processing")
+    shinyjs::hide("extra_status_ready")
+
+    # Use a slight delay to ensure UI updates before plot generation
+    shinyjs::delay(50, {
+      generate_plot()
+
+      # Show ready indicator after plot generation
+      shinyjs::hide("extra_status_waiting")
+      shinyjs::hide("extra_status_processing")
+      shinyjs::show("extra_status_ready")
+    })
   })
 
   # Update YAML output
