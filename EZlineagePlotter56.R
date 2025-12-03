@@ -6696,14 +6696,12 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v123 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v124 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("FIX: Multiple heatmaps now work correctly - fixed scale conflict"),
-                              tags$li("FIX: Guide lines extend into tree to visually connect with tips"),
-                              tags$li("FIX: Guide line width slider expanded to 10.0 max"),
-                              tags$li("FIX: Auto-detection more lenient for numeric columns (>=5 unique values = continuous)")
+                              tags$li("FIX: Auto-detection harmonized between UI and apply sections"),
+                              tags$li("FIX: Legend tab preview now uses same rendering as other tabs (no distortion)")
                             )
                      )
             )
@@ -7284,14 +7282,14 @@ ui <- dashboardPage(
             )
           ),
 
-          # v122: Plot preview on right (8 columns)
+          # v124: Plot preview on right (8 columns) - using imageOutput like other tabs
           column(8,
             box(
               title = "Legend Preview",
               status = "primary",
               solidHeader = TRUE,
               width = 12,
-              plotOutput("legend_preview", height = "700px")
+              imageOutput("legend_preview", height = "auto")
             )
           )
         )
@@ -10569,12 +10567,30 @@ server <- function(input, output, session) {
               }
             }
 
-            # v110/v119: Better detection for numeric columns
+            # v124: Harmonized detection with apply_heatmaps section
+            # Logic: decimals = continuous, otherwise check unique values and range
             if (is_numeric && length(non_na_vals) > 0) {
               # Check if values have decimals (not all integers)
               has_decimals <- any(non_na_vals != floor(non_na_vals))
-              # Numeric with decimals = continuous, or many unique values = continuous
-              detected_type <- if (has_decimals || unique_vals > 10) "continuous" else "discrete"
+              # Calculate value range for additional check
+              val_range <- diff(range(non_na_vals, na.rm = TRUE))
+
+              if (has_decimals) {
+                # Decimals ALWAYS mean continuous (measurements, percentages)
+                detected_type <- "continuous"
+              } else {
+                # v124: Match apply section logic - boolean-like or small categorical = discrete
+                is_boolean_like <- unique_vals <= 2 && val_range <= 1
+                is_small_categorical <- unique_vals <= 3 && val_range <= 2
+                if (is_boolean_like || is_small_categorical) {
+                  detected_type <- "discrete"
+                } else if (unique_vals >= 5 || val_range >= 5) {
+                  # v124: >=5 unique values OR range>=5 = continuous
+                  detected_type <- "continuous"
+                } else {
+                  detected_type <- "discrete"
+                }
+              }
             } else {
               detected_type <- "discrete"
             }
@@ -13298,17 +13314,18 @@ server <- function(input, output, session) {
     })
   }, height = 600)
 
-  # v122: Legend preview - same as final preview
-  output$legend_preview <- renderPlot({
-    req(values$current_plot)
-    tryCatch({
-      values$current_plot
-    }, error = function(e) {
-      plot(c(0,1), c(0,1), type="n", xlab="", ylab="",
-           main="Preview Error", axes=FALSE)
-      text(0.5, 0.5, "Failed to render plot.\nCheck console for details.", cex=1.2)
-    })
-  }, height = 700)
+  # v124: Legend preview - using renderImage like other tabs for consistent aspect ratio
+  output$legend_preview <- renderImage({
+    # Force reactive update by depending on plot_counter
+    req(values$temp_plot_file, values$plot_counter)
+
+    list(
+      src = values$temp_plot_file,
+      contentType = "image/png",
+      width = "100%",
+      alt = "Legend preview"
+    )
+  }, deleteFile = FALSE)
 
   # Update YAML output
   output$yaml_output <- renderText({
