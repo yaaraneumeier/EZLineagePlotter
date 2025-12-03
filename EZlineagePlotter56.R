@@ -2817,10 +2817,17 @@ func.print.lineage.tree <- function(conf_yaml_path,
                 param[['label_mapping']] <- list()
               }
 
-              # v117: Get tip guide line settings (for discrete heatmaps)
+              # v117/v121: Get tip guide line settings (for discrete heatmaps)
+              # v121: Added comprehensive debug logging
+              cat(file=stderr(), paste0("\n=== v121: TIP GUIDE SETTINGS DEBUG (discrete) ===\n"))
+              cat(file=stderr(), paste0("  heat_map_i_def names: ", paste(names(heat_map_i_def), collapse=", "), "\n"))
               if ('show_guides' %in% names(heat_map_i_def)) {
+                raw_val <- heat_map_i_def[['show_guides']]
+                cat(file=stderr(), paste0("  show_guides raw value: ", raw_val, " (class: ", class(raw_val), ")\n"))
                 param[['show_guides']] <- func.check.bin.val.from.conf(heat_map_i_def[['show_guides']])
+                cat(file=stderr(), paste0("  show_guides after conversion: ", param[['show_guides']], "\n"))
               } else {
+                cat(file=stderr(), paste0("  show_guides NOT FOUND in heat_map_i_def\n"))
                 param[['show_guides']] <- FALSE
               }
               if ('guide_color1' %in% names(heat_map_i_def)) {
@@ -2996,10 +3003,17 @@ func.print.lineage.tree <- function(conf_yaml_path,
                 param[['label_mapping']] <- list()
               }
 
-              # v117: Get tip guide line settings (for continuous heatmaps)
+              # v117/v121: Get tip guide line settings (for continuous heatmaps)
+              # v121: Added comprehensive debug logging
+              cat(file=stderr(), paste0("\n=== v121: TIP GUIDE SETTINGS DEBUG (continuous) ===\n"))
+              cat(file=stderr(), paste0("  heat_map_i_def names: ", paste(names(heat_map_i_def), collapse=", "), "\n"))
               if ('show_guides' %in% names(heat_map_i_def)) {
+                raw_val <- heat_map_i_def[['show_guides']]
+                cat(file=stderr(), paste0("  show_guides raw value: ", raw_val, " (class: ", class(raw_val), ")\n"))
                 param[['show_guides']] <- func.check.bin.val.from.conf(heat_map_i_def[['show_guides']])
+                cat(file=stderr(), paste0("  show_guides after conversion: ", param[['show_guides']], "\n"))
               } else {
+                cat(file=stderr(), paste0("  show_guides NOT FOUND in heat_map_i_def\n"))
                 param[['show_guides']] <- FALSE
               }
               if ('guide_color1' %in% names(heat_map_i_def)) {
@@ -6612,6 +6626,7 @@ ui <- dashboardPage(
       menuItem("Bootstrap Values", tabName = "bootstrap", icon = icon("percentage")),
       menuItem("Highlighting", tabName = "highlighting", icon = icon("highlighter")),
       menuItem("Heatmap", tabName = "heatmap", icon = icon("th")),
+      menuItem("Legend", tabName = "legend", icon = icon("list")),
       menuItem("Download", tabName = "download", icon = icon("download")),
       menuItem("Configuration", tabName = "config", icon = icon("cogs"))
     ),
@@ -6655,14 +6670,15 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v120 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v121 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("FIX: Tip Guide Lines now work in default classification path (was missing guide settings transfer)"),
-                              tags$li("FIX: Auto-detect logic harmonized between UI and Apply sections for consistent type detection"),
-                              tags$li("REMOVED: Unused 'Advanced Mode' checkbox from sidebar"),
-                              tags$li("CONFIRMED: Phase 3 (custom color scales) already fully implemented")
+                              tags$li("NEW: Legend tab - configure legend position (top/bottom/left/right)"),
+                              tags$li("NEW: Legend tab - toggle visibility for classification, highlight, bootstrap, heatmap legends"),
+                              tags$li("NEW: Legend tab - adjust legend title and text sizes"),
+                              tags$li("NEW: Column Range selector - select columns 2-10 with a single input"),
+                              tags$li("FIX: Added debug logging for tip guide lines to trace settings flow")
                             )
                      )
             )
@@ -7168,6 +7184,64 @@ ui <- dashboardPage(
         )
       ),
 
+      # Legend Tab (v121)
+      tabItem(
+        tabName = "legend",
+        fluidRow(
+          box(
+            title = "Legend Position",
+            status = "primary",
+            solidHeader = TRUE,
+            width = 6,
+            tags$p("Configure where legends appear on the plot:"),
+            selectInput("legend_position", "Legend Position",
+                        choices = c("Right (default)" = "right",
+                                    "Left" = "left",
+                                    "Top" = "top",
+                                    "Bottom" = "bottom",
+                                    "None (hide all)" = "none"),
+                        selected = "right"),
+            hr(),
+            tags$h5(icon("eye"), " Legend Visibility"),
+            tags$p(class = "text-muted", "Toggle which legends to show:"),
+            checkboxInput("legend_show_classification", "Show Classification Legend", value = TRUE),
+            checkboxInput("legend_show_highlight", "Show Highlight Legend", value = TRUE),
+            checkboxInput("legend_show_bootstrap", "Show Bootstrap Legend", value = TRUE),
+            checkboxInput("legend_show_heatmap", "Show Heatmap Legends", value = TRUE)
+          ),
+          box(
+            title = "Legend Text Settings",
+            status = "info",
+            solidHeader = TRUE,
+            width = 6,
+            tags$h5(icon("text-height"), " Font Sizes"),
+            sliderInput("legend_title_size", "Legend Title Size",
+                        min = 6, max = 24, value = 12, step = 1),
+            sliderInput("legend_text_size", "Legend Text Size",
+                        min = 4, max = 18, value = 10, step = 1),
+            hr(),
+            tags$h5(icon("square"), " Symbol Settings"),
+            sliderInput("legend_key_size", "Legend Key Size (symbols)",
+                        min = 0.2, max = 2, value = 1, step = 0.1),
+            sliderInput("legend_spacing", "Legend Spacing",
+                        min = 0.1, max = 1, value = 0.3, step = 0.05)
+          )
+        ),
+        fluidRow(
+          box(
+            title = "Apply Legend Settings",
+            status = "success",
+            solidHeader = TRUE,
+            width = 12,
+            actionButton("apply_legend_settings", "Apply Legend Settings",
+                         class = "btn-success btn-lg",
+                         icon = icon("check")),
+            tags$p(class = "text-muted", style = "margin-top: 10px;",
+                   "Click to apply legend settings to the plot. Settings will be saved to the configuration.")
+          )
+        )
+      ),
+
       # Download Tab
       tabItem(
         tabName = "download",
@@ -7252,7 +7326,19 @@ server <- function(input, output, session) {
     progress_message = "",  # Current progress message
     progress_visible = FALSE,  # Whether to show progress bar
     plot_generating = FALSE,  # Whether plot is currently being generated
-    plot_ready = FALSE  # Whether plot is ready to display
+    plot_ready = FALSE,  # Whether plot is ready to display
+    # v121: Legend settings
+    legend_settings = list(
+      position = "right",
+      show_classification = TRUE,
+      show_highlight = TRUE,
+      show_bootstrap = TRUE,
+      show_heatmap = TRUE,
+      title_size = 12,
+      text_size = 10,
+      key_size = 1,
+      spacing = 0.3
+    )
   )
   
   classification_loading <- reactiveVal(FALSE)
@@ -10499,7 +10585,36 @@ server <- function(input, output, session) {
                            value = if (!is.null(cfg$title)) cfg$title else paste0("Heatmap ", i))
           )
         ),
-        
+
+        # v121: Column range selector - allows quick selection of contiguous columns
+        fluidRow(
+          column(6,
+                 tags$div(
+                   style = "display: flex; align-items: flex-end; gap: 10px;",
+                   tags$div(
+                     style = "flex: 1;",
+                     textInput(paste0("heatmap_col_range_", i), "Column Range (e.g., 2-10)",
+                               value = "",
+                               placeholder = "2-10 or 3-15")
+                   ),
+                   tags$div(
+                     style = "padding-bottom: 15px;",
+                     actionButton(paste0("heatmap_add_range_", i), "Add Range",
+                                  class = "btn-sm btn-info",
+                                  icon = icon("plus"))
+                   )
+                 )
+          ),
+          column(6,
+                 tags$div(
+                   style = "padding-top: 25px;",
+                   tags$small(class = "text-muted",
+                              icon("info-circle"),
+                              " Enter column numbers (e.g., '2-10') to add columns by position")
+                 )
+          )
+        ),
+
         fluidRow(
           column(4,
                  tags$label("Detected Type"),
@@ -10995,9 +11110,75 @@ server <- function(input, output, session) {
           values$heatmap_configs[[i]]$midpoint <- input[[paste0("heatmap_midpoint_", i)]]
         }
       }, ignoreInit = TRUE)
+
+      # v121: Column range observer - allows adding columns by position range (e.g., "2-10")
+      observeEvent(input[[paste0("heatmap_add_range_", i)]], {
+        range_text <- input[[paste0("heatmap_col_range_", i)]]
+        if (is.null(range_text) || nchar(trimws(range_text)) == 0) {
+          showNotification("Please enter a column range (e.g., 2-10)", type = "warning")
+          return()
+        }
+
+        # Parse the range
+        range_text <- trimws(range_text)
+        parts <- strsplit(range_text, "-")[[1]]
+        if (length(parts) != 2) {
+          showNotification("Invalid range format. Use 'start-end' (e.g., 2-10)", type = "error")
+          return()
+        }
+
+        start_col <- suppressWarnings(as.integer(trimws(parts[1])))
+        end_col <- suppressWarnings(as.integer(trimws(parts[2])))
+
+        if (is.na(start_col) || is.na(end_col)) {
+          showNotification("Column numbers must be integers (e.g., 2-10)", type = "error")
+          return()
+        }
+
+        if (start_col < 1 || end_col < start_col) {
+          showNotification("Invalid range: start must be >= 1 and end must be >= start", type = "error")
+          return()
+        }
+
+        # Get current CSV column names
+        csv_cols <- if (!is.null(values$csv_data)) names(values$csv_data) else character(0)
+        if (length(csv_cols) == 0) {
+          showNotification("No CSV data loaded", type = "error")
+          return()
+        }
+
+        if (end_col > length(csv_cols)) {
+          showNotification(paste0("End column (", end_col, ") exceeds number of columns (", length(csv_cols), ")"), type = "error")
+          return()
+        }
+
+        # Get column names for the range
+        range_cols <- csv_cols[start_col:end_col]
+
+        # Get current selection and add range columns
+        current_cols <- input[[paste0("heatmap_columns_", i)]]
+        if (is.null(current_cols)) current_cols <- character(0)
+
+        # Add new columns (avoiding duplicates)
+        new_cols <- unique(c(current_cols, range_cols))
+
+        # Update the selectize input
+        updateSelectizeInput(session, paste0("heatmap_columns_", i), selected = new_cols)
+
+        # Also update config
+        if (i <= length(values$heatmap_configs)) {
+          values$heatmap_configs[[i]]$columns <- new_cols
+        }
+
+        # Clear the range input
+        updateTextInput(session, paste0("heatmap_col_range_", i), value = "")
+
+        showNotification(paste0("Added columns ", start_col, "-", end_col, " (", length(range_cols), " columns): ",
+                                paste(range_cols, collapse = ", ")), type = "message")
+      }, ignoreInit = TRUE)
     })
   })
-  
+
   # v62: Render palette previews for discrete heatmaps
   observe({
     lapply(1:6, function(i) {
@@ -11849,7 +12030,47 @@ server <- function(input, output, session) {
   # ============================================
   # END v55: NEW MULTI-HEATMAP SYSTEM
   # ============================================
-  
+
+  # ============================================
+  # v121: LEGEND SETTINGS SYSTEM
+  # ============================================
+
+  # Observer for Apply Legend Settings button
+  observeEvent(input$apply_legend_settings, {
+    cat(file=stderr(), "\n=== v121: APPLYING LEGEND SETTINGS ===\n")
+
+    # Update legend settings in reactive values
+    values$legend_settings <- list(
+      position = input$legend_position,
+      show_classification = input$legend_show_classification,
+      show_highlight = input$legend_show_highlight,
+      show_bootstrap = input$legend_show_bootstrap,
+      show_heatmap = input$legend_show_heatmap,
+      title_size = input$legend_title_size,
+      text_size = input$legend_text_size,
+      key_size = input$legend_key_size,
+      spacing = input$legend_spacing
+    )
+
+    cat(file=stderr(), paste0("  Position: ", input$legend_position, "\n"))
+    cat(file=stderr(), paste0("  Show classification: ", input$legend_show_classification, "\n"))
+    cat(file=stderr(), paste0("  Show highlight: ", input$legend_show_highlight, "\n"))
+    cat(file=stderr(), paste0("  Show bootstrap: ", input$legend_show_bootstrap, "\n"))
+    cat(file=stderr(), paste0("  Show heatmap: ", input$legend_show_heatmap, "\n"))
+    cat(file=stderr(), paste0("  Title size: ", input$legend_title_size, "\n"))
+    cat(file=stderr(), paste0("  Text size: ", input$legend_text_size, "\n"))
+    cat(file=stderr(), "======================================\n\n")
+
+    # Regenerate plot with new legend settings
+    generate_plot()
+
+    showNotification("Legend settings applied", type = "message")
+  })
+
+  # ============================================
+  # END v121: LEGEND SETTINGS SYSTEM
+  # ============================================
+
   # Update Preview (without saving)
   observeEvent(input$update_classification_preview, {
     classification_loading(TRUE)
@@ -12765,8 +12986,47 @@ server <- function(input, output, session) {
     # If we got a valid result
     if (!is.null(result)) {
       # v53: cat(file=stderr(), "=== Attempting to save plot ===\n")
-      
-      # Store the original plot
+
+      # v121: Apply legend settings from the Legend tab
+      legend_settings <- values$legend_settings
+      if (!is.null(legend_settings)) {
+        cat(file=stderr(), paste0("\n=== v121: Applying legend settings to plot ===\n"))
+        cat(file=stderr(), paste0("  Position: ", legend_settings$position, "\n"))
+
+        # Build theme modifications for legend
+        legend_theme <- theme(
+          legend.position = legend_settings$position,
+          legend.title = element_text(size = legend_settings$title_size, face = "bold"),
+          legend.text = element_text(size = legend_settings$text_size),
+          legend.key.size = unit(legend_settings$key_size, "lines"),
+          legend.spacing = unit(legend_settings$spacing, "cm")
+        )
+
+        # Apply the legend theme
+        result <- result + legend_theme
+
+        # Apply visibility controls using guides()
+        guides_list <- list()
+
+        # Hide specific legends based on visibility settings
+        if (!isTRUE(legend_settings$show_classification)) {
+          guides_list$colour <- "none"
+        }
+        if (!isTRUE(legend_settings$show_heatmap)) {
+          guides_list$fill <- "none"
+        }
+        if (!isTRUE(legend_settings$show_bootstrap)) {
+          guides_list$size <- "none"
+        }
+
+        if (length(guides_list) > 0) {
+          result <- result + do.call(guides, guides_list)
+        }
+
+        cat(file=stderr(), paste0("  Legend settings applied successfully\n"))
+      }
+
+      # Store the plot with legend settings applied
       values$current_plot <- result
       
       # Create a unique temp file with timestamp to force browser refresh

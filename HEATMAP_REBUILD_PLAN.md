@@ -5,7 +5,7 @@
 This document contains the step-by-step plan for rebuilding the heatmap functionality in EZLineagePlotter.
 The complex heatmap code (~800 lines) has been disabled in v91 and replaced with a simple proof-of-concept.
 
-**Current Status**: v120 - Fixed Tip Guide Lines in default classification path (was missing guide settings transfer to YAML). Harmonized auto-detect logic between UI and Apply sections for consistent type detection. Removed unused "Advanced Mode" checkbox. Confirmed Phase 3 (custom color scales for discrete data) is already fully implemented.
+**Current Status**: v121 - Added new Legend tab for configuring legend position (top/bottom/left/right), visibility toggles for different legend types (classification, highlight, bootstrap, heatmap), and legend text/symbol sizes. Added Column Range selector for selecting contiguous columns (e.g., "2-10") in heatmap configuration. Added comprehensive debug logging for tip guide lines settings to trace where settings might be lost. Phase 4 (custom color scales for continuous data) was confirmed already implemented in v120.
 
 ## Why We Simplified
 
