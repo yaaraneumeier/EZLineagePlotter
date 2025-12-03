@@ -3910,7 +3910,7 @@ func.print.lineage.tree <- function(conf_yaml_path,
         bootstrap_label_size =bootstrap_label_size,
         heatmap_tree_distance = heatmap_tree_distance,
         heatmap_global_gap = heatmap_global_gap,  # v125: Gap between multiple heatmaps
-        legend_settings = values$legend_settings  # v136: Pass legend settings for highlight/bootstrap legends
+        legend_settings = legend_settings  # v136: Pass legend settings for highlight/bootstrap legends
       )
       # }
 
@@ -6808,11 +6808,11 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v136 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v137 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("FIX: Heatmap 'object legend_settings not found' error - added missing legend_settings parameter to func.make.plot.tree.heat.NEW function signature and call site")
+                              tags$li("FIX: Heatmap 'object values not found' error - corrected legend_settings parameter passing through function chain")
                             )
                      )
             )
