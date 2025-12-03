@@ -6721,13 +6721,13 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v127 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v128 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("FIX: Auto-detect type display now updates dynamically when columns change"),
-                              tags$li("FIX: Bootstrap legend now works even without heatmap (boudariestt initialized early)"),
-                              tags$li("NEW: Legend tab now has processing/ready status indicators like other tabs")
+                              tags$li("FIX: Bootstrap legend now uses Legend tab font size settings"),
+                              tags$li("FIX: Bootstrap legend title size now matches other legend titles"),
+                              tags$li("IMPROVED: Smaller default bootstrap legend size (controlled via Legend tab)")
                             )
                      )
             )
@@ -8951,10 +8951,12 @@ server <- function(input, output, session) {
     }
     
     # Update font sizes
+    # v128: Use Legend tab font size settings for legend_title and legend_text
+    # This ensures bootstrap legend matches other legends' font sizes
     values$yaml_data$`visual definitions`$font_size <- list(
       tips = if(!is.null(input$tip_font_size)) input$tip_font_size else 3,
-      legend_title = 30,
-      legend_text = 20,
+      legend_title = if(!is.null(input$legend_title_size)) input$legend_title_size else 12,
+      legend_text = if(!is.null(input$legend_text_size)) input$legend_text_size else 10,
       legend_box = 15,
       heat_map_title = 25,
       heat_map_legend = if(!is.null(input$heatmap_font_size)) input$heatmap_font_size else 3.8
@@ -12764,10 +12766,12 @@ server <- function(input, output, session) {
   # Make sure font_size section has all required fields
   update_font_sizes <- function() {
     # Ensure these values exist and are properly set
+    # v128: Use Legend tab font size settings for legend_title and legend_text
+    # This ensures bootstrap legend matches other legends' font sizes
     values$yaml_data$`visual definitions`$font_size <- list(
       tips = if(!is.null(input$tip_font_size)) input$tip_font_size else 3,
-      legend_title = 30,  # Fixed value
-      legend_text = 20,   # Fixed value
+      legend_title = if(!is.null(input$legend_title_size)) input$legend_title_size else 12,
+      legend_text = if(!is.null(input$legend_text_size)) input$legend_text_size else 10,
       legend_box = 15,    # Fixed value
       heat_map_title = 25, # Fixed value
       heat_map_legend = if(!is.null(input$heatmap_font_size)) input$heatmap_font_size else 3.8
