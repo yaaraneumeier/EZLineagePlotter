@@ -4810,9 +4810,11 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   cat(file=stderr(), paste0("  v132: boudariestt initialized early: xmin=", boudariestt$xmin, ", xmax=", boudariestt$xmax, "\n"))
 
   # Handle highlighting if requested
-  if (FLAG_BULK_DISPLAY == TRUE) {
+  # v141: Only apply highlight here when NO heatmap, to prevent double highlighting
+  # When heat_flag == TRUE, highlight is applied AFTER heatmap processing (around line 6421)
+  if (FLAG_BULK_DISPLAY == TRUE && heat_flag == FALSE) {
     x_adj_hi <- 0
-    
+
     # Calculate tip length for ellipse sizing
     # If trimming is disabled (id_tip_trim_end is NA), use the max tip label length
     tip_length <- if (is.na(id_tip_trim_end)) {
@@ -4820,21 +4822,13 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     } else {
       id_tip_trim_end
     }
-    
-    if (heat_flag == FALSE) {
-      # v50: Use multiplicative scaling for height and width sliders
-      base_a <- tip_length * size_tip_text / 800 + man_adjust_elipse_a
-      base_b <- 0.12 + man_adjust_elipse_b
-      a <- base_a * adjust_height_ecliplse  # Slider value is now a multiplier (1.0 = no change)
-      b <- base_b * adjust_width_eclipse    # Slider value is now a multiplier
-    } else {
-      # v50: Use multiplicative scaling for height and width sliders  
-      base_a <- tip_length * size_tip_text / (5.1 * boudariestt$xmax) + man_adjust_elipse_a
-      base_b <- 0.12 + man_adjust_elipse_b
-      a <- base_a * adjust_height_ecliplse
-      b <- base_b * adjust_width_eclipse
-    }   
-    
+
+    # v50: Use multiplicative scaling for height and width sliders
+    base_a <- tip_length * size_tip_text / 800 + man_adjust_elipse_a
+    base_b <- 0.12 + man_adjust_elipse_b
+    a <- base_a * adjust_height_ecliplse  # Slider value is now a multiplier (1.0 = no change)
+    b <- base_b * adjust_width_eclipse    # Slider value is now a multiplier
+
     # v139: Pass high_alpha_list for transparency
     p <- func_highlight(
       p, how_many_hi, heat_flag, high_color_list, a, b, man_adjust_elipse,
@@ -6844,12 +6838,14 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v140 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v141 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("Fixed 'object high_alpha_list not found' error when applying highlight"),
-                              tags$li("Transparency parameter now properly passed through all function layers")
+                              tags$li("Fixed double highlight when adding heatmap to plot with highlight"),
+                              tags$li("Page orientation now updates preview immediately when changed"),
+                              tags$li("Increased maximum heatmaps from 6 to 10"),
+                              tags$li("Redesigned Extra tab: plot positioning + text overlay (text doesn't push plot)")
                             )
                      )
             )
@@ -7298,11 +7294,11 @@ ui <- dashboardPage(
               # Add new heatmap button
               fluidRow(
                 column(12,
-                       actionButton("add_new_heatmap", "Add New Heatmap", 
+                       actionButton("add_new_heatmap", "Add New Heatmap",
                                     icon = icon("plus"), class = "btn-success",
                                     style = "margin-bottom: 15px;"),
                        tags$span(class = "text-muted", style = "margin-left: 10px;",
-                                 "Maximum 6 heatmaps allowed")
+                                 "Maximum 10 heatmaps allowed")  # v141: Increased from 6 to 10
                 )
               ),
               
@@ -7543,13 +7539,14 @@ ui <- dashboardPage(
       ),
 
       # v130: Extra Tab - Page title, custom text annotations, and images
+      # v141: Redesigned to add plot positioning and clarify text overlay behavior
       tabItem(
         tabName = "extra",
         fluidRow(
-          # Page Title Section
+          # Plot Position Section (v141: NEW)
           box(
             title = tagList(
-              "Page Title ",
+              icon("arrows-alt"), " Plot Position ",
               span(id = "extra_status_waiting",
                 style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #f8f9fa; color: #6c757d; font-size: 12px;",
                 icon("clock"), " Waiting for data"
@@ -7566,7 +7563,51 @@ ui <- dashboardPage(
             status = "primary",
             solidHeader = TRUE,
             width = 6,
+            collapsible = FALSE,
+            tags$p(class = "text-muted",
+              "Move the entire plot (tree + heatmap + legend) on the page. ",
+              "Text annotations are overlaid on top."
+            ),
+            fluidRow(
+              column(6,
+                sliderInput("plot_offset_x", "Horizontal Position:",
+                           min = -0.5, max = 0.5, value = 0, step = 0.01,
+                           post = " (left/right)")
+              ),
+              column(6,
+                sliderInput("plot_offset_y", "Vertical Position:",
+                           min = -0.5, max = 0.5, value = 0, step = 0.01,
+                           post = " (down/up)")
+              )
+            ),
+            fluidRow(
+              column(12,
+                actionButton("reset_plot_position", "Reset to Center",
+                            class = "btn-secondary btn-sm", icon = icon("undo"))
+              )
+            )
+          ),
+
+          # Preview Box
+          box(
+            title = "Preview",
+            status = "primary",
+            solidHeader = TRUE,
+            width = 6,
+            imageOutput("extra_preview", height = "400px"),
+            actionButton("extra_apply", "Apply to Plot", class = "btn-primary", style = "margin-top: 10px;")
+          )
+        ),
+
+        # Page Title Section
+        fluidRow(
+          box(
+            title = tagList(icon("heading"), " Page Title"),
+            status = "info",
+            solidHeader = TRUE,
+            width = 12,
             collapsible = TRUE,
+            collapsed = TRUE,
             checkboxInput("enable_page_title", "Enable Page Title", value = FALSE),
             conditionalPanel(
               condition = "input.enable_page_title == true",
@@ -7592,29 +7633,27 @@ ui <- dashboardPage(
               selectInput("page_title_hjust", "Horizontal Alignment:",
                           choices = c("Left" = "0", "Center" = "0.5", "Right" = "1"), selected = "0.5")
             )
-          ),
-
-          # Preview Box
-          box(
-            title = "Preview",
-            status = "primary",
-            solidHeader = TRUE,
-            width = 6,
-            imageOutput("extra_preview", height = "400px"),
-            actionButton("extra_apply", "Apply to Plot", class = "btn-primary", style = "margin-top: 10px;")
           )
         ),
 
-        # Custom Text Annotations Section
+        # Custom Text Annotations Section (Overlay)
         fluidRow(
           box(
-            title = "Custom Text Annotations",
-            status = "info",
+            title = tagList(icon("font"), " Text Overlay"),
+            status = "success",
             solidHeader = TRUE,
             width = 12,
             collapsible = TRUE,
-            collapsed = TRUE,
-            p("Add custom text labels at specific positions on the plot."),
+            collapsed = FALSE,
+            tags$div(
+              style = "background: #d4edda; padding: 10px; border-radius: 5px; margin-bottom: 15px;",
+              tags$p(style = "margin: 0; color: #155724;",
+                icon("info-circle"),
+                " Text is placed as an ", tags$b("overlay"), " on top of the plot. ",
+                "Position the plot using the controls above, then add text wherever you want. ",
+                "If text covers the plot, it will appear on top."
+              )
+            ),
 
             fluidRow(
               column(3,
@@ -7667,13 +7706,13 @@ ui <- dashboardPage(
         # Custom Images Section
         fluidRow(
           box(
-            title = "Custom Images",
+            title = tagList(icon("image"), " Image Overlay"),
             status = "warning",
             solidHeader = TRUE,
             width = 12,
             collapsible = TRUE,
             collapsed = TRUE,
-            p("Add images at specific positions on the plot."),
+            p("Add images as an overlay at specific positions on the page."),
 
             fluidRow(
               column(4,
@@ -7824,7 +7863,10 @@ server <- function(input, output, session) {
       hjust = 0.5
     ),
     custom_texts = list(),  # List of custom text annotations
-    custom_images = list()  # List of custom images
+    custom_images = list(),  # List of custom images
+    # v141: Plot position offsets for Extra tab
+    plot_offset_x = 0,  # Horizontal offset (negative = left, positive = right)
+    plot_offset_y = 0   # Vertical offset (negative = down, positive = up)
   )
   
   classification_loading <- reactiveVal(FALSE)
@@ -11375,8 +11417,9 @@ server <- function(input, output, session) {
   
   # Add new heatmap
   observeEvent(input$add_new_heatmap, {
-    if (length(values$heatmap_configs) >= 6) {
-      showNotification("Maximum 6 heatmaps allowed", type = "warning")
+    # v141: Increased max heatmaps from 6 to 10
+    if (length(values$heatmap_configs) >= 10) {
+      showNotification("Maximum 10 heatmaps allowed", type = "warning")
       return()
     }
     
@@ -12809,11 +12852,12 @@ server <- function(input, output, session) {
 
   # v139: Observer to swap width/height when page orientation changes
   # Changed to always swap dimensions when orientation changes (not just when they don't match)
+  # v141: Also regenerate plot to show the orientation change visually
   observeEvent(input$page_orientation, {
     current_width <- isolate(input$output_width)
     current_height <- isolate(input$output_height)
 
-    cat(file=stderr(), paste0("\n=== v139: PAGE ORIENTATION CHANGED ===\n"))
+    cat(file=stderr(), paste0("\n=== v141: PAGE ORIENTATION CHANGED ===\n"))
     cat(file=stderr(), paste0("  Orientation: ", input$page_orientation, "\n"))
     cat(file=stderr(), paste0("  Current width: ", current_width, ", height: ", current_height, "\n"))
 
@@ -12841,6 +12885,12 @@ server <- function(input, output, session) {
       cat(file=stderr(), "  WARNING: width or height is NULL, cannot swap\n")
     }
     cat(file=stderr(), "=== END PAGE ORIENTATION ===\n")
+
+    # v141: Regenerate plot to show the orientation change visually
+    if (!is.null(values$tree_data)) {
+      generate_plot()
+      cat(file=stderr(), "  v141: Plot regenerated for orientation preview\n")
+    }
   }, ignoreInit = TRUE)
 
   # Update Preview (without saving)
@@ -13822,6 +13872,46 @@ server <- function(input, output, session) {
       # v130: Apply Extra tab settings (page title, custom texts, images)
       # These are applied AFTER legend settings so they appear on top
       tryCatch({
+        # v141: Apply plot position offsets
+        # These move the entire plot on the page by adjusting margins
+        plot_off_x <- if (!is.null(values$plot_offset_x)) values$plot_offset_x else 0
+        plot_off_y <- if (!is.null(values$plot_offset_y)) values$plot_offset_y else 0
+
+        if (plot_off_x != 0 || plot_off_y != 0) {
+          cat(file=stderr(), paste0("\n=== v141: APPLYING PLOT POSITION OFFSETS ===\n"))
+          cat(file=stderr(), paste0("  X offset: ", plot_off_x, " (positive = right)\n"))
+          cat(file=stderr(), paste0("  Y offset: ", plot_off_y, " (positive = up)\n"))
+
+          # Convert offset to margin units (cm)
+          # Positive X offset = more left margin = plot moves right
+          # Positive Y offset = more bottom margin = plot moves up
+          base_margin <- 0.5  # Base margin in cm
+          margin_scale <- 10  # Scale factor for offset
+
+          # Calculate margins: margin(top, right, bottom, left)
+          # Positive X offset -> increase left margin, decrease right margin
+          # Positive Y offset -> increase bottom margin, decrease top margin
+          left_margin <- base_margin + (plot_off_x * margin_scale)
+          right_margin <- base_margin - (plot_off_x * margin_scale)
+          top_margin <- base_margin - (plot_off_y * margin_scale)
+          bottom_margin <- base_margin + (plot_off_y * margin_scale)
+
+          # Ensure margins don't go negative
+          left_margin <- max(0, left_margin)
+          right_margin <- max(0, right_margin)
+          top_margin <- max(0, top_margin)
+          bottom_margin <- max(0, bottom_margin)
+
+          result <- result + theme(
+            plot.margin = margin(t = top_margin, r = right_margin,
+                                b = bottom_margin, l = left_margin, unit = "cm")
+          )
+          cat(file=stderr(), paste0("  Margins applied: t=", round(top_margin, 2),
+                                    ", r=", round(right_margin, 2),
+                                    ", b=", round(bottom_margin, 2),
+                                    ", l=", round(left_margin, 2), " cm\n"))
+        }
+
         # Apply page title
         page_title_settings <- values$page_title
 
@@ -14348,6 +14438,24 @@ server <- function(input, output, session) {
         }
       }, ignoreInit = TRUE, once = TRUE)
     })
+  })
+
+  # v141: Observer for plot position X slider
+  observeEvent(input$plot_offset_x, {
+    values$plot_offset_x <- input$plot_offset_x
+  }, ignoreInit = TRUE)
+
+  # v141: Observer for plot position Y slider
+  observeEvent(input$plot_offset_y, {
+    values$plot_offset_y <- input$plot_offset_y
+  }, ignoreInit = TRUE)
+
+  # v141: Reset plot position button
+  observeEvent(input$reset_plot_position, {
+    updateSliderInput(session, "plot_offset_x", value = 0)
+    updateSliderInput(session, "plot_offset_y", value = 0)
+    values$plot_offset_x <- 0
+    values$plot_offset_y <- 0
   })
 
   # v130: Apply Extra settings to plot
