@@ -4780,78 +4780,84 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   # v99: Save a backup of p before heatmap for fallback recovery
   tt <- p
 
-  # v99: MANUAL HEATMAP IMPLEMENTATION using geom_tile
-  # Previous approach using gheatmap() was corrupting the plot's @mapping property
-  # causing "Problem while setting up geom" errors. This approach builds the heatmap
-  # manually using geom_tile for full control.
+  # v122: MULTIPLE HEATMAPS IMPLEMENTATION
+  # Refactored from v99 to support multiple heatmaps with spacing control
+  # Each heatmap can have its own colors, type (discrete/continuous), and parameters
   if (heat_flag == TRUE && length(dxdf440_for_heat) > 0) {
-    cat(file=stderr(), paste0("\n=== v99: ENTERING MANUAL HEATMAP CODE ===\n"))
+    cat(file=stderr(), paste0("\n=== v122: ENTERING MULTIPLE HEATMAPS CODE ===\n"))
+    cat(file=stderr(), paste0("  Number of heatmaps to render: ", length(dxdf440_for_heat), "\n"))
 
-    # Get the first heatmap data
-    heat_data <- dxdf440_for_heat[[1]]
+    # v122: Get tree info once (shared across all heatmaps)
+    tip_data <- subset(p$data, isTip == TRUE)
+    tree_tips <- tip_data$label
+    tree_xmin <- min(p$data$x, na.rm = TRUE)
+    tree_xmax <- max(p$data$x, na.rm = TRUE)
+    tree_width <- abs(tree_xmax - tree_xmin)
 
-    # v99: Validate heatmap data
-    cat(file=stderr(), paste0("\n=== v99: HEATMAP DATA VALIDATION ===\n"))
-    cat(file=stderr(), paste0("  Initial heat_data dimensions: ", nrow(heat_data), " x ", ncol(heat_data), "\n"))
+    # v122: Track x position for placing heatmaps side by side
+    # current_heatmap_x_end will be updated after each heatmap
+    current_heatmap_x_start <- tree_xmax
 
-    # v99: Check if heat_data is valid
-    if (is.null(heat_data) || !is.data.frame(heat_data) || nrow(heat_data) == 0) {
-      cat(file=stderr(), paste0("  ERROR: Invalid heatmap data - skipping heatmap\n"))
-      heat_flag <- FALSE
-    } else {
-      # v99: Get tree tip labels and positions for matching
-      tip_data <- subset(p$data, isTip == TRUE)
-      tree_tips <- tip_data$label
+    # v122: Default spacing between heatmaps (can be overridden per-heatmap via 'distance')
+    heatmap_spacing <- 0.02 * tree_width
+
+    # v122: Loop through all heatmaps
+    for (heat_idx in 1:length(dxdf440_for_heat)) {
+      cat(file=stderr(), paste0("\n=== v122: PROCESSING HEATMAP ", heat_idx, " of ", length(dxdf440_for_heat), " ===\n"))
+
+      # Get this heatmap's data
+      heat_data <- dxdf440_for_heat[[heat_idx]]
+
+      # v122: Validate heatmap data
+      cat(file=stderr(), paste0("  Initial heat_data dimensions: ", nrow(heat_data), " x ", ncol(heat_data), "\n"))
+
+      # v122: Check if heat_data is valid - skip this heatmap if invalid
+      if (is.null(heat_data) || !is.data.frame(heat_data) || nrow(heat_data) == 0) {
+        cat(file=stderr(), paste0("  ERROR: Invalid heatmap data - skipping heatmap ", heat_idx, "\n"))
+        next  # v122: Continue to next heatmap instead of stopping all heatmaps
+      }
+
       cat(file=stderr(), paste0("  Tree has ", length(tree_tips), " tips\n"))
-      cat(file=stderr(), paste0("  Tree tips sample: ", paste(head(tree_tips, 5), collapse=", "), "\n"))
 
-      # v99: Check current row names
+      # v122: Check current row names
       current_rownames <- rownames(heat_data)
       cat(file=stderr(), paste0("  Current rownames: ", paste(head(current_rownames, 5), collapse=", "), "\n"))
 
-      # v99: Verify row names are valid and match tree tips
+      # v122: Verify row names are valid and match tree tips
       if (is.null(current_rownames) || all(current_rownames == as.character(1:nrow(heat_data)))) {
-        cat(file=stderr(), paste0("  WARNING: Heat data has default numeric row names - cannot match to tree tips\n"))
-        cat(file=stderr(), paste0("  Skipping heatmap due to missing/invalid row names\n"))
-        heat_flag <- FALSE
-      } else {
-        # v99: Check how many row names match tree tips
-        matching_tips <- sum(current_rownames %in% tree_tips)
-        cat(file=stderr(), paste0("  Row names matching tree tips: ", matching_tips, " / ", nrow(heat_data), "\n"))
-
-        if (matching_tips == 0) {
-          cat(file=stderr(), paste0("  ERROR: No row names match tree tips - skipping heatmap\n"))
-          heat_flag <- FALSE
-        } else if (matching_tips < nrow(heat_data)) {
-          cat(file=stderr(), paste0("  WARNING: Only ", matching_tips, " row names match - filtering data\n"))
-          heat_data <- heat_data[current_rownames %in% tree_tips, , drop = FALSE]
-          cat(file=stderr(), paste0("  After filtering: ", nrow(heat_data), " rows\n"))
-        }
+        cat(file=stderr(), paste0("  WARNING: Heat data has default numeric row names - skipping heatmap ", heat_idx, "\n"))
+        next
       }
-    }
 
-    # v99: Continue only if we have valid data
-    if (heat_flag == TRUE && nrow(heat_data) > 0) {
+      # v122: Check how many row names match tree tips
+      matching_tips <- sum(current_rownames %in% tree_tips)
+      cat(file=stderr(), paste0("  Row names matching tree tips: ", matching_tips, " / ", nrow(heat_data), "\n"))
+
+      if (matching_tips == 0) {
+        cat(file=stderr(), paste0("  ERROR: No row names match tree tips - skipping heatmap ", heat_idx, "\n"))
+        next
+      } else if (matching_tips < nrow(heat_data)) {
+        cat(file=stderr(), paste0("  WARNING: Only ", matching_tips, " row names match - filtering data\n"))
+        heat_data <- heat_data[current_rownames %in% tree_tips, , drop = FALSE]
+        cat(file=stderr(), paste0("  After filtering: ", nrow(heat_data), " rows\n"))
+      }
+
       cat(file=stderr(), paste0("  heat_data dimensions: ", nrow(heat_data), " x ", ncol(heat_data), "\n"))
       cat(file=stderr(), paste0("  heat_data rownames sample: ", paste(head(rownames(heat_data), 5), collapse=", "), "\n"))
       cat(file=stderr(), paste0("  heat_data columns: ", paste(colnames(heat_data), collapse=", "), "\n"))
 
-      # v99: Get heatmap parameters
-      heat_param <- heat_display_params_list[[1]]
+      # v122: Get heatmap parameters for THIS heatmap (use heat_idx, not 1)
+      heat_param <- if (heat_idx <= length(heat_display_params_list)) heat_display_params_list[[heat_idx]] else list()
       is_discrete <- ifelse(!is.null(heat_param) && !is.na(heat_param['is_discrete']),
                             heat_param['is_discrete'] == TRUE, FALSE)
       cat(file=stderr(), paste0("  is_discrete: ", is_discrete, "\n"))
 
-      # v99: Calculate heatmap positioning based on tree
-      # Tips are typically at x=0, root at negative x
-      tree_xmin <- min(p$data$x, na.rm = TRUE)
-      tree_xmax <- max(p$data$x, na.rm = TRUE)
-      tree_width <- abs(tree_xmax - tree_xmin)  # Total width of tree
-
-      # v104: Use per-heatmap distance from heat_param (falls back to global slider if not set)
+      # v122: Calculate heatmap positioning - use current_heatmap_x_start from previous heatmap
+      # For first heatmap, this is tree_xmax; for subsequent, it's the end of the previous heatmap
       per_heatmap_distance <- if (!is.null(heat_param[['distance']])) heat_param[['distance']] else heatmap_tree_distance
       heatmap_offset <- tree_width * per_heatmap_distance
       cat(file=stderr(), paste0("  per_heatmap_distance: ", per_heatmap_distance, "\n"))
+      cat(file=stderr(), paste0("  current_heatmap_x_start: ", current_heatmap_x_start, "\n"))
       # v113: Fixed row height and column width to be INDEPENDENT
       # In coord_flip context with ggtree:
       # - Data y (tip indices 1,2,3...) becomes visual x after flip
@@ -4923,7 +4929,8 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
           tip_row <- tip_data[tip_data$label == tip_label, ]
           if (nrow(tip_row) > 0) {
             y_pos <- tip_row$y[1]
-            x_pos <- tree_xmax + heatmap_offset + (col_idx - 0.5) * tile_width
+            # v122: Use current_heatmap_x_start (which tracks position after previous heatmaps)
+            x_pos <- current_heatmap_x_start + heatmap_offset + (col_idx - 0.5) * tile_width
 
             # v111: For continuous data, keep value as-is (numeric)
             # For discrete data, convert to character
@@ -5065,7 +5072,14 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
           # v100: Add color scale using user-selected colors
           na_color <- if (!is.null(heat_param[['na_color']])) heat_param[['na_color']] else "grey90"
-          heatmap_title <- if (length(heat_map_title_list) > 0) heat_map_title_list[[1]] else "Heatmap"
+          # v122: Use heat_idx to get the correct heatmap title
+          heatmap_title <- if (heat_idx <= length(heat_map_title_list)) heat_map_title_list[[heat_idx]] else paste0("Heatmap ", heat_idx)
+
+          # v122: For heatmaps after the first, add new_scale_fill() before adding color scale
+          if (heat_idx > 1) {
+            cat(file=stderr(), paste0("  v122: Adding new_scale_fill() for heatmap ", heat_idx, "\n"))
+            p_with_tiles <- p_with_tiles + ggnewscale::new_scale_fill()
+          }
 
           if (is_discrete) {
             cat(file=stderr(), paste0("  Adding discrete color scale\n"))
@@ -5317,9 +5331,11 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             n_tips <- length(tip_y_values)
             cat(file=stderr(), paste0("  Number of tips: ", n_tips, "\n"))
 
-            # Calculate x-range for guide lines (spanning the entire heatmap width)
-            x_min <- min(tile_df$x) - tile_width / 2
-            x_max <- max(tile_df$x) + tile_width / 2
+            # v122: Calculate x-range for guide lines - from tree tips (x=0) to end of heatmap
+            # The heatmap is to the RIGHT of the tree tips, so guides extend from 0 to heatmap end
+            x_min <- 0  # Start at tree tips
+            x_max <- max(tile_df$x) + tile_width / 2  # End at right edge of heatmap
+            cat(file=stderr(), paste0("  v122: Guide line x range: [", x_min, ", ", x_max, "]\n"))
 
             # Build guide lines data - alternating colors
             guide_lines_df <- data.frame(
@@ -5363,16 +5379,22 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
           p
         })
 
-        cat(file=stderr(), paste0("=== v99: MANUAL HEATMAP COMPLETE ===\n"))
+        cat(file=stderr(), paste0("=== v122: HEATMAP ", heat_idx, " COMPLETE ===\n"))
         cat(file=stderr(), paste0("  p layers after heatmap: ", length(p$layers), "\n"))
         cat(file=stderr(), paste0("  Layer types: ", paste(sapply(p$layers, function(l) class(l$geom)[1]), collapse=", "), "\n"))
 
+        # v122: Update current_heatmap_x_start for next heatmap
+        # Calculate the rightmost x position of this heatmap
+        this_heatmap_x_end <- max(tile_df$x) + tile_width / 2
+        current_heatmap_x_start <- this_heatmap_x_end
+        cat(file=stderr(), paste0("  v122: Updated current_heatmap_x_start to ", current_heatmap_x_start, "\n"))
+
       } else {
-        cat(file=stderr(), paste0("  WARNING: No tile data created - skipping heatmap\n"))
+        cat(file=stderr(), paste0("  WARNING: No tile data created - skipping heatmap ", heat_idx, "\n"))
       }
-    } # End of v98 validation block
+    } # End of v122 for loop for this heatmap
   }
-  # END v98 MANUAL HEATMAP
+  # END v122 MULTIPLE HEATMAPS
 
   # v94: Track p right after heatmap block
   cat(file=stderr(), paste0("\n=== v94: Immediately after simplified heatmap block ===\n"))
@@ -6670,15 +6692,16 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v121 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v122 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("NEW: Legend tab - configure legend position (top/bottom/left/right)"),
-                              tags$li("NEW: Legend tab - toggle visibility for classification, highlight, bootstrap, heatmap legends"),
-                              tags$li("NEW: Legend tab - adjust legend title and text sizes"),
-                              tags$li("NEW: Column Range selector - select columns 2-10 with a single input"),
-                              tags$li("FIX: Added debug logging for tip guide lines to trace settings flow")
+                              tags$li("NEW: Multiple heatmaps support - add up to 6 heatmaps side by side"),
+                              tags$li("NEW: Each heatmap can have its own colors, type, and spacing"),
+                              tags$li("NEW: Heatmap distance controls spacing between heatmaps"),
+                              tags$li("FIX: Guide lines now extend from tree tips to heatmap edge"),
+                              tags$li("FIX: Auto-detection reads current checkbox state properly"),
+                              tags$li("NEW: Legend tab - plot preview, increased slider ranges, improved layout")
                             )
                      )
             )
@@ -7184,60 +7207,90 @@ ui <- dashboardPage(
         )
       ),
 
-      # Legend Tab (v121)
+      # Legend Tab (v122)
       tabItem(
         tabName = "legend",
         fluidRow(
-          box(
-            title = "Legend Position",
-            status = "primary",
-            solidHeader = TRUE,
-            width = 6,
-            tags$p("Configure where legends appear on the plot:"),
-            selectInput("legend_position", "Legend Position",
-                        choices = c("Right (default)" = "right",
-                                    "Left" = "left",
-                                    "Top" = "top",
-                                    "Bottom" = "bottom",
-                                    "None (hide all)" = "none"),
-                        selected = "right"),
-            hr(),
-            tags$h5(icon("eye"), " Legend Visibility"),
-            tags$p(class = "text-muted", "Toggle which legends to show:"),
-            checkboxInput("legend_show_classification", "Show Classification Legend", value = TRUE),
-            checkboxInput("legend_show_highlight", "Show Highlight Legend", value = TRUE),
-            checkboxInput("legend_show_bootstrap", "Show Bootstrap Legend", value = TRUE),
-            checkboxInput("legend_show_heatmap", "Show Heatmap Legends", value = TRUE)
+          # v122: Settings on left (4 columns), preview on right (8 columns)
+          column(4,
+            # Legend Position box
+            box(
+              title = NULL,  # v122: No side-by-side title
+              status = "primary",
+              solidHeader = FALSE,
+              width = 12,
+              tags$h4(icon("arrows-alt"), " Legend Position", style = "margin-top: 0;"),
+              tags$p(class = "text-muted", "Where legends appear on the plot:"),
+              selectInput("legend_position", NULL,  # v122: Title is above, not in label
+                          choices = c("Right (default)" = "right",
+                                      "Left" = "left",
+                                      "Top" = "top",
+                                      "Bottom" = "bottom",
+                                      "None (hide all)" = "none"),
+                          selected = "right")
+            ),
+
+            # Legend Visibility box
+            box(
+              title = NULL,
+              status = "info",
+              solidHeader = FALSE,
+              width = 12,
+              tags$h4(icon("eye"), " Legend Visibility", style = "margin-top: 0;"),
+              tags$p(class = "text-muted", "Toggle which legends to show:"),
+              checkboxInput("legend_show_classification", "Classification Legend", value = TRUE),
+              checkboxInput("legend_show_highlight", "Highlight Legend", value = TRUE),
+              checkboxInput("legend_show_bootstrap", "Bootstrap Legend", value = TRUE),
+              checkboxInput("legend_show_heatmap", "Heatmap Legends", value = TRUE)
+            ),
+
+            # Font Sizes box
+            box(
+              title = NULL,
+              status = "warning",
+              solidHeader = FALSE,
+              width = 12,
+              tags$h4(icon("text-height"), " Font Sizes", style = "margin-top: 0;"),
+              sliderInput("legend_title_size", "Legend Title Size",
+                          min = 4, max = 48, value = 12, step = 1),  # v122: Increased max from 24 to 48
+              sliderInput("legend_text_size", "Legend Text Size",
+                          min = 2, max = 36, value = 10, step = 1)   # v122: Increased max from 18 to 36
+            ),
+
+            # Symbol Settings box
+            box(
+              title = NULL,
+              status = "success",
+              solidHeader = FALSE,
+              width = 12,
+              tags$h4(icon("square"), " Symbol Settings", style = "margin-top: 0;"),
+              sliderInput("legend_key_size", "Legend Key Size (symbols)",
+                          min = 0.1, max = 5, value = 1, step = 0.1),  # v122: Increased max from 2 to 5
+              sliderInput("legend_spacing", "Legend Spacing",
+                          min = 0.05, max = 3, value = 0.3, step = 0.05)  # v122: Increased max from 1 to 3
+            ),
+
+            # Apply button
+            box(
+              title = NULL,
+              status = "primary",
+              solidHeader = FALSE,
+              width = 12,
+              actionButton("apply_legend_settings", "Apply Legend Settings",
+                           class = "btn-success btn-lg btn-block",
+                           icon = icon("check"))
+            )
           ),
-          box(
-            title = "Legend Text Settings",
-            status = "info",
-            solidHeader = TRUE,
-            width = 6,
-            tags$h5(icon("text-height"), " Font Sizes"),
-            sliderInput("legend_title_size", "Legend Title Size",
-                        min = 6, max = 24, value = 12, step = 1),
-            sliderInput("legend_text_size", "Legend Text Size",
-                        min = 4, max = 18, value = 10, step = 1),
-            hr(),
-            tags$h5(icon("square"), " Symbol Settings"),
-            sliderInput("legend_key_size", "Legend Key Size (symbols)",
-                        min = 0.2, max = 2, value = 1, step = 0.1),
-            sliderInput("legend_spacing", "Legend Spacing",
-                        min = 0.1, max = 1, value = 0.3, step = 0.05)
-          )
-        ),
-        fluidRow(
-          box(
-            title = "Apply Legend Settings",
-            status = "success",
-            solidHeader = TRUE,
-            width = 12,
-            actionButton("apply_legend_settings", "Apply Legend Settings",
-                         class = "btn-success btn-lg",
-                         icon = icon("check")),
-            tags$p(class = "text-muted", style = "margin-top: 10px;",
-                   "Click to apply legend settings to the plot. Settings will be saved to the configuration.")
+
+          # v122: Plot preview on right (8 columns)
+          column(8,
+            box(
+              title = "Legend Preview",
+              status = "primary",
+              solidHeader = TRUE,
+              width = 12,
+              plotOutput("legend_preview", height = "700px")
+            )
           )
         )
       ),
@@ -11781,12 +11834,22 @@ server <- function(input, output, session) {
 
       # Update config with current columns
       cfg$columns <- current_columns
-      
+
+      # v122: Read auto_type from current input (not from stale cfg)
+      current_auto_type <- input[[paste0("heatmap_auto_type_", i)]]
+      if (is.null(current_auto_type)) current_auto_type <- TRUE
+
+      # v122: Read forced type from current input
+      current_forced_type <- input[[paste0("heatmap_type_", i)]]
+      if (is.null(current_forced_type)) current_forced_type <- "discrete"
+
       # v116: Improved auto-detect logic for discrete vs continuous
       # Priority: decimals = continuous, non-numeric = discrete, then check unique values
-      actual_type <- cfg$type
+      actual_type <- current_forced_type  # v122: Default to forced type
       first_col <- cfg$columns[1]
-      if (cfg$auto_type && !is.null(values$csv_data) && first_col %in% names(values$csv_data)) {
+      cat(file=stderr(), paste0("  v122 AUTO-DETECT: auto_type=", current_auto_type,
+                                 ", forced_type=", current_forced_type, "\n"))
+      if (current_auto_type && !is.null(values$csv_data) && first_col %in% names(values$csv_data)) {
         col_data <- values$csv_data[[first_col]]
         col_data_clean <- na.omit(col_data)
         unique_vals <- length(unique(col_data_clean))
@@ -13231,7 +13294,19 @@ server <- function(input, output, session) {
       text(0.5, 0.5, "Failed to render plot.\nCheck console for details.", cex=1.2)
     })
   }, height = 600)
-  
+
+  # v122: Legend preview - same as final preview
+  output$legend_preview <- renderPlot({
+    req(values$current_plot)
+    tryCatch({
+      values$current_plot
+    }, error = function(e) {
+      plot(c(0,1), c(0,1), type="n", xlab="", ylab="",
+           main="Preview Error", axes=FALSE)
+      text(0.5, 0.5, "Failed to render plot.\nCheck console for details.", cex=1.2)
+    })
+  }, height = 700)
+
   # Update YAML output
   output$yaml_output <- renderText({
     yaml::as.yaml(values$yaml_data, indent.mapping.sequence = TRUE)

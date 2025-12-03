@@ -5,7 +5,7 @@
 This document contains the step-by-step plan for rebuilding the heatmap functionality in EZLineagePlotter.
 The complex heatmap code (~800 lines) has been disabled in v91 and replaced with a simple proof-of-concept.
 
-**Current Status**: v121 - Added new Legend tab for configuring legend position (top/bottom/left/right), visibility toggles for different legend types (classification, highlight, bootstrap, heatmap), and legend text/symbol sizes. Added Column Range selector for selecting contiguous columns (e.g., "2-10") in heatmap configuration. Added comprehensive debug logging for tip guide lines settings to trace where settings might be lost. Phase 4 (custom color scales for continuous data) was confirmed already implemented in v120.
+**Current Status**: v122 - **Phase 5 COMPLETE!** Implemented multiple heatmaps support - up to 6 heatmaps side by side with individual colors, types, and spacing. Each heatmap can have its own distance parameter to control spacing from the previous heatmap. Uses `new_scale_fill()` for multiple color scales. Also fixed: guide lines now extend from tree tips to heatmap edge, auto-detection properly reads current checkbox state, Legend tab has plot preview and increased slider ranges.
 
 ## Why We Simplified
 
