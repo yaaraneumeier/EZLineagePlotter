@@ -2211,7 +2211,8 @@ func.print.lineage.tree <- function(conf_yaml_path,
                                     tip_name_display_flag=TRUE,
                                     bootstrap_label_size= 1.5,  # v129: Reduced from 3.5 for smaller default legend
                                     heatmap_tree_distance= 0.02,
-                                    heatmap_global_gap = 0.05) {  # v125: Gap between multiple heatmaps
+                                    heatmap_global_gap = 0.05,  # v125: Gap between multiple heatmaps
+                                    legend_settings = NULL) {  # v135: Legend settings for highlight/bootstrap legends
 
   # === DEBUG CHECKPOINT 2: FUNCTION ENTRY ===
   # v53: cat(file=stderr(), "\nÃ°Å¸â€Â DEBUG CHECKPOINT 2: func.print.lineage.tree ENTRY\n")
@@ -6419,7 +6420,8 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     }
 
     # v133: Get legend settings for highlight and bootstrap legends
-    legend_settings_local <- values$legend_settings
+    # v135: Use legend_settings parameter instead of values$legend_settings
+    legend_settings_local <- legend_settings
     highlight_x_off <- if (!is.null(legend_settings_local$highlight_x_offset)) legend_settings_local$highlight_x_offset else 0
     highlight_y_off <- if (!is.null(legend_settings_local$highlight_y_offset)) legend_settings_local$highlight_y_offset else 0
     highlight_title_sz <- legend_settings_local$highlight_title_size  # NULL is ok, will use default
@@ -6804,13 +6806,11 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v134 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v135 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("FIX: Downloaded files now match the final preview exactly"),
-                              tags$li("FIX: Heatmaps, highlights, and all layers are included in downloads"),
-                              tags$li("Download uses ggsave with the actual generated plot instead of basic tree")
+                              tags$li("FIX: Heatmap 'object values not found' error - legend_settings now passed correctly to plot function")
                             )
                      )
             )
@@ -13579,7 +13579,9 @@ server <- function(input, output, session) {
           values$heatmap_global_gap
         } else {
           0.05
-        }
+        },
+        # v135: Pass legend settings for highlight/bootstrap legends
+        legend_settings = values$legend_settings
       ))
       
       # Debug output
