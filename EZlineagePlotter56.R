@@ -1299,8 +1299,14 @@ func.make.leaves_id_ordered_for_df440 <- function(leaves_id_from_tree1, dxdf440_
 
 
 # Function to handle highlighting
+# v57: Added high_alpha_list parameter to support per-highlight transparency
 func_highlight <- function(p, how_many_hi, heat_flag, high_color_list, a, b, man_adjust_elipse, pr440_short_tips_TRY,
-                           boudariestt, debug_mode = FALSE, high_offset = 0, high_vertical_offset = 0) {
+                           boudariestt, debug_mode = FALSE, high_offset = 0, high_vertical_offset = 0,
+                           high_alpha_list = NULL) {
+  # v57: Default to 0.5 if no alpha list provided (backwards compatibility)
+  if (is.null(high_alpha_list) || length(high_alpha_list) == 0) {
+    high_alpha_list <- rep(0.5, how_many_hi)
+  }
   up_offset <- -1 # -3
   y_off_base <- -8
   
@@ -1350,35 +1356,50 @@ func_highlight <- function(p, how_many_hi, heat_flag, high_color_list, a, b, man
       # v53: cat(file=stderr(), paste0("🔵 Ellipse positioning: man_adjust_elipse=", man_adjust_elipse, 
       #                            " (inverted), max_x=", max(pr440_short_tips_TRY$data[,'x']), "\n"))
       
+      # v57: Use per-highlight transparency from high_alpha_list instead of hardcoded 0.5
+      current_alpha <- if (length(high_alpha_list) >= 1) high_alpha_list[[1]] else 0.5
+
       if (heat_flag == FALSE) {
         p <- p +
           geom_ellipse(data = high_nodes_table1,
                        aes(x0 = ((max(pr440_short_tips_TRY$data[,'x']) - x) * (-1) - man_adjust_elipse),
                            y0 = y + high_vertical_offset, a = a, b = b, angle = 0),
-                       fill = high_color_list[[1]], alpha = 0.5, linetype = "blank", show.legend = FALSE)
+                       fill = high_color_list[[1]], alpha = current_alpha, linetype = "blank", show.legend = FALSE)
       } else {
+        # v57: Improved ellipse positioning for heatmap case
+        # Calculate scaling factor dynamically based on actual tree/heatmap boundaries
+        # The tree x-coordinates are multiplied by 15, so we need to account for that
+        max_x <- max(p$data[p$data$isTip == TRUE, 'x'], na.rm = TRUE)
+
+        # Debug output for ellipse positioning
+        cat(file=stderr(), paste0("v57 Ellipse Debug: heat_flag=TRUE, max_x=", round(max_x, 2),
+                                  ", boudariestt$xmax=", round(boudariestt$xmax, 2),
+                                  ", boudariestt$xmin=", round(boudariestt$xmin, 2), "\n"))
+
         p <- p +
           geom_ellipse(data = high_nodes_table1,
-                       aes(x0 = ((max(p$data[,'x']) - x) * (-15.4) - man_adjust_elipse - boudariestt$xmax - boudariestt$xmin),
+                       aes(x0 = ((max_x - x) * (-15) - man_adjust_elipse),
                            y0 = y + high_vertical_offset, a = a, b = b, angle = 0),
-                       fill = high_color_list[[1]], alpha = 0.5, linetype = "blank", show.legend = FALSE)
+                       fill = high_color_list[[1]], alpha = current_alpha, linetype = "blank", show.legend = FALSE)
       }
     } else if (index_high == 2) {
       high_nodes_table2 <- p$data[p$data$high2 == TRUE,]
-      
+      current_alpha <- if (length(high_alpha_list) >= 2) high_alpha_list[[2]] else 0.5
+
       p <- p +
         geom_ellipse(data = high_nodes_table2,
-                     aes(x0 = ((max(p$data[,'x']) - x) * (x_range_min)), 
+                     aes(x0 = ((max(p$data[,'x']) - x) * (x_range_min)),
                          y0 = y, a = a, b = b, angle = 0),
-                     fill = high_color_list[[2]], alpha = 0.5, linetype = "blank", show.legend = FALSE)
+                     fill = high_color_list[[2]], alpha = current_alpha, linetype = "blank", show.legend = FALSE)
     } else if (index_high == 3) {
       high_nodes_table3 <- p$data[tree_TRY$data$high3 == TRUE,]
-      
+      current_alpha <- if (length(high_alpha_list) >= 3) high_alpha_list[[3]] else 0.5
+
       p <- p +
         geom_ellipse(data = high_nodes_table3,
-                     aes(x0 = ((max(pr440_short_tips_TRY$data[,'x']) - x) * (x_range_min)), 
+                     aes(x0 = ((max(pr440_short_tips_TRY$data[,'x']) - x) * (x_range_min)),
                          y0 = y, a = a, b = b, angle = 0),
-                     fill = high_color_list[[3]], alpha = 0.5, linetype = "blank", show.legend = FALSE)
+                     fill = high_color_list[[3]], alpha = current_alpha, linetype = "blank", show.legend = FALSE)
     }
   }
   
@@ -1421,6 +1442,7 @@ func_highlight <- function(p, how_many_hi, heat_flag, high_color_list, a, b, man
 
 
 # Function to create the second legend
+# v57: Added high_alpha_list parameter to match ellipse transparency in legend with plot
 func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag, how_many_boxes,
                                     how_mant_rows, boudariestt, y_off_base, high_title_list,
                                     size_font_legend_title, high_label_list, size_font_legend_text,
@@ -1429,7 +1451,12 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
                                     man_multiply_second_legend, man_multiply_second_legend_text,
                                     man_multiply_elipse, man_space_second_legend,
                                     man_space_second_legend_multiplier, man_offset_for_highlight_legend_x,
-                                    debug_mode = FALSE, boot_values = NA, man_offset_second_legend = 0, width) {
+                                    debug_mode = FALSE, boot_values = NA, man_offset_second_legend = 0, width,
+                                    high_alpha_list = NULL, bootstrap_label_size = 3.5) {
+  # v57: Default to 0.5 if no alpha list provided (backwards compatibility)
+  if (is.null(high_alpha_list) || length(high_alpha_list) == 0) {
+    high_alpha_list <- rep(0.5, how_many_hi)
+  }
   if (debug_mode == TRUE) {
     # v53: print("boudariestt is")
     # v53: print(boudariestt)
@@ -1474,8 +1501,13 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
   }
   
   norm <- 0.8
-  size_title <- size_font_legend_title * man_multiply_second_legend_text
+  # v57: Reduce legend title size - was too large. Cap at reasonable value
+  size_title <- min(size_font_legend_title * man_multiply_second_legend_text, 5)
   size_text <- size_font_legend_text * man_multiply_second_legend * norm
+
+  # v57: Debug output for legend coordinates
+  cat(file=stderr(), paste0("v57 Legend Debug: size_title=", round(size_title, 2),
+                            ", size_text=", round(size_text, 2), "\n"))
   
   x11 <- new_base_for_second_legend_normalized
   x22 <- new_base_for_second_legend_normalized - new_step
@@ -1497,45 +1529,63 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
           # v53: print(y_off_base)
         }
         
+        # v57: Calculate title y position
+        title_y <- y_off_base + 0.7 + (width / 400) + man_adjust_image_of_second_legend
+
+        # v57: Debug output for legend title coordinates
+        cat(file=stderr(), paste0("v57 Highlight Legend Title '", high_title_list[[index_high]],
+                                  "': x=", round(x11, 2), ", y=", round(title_y, 2), "\n"))
+
         p <- p + annotate(
-          geom = "text", 
-          label = high_title_list[[index_high]], size = size_title, 
+          geom = "text",
+          label = high_title_list[[index_high]], size = size_title,
           x = x11,
-          y = y_off_base + 0.7 + (width / 400) + man_adjust_image_of_second_legend, 
+          y = title_y,
           hjust = 0, vjust = 0,
           fontface = "bold"
         )
-        
+
         if (how_many_hi > 1) {
+          # v57: Use transparency from high_alpha_list
+          current_alpha <- if (length(high_alpha_list) >= index_high) high_alpha_list[[index_high]] else 0.5
           p <- p + geom_ellipse(
-            aes(x0 = x22, y0 = y_off_base + 0.7 + (width / 400) + man_adjust_image_of_second_legend, 
+            aes(x0 = x22, y0 = y_off_base + 0.7 + (width / 400) + man_adjust_image_of_second_legend,
                 a = a, b = b, angle = 0),
-            fill = high_color_list[[index_high]], alpha = 0.5, linetype = "blank", show.legend = FALSE
+            fill = high_color_list[[index_high]], alpha = current_alpha, linetype = "blank", show.legend = FALSE
           )
         }
       }
-      
+
+      # v57: Use transparency from high_alpha_list for legend ellipses
+      current_alpha <- if (length(high_alpha_list) >= index_high) high_alpha_list[[index_high]] else 0.5
+
       p <- p + annotate(
-        geom = "text", 
-        label = high_label_list[[index_high]], size = size_text, 
+        geom = "text",
+        label = high_label_list[[index_high]], size = size_text,
         x = x22 + extra,
         y = y_off_base - 3.2
       ) + geom_ellipse(
         aes(x0 = x22 + extra,
-            y0 = y_off_base + 1 + man_adjust_image_of_second_legend, 
+            y0 = y_off_base + 1 + man_adjust_image_of_second_legend,
             a = a * man_multiply_elipse, b = b + 0.3, angle = 0),
-        fill = high_color_list[[index_high]], alpha = 0.5, linetype = "blank", show.legend = FALSE
+        fill = high_color_list[[index_high]], alpha = current_alpha, linetype = "blank", show.legend = FALSE
       )
     }
   } 
   
   if (show_boot_flag == TRUE) {
-    if (boot_values$'format' == 'triangles') {  
+    if (boot_values$'format' == 'triangles') {
+      # v57: Calculate and output bootstrap legend title coordinates
+      boot_title_x <- x22 - new_big_step + 2 * extra
+      boot_title_y <- y_off_base + 3
+      cat(file=stderr(), paste0("v57 Bootstrap Legend Title 'Bootstrap': x=", round(boot_title_x, 2),
+                                ", y=", round(boot_title_y, 2), "\n"))
+
       p <- p + annotate(
-        geom = "text", 
-        label = "Bootstrap", size = size_title, 
-        x = x22 - new_big_step + 2 * extra, 
-        y = y_off_base + 3, hjust = 0, vjust = 0,
+        geom = "text",
+        label = "Bootstrap", size = size_title,
+        x = boot_title_x,
+        y = boot_title_y, hjust = 0, vjust = 0,
         fontface = "bold"
       ) + annotate(
         geom = "text", 
@@ -1653,7 +1703,17 @@ func.make.highlight.params.NEW <- function(yaml_file, title.id, ids_list, tree44
   for (in_hi in indexes_hi) {
     high_color_list[[in_hi]] <- hi_def$according[[in_hi]][[as.character(in_hi)]]$color
   }
-  
+
+  # v57: Extract transparency values from YAML config (default to 0.5 for backwards compatibility)
+  high_alpha_list <- c()
+  for (in_hi in indexes_hi) {
+    alpha_val <- hi_def$according[[in_hi]][[as.character(in_hi)]]$transparency
+    if (is.null(alpha_val) || is.na(alpha_val)) {
+      alpha_val <- 0.5  # Default transparency
+    }
+    high_alpha_list[[in_hi]] <- alpha_val
+  }
+
   high_title_list <- c()
   for (in_hi in indexes_hi) {
     high_title_list[[in_hi]] <- hi_def$according[[in_hi]][[as.character(in_hi)]]$display_title
@@ -1789,13 +1849,14 @@ func.make.highlight.params.NEW <- function(yaml_file, title.id, ids_list, tree44
   highlight.params.NEW$how_many_hi <- how_many_hi
   highlight.params.NEW$high_label_list <- high_label_list
   highlight.params.NEW$high_color_list <- high_color_list
+  highlight.params.NEW$high_alpha_list <- high_alpha_list  # v57: Add transparency list
   highlight.params.NEW$high_title_list <- high_title_list
   highlight.params.NEW$lists_list_hi <- lists_list_hi
   highlight.params.NEW$offset_hi <- offset_hi
   highlight.params.NEW$vertical_offset_hi <- vertical_offset_hi
   highlight.params.NEW$adjust_height_ecliplse <- adjust_height_ecliplse
   highlight.params.NEW$adjust_width_eclipse <- adjust_width_eclipse
-  
+
   return(highlight.params.NEW)
 }
 
@@ -3010,6 +3071,7 @@ func.print.lineage.tree <- function(conf_yaml_path,
           how_many_hi <- highlight.params.NEW$how_many_hi
           high_label_list<- highlight.params.NEW$high_label_list
           high_color_list<- highlight.params.NEW$high_color_list
+          high_alpha_list <- highlight.params.NEW$high_alpha_list  # v57: Extract transparency list
           high_title_list<- highlight.params.NEW$high_title_list
           lists_list_hi<- highlight.params.NEW$lists_list_hi
           high_offset<- highlight.params.NEW$offset_hi
@@ -3391,6 +3453,7 @@ func.print.lineage.tree <- function(conf_yaml_path,
         how_many_hi = how_many_hi,
         high_label_list = high_label_list,
         high_color_list = high_color_list,
+        high_alpha_list = high_alpha_list,  # v57: Pass transparency list
         high_title_list = high_title_list,
         lists_list_hi = lists_list_hi,
         simulate.p.value= simulate.p.value,
@@ -3580,11 +3643,12 @@ func.print.lineage.tree <- function(conf_yaml_path,
 
 
 # Main function for creating the plot tree with heatmap
-func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by_class, dxdf440_dataf, 
+# v57: Added high_alpha_list parameter for transparency support
+func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by_class, dxdf440_dataf,
                                          title.id, FDR_perc, no_name, rotate_flag, rotation_params1,
                                          rotation_params2, flag_short_tips, tips_length, show_boot_flag,
                                          FLAG_BULK_DISPLAY, how_many_hi = 0, high_label_list,
-                                         high_color_list, high_title_list, lists_list_hi,
+                                         high_color_list, high_alpha_list = NULL, high_title_list, lists_list_hi,
                                          simulate.p.value, width, height, colors_scale1,
                                          out_file_path, edge_width_multiplier = 1,
                                          size_tip_text = 3, size_font_legend_title = 30,
@@ -4339,9 +4403,11 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       b <- base_b * adjust_width_eclipse
     }   
     
+    # v57: Pass high_alpha_list for transparency support
     p <- func_highlight(
       p, how_many_hi, heat_flag, high_color_list, a, b, man_adjust_elipse,
-      pr440_short_tips_TRY, boudariestt, debug_mode, high_offset, high_vertical_offset
+      pr440_short_tips_TRY, boudariestt, debug_mode, high_offset, high_vertical_offset,
+      high_alpha_list = high_alpha_list
     )
   }
   
@@ -4726,20 +4792,21 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       b <- base_b * adjust_width_eclipse
     }   
     
+    # v57: Pass high_alpha_list for transparency support
     p <- func_highlight(
-      p, how_many_hi, heat_flag, high_color_list, a, b, man_adjust_elipse, 
-      pr440_short_tips_TRY, boudariestt, debug_mode, high_offset, high_vertical_offset
+      p, how_many_hi, heat_flag, high_color_list, a, b, man_adjust_elipse,
+      pr440_short_tips_TRY, boudariestt, debug_mode, high_offset, high_vertical_offset,
+      high_alpha_list = high_alpha_list
     )
   }
-  
+
   if (length(b) == 0) {
     b <- 0.2
   }
-  
-  # Add second legend if heatmap exists
-  
+
   # Add second legend if heatmap exists
   if (length(heat_map_title_list) > 0) {
+    # v57: Added high_alpha_list and bootstrap_label_size parameters
     p <- func.make.second.legend(
       p,
       FLAG_BULK_DISPLAY,
@@ -4771,7 +4838,9 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       debug_mode,
       boot_values,
       man_offset_second_legend,
-      width
+      width,
+      high_alpha_list = high_alpha_list,
+      bootstrap_label_size = bootstrap_label_size
     )
   }
   
@@ -4814,7 +4883,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
 # Define UI
 ui <- dashboardPage(
-  dashboardHeader(title = "Lineage Tree Plotter v56"),
+  dashboardHeader(title = "Lineage Tree Plotter v57"),
   
   dashboardSidebar(
     width = 300,
@@ -9611,13 +9680,37 @@ server <- function(input, output, session) {
         # Save the plot as PNG
         # v53: cat(file=stderr(), "Calling ggsave...\n")
         # v54: Wrap in suppressWarnings to suppress scale warnings
+        # v57: Use user-specified dimensions to maintain consistent proportions across tabs
+        # Convert dimensions to inches based on the selected units for ggsave
+        save_width <- width_val
+        save_height <- height_val
+        save_units <- units_val
+
+        # Ensure aspect ratio is preserved - use the user's proportions
+        # Calculate scaling factor to fit in reasonable preview size while keeping proportions
+        aspect_ratio <- save_width / save_height
+        # Preview should be reasonable size for display, but maintain aspect ratio
+        if (save_units == "cm") {
+          preview_width_in <- min(save_width / 2.54, 25)  # Max 25 inches wide
+          preview_height_in <- preview_width_in / aspect_ratio
+        } else if (save_units == "mm") {
+          preview_width_in <- min(save_width / 25.4, 25)
+          preview_height_in <- preview_width_in / aspect_ratio
+        } else {
+          preview_width_in <- min(save_width, 25)
+          preview_height_in <- preview_width_in / aspect_ratio
+        }
+
+        cat(file=stderr(), paste0("v57: Saving plot with aspect ratio ", round(aspect_ratio, 2),
+                                  " (", preview_width_in, "x", preview_height_in, " inches)\n"))
+
         suppressWarnings(ggsave(
-          filename = temp_plot_file, 
-          plot = result, 
-          width = 20, 
-          height = 10, 
-          units = "in", 
-          dpi = 150, 
+          filename = temp_plot_file,
+          plot = result,
+          width = preview_width_in,
+          height = preview_height_in,
+          units = "in",
+          dpi = 150,
           limitsize = FALSE
         ))
         
