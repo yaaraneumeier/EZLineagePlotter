@@ -25,6 +25,8 @@ library(tidyverse)
 library(ggnewscale)
 library(stats)
 library(gridExtra)
+library(cowplot)  # v144: For proper plot positioning using draw_plot
+library(jpeg)     # v144: For JPEG image overlay support
 library(combinat)
 library(infotheo)
 library(aricode)
@@ -6409,10 +6411,24 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     }
 
     # v50: Use multiplicative scaling for height and width sliders
+    # v144: Scale both 'a' and 'b' based on plot dimensions to maintain ellipse proportions
+    # When heatmap expands the x-range, we need to scale 'b' proportionally
     base_a <- tip_length * size_tip_text / (5.1 * boudariestt$xmax) + man_adjust_elipse_a
-    base_b <- 0.12 + man_adjust_elipse_b
+
+    # v144: Calculate scale factor for 'b' based on plot aspect ratio change
+    # Without heatmap: divisor is 800, with heatmap: divisor is 5.1 * xmax
+    # Scale 'b' inversely to maintain visual proportions
+    ellipse_scale_factor <- 800 / (5.1 * boudariestt$xmax)
+    # Clamp scale factor to reasonable range to prevent extreme values
+    ellipse_scale_factor <- min(max(ellipse_scale_factor, 0.1), 2.0)
+
+    base_b <- (0.12 + man_adjust_elipse_b) * ellipse_scale_factor
     a <- base_a * adjust_height_ecliplse
     b <- base_b * adjust_width_eclipse
+
+    cat(file=stderr(), paste0("  v144: Ellipse scale factor: ", round(ellipse_scale_factor, 3),
+                              " (xmax=", round(boudariestt$xmax, 2), ")\n"))
+    cat(file=stderr(), paste0("  v144: Adjusted ellipse b=", round(b, 4), "\n"))
 
     # v139: Pass high_alpha_list for transparency
     p <- func_highlight(
@@ -6843,15 +6859,16 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v143 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v144 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "New in this version:",
                             tags$ul(
-                              tags$li("Extra tab: Vertical position range greatly expanded (now -10 to +5)"),
-                              tags$li("Extra tab: Text overlay is now a TRUE overlay using grid::textGrob (doesn't move the figure at all)"),
-                              tags$li("Download tab: Page orientation change now properly regenerates preview with correct proportions"),
-                              tags$li("Legend tab: Highlight legend title size default reduced further (0.5)"),
-                              tags$li("Legend tab: Added Bootstrap Title X Offset control to move title to the right")
+                              tags$li("Extra tab: Vertical position now MOVES plot (using cowplot) instead of squeezing it"),
+                              tags$li("Extra tab: Image overlay now supports PNG and JPEG formats, uses true overlay positioning"),
+                              tags$li("Download tab: Preview now maintains fixed proportions (not stretched to output dimensions)"),
+                              tags$li("Highlighting: Ellipse size now scales properly when heatmap is added (no more huge ellipses)"),
+                              tags$li("Legend tab: Highlight legend title size default reduced to 0.3"),
+                              tags$li("Legend tab: Bootstrap legend Y offset default changed to -8 for better positioning below other legends")
                             )
                      )
             )
@@ -7442,7 +7459,7 @@ ui <- dashboardPage(
               fluidRow(
                 column(6,
                   sliderInput("highlight_legend_title_size", "Title Size",
-                              min = 0.3, max = 10, value = 0.5, step = 0.1)  # v143: even smaller default (was 1)
+                              min = 0.2, max = 10, value = 0.3, step = 0.1)  # v144: smaller default (was 0.5)
                 ),
                 column(6,
                   sliderInput("highlight_legend_text_size", "Label Text Size",
@@ -7478,9 +7495,9 @@ ui <- dashboardPage(
                               min = -5, max = 5, value = -2, step = 0.1)
                 ),
                 column(6,
-                  # v142: Changed default from 0 to -6 to position below highlight legend
+                  # v144: Changed default from -6 to -8 to position further below highlight legend
                   sliderInput("bootstrap_legend_y_offset", "Y Offset (Up/Down)",
-                              min = -10, max = 10, value = -6, step = 0.5)
+                              min = -15, max = 10, value = -8, step = 0.5)
                 )
               ),
               fluidRow(
@@ -13919,45 +13936,22 @@ server <- function(input, output, session) {
       # v130: Apply Extra tab settings (page title, custom texts, images)
       # These are applied AFTER legend settings so they appear on top
       tryCatch({
-        # v141: Apply plot position offsets
-        # These move the entire plot on the page by adjusting margins
+        # v144: Plot position offsets are now applied AFTER all modifications
+        # using cowplot's draw_plot for true translation (no squeezing)
+        # Store offsets for later use during rendering
         plot_off_x <- if (!is.null(values$plot_offset_x)) values$plot_offset_x else 0
         plot_off_y <- if (!is.null(values$plot_offset_y)) values$plot_offset_y else 0
 
+        # v144: Store the offsets in result for later extraction
+        # We'll apply them during the final rendering step
+        attr(result, "plot_offset_x") <- plot_off_x
+        attr(result, "plot_offset_y") <- plot_off_y
+
         if (plot_off_x != 0 || plot_off_y != 0) {
-          cat(file=stderr(), paste0("\n=== v142: APPLYING PLOT POSITION OFFSETS ===\n"))
+          cat(file=stderr(), paste0("\n=== v144: STORING PLOT POSITION OFFSETS ===\n"))
           cat(file=stderr(), paste0("  X offset: ", plot_off_x, " (positive = right)\n"))
           cat(file=stderr(), paste0("  Y offset: ", plot_off_y, " (positive = up)\n"))
-
-          # v142: Convert offset to margin units (cm)
-          # Using larger scale for more noticeable movement
-          # Positive X offset = more left margin = plot moves right
-          # Positive Y offset = more bottom margin = plot moves up
-          base_margin <- 1  # Base margin in cm
-          margin_scale <- 5  # Scale factor for offset (larger values = bigger movement)
-
-          # Calculate margins: margin(top, right, bottom, left)
-          # Positive X offset -> increase left margin, decrease right margin
-          # Positive Y offset -> increase bottom margin, decrease top margin
-          left_margin <- base_margin + (plot_off_x * margin_scale)
-          right_margin <- base_margin - (plot_off_x * margin_scale)
-          top_margin <- base_margin - (plot_off_y * margin_scale)
-          bottom_margin <- base_margin + (plot_off_y * margin_scale)
-
-          # Ensure margins don't go negative (minimum 0.1 cm)
-          left_margin <- max(0.1, left_margin)
-          right_margin <- max(0.1, right_margin)
-          top_margin <- max(0.1, top_margin)
-          bottom_margin <- max(0.1, bottom_margin)
-
-          result <- result + theme(
-            plot.margin = margin(t = top_margin, r = right_margin,
-                                b = bottom_margin, l = left_margin, unit = "cm")
-          )
-          cat(file=stderr(), paste0("  v142: Margins applied: t=", round(top_margin, 2),
-                                    ", r=", round(right_margin, 2),
-                                    ", b=", round(bottom_margin, 2),
-                                    ", l=", round(left_margin, 2), " cm\n"))
+          cat(file=stderr(), paste0("  v144: Offsets will be applied via cowplot draw_plot during rendering\n"))
         }
 
         # Apply page title
@@ -14052,59 +14046,83 @@ server <- function(input, output, session) {
           cat(file=stderr(), paste0("  v143: Text overlays applied - plot coordinates unchanged\n"))
         }
 
-        # Apply custom images
+        # v144: Apply custom images as TRUE overlays using grid positioning
+        # This is consistent with text overlay behavior - uses normalized page coordinates
         custom_images <- values$custom_images
         if (!is.null(custom_images) && length(custom_images) > 0) {
-          cat(file=stderr(), paste0("\n=== v130: Applying ", length(custom_images), " custom image(s) ===\n"))
-
-          # Get plot ranges to convert normalized coords to data coords
-          if (!exists("plot_build")) {
-            plot_build <- ggplot_build(result)
-          }
-          x_range <- plot_build$layout$panel_params[[1]]$x.range
-          y_range <- plot_build$layout$panel_params[[1]]$y.range
-          x_span <- x_range[2] - x_range[1]
-          y_span <- y_range[2] - y_range[1]
+          cat(file=stderr(), paste0("\n=== v144: Applying ", length(custom_images), " custom image(s) as TRUE OVERLAY ===\n"))
 
           for (i in seq_along(custom_images)) {
             img <- custom_images[[i]]
             if (file.exists(img$path)) {
               tryCatch({
-                # Load image
-                img_data <- png::readPNG(img$path)
+                # v144: Detect file type and load with appropriate library
+                file_ext <- tolower(tools::file_ext(img$path))
+                img_data <- NULL
 
-                # Calculate position in data coords
-                img_width <- img$width * x_span
-                img_height <- if (!is.null(img$height) && img$height > 0) {
-                  img$height * y_span
+                if (file_ext %in% c("png")) {
+                  img_data <- png::readPNG(img$path)
+                  cat(file=stderr(), paste0("  Image ", i, ": Loaded PNG - ", img$name, "\n"))
+                } else if (file_ext %in% c("jpg", "jpeg")) {
+                  img_data <- jpeg::readJPEG(img$path)
+                  cat(file=stderr(), paste0("  Image ", i, ": Loaded JPEG - ", img$name, "\n"))
+                } else if (file_ext %in% c("gif")) {
+                  # GIF not directly supported, try to load as PNG (some GIFs work)
+                  tryCatch({
+                    img_data <- png::readPNG(img$path)
+                    cat(file=stderr(), paste0("  Image ", i, ": Loaded GIF as PNG - ", img$name, "\n"))
+                  }, error = function(e) {
+                    cat(file=stderr(), paste0("  Image ", i, ": GIF format not fully supported - ", img$name, "\n"))
+                  })
                 } else {
-                  # Auto height based on aspect ratio
-                  img_width * (dim(img_data)[1] / dim(img_data)[2])
+                  cat(file=stderr(), paste0("  Image ", i, ": Unsupported format (", file_ext, ") - ", img$name, "\n"))
                 }
 
-                x_center <- x_range[1] + img$x * x_span
-                y_center <- y_range[1] + img$y * y_span
+                if (!is.null(img_data)) {
+                  # v144: Create image grob with proper positioning using normalized page coordinates (npc)
+                  # This is a true overlay - like text overlays, it won't affect plot coordinates
+                  img_aspect <- dim(img_data)[1] / dim(img_data)[2]  # height/width
 
-                xmin <- x_center - img_width / 2
-                xmax <- x_center + img_width / 2
-                ymin <- y_center - img_height / 2
-                ymax <- y_center + img_height / 2
+                  # Width in normalized page units
+                  img_width_npc <- img$width
 
-                cat(file=stderr(), paste0("  Image ", i, ": ", img$name,
-                                           " at (", round(x_center, 2), ", ", round(y_center, 2), ")\n"))
+                  # Height: use user-specified or calculate from aspect ratio
+                  img_height_npc <- if (!is.null(img$height) && img$height > 0) {
+                    img$height
+                  } else {
+                    img_width_npc * img_aspect  # Auto height based on aspect ratio
+                  }
 
-                # Add image as rasterGrob
-                result <- result + annotation_custom(
-                  grob = grid::rasterGrob(img_data, interpolate = TRUE),
-                  xmin = xmin, xmax = xmax,
-                  ymin = ymin, ymax = ymax
-                )
+                  cat(file=stderr(), paste0("    Position: (", round(img$x, 2), ", ", round(img$y, 2), ")\n"))
+                  cat(file=stderr(), paste0("    Size (npc): width=", round(img_width_npc, 3),
+                                             ", height=", round(img_height_npc, 3), "\n"))
+
+                  # Create rasterGrob positioned with normalized page coordinates
+                  img_grob <- grid::rasterGrob(
+                    img_data,
+                    x = grid::unit(img$x, "npc"),
+                    y = grid::unit(img$y, "npc"),
+                    width = grid::unit(img_width_npc, "npc"),
+                    height = grid::unit(img_height_npc, "npc"),
+                    interpolate = TRUE
+                  )
+
+                  # Use annotation_custom with -Inf/Inf for true overlay
+                  result <- result + annotation_custom(
+                    grob = img_grob,
+                    xmin = -Inf, xmax = Inf,
+                    ymin = -Inf, ymax = Inf
+                  )
+                  cat(file=stderr(), paste0("    Image added as overlay\n"))
+                }
               }, error = function(e) {
                 cat(file=stderr(), paste0("  ERROR loading image ", i, ": ", e$message, "\n"))
               })
+            } else {
+              cat(file=stderr(), paste0("  Image ", i, ": File not found - ", img$path, "\n"))
             }
           }
-          cat(file=stderr(), paste0("  Custom images applied successfully\n"))
+          cat(file=stderr(), paste0("  v144: Custom images applied as overlays\n"))
         }
       }, error = function(e) {
         cat(file=stderr(), paste0("  v130 Extra tab ERROR: ", e$message, "\n"))
@@ -14128,30 +14146,58 @@ server <- function(input, output, session) {
       
       tryCatch({
         # Save the plot as PNG
-        # v142: Use output dimensions for preview to show correct orientation
-        # Scale down for preview but maintain aspect ratio
+        # v144: Use FIXED proportions for preview to avoid squeezing
+        # The plot maintains its natural proportions - user's output dimensions are only for final download
+        # This ensures Extra tab and Download tab preview show the same (undistorted) plot
         preview_width <- 20
-        preview_height <- 10
+        preview_height <- 10  # 2:1 aspect ratio (standard landscape)
 
-        # Get user-specified dimensions if available
-        if (!is.null(input$output_width) && !is.null(input$output_height) &&
-            input$output_width > 0 && input$output_height > 0) {
-          # Calculate aspect ratio from user dimensions
-          user_aspect <- input$output_width / input$output_height
-          # Set preview width fixed at 20in, calculate height to match aspect ratio
-          preview_width <- 20
-          preview_height <- 20 / user_aspect
-          cat(file=stderr(), paste0("  v142: Preview using aspect ratio from user dimensions (",
-                                    input$output_width, "x", input$output_height, ")\n"))
-          cat(file=stderr(), paste0("  v142: Preview dimensions: ", preview_width, " x ",
-                                    round(preview_height, 2), " in\n"))
+        # v144: Adjust preview orientation based on user's page orientation selection
+        # but keep the plot at its natural 2:1 aspect ratio (just rotated)
+        if (!is.null(input$page_orientation) && input$page_orientation == "portrait") {
+          # For portrait, swap width/height to get 1:2 aspect ratio
+          preview_width <- 10
+          preview_height <- 20
+        }
+
+        cat(file=stderr(), paste0("  v144: Preview using FIXED proportions (not stretched to output dimensions)\n"))
+        cat(file=stderr(), paste0("  v144: Preview dimensions: ", preview_width, " x ", preview_height, " in\n"))
+        cat(file=stderr(), paste0("  v144: Output dimensions (for final download only): ",
+                                  input$output_width, " x ", input$output_height, " ", input$output_units, "\n"))
+
+        # v144: Apply plot position offsets using cowplot for true translation
+        # This moves the plot without squeezing it
+        plot_to_save <- result
+        offset_x <- attr(result, "plot_offset_x")
+        offset_y <- attr(result, "plot_offset_y")
+
+        if (!is.null(offset_x) && !is.null(offset_y) && (offset_x != 0 || offset_y != 0)) {
+          cat(file=stderr(), paste0("\n=== v144: APPLYING PLOT POSITION WITH COWPLOT ===\n"))
+
+          # Convert slider values to position offsets
+          # X slider: -5 to 5 -> position offset of -0.25 to 0.25 (50% of canvas width total)
+          # Y slider: -10 to 5 -> position offset of -0.5 to 0.25 (move down more than up)
+          x_pos_offset <- offset_x * 0.05  # Each unit moves 5% of canvas
+          y_pos_offset <- offset_y * 0.05  # Each unit moves 5% of canvas
+
+          cat(file=stderr(), paste0("  X position offset: ", round(x_pos_offset, 3), "\n"))
+          cat(file=stderr(), paste0("  Y position offset: ", round(y_pos_offset, 3), "\n"))
+
+          # Use ggdraw to create a canvas and draw_plot to position the plot
+          # The plot is placed at the offset position with full size (width=1, height=1)
+          # Content that goes off-canvas will be clipped
+          plot_to_save <- cowplot::ggdraw() +
+            cowplot::draw_plot(result, x = x_pos_offset, y = y_pos_offset,
+                              width = 1, height = 1)
+
+          cat(file=stderr(), paste0("  v144: Plot wrapped in cowplot canvas with offset positioning\n"))
         }
 
         # v53: cat(file=stderr(), "Calling ggsave...\n")
         # v54: Wrap in suppressWarnings to suppress scale warnings
         suppressWarnings(ggsave(
           filename = temp_plot_file,
-          plot = result,
+          plot = plot_to_save,
           width = preview_width,
           height = preview_height,
           units = "in",
@@ -14723,10 +14769,25 @@ server <- function(input, output, session) {
         # Set DPI based on format
         dpi_val <- if (input$output_format %in% c("pdf", "svg")) 300 else 300
 
+        # v144: Apply cowplot positioning for downloads too
+        plot_to_download <- values$current_plot
+        offset_x <- attr(values$current_plot, "plot_offset_x")
+        offset_y <- attr(values$current_plot, "plot_offset_y")
+
+        if (!is.null(offset_x) && !is.null(offset_y) && (offset_x != 0 || offset_y != 0)) {
+          x_pos_offset <- offset_x * 0.05
+          y_pos_offset <- offset_y * 0.05
+
+          plot_to_download <- cowplot::ggdraw() +
+            cowplot::draw_plot(values$current_plot, x = x_pos_offset, y = y_pos_offset,
+                              width = 1, height = 1)
+          cat(file=stderr(), paste0("v144: Download plot positioned with cowplot offsets\n"))
+        }
+
         tryCatch({
           suppressWarnings(ggsave(
             filename = file,
-            plot = values$current_plot,
+            plot = plot_to_download,
             width = width_in,
             height = height_in,
             units = "in",
