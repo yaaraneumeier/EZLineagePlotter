@@ -33,6 +33,8 @@ library(aricode)
 
 
 options(shiny.reactlog = TRUE)
+# v146: Increase max upload size for Shiny server deployments (100MB)
+options(shiny.maxRequestSize = 100*1024^2)
 
 ###### part 1 a:
 # ============================================================================
@@ -1558,10 +1560,21 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
                                     show_highlight_legend = TRUE, show_bootstrap_legend = TRUE,
                                     # v145: Transparency list for legend ellipses
                                     high_alpha_list = NULL) {
-  # v145: Default alpha list if not provided
+  # v146: Default alpha list if not provided - with debug output
+  cat(file=stderr(), paste0("\n=== v146: LEGEND ELLIPSE TRANSPARENCY CHECK ===\n"))
+  cat(file=stderr(), paste0("  high_alpha_list received: ", paste(high_alpha_list, collapse=", "), "\n"))
+  cat(file=stderr(), paste0("  high_alpha_list is NULL: ", is.null(high_alpha_list), "\n"))
+  cat(file=stderr(), paste0("  high_alpha_list length: ", length(high_alpha_list), "\n"))
+  cat(file=stderr(), paste0("  how_many_hi: ", how_many_hi, "\n"))
+
   if (is.null(high_alpha_list) || length(high_alpha_list) == 0) {
+    cat(file=stderr(), paste0("  WARNING: Using default 0.5 for all ellipses\n"))
     high_alpha_list <- rep(0.5, how_many_hi)
   }
+
+  cat(file=stderr(), paste0("  Final high_alpha_list: ", paste(high_alpha_list, collapse=", "), "\n"))
+  cat(file=stderr(), paste0("================================================\n"))
+
   if (debug_mode == TRUE) {
     # v53: print("boudariestt is")
     # v53: print(boudariestt)
@@ -6446,25 +6459,39 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       id_tip_trim_end
     }
 
-    # v50: Use multiplicative scaling for height and width sliders
-    # v144: Scale both 'a' and 'b' based on plot dimensions to maintain ellipse proportions
-    # When heatmap expands the x-range, we need to scale 'b' proportionally
-    base_a <- tip_length * size_tip_text / (5.1 * boudariestt$xmax) + man_adjust_elipse_a
+    # v146: Scale both 'a' (height) and 'b' (width) based on plot dimensions
+    # When heatmap expands the x-range, we need to scale ellipses proportionally
+    # to maintain the same visual relationship with the tree
 
-    # v144: Calculate scale factor for 'b' based on plot aspect ratio change
-    # Without heatmap: divisor is 800, with heatmap: divisor is 5.1 * xmax
-    # Scale 'b' inversely to maintain visual proportions
-    ellipse_scale_factor <- 800 / (5.1 * boudariestt$xmax)
-    # Clamp scale factor to reasonable range to prevent extreme values
-    ellipse_scale_factor <- min(max(ellipse_scale_factor, 0.1), 2.0)
+    # Calculate the tree width (from 0 to max tree x)
+    tree_width <- max(pr440_short_tips_TRY$data$x, na.rm = TRUE)
 
-    base_b <- (0.12 + man_adjust_elipse_b) * ellipse_scale_factor
+    # Calculate the total plot width (tree + heatmaps)
+    total_width <- boudariestt$xmax - boudariestt$xmin
+
+    # Scale factor: ratio of tree to total plot (clamped to reasonable range)
+    # When no heatmap, this is close to 1; with heatmaps, this gets smaller
+    tree_ratio <- tree_width / max(total_width, tree_width)
+    tree_ratio <- min(max(tree_ratio, 0.1), 1.0)
+
+    cat(file=stderr(), paste0("\n=== v146: ELLIPSE SCALING FOR HEATMAP ===\n"))
+    cat(file=stderr(), paste0("  Tree width: ", round(tree_width, 2), "\n"))
+    cat(file=stderr(), paste0("  Total plot width: ", round(total_width, 2), "\n"))
+    cat(file=stderr(), paste0("  Tree ratio (tree/total): ", round(tree_ratio, 3), "\n"))
+
+    # v146: Scale both height (a) and width (b) based on tree ratio
+    # Use the same base calculation as non-heatmap case, then scale by tree_ratio
+    base_a <- (tip_length * size_tip_text / 800 + man_adjust_elipse_a) * tree_ratio
+    base_b <- (0.12 + man_adjust_elipse_b) * tree_ratio
+
     a <- base_a * adjust_height_ecliplse
     b <- base_b * adjust_width_eclipse
 
-    cat(file=stderr(), paste0("  v144: Ellipse scale factor: ", round(ellipse_scale_factor, 3),
-                              " (xmax=", round(boudariestt$xmax, 2), ")\n"))
-    cat(file=stderr(), paste0("  v144: Adjusted ellipse b=", round(b, 4), "\n"))
+    cat(file=stderr(), paste0("  Base a (height): ", round(base_a, 4), "\n"))
+    cat(file=stderr(), paste0("  Base b (width): ", round(base_b, 4), "\n"))
+    cat(file=stderr(), paste0("  Final a (after user adjust): ", round(a, 4), "\n"))
+    cat(file=stderr(), paste0("  Final b (after user adjust): ", round(b, 4), "\n"))
+    cat(file=stderr(), paste0("=============================================\n"))
 
     # v139: Pass high_alpha_list for transparency
     p <- func_highlight(
@@ -6897,15 +6924,15 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v145 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v146 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
-                            "New in v145:",
+                            "New in v146:",
                             tags$ul(
-                              tags$li("Preview proportions: All tabs now use the SAME proportions as Download tab settings"),
-                              tags$li("Image overlay: Fixed to work properly using cowplot::draw_image (after cowplot wrapping)"),
-                              tags$li("Legend transparency: Highlight ellipses in legend now match plot ellipse transparency"),
-                              tags$li("Legend title size: Capped at 5 (highlight) and 4 (bootstrap) to prevent huge titles"),
-                              tags$li("Legend coordinates: Debug output now shows x, y coordinates for legend titles")
+                              tags$li("Shiny server support: Added options(shiny.maxRequestSize = 100*1024^2) for 100MB uploads"),
+                              tags$li("Plot scaling: Added scale slider (25%-200%) in Extra tab to zoom plot without distortion"),
+                              tags$li("Ellipse scaling: Fixed ellipse height (a) scaling when heatmaps are added - now scales proportionally to tree ratio"),
+                              tags$li("Consistent proportions: All preview tabs now use imageOutput with auto height for consistent aspect ratio"),
+                              tags$li("Legend debug: Added detailed transparency and coordinate debug output for legend ellipses")
                             )
                      )
             )
@@ -7071,7 +7098,8 @@ ui <- dashboardPage(
             status = "primary",
             solidHeader = TRUE,
             width = 12,
-            plotOutput("tree_preview", height = "600px")
+            # v146: Changed to imageOutput with auto height for consistent aspect ratio
+            imageOutput("tree_preview", height = "auto")
           )
         )
       ),
@@ -7654,6 +7682,24 @@ ui <- dashboardPage(
                 actionButton("reset_plot_position", "Reset to Center",
                             class = "btn-secondary btn-sm", icon = icon("undo"))
               )
+            ),
+            hr(),
+            # v146: Scale slider to zoom plot without distorting proportions
+            tags$p(class = "text-muted",
+              "Scale the entire plot up or down (zoom) without changing proportions."
+            ),
+            fluidRow(
+              column(12,
+                sliderInput("plot_scale_percent", "Plot Scale:",
+                           min = 25, max = 200, value = 100, step = 5,
+                           post = "%")
+              )
+            ),
+            fluidRow(
+              column(12,
+                actionButton("reset_plot_scale", "Reset to 100%",
+                            class = "btn-secondary btn-sm", icon = icon("undo"))
+              )
             )
           ),
 
@@ -7663,7 +7709,8 @@ ui <- dashboardPage(
             status = "primary",
             solidHeader = TRUE,
             width = 6,
-            imageOutput("extra_preview", height = "400px"),
+            # v146: Changed to auto height for consistent aspect ratio with other tabs
+            imageOutput("extra_preview", height = "auto"),
             actionButton("extra_apply", "Apply to Plot", class = "btn-primary", style = "margin-top: 10px;")
           )
         ),
@@ -7950,7 +7997,9 @@ server <- function(input, output, session) {
     custom_images = list(),  # List of custom images
     # v141: Plot position offsets for Extra tab
     plot_offset_x = 0,  # Horizontal offset (negative = left, positive = right)
-    plot_offset_y = 0   # Vertical offset (negative = down, positive = up)
+    plot_offset_y = 0,  # Vertical offset (negative = down, positive = up)
+    # v146: Plot scale percentage (zoom without distorting proportions)
+    plot_scale_percent = 100
   )
   
   classification_loading <- reactiveVal(FALSE)
@@ -13978,17 +14027,21 @@ server <- function(input, output, session) {
         # Store offsets for later use during rendering
         plot_off_x <- if (!is.null(values$plot_offset_x)) values$plot_offset_x else 0
         plot_off_y <- if (!is.null(values$plot_offset_y)) values$plot_offset_y else 0
+        # v146: Get scale percentage
+        plot_scale <- if (!is.null(values$plot_scale_percent)) values$plot_scale_percent else 100
 
         # v144: Store the offsets in result for later extraction
         # We'll apply them during the final rendering step
         attr(result, "plot_offset_x") <- plot_off_x
         attr(result, "plot_offset_y") <- plot_off_y
+        attr(result, "plot_scale_percent") <- plot_scale
 
-        if (plot_off_x != 0 || plot_off_y != 0) {
-          cat(file=stderr(), paste0("\n=== v144: STORING PLOT POSITION OFFSETS ===\n"))
+        if (plot_off_x != 0 || plot_off_y != 0 || plot_scale != 100) {
+          cat(file=stderr(), paste0("\n=== v146: STORING PLOT POSITION & SCALE ===\n"))
           cat(file=stderr(), paste0("  X offset: ", plot_off_x, " (positive = right)\n"))
           cat(file=stderr(), paste0("  Y offset: ", plot_off_y, " (positive = up)\n"))
-          cat(file=stderr(), paste0("  v144: Offsets will be applied via cowplot draw_plot during rendering\n"))
+          cat(file=stderr(), paste0("  Scale: ", plot_scale, "%\n"))
+          cat(file=stderr(), paste0("  v146: Offsets and scale will be applied via cowplot draw_plot during rendering\n"))
         }
 
         # Apply page title
@@ -14143,32 +14196,51 @@ server <- function(input, output, session) {
         cat(file=stderr(), paste0("  v145: User dimensions: ", user_width, " x ", user_height, " ", user_units, "\n"))
         cat(file=stderr(), paste0("  v145: Preview dimensions: ", round(preview_width, 2), " x ", round(preview_height, 2), " in\n"))
 
-        # v144: Apply plot position offsets using cowplot for true translation
-        # This moves the plot without squeezing it
+        # v146: Apply plot position offsets AND scale using cowplot for true transformation
+        # This moves and scales the plot without squeezing/distorting proportions
         plot_to_save <- result
         offset_x <- attr(result, "plot_offset_x")
         offset_y <- attr(result, "plot_offset_y")
+        scale_pct <- attr(result, "plot_scale_percent")
+        if (is.null(scale_pct)) scale_pct <- 100
 
-        if (!is.null(offset_x) && !is.null(offset_y) && (offset_x != 0 || offset_y != 0)) {
-          cat(file=stderr(), paste0("\n=== v144: APPLYING PLOT POSITION WITH COWPLOT ===\n"))
+        # Check if we need to apply any transformation
+        needs_transform <- (!is.null(offset_x) && !is.null(offset_y) && (offset_x != 0 || offset_y != 0)) || scale_pct != 100
+
+        if (needs_transform) {
+          cat(file=stderr(), paste0("\n=== v146: APPLYING PLOT POSITION AND SCALE WITH COWPLOT ===\n"))
 
           # Convert slider values to position offsets
           # X slider: -5 to 5 -> position offset of -0.25 to 0.25 (50% of canvas width total)
           # Y slider: -10 to 5 -> position offset of -0.5 to 0.25 (move down more than up)
-          x_pos_offset <- offset_x * 0.05  # Each unit moves 5% of canvas
-          y_pos_offset <- offset_y * 0.05  # Each unit moves 5% of canvas
+          x_pos_offset <- if (!is.null(offset_x)) offset_x * 0.05 else 0  # Each unit moves 5% of canvas
+          y_pos_offset <- if (!is.null(offset_y)) offset_y * 0.05 else 0  # Each unit moves 5% of canvas
 
+          # v146: Convert scale percentage to draw_plot dimensions
+          # 100% = width/height of 1 (full canvas)
+          # 50% = width/height of 0.5 (half size, centered)
+          # 200% = width/height of 2 (double size, centered)
+          scale_factor <- scale_pct / 100
+
+          # Calculate position to center the scaled plot
+          # When scale_factor = 1, x = 0 + x_offset, y = 0 + y_offset (top-left)
+          # When scale_factor = 0.5, x = 0.25 + x_offset (centered at 0.5)
+          # Formula: x = (1 - scale_factor) / 2 + x_offset
+          center_x <- (1 - scale_factor) / 2 + x_pos_offset
+          center_y <- (1 - scale_factor) / 2 + y_pos_offset
+
+          cat(file=stderr(), paste0("  Scale: ", scale_pct, "% (factor: ", round(scale_factor, 3), ")\n"))
           cat(file=stderr(), paste0("  X position offset: ", round(x_pos_offset, 3), "\n"))
           cat(file=stderr(), paste0("  Y position offset: ", round(y_pos_offset, 3), "\n"))
+          cat(file=stderr(), paste0("  Final position: (", round(center_x, 3), ", ", round(center_y, 3), ")\n"))
 
-          # Use ggdraw to create a canvas and draw_plot to position the plot
-          # The plot is placed at the offset position with full size (width=1, height=1)
-          # Content that goes off-canvas will be clipped
+          # Use ggdraw to create a canvas and draw_plot to position and scale the plot
+          # The plot is scaled uniformly (same width and height factor) to avoid distortion
           plot_to_save <- cowplot::ggdraw() +
-            cowplot::draw_plot(result, x = x_pos_offset, y = y_pos_offset,
-                              width = 1, height = 1)
+            cowplot::draw_plot(result, x = center_x, y = center_y,
+                              width = scale_factor, height = scale_factor)
 
-          cat(file=stderr(), paste0("  v144: Plot wrapped in cowplot canvas with offset positioning\n"))
+          cat(file=stderr(), paste0("  v146: Plot wrapped in cowplot canvas with scale and offset positioning\n"))
         }
 
         # v145: Apply custom images as TRUE overlays using cowplot::draw_image
@@ -14621,6 +14693,17 @@ server <- function(input, output, session) {
     values$plot_offset_y <- 0
   })
 
+  # v146: Observer for plot scale slider
+  observeEvent(input$plot_scale_percent, {
+    values$plot_scale_percent <- input$plot_scale_percent
+  }, ignoreInit = TRUE)
+
+  # v146: Reset plot scale button
+  observeEvent(input$reset_plot_scale, {
+    updateSliderInput(session, "plot_scale_percent", value = 100)
+    values$plot_scale_percent <- 100
+  })
+
   # v130: Apply Extra settings to plot
   # v139: Added processing indicator
   observeEvent(input$extra_apply, {
@@ -14805,19 +14888,28 @@ server <- function(input, output, session) {
         # Set DPI based on format
         dpi_val <- if (input$output_format %in% c("pdf", "svg")) 300 else 300
 
-        # v144: Apply cowplot positioning for downloads too
+        # v146: Apply cowplot positioning AND scale for downloads too
         plot_to_download <- values$current_plot
         offset_x <- attr(values$current_plot, "plot_offset_x")
         offset_y <- attr(values$current_plot, "plot_offset_y")
+        scale_pct <- attr(values$current_plot, "plot_scale_percent")
+        if (is.null(scale_pct)) scale_pct <- 100
 
-        if (!is.null(offset_x) && !is.null(offset_y) && (offset_x != 0 || offset_y != 0)) {
-          x_pos_offset <- offset_x * 0.05
-          y_pos_offset <- offset_y * 0.05
+        needs_transform <- (!is.null(offset_x) && !is.null(offset_y) && (offset_x != 0 || offset_y != 0)) || scale_pct != 100
+
+        if (needs_transform) {
+          x_pos_offset <- if (!is.null(offset_x)) offset_x * 0.05 else 0
+          y_pos_offset <- if (!is.null(offset_y)) offset_y * 0.05 else 0
+          scale_factor <- scale_pct / 100
+
+          # Calculate position to center the scaled plot
+          center_x <- (1 - scale_factor) / 2 + x_pos_offset
+          center_y <- (1 - scale_factor) / 2 + y_pos_offset
 
           plot_to_download <- cowplot::ggdraw() +
-            cowplot::draw_plot(values$current_plot, x = x_pos_offset, y = y_pos_offset,
-                              width = 1, height = 1)
-          cat(file=stderr(), paste0("v144: Download plot positioned with cowplot offsets\n"))
+            cowplot::draw_plot(values$current_plot, x = center_x, y = center_y,
+                              width = scale_factor, height = scale_factor)
+          cat(file=stderr(), paste0("v146: Download plot positioned with cowplot (scale: ", scale_pct, "%)\n"))
         }
 
         tryCatch({
