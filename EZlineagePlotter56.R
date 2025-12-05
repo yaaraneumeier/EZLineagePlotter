@@ -1431,8 +1431,20 @@ func_highlight <- function(p, how_many_hi, heat_flag, high_color_list, a, b, man
         # v53: cat(file=stderr(), paste0("🔴 Available columns: ", paste(names(pr440_short_tips_TRY$data), collapse=", "), "\n"))
         next
       }
-      
-      high_nodes_table1 <- pr440_short_tips_TRY$data[pr440_short_tips_TRY$data$high1 == TRUE,]
+
+      # v146: When heat_flag is TRUE, get node positions from p$data (after heatmap transform)
+      # to ensure ellipses align with the transformed tree coordinates
+      if (heat_flag == TRUE && "high1" %in% names(p$data)) {
+        high_nodes_table1 <- p$data[p$data$high1 == TRUE,]
+        cat(file=stderr(), paste0("  v146: Using p$data for ellipse positioning (heat_flag=TRUE)\n"))
+        cat(file=stderr(), paste0("  v146: high_nodes_table1 rows: ", nrow(high_nodes_table1), "\n"))
+        if (nrow(high_nodes_table1) > 0) {
+          cat(file=stderr(), paste0("  v146: y-range: ", round(min(high_nodes_table1$y, na.rm=TRUE), 2),
+                                    " to ", round(max(high_nodes_table1$y, na.rm=TRUE), 2), "\n"))
+        }
+      } else {
+        high_nodes_table1 <- pr440_short_tips_TRY$data[pr440_short_tips_TRY$data$high1 == TRUE,]
+      }
       # v53: cat(file=stderr(), paste0("🔵   high_nodes_table1 rows: ", nrow(high_nodes_table1), "\n"))
       
       if (debug_mode == TRUE) {
@@ -1677,22 +1689,39 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
         }
       }
 
-      # v145: Use transparency from high_alpha_list instead of hardcoded 0.5
+      # v146: Use transparency from high_alpha_list instead of hardcoded 0.5
+      # Debug output to trace transparency values
+      cat(file=stderr(), paste0("  v146: Legend ellipse ", index_high, " - checking alpha...\n"))
+      cat(file=stderr(), paste0("    high_alpha_list length: ", length(high_alpha_list), "\n"))
+      if (length(high_alpha_list) >= index_high) {
+        cat(file=stderr(), paste0("    high_alpha_list[[", index_high, "]] = ", high_alpha_list[[index_high]], "\n"))
+      }
+
       current_alpha <- if (length(high_alpha_list) >= index_high && !is.null(high_alpha_list[[index_high]])) {
         high_alpha_list[[index_high]]
       } else {
         0.5
       }
+      cat(file=stderr(), paste0("    FINAL current_alpha for legend ellipse: ", current_alpha, "\n"))
+
+      # v146: Output legend label coordinates
+      label_x <- x22 + extra
+      label_y <- y_off_base - 3.2 - highlight_title_gap + highlight_y_offset
+      ellipse_y <- y_off_base + 1 + man_adjust_image_of_second_legend + highlight_y_offset
+      cat(file=stderr(), paste0("  Highlight Legend Label '", high_label_list[[index_high]], "':\n"))
+      cat(file=stderr(), paste0("    x = ", round(label_x, 4), "\n"))
+      cat(file=stderr(), paste0("    y = ", round(label_y, 4), "\n"))
+      cat(file=stderr(), paste0("    ellipse y = ", round(ellipse_y, 4), "\n"))
 
       # v133: Label position with offsets and title_gap
       p <- p + annotate(
         geom = "text",
         label = high_label_list[[index_high]], size = size_text,
-        x = x22 + extra,
-        y = y_off_base - 3.2 - highlight_title_gap + highlight_y_offset
+        x = label_x,
+        y = label_y
       ) + geom_ellipse(
-        aes(x0 = x22 + extra,
-            y0 = y_off_base + 1 + man_adjust_image_of_second_legend + highlight_y_offset,
+        aes(x0 = label_x,
+            y0 = ellipse_y,
             a = a * man_multiply_elipse, b = b + 0.3, angle = 0),
         fill = high_color_list[[index_high]], alpha = current_alpha, linetype = "blank", show.legend = FALSE
       )
@@ -1853,12 +1882,20 @@ func.make.highlight.params.NEW <- function(yaml_file, title.id, ids_list, tree44
   }
 
   # v139: Extract transparency (alpha) for each highlight
+  # v146: Added debug output to trace transparency values
+  cat(file=stderr(), paste0("\n=== v146: EXTRACTING HIGHLIGHT TRANSPARENCY ===\n"))
   high_alpha_list <- c()
   for (in_hi in indexes_hi) {
     alpha_val <- hi_def$according[[in_hi]][[as.character(in_hi)]]$transparency
+    cat(file=stderr(), paste0("  Highlight ", in_hi, ":\n"))
+    cat(file=stderr(), paste0("    hi_def$according[[", in_hi, "]][[\"", in_hi, "\"]]$transparency = ",
+                              if(is.null(alpha_val)) "NULL" else alpha_val, "\n"))
     # Default to 0.5 if transparency not specified
     high_alpha_list[[in_hi]] <- if (!is.null(alpha_val)) alpha_val else 0.5
+    cat(file=stderr(), paste0("    high_alpha_list[[", in_hi, "]] = ", high_alpha_list[[in_hi]], "\n"))
   }
+  cat(file=stderr(), paste0("  Final high_alpha_list: ", paste(high_alpha_list, collapse=", "), "\n"))
+  cat(file=stderr(), paste0("==============================================\n"))
 
   high_title_list <- c()
   for (in_hi in indexes_hi) {
@@ -6930,9 +6967,11 @@ ui <- dashboardPage(
                             tags$ul(
                               tags$li("Shiny server support: Added options(shiny.maxRequestSize = 100*1024^2) for 100MB uploads"),
                               tags$li("Plot scaling: Added scale slider (25%-200%) in Extra tab to zoom plot without distortion"),
-                              tags$li("Ellipse scaling: Fixed ellipse height (a) scaling when heatmaps are added - now scales proportionally to tree ratio"),
+                              tags$li("Ellipse scaling: Fixed ellipse dimensions when heatmaps are added - now scales proportionally to tree ratio"),
+                              tags$li("Ellipse y-offset: Fixed ellipse vertical positioning - now uses p$data when heat_flag=TRUE for correct alignment"),
                               tags$li("Consistent proportions: All preview tabs now use imageOutput with auto height for consistent aspect ratio"),
-                              tags$li("Legend debug: Added detailed transparency and coordinate debug output for legend ellipses")
+                              tags$li("Legend transparency debug: Added detailed debug output to trace transparency values through the entire pipeline"),
+                              tags$li("All legend coordinates: Added output for all legend positions (classification, heatmap, p-value, highlight, bootstrap)")
                             )
                      )
             )
@@ -14149,7 +14188,62 @@ server <- function(input, output, session) {
 
       # Store the plot with legend settings applied
       values$current_plot <- result
-      
+
+      # v146: Extract and output all legend coordinates
+      tryCatch({
+        cat(file=stderr(), paste0("\n=== v146: ALL LEGEND COORDINATES ===\n"))
+
+        # Build the plot to extract grob information
+        plot_build <- ggplot2::ggplot_build(result)
+        plot_gtable <- ggplot2::ggplot_gtable(plot_build)
+
+        # Find all legend grobs
+        legend_grobs <- which(grepl("guide-box", plot_gtable$layout$name))
+        if (length(legend_grobs) > 0) {
+          for (i in seq_along(legend_grobs)) {
+            leg_idx <- legend_grobs[i]
+            leg_name <- plot_gtable$layout$name[leg_idx]
+            leg_l <- plot_gtable$layout$l[leg_idx]
+            leg_r <- plot_gtable$layout$r[leg_idx]
+            leg_t <- plot_gtable$layout$t[leg_idx]
+            leg_b <- plot_gtable$layout$b[leg_idx]
+            cat(file=stderr(), paste0("  Legend Box ", i, " ('", leg_name, "'):\n"))
+            cat(file=stderr(), paste0("    Grid position: left=", leg_l, ", right=", leg_r,
+                                      ", top=", leg_t, ", bottom=", leg_b, "\n"))
+          }
+        } else {
+          cat(file=stderr(), paste0("  No legend guide-boxes found in gtable\n"))
+        }
+
+        # Also extract legend titles from the built plot scales
+        scales_info <- plot_build$plot$scales$scales
+        if (!is.null(scales_info) && length(scales_info) > 0) {
+          cat(file=stderr(), paste0("\n  Legend Titles from Scales:\n"))
+          for (i in seq_along(scales_info)) {
+            scale_obj <- scales_info[[i]]
+            if (!is.null(scale_obj$name) && nchar(as.character(scale_obj$name)) > 0) {
+              cat(file=stderr(), paste0("    Scale ", i, ": '", scale_obj$name,
+                                        "' (aesthetic: ", paste(scale_obj$aesthetics, collapse=", "), ")\n"))
+            }
+          }
+        }
+
+        # Check for guides configuration
+        if (!is.null(plot_build$plot$guides)) {
+          cat(file=stderr(), paste0("\n  Guides Configuration:\n"))
+          guide_list <- plot_build$plot$guides$guides
+          if (!is.null(guide_list) && length(guide_list) > 0) {
+            for (guide_name in names(guide_list)) {
+              cat(file=stderr(), paste0("    Guide '", guide_name, "' is configured\n"))
+            }
+          }
+        }
+
+        cat(file=stderr(), paste0("=====================================\n"))
+      }, error = function(e) {
+        cat(file=stderr(), paste0("  v146: Error extracting legend coords: ", e$message, "\n"))
+      })
+
       # Create a unique temp file with timestamp to force browser refresh
       temp_plot_file <- file.path(tempdir(), paste0("shiny_plot_", Sys.getpid(), "_", 
                                                     format(Sys.time(), "%Y%m%d_%H%M%S_%OS3"), ".png"))
