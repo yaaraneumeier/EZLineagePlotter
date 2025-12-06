@@ -39,6 +39,9 @@ options(shiny.maxRequestSize = 100*1024^2)
 # v147: Fixed ellipse x0 positioning in heatmap mode (was using incorrect -15.4 multiplier)
 #       Added debug output for PLOT ellipse alpha to compare with legend ellipse alpha
 #       Improved legend coordinate output with coordinate system explanations
+# v148: Fixed ellipse x0 using SAME data source (p$data) for both tree_max and node positions
+#       Fixed legend ellipse size to match plot ellipse (removed man_multiply_elipse and +0.3)
+#       Changed y_off_base to position highlight/bootstrap legends on RIGHT side of plot
 
 ###### part 1 a:
 # ============================================================================
@@ -1476,10 +1479,11 @@ func_highlight <- function(p, how_many_hi, heat_flag, high_color_list, a, b, man
       # v139: Use high_alpha_list for transparency instead of hardcoded 0.5
       alpha_val <- if (length(high_alpha_list) >= 1 && !is.null(high_alpha_list[[1]])) high_alpha_list[[1]] else 0.5
 
-      # v147: Debug output for PLOT ellipse alpha to compare with legend ellipse
-      cat(file=stderr(), paste0("\n=== v147: PLOT ELLIPSE TRANSPARENCY (high1) ===\n"))
-      cat(file=stderr(), paste0("  alpha_val used for PLOT ellipse: ", alpha_val, "\n"))
-      cat(file=stderr(), paste0("=============================================\n"))
+      # v148: Debug output for PLOT ellipse alpha and dimensions
+      cat(file=stderr(), paste0("\n=== v148: PLOT ELLIPSE (high1) ===\n"))
+      cat(file=stderr(), paste0("  Alpha: ", alpha_val, "\n"))
+      cat(file=stderr(), paste0("  Dimensions: a=", round(a, 4), ", b=", round(b, 4), "\n"))
+      cat(file=stderr(), paste0("==================================\n"))
 
       if (heat_flag == FALSE) {
         p <- p +
@@ -1488,22 +1492,28 @@ func_highlight <- function(p, how_many_hi, heat_flag, high_color_list, a, b, man
                            y0 = y + high_vertical_offset, a = a, b = b, angle = 0),
                        fill = high_color_list[[1]], alpha = alpha_val, linetype = "blank", show.legend = FALSE)
       } else {
-        # v147: Fixed ellipse x0 positioning for heatmap mode
-        # The tree portion maintains its original x-coordinates even when heatmaps are added
-        # Use the tree's max x (from pr440_short_tips_TRY$data) as the reference point
-        # The -1 multiplier positions ellipses to the left of tree tips (same as non-heat mode)
-        tree_max_x <- max(pr440_short_tips_TRY$data[,'x'], na.rm = TRUE)
+        # v148: Fixed ellipse x0 positioning for heatmap mode
+        # CRITICAL: Must use the SAME data source for both tree_max_x and node x-values
+        # When heat_flag=TRUE, we get nodes from p$data, so we must also get tree_max from p$data
+        # Using different data sources causes coordinate mismatch and wrong positioning
 
-        cat(file=stderr(), paste0("\n=== v147: ELLIPSE X0 POSITIONING (heat mode) ===\n"))
-        cat(file=stderr(), paste0("  tree_max_x (from pr440_short_tips_TRY): ", round(tree_max_x, 2), "\n"))
+        # Get tree_max_x from the SAME source as node positions (p$data)
+        tree_max_x_from_p <- max(p$data[p$data$isTip == TRUE, 'x'], na.rm = TRUE)
+
+        # Also get the original tree_max for comparison
+        tree_max_x_original <- max(pr440_short_tips_TRY$data[,'x'], na.rm = TRUE)
+
+        cat(file=stderr(), paste0("\n=== v148: ELLIPSE X0 POSITIONING (heat mode) ===\n"))
+        cat(file=stderr(), paste0("  tree_max_x (from p$data tips): ", round(tree_max_x_from_p, 4), "\n"))
+        cat(file=stderr(), paste0("  tree_max_x (from pr440 - for reference): ", round(tree_max_x_original, 4), "\n"))
         cat(file=stderr(), paste0("  man_adjust_elipse: ", man_adjust_elipse, "\n"))
-        cat(file=stderr(), paste0("  Sample node x values: ", paste(round(head(high_nodes_table1$x, 3), 2), collapse=", "), "\n"))
-        cat(file=stderr(), paste0("  Sample calculated x0: ", paste(round((tree_max_x - head(high_nodes_table1$x, 3)) * (-1) - man_adjust_elipse, 2), collapse=", "), "\n"))
+        cat(file=stderr(), paste0("  Sample node x values: ", paste(round(head(high_nodes_table1$x, 3), 4), collapse=", "), "\n"))
+        cat(file=stderr(), paste0("  Sample calculated x0: ", paste(round((tree_max_x_from_p - head(high_nodes_table1$x, 3)) * (-1) - man_adjust_elipse, 4), collapse=", "), "\n"))
         cat(file=stderr(), paste0("=============================================\n"))
 
         p <- p +
           geom_ellipse(data = high_nodes_table1,
-                       aes(x0 = ((tree_max_x - x) * (-1) - man_adjust_elipse),
+                       aes(x0 = ((tree_max_x_from_p - x) * (-1) - man_adjust_elipse),
                            y0 = y + high_vertical_offset, a = a, b = b, angle = 0),
                        fill = high_color_list[[1]], alpha = alpha_val, linetype = "blank", show.legend = FALSE)
       }
@@ -1711,28 +1721,21 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
         }
       }
 
-      # v147: Use transparency from high_alpha_list instead of hardcoded 0.5
-      # Enhanced debug output to trace transparency values and compare with plot ellipse
-      cat(file=stderr(), paste0("\n=== v147: LEGEND ELLIPSE TRANSPARENCY (high", index_high, ") ===\n"))
-      cat(file=stderr(), paste0("  high_alpha_list length: ", length(high_alpha_list), "\n"))
-      if (length(high_alpha_list) >= index_high) {
-        cat(file=stderr(), paste0("  high_alpha_list[[", index_high, "]] = ", high_alpha_list[[index_high]], "\n"))
-      }
+      # v148: Use transparency from high_alpha_list instead of hardcoded 0.5
+      cat(file=stderr(), paste0("\n=== v148: LEGEND ELLIPSE (high", index_high, ") ===\n"))
 
       current_alpha <- if (length(high_alpha_list) >= index_high && !is.null(high_alpha_list[[index_high]])) {
         high_alpha_list[[index_high]]
       } else {
         0.5
       }
-      cat(file=stderr(), paste0("  LEGEND ellipse alpha: ", current_alpha, "\n"))
-      cat(file=stderr(), paste0("  (Compare with PLOT ellipse alpha output above)\n"))
-      cat(file=stderr(), paste0("  If both values are the same, the visual difference may be due to:\n"))
-      cat(file=stderr(), paste0("  - Legend ellipse size (a * man_multiply_elipse, b + 0.3)\n"))
-      cat(file=stderr(), paste0("  - Background color differences\n"))
-      cat(file=stderr(), paste0("  - PDF/PNG rendering differences\n"))
-      cat(file=stderr(), paste0("=============================================\n"))
 
-      # v147: Output legend label coordinates with coordinate system explanation
+      cat(file=stderr(), paste0("  Alpha (same as plot): ", current_alpha, "\n"))
+      cat(file=stderr(), paste0("  Dimensions (same as plot): a=", round(a, 4), ", b=", round(b, 4), "\n"))
+      cat(file=stderr(), paste0("  v148: Now using SAME size as plot ellipse for visual match\n"))
+      cat(file=stderr(), paste0("================================================\n"))
+
+      # v148: Output legend label coordinates with coordinate system explanation
       label_x <- x22 + extra
       label_y <- y_off_base - 3.2 - highlight_title_gap + highlight_y_offset
       ellipse_y <- y_off_base + 1 + man_adjust_image_of_second_legend + highlight_y_offset
@@ -1741,7 +1744,10 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
       cat(file=stderr(), paste0("    Ellipse position: x=", round(label_x, 2), ", y=", round(ellipse_y, 2), "\n"))
       cat(file=stderr(), paste0("    (Use highlight_x_offset/highlight_y_offset in Legend tab to adjust)\n"))
 
-      # v133: Label position with offsets and title_gap
+      # v148: Label position with offsets and title_gap
+      # Use SAME dimensions as plot ellipse to ensure visual transparency match
+      # (Previously used a * man_multiply_elipse and b + 0.3 which made legend ellipse larger
+      # and therefore appear more opaque even with the same alpha value)
       p <- p + annotate(
         geom = "text",
         label = high_label_list[[index_high]], size = size_text,
@@ -1750,7 +1756,7 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
       ) + geom_ellipse(
         aes(x0 = label_x,
             y0 = ellipse_y,
-            a = a * man_multiply_elipse, b = b + 0.3, angle = 0),
+            a = a, b = b, angle = 0),
         fill = high_color_list[[index_high]], alpha = current_alpha, linetype = "blank", show.legend = FALSE
       )
     }
@@ -1778,7 +1784,7 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
       boot_labels_y <- boot_y_base + 6 - bootstrap_title_gap - bootstrap_label_gap  # Labels below triangles
       boot_title_x <- boot_x_base + 2 * extra + bootstrap_title_x_offset
 
-      # v147: Output Bootstrap legend coordinates with coordinate system explanation
+      # v148: Output Bootstrap legend coordinates with coordinate system explanation
       cat(file=stderr(), paste0("\n  Bootstrap Legend (PLOT COORDINATES):\n"))
       cat(file=stderr(), paste0("    Title position: x=", round(boot_title_x, 2), ", y=", round(boot_title_y, 2), "\n"))
       cat(file=stderr(), paste0("    Triangles position: y=", round(boot_triangles_y, 2), "\n"))
@@ -6616,6 +6622,14 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     cat(file=stderr(), paste0("  v133: bootstrap offsets - x:", bootstrap_x_off, ", y:", bootstrap_y_off, "\n"))
     cat(file=stderr(), paste0("  v138: show_highlight_legend:", show_highlight_leg, ", show_bootstrap_legend:", show_bootstrap_leg, "\n"))
 
+    # v148: Calculate y_off_base dynamically to position legends on the RIGHT side
+    # With coord_flip + scale_y_reverse: y values become horizontal positions
+    # y = 1 is at visual LEFT, y = max_tips is at visual RIGHT
+    # To align with ggplot legends (which are to the RIGHT), we need y > max_tips
+    n_tips <- sum(p$data$isTip == TRUE, na.rm = TRUE)
+    y_off_base <- n_tips + 5  # Position beyond the rightmost tips
+    cat(file=stderr(), paste0("  v148: Calculated y_off_base for RIGHT-side alignment: ", y_off_base, " (tips=", n_tips, ")\n"))
+
     # v95: Wrap in tryCatch to catch any errors
     p <- tryCatch({
       result <- func.make.second.legend(
@@ -6934,7 +6948,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
 # Define UI
 ui <- dashboardPage(
-  dashboardHeader(title = "Lineage Tree Plotter v147"),
+  dashboardHeader(title = "Lineage Tree Plotter v148"),
   
   dashboardSidebar(
     width = 300,
@@ -14218,9 +14232,9 @@ server <- function(input, output, session) {
       # Store the plot with legend settings applied
       values$current_plot <- result
 
-      # v147: Extract and output all legend coordinates with coordinate system explanations
+      # v148: Extract and output all legend coordinates with coordinate system explanations
       tryCatch({
-        cat(file=stderr(), paste0("\n=== v147: LEGEND COORDINATE SYSTEMS EXPLAINED ===\n"))
+        cat(file=stderr(), paste0("\n=== v148: LEGEND COORDINATE SYSTEMS EXPLAINED ===\n"))
         cat(file=stderr(), paste0("\n"))
         cat(file=stderr(), paste0("NOTE: There are TWO different coordinate systems:\n"))
         cat(file=stderr(), paste0("\n"))
@@ -14290,7 +14304,7 @@ server <- function(input, output, session) {
 
         cat(file=stderr(), paste0("\n=================================================\n"))
       }, error = function(e) {
-        cat(file=stderr(), paste0("  v147: Error extracting legend coords: ", e$message, "\n"))
+        cat(file=stderr(), paste0("  v148: Error extracting legend coords: ", e$message, "\n"))
       })
 
       # Create a unique temp file with timestamp to force browser refresh
