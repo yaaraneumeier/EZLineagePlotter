@@ -36,6 +36,10 @@ options(shiny.reactlog = TRUE)
 # v146: Increase max upload size for Shiny server deployments (100MB)
 options(shiny.maxRequestSize = 100*1024^2)
 
+# v147: Fixed ellipse x0 positioning in heatmap mode (was using incorrect -15.4 multiplier)
+#       Added debug output for PLOT ellipse alpha to compare with legend ellipse alpha
+#       Improved legend coordinate output with coordinate system explanations
+
 ###### part 1 a:
 # ============================================================================
 # UTILITY FUNCTIONS
@@ -1472,6 +1476,11 @@ func_highlight <- function(p, how_many_hi, heat_flag, high_color_list, a, b, man
       # v139: Use high_alpha_list for transparency instead of hardcoded 0.5
       alpha_val <- if (length(high_alpha_list) >= 1 && !is.null(high_alpha_list[[1]])) high_alpha_list[[1]] else 0.5
 
+      # v147: Debug output for PLOT ellipse alpha to compare with legend ellipse
+      cat(file=stderr(), paste0("\n=== v147: PLOT ELLIPSE TRANSPARENCY (high1) ===\n"))
+      cat(file=stderr(), paste0("  alpha_val used for PLOT ellipse: ", alpha_val, "\n"))
+      cat(file=stderr(), paste0("=============================================\n"))
+
       if (heat_flag == FALSE) {
         p <- p +
           geom_ellipse(data = high_nodes_table1,
@@ -1479,9 +1488,22 @@ func_highlight <- function(p, how_many_hi, heat_flag, high_color_list, a, b, man
                            y0 = y + high_vertical_offset, a = a, b = b, angle = 0),
                        fill = high_color_list[[1]], alpha = alpha_val, linetype = "blank", show.legend = FALSE)
       } else {
+        # v147: Fixed ellipse x0 positioning for heatmap mode
+        # The tree portion maintains its original x-coordinates even when heatmaps are added
+        # Use the tree's max x (from pr440_short_tips_TRY$data) as the reference point
+        # The -1 multiplier positions ellipses to the left of tree tips (same as non-heat mode)
+        tree_max_x <- max(pr440_short_tips_TRY$data[,'x'], na.rm = TRUE)
+
+        cat(file=stderr(), paste0("\n=== v147: ELLIPSE X0 POSITIONING (heat mode) ===\n"))
+        cat(file=stderr(), paste0("  tree_max_x (from pr440_short_tips_TRY): ", round(tree_max_x, 2), "\n"))
+        cat(file=stderr(), paste0("  man_adjust_elipse: ", man_adjust_elipse, "\n"))
+        cat(file=stderr(), paste0("  Sample node x values: ", paste(round(head(high_nodes_table1$x, 3), 2), collapse=", "), "\n"))
+        cat(file=stderr(), paste0("  Sample calculated x0: ", paste(round((tree_max_x - head(high_nodes_table1$x, 3)) * (-1) - man_adjust_elipse, 2), collapse=", "), "\n"))
+        cat(file=stderr(), paste0("=============================================\n"))
+
         p <- p +
           geom_ellipse(data = high_nodes_table1,
-                       aes(x0 = ((max(p$data[,'x']) - x) * (-15.4) - man_adjust_elipse - boudariestt$xmax - boudariestt$xmin),
+                       aes(x0 = ((tree_max_x - x) * (-1) - man_adjust_elipse),
                            y0 = y + high_vertical_offset, a = a, b = b, angle = 0),
                        fill = high_color_list[[1]], alpha = alpha_val, linetype = "blank", show.legend = FALSE)
       }
@@ -1689,12 +1711,12 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
         }
       }
 
-      # v146: Use transparency from high_alpha_list instead of hardcoded 0.5
-      # Debug output to trace transparency values
-      cat(file=stderr(), paste0("  v146: Legend ellipse ", index_high, " - checking alpha...\n"))
-      cat(file=stderr(), paste0("    high_alpha_list length: ", length(high_alpha_list), "\n"))
+      # v147: Use transparency from high_alpha_list instead of hardcoded 0.5
+      # Enhanced debug output to trace transparency values and compare with plot ellipse
+      cat(file=stderr(), paste0("\n=== v147: LEGEND ELLIPSE TRANSPARENCY (high", index_high, ") ===\n"))
+      cat(file=stderr(), paste0("  high_alpha_list length: ", length(high_alpha_list), "\n"))
       if (length(high_alpha_list) >= index_high) {
-        cat(file=stderr(), paste0("    high_alpha_list[[", index_high, "]] = ", high_alpha_list[[index_high]], "\n"))
+        cat(file=stderr(), paste0("  high_alpha_list[[", index_high, "]] = ", high_alpha_list[[index_high]], "\n"))
       }
 
       current_alpha <- if (length(high_alpha_list) >= index_high && !is.null(high_alpha_list[[index_high]])) {
@@ -1702,16 +1724,22 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
       } else {
         0.5
       }
-      cat(file=stderr(), paste0("    FINAL current_alpha for legend ellipse: ", current_alpha, "\n"))
+      cat(file=stderr(), paste0("  LEGEND ellipse alpha: ", current_alpha, "\n"))
+      cat(file=stderr(), paste0("  (Compare with PLOT ellipse alpha output above)\n"))
+      cat(file=stderr(), paste0("  If both values are the same, the visual difference may be due to:\n"))
+      cat(file=stderr(), paste0("  - Legend ellipse size (a * man_multiply_elipse, b + 0.3)\n"))
+      cat(file=stderr(), paste0("  - Background color differences\n"))
+      cat(file=stderr(), paste0("  - PDF/PNG rendering differences\n"))
+      cat(file=stderr(), paste0("=============================================\n"))
 
-      # v146: Output legend label coordinates
+      # v147: Output legend label coordinates with coordinate system explanation
       label_x <- x22 + extra
       label_y <- y_off_base - 3.2 - highlight_title_gap + highlight_y_offset
       ellipse_y <- y_off_base + 1 + man_adjust_image_of_second_legend + highlight_y_offset
-      cat(file=stderr(), paste0("  Highlight Legend Label '", high_label_list[[index_high]], "':\n"))
-      cat(file=stderr(), paste0("    x = ", round(label_x, 4), "\n"))
-      cat(file=stderr(), paste0("    y = ", round(label_y, 4), "\n"))
-      cat(file=stderr(), paste0("    ellipse y = ", round(ellipse_y, 4), "\n"))
+      cat(file=stderr(), paste0("\n  Highlight Legend '", high_label_list[[index_high]], "' (PLOT COORDINATES):\n"))
+      cat(file=stderr(), paste0("    Label position: x=", round(label_x, 2), ", y=", round(label_y, 2), "\n"))
+      cat(file=stderr(), paste0("    Ellipse position: x=", round(label_x, 2), ", y=", round(ellipse_y, 2), "\n"))
+      cat(file=stderr(), paste0("    (Use highlight_x_offset/highlight_y_offset in Legend tab to adjust)\n"))
 
       # v133: Label position with offsets and title_gap
       p <- p + annotate(
@@ -1750,12 +1778,13 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
       boot_labels_y <- boot_y_base + 6 - bootstrap_title_gap - bootstrap_label_gap  # Labels below triangles
       boot_title_x <- boot_x_base + 2 * extra + bootstrap_title_x_offset
 
-      # v145: Output Bootstrap legend coordinates
-      cat(file=stderr(), paste0("  Bootstrap Legend Title 'Bootstrap':\n"))
-      cat(file=stderr(), paste0("    x = ", round(boot_title_x, 4), "\n"))
-      cat(file=stderr(), paste0("    y = ", round(boot_title_y, 4), "\n"))
-      cat(file=stderr(), paste0("    size = ", round(boot_title_size, 2), "\n"))
-      cat(file=stderr(), paste0("================================\n"))
+      # v147: Output Bootstrap legend coordinates with coordinate system explanation
+      cat(file=stderr(), paste0("\n  Bootstrap Legend (PLOT COORDINATES):\n"))
+      cat(file=stderr(), paste0("    Title position: x=", round(boot_title_x, 2), ", y=", round(boot_title_y, 2), "\n"))
+      cat(file=stderr(), paste0("    Triangles position: y=", round(boot_triangles_y, 2), "\n"))
+      cat(file=stderr(), paste0("    Labels position: y=", round(boot_labels_y, 2), "\n"))
+      cat(file=stderr(), paste0("    Title size: ", round(boot_title_size, 2), "\n"))
+      cat(file=stderr(), paste0("    (Use bootstrap_x_offset/bootstrap_y_offset in Legend tab to adjust)\n"))
 
       # v143: bootstrap_title_x_offset moves the title further to the right
       p <- p + annotate(
@@ -6905,7 +6934,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
 # Define UI
 ui <- dashboardPage(
-  dashboardHeader(title = "Lineage Tree Plotter v89"),
+  dashboardHeader(title = "Lineage Tree Plotter v147"),
   
   dashboardSidebar(
     width = 300,
@@ -14189,14 +14218,47 @@ server <- function(input, output, session) {
       # Store the plot with legend settings applied
       values$current_plot <- result
 
-      # v146: Extract and output all legend coordinates
+      # v147: Extract and output all legend coordinates with coordinate system explanations
       tryCatch({
-        cat(file=stderr(), paste0("\n=== v146: ALL LEGEND COORDINATES ===\n"))
+        cat(file=stderr(), paste0("\n=== v147: LEGEND COORDINATE SYSTEMS EXPLAINED ===\n"))
+        cat(file=stderr(), paste0("\n"))
+        cat(file=stderr(), paste0("NOTE: There are TWO different coordinate systems:\n"))
+        cat(file=stderr(), paste0("\n"))
+        cat(file=stderr(), paste0("1) PLOT COORDINATES (used by Highlight & Bootstrap legends):\n"))
+        cat(file=stderr(), paste0("   - These are DATA coordinates within the plot area\n"))
+        cat(file=stderr(), paste0("   - x = tree depth direction (after coord_flip: vertical position)\n"))
+        cat(file=stderr(), paste0("   - y = tip position direction (after coord_flip: horizontal position)\n"))
+        cat(file=stderr(), paste0("   - Negative x values place items below the tree baseline\n"))
+        cat(file=stderr(), paste0("   - Controlled via: highlight_x_offset, highlight_y_offset,\n"))
+        cat(file=stderr(), paste0("                     bootstrap_x_offset, bootstrap_y_offset in Legend tab\n"))
+        cat(file=stderr(), paste0("\n"))
+        cat(file=stderr(), paste0("2) GRID COORDINATES (used by Classification/Heatmap/P-value legends):\n"))
+        cat(file=stderr(), paste0("   - These are LAYOUT CELL positions in the rendered gtable\n"))
+        cat(file=stderr(), paste0("   - Not directly comparable to plot coordinates\n"))
+        cat(file=stderr(), paste0("   - Positioned by ggplot's legend.position theme setting\n"))
+        cat(file=stderr(), paste0("\n"))
+        cat(file=stderr(), paste0("To ALIGN legends: Use the Legend tab offset controls to move\n"))
+        cat(file=stderr(), paste0("Highlight/Bootstrap legends up/down/left/right until visually aligned.\n"))
+        cat(file=stderr(), paste0("\n"))
 
         # Build the plot to extract grob information
         plot_build <- ggplot2::ggplot_build(result)
         plot_gtable <- ggplot2::ggplot_gtable(plot_build)
 
+        # Get plot data range to help understand coordinate scale
+        if (!is.null(plot_build$layout$panel_params) && length(plot_build$layout$panel_params) > 0) {
+          pp <- plot_build$layout$panel_params[[1]]
+          cat(file=stderr(), paste0("PLOT DATA RANGE (for reference):\n"))
+          if (!is.null(pp$x.range)) {
+            cat(file=stderr(), paste0("  x-axis range: ", round(pp$x.range[1], 2), " to ", round(pp$x.range[2], 2), "\n"))
+          }
+          if (!is.null(pp$y.range)) {
+            cat(file=stderr(), paste0("  y-axis range: ", round(pp$y.range[1], 2), " to ", round(pp$y.range[2], 2), "\n"))
+          }
+          cat(file=stderr(), paste0("\n"))
+        }
+
+        cat(file=stderr(), paste0("GGPLOT LEGENDS (Grid Coordinates):\n"))
         # Find all legend grobs
         legend_grobs <- which(grepl("guide-box", plot_gtable$layout$name))
         if (length(legend_grobs) > 0) {
@@ -14208,8 +14270,7 @@ server <- function(input, output, session) {
             leg_t <- plot_gtable$layout$t[leg_idx]
             leg_b <- plot_gtable$layout$b[leg_idx]
             cat(file=stderr(), paste0("  Legend Box ", i, " ('", leg_name, "'):\n"))
-            cat(file=stderr(), paste0("    Grid position: left=", leg_l, ", right=", leg_r,
-                                      ", top=", leg_t, ", bottom=", leg_b, "\n"))
+            cat(file=stderr(), paste0("    Grid cell: column ", leg_l, "-", leg_r, ", row ", leg_t, "-", leg_b, "\n"))
           }
         } else {
           cat(file=stderr(), paste0("  No legend guide-boxes found in gtable\n"))
@@ -14218,30 +14279,18 @@ server <- function(input, output, session) {
         # Also extract legend titles from the built plot scales
         scales_info <- plot_build$plot$scales$scales
         if (!is.null(scales_info) && length(scales_info) > 0) {
-          cat(file=stderr(), paste0("\n  Legend Titles from Scales:\n"))
+          cat(file=stderr(), paste0("\n  Active Scales with Legends:\n"))
           for (i in seq_along(scales_info)) {
             scale_obj <- scales_info[[i]]
             if (!is.null(scale_obj$name) && nchar(as.character(scale_obj$name)) > 0) {
-              cat(file=stderr(), paste0("    Scale ", i, ": '", scale_obj$name,
-                                        "' (aesthetic: ", paste(scale_obj$aesthetics, collapse=", "), ")\n"))
+              cat(file=stderr(), paste0("    - '", scale_obj$name, "' (", paste(scale_obj$aesthetics, collapse=", "), ")\n"))
             }
           }
         }
 
-        # Check for guides configuration
-        if (!is.null(plot_build$plot$guides)) {
-          cat(file=stderr(), paste0("\n  Guides Configuration:\n"))
-          guide_list <- plot_build$plot$guides$guides
-          if (!is.null(guide_list) && length(guide_list) > 0) {
-            for (guide_name in names(guide_list)) {
-              cat(file=stderr(), paste0("    Guide '", guide_name, "' is configured\n"))
-            }
-          }
-        }
-
-        cat(file=stderr(), paste0("=====================================\n"))
+        cat(file=stderr(), paste0("\n=================================================\n"))
       }, error = function(e) {
-        cat(file=stderr(), paste0("  v146: Error extracting legend coords: ", e$message, "\n"))
+        cat(file=stderr(), paste0("  v147: Error extracting legend coords: ", e$message, "\n"))
       })
 
       # Create a unique temp file with timestamp to force browser refresh
