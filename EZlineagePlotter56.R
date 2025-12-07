@@ -1583,6 +1583,9 @@ func_highlight <- function(p, how_many_hi, heat_flag, high_color_list, a, b, man
 
 # Function to create the second legend
 # v145: Added high_alpha_list parameter for transparency control
+# v153: OPTION B - Rewritten to use annotation_custom with grid grobs
+#       This positions legends in normalized panel coordinates (npc) instead of data coordinates
+#       so they DON'T expand the plot data range
 func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag, how_many_boxes,
                                     how_mant_rows, boudariestt, y_off_base, high_title_list,
                                     size_font_legend_title, high_label_list, size_font_legend_text,
@@ -1607,269 +1610,233 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
                                     show_highlight_legend = TRUE, show_bootstrap_legend = TRUE,
                                     # v145: Transparency list for legend ellipses
                                     high_alpha_list = NULL) {
-  # v146: Default alpha list if not provided - with debug output
+
+  # v153: OPTION B Implementation
+  # Using annotation_custom with grid grobs positioned in normalized panel coordinates (npc)
+  # This prevents legends from expanding the plot data range
+
+  cat(file=stderr(), paste0("\n=== v153: OPTION B - GROB-BASED LEGENDS ===\n"))
+  cat(file=stderr(), paste0("  Using normalized panel coordinates (npc) instead of data coordinates\n"))
+  cat(file=stderr(), paste0("  Legends will NOT expand plot data range\n"))
+
+  # v146: Check and initialize high_alpha_list if NULL
   cat(file=stderr(), paste0("\n=== v146: LEGEND ELLIPSE TRANSPARENCY CHECK ===\n"))
   cat(file=stderr(), paste0("  high_alpha_list received: ", paste(high_alpha_list, collapse=", "), "\n"))
   cat(file=stderr(), paste0("  high_alpha_list is NULL: ", is.null(high_alpha_list), "\n"))
   cat(file=stderr(), paste0("  high_alpha_list length: ", length(high_alpha_list), "\n"))
   cat(file=stderr(), paste0("  how_many_hi: ", how_many_hi, "\n"))
-
   if (is.null(high_alpha_list) || length(high_alpha_list) == 0) {
-    cat(file=stderr(), paste0("  WARNING: Using default 0.5 for all ellipses\n"))
+    cat(file=stderr(), paste0("  WARNING: high_alpha_list is NULL/empty, using default 0.5\n"))
     high_alpha_list <- rep(0.5, how_many_hi)
   }
-
   cat(file=stderr(), paste0("  Final high_alpha_list: ", paste(high_alpha_list, collapse=", "), "\n"))
   cat(file=stderr(), paste0("================================================\n"))
 
-  if (debug_mode == TRUE) {
-    # v53: print("boudariestt is")
-    # v53: print(boudariestt)
-  }
-  
-  if (heat_flag == FALSE) {
-    new_base_for_second_legend_non <- 0.5 + 0.5 * (how_mant_rows) * 0.05 + 0.5 * how_many_boxes * 0.1
-    new_base_for_second_legend_normalized <- new_base_for_second_legend_non * x_range_min
-    new_step <- 0.02 * x_range_min * man_space_second_legend_multiplier + man_offset_for_highlight_legend_x
-    new_big_step <- 0.15 * x_range_min
-    extra <- man_space_second_legend
-    move <- 0
-  } else {
-    # v150: Position legends at BOTTOM-RIGHT of plot (below other ggplot legends)
-    # With coord_flip + scale_y_reverse: more positive x = lower visual position
-    # y_off_base (n_tips + 5) controls RIGHT side horizontal position
-    # Small positive x (like +3) places legends at BOTTOM without expanding plot range
-    # CRITICAL: Large negative x expands panel x.range and shrinks the tree!
-    new_base_for_second_legend_normalized <- 3  # Small positive = BOTTOM of plot
-    new_step <- 2  # Fixed step for spacing between elements
-    new_big_step <- 5  # Fixed big step for bootstrap legend offset
-    extra <- man_space_second_legend + 0.3
-    cat(file=stderr(), paste0("  v150: Legend x-position base: ", new_base_for_second_legend_normalized, " (BOTTOM-RIGHT, y_off_base=", y_off_base, ")\n"))
-  }
-  
-  if (debug_mode == TRUE) {
-    # v53: print("new_base_for_second_legend_normalized is")
-    # v53: print(new_base_for_second_legend_normalized)
-  }
-  
-  yet_another_multiplier <- 0   
-  if (FLAG_BULK_DISPLAY == TRUE) {
-    yet_another_multiplier <- 1.5
-  }
-  
-  stair <- 0.05
-  multiple_high_up_offset <- stair * (how_many_hi - 1) * (-1)
-  
-  if (debug_mode == TRUE) {
-    # v53: print("multiple_high_up_offset is")
-    # v53: print(multiple_high_up_offset)
-    # v53: print("new_big_step is")
-    # v53: print(new_big_step)
-    # v53: print("new_step is")
-    # v53: print(new_step)
-    # v53: print("how_many_hi is")
-    # v53: print(how_many_hi)
-  }
-  
-  norm <- 0.8
-  # v133: Use custom highlight legend sizes if provided, otherwise use defaults
-  # v145: Cap the default title size to prevent huge titles
-  default_title_size <- size_font_legend_title * man_multiply_second_legend_text
-  if (default_title_size > 5) {
-    default_title_size <- 5  # v145: Cap at 5 to prevent huge titles
-  }
+  # v153: Calculate base positions in NPC (normalized panel coordinates)
+  # npc x: 0 = left edge of panel, 1 = right edge
+  # npc y: 0 = bottom edge of panel, 1 = top edge
+  # With coord_flip: npc_x controls vertical position, npc_y controls horizontal position
+
+  # Convert user offsets to npc offsets (scale factor: offset of 10 ≈ 0.1 npc)
+  npc_highlight_x_offset <- highlight_x_offset * 0.01
+  npc_highlight_y_offset <- highlight_y_offset * 0.01
+  npc_bootstrap_x_offset <- bootstrap_x_offset * 0.01
+  npc_bootstrap_y_offset <- bootstrap_y_offset * 0.01
+
+  # Base position for legends (right side of panel, stacked vertically)
+  # Start from top-right and work down
+  base_npc_y <- 0.98  # Near right edge of panel
+  base_npc_x <- 0.95  # Near top of panel (after coord_flip, this is vertical position)
+
+  # Calculate text sizes in points
+  default_title_size <- min(size_font_legend_title * man_multiply_second_legend, 5)
   size_title <- if (!is.null(highlight_title_size)) highlight_title_size else default_title_size
-  size_text <- if (!is.null(highlight_text_size)) highlight_text_size else (size_font_legend_text * man_multiply_second_legend * norm)
+  size_text <- if (!is.null(highlight_text_size)) highlight_text_size else (size_font_legend_text * man_multiply_second_legend_text * 0.8)
 
-  # v133: Apply highlight legend offsets
-  x11 <- new_base_for_second_legend_normalized + highlight_x_offset
-  x22 <- new_base_for_second_legend_normalized - new_step + highlight_x_offset
+  # Convert ggplot sizes to grid font sizes (approximate conversion)
+  title_fontsize <- size_title * 3  # ggplot size to points
+  text_fontsize <- size_text * 3
 
-  # v133: Apply highlight label gap to step calculation
-  new_step_adjusted <- new_step * highlight_label_gap * 2  # Adjust spacing between labels
+  cat(file=stderr(), paste0("  v153: NPC base position - x:", base_npc_x, ", y:", base_npc_y, "\n"))
+  cat(file=stderr(), paste0("  v153: Title fontsize:", title_fontsize, ", Text fontsize:", text_fontsize, "\n"))
+
+  current_npc_x <- base_npc_x + npc_highlight_x_offset  # Vertical position
+  current_npc_y <- base_npc_y + npc_highlight_y_offset  # Horizontal position (right side)
 
   # v138: Only draw highlight legend if show_highlight_legend is TRUE
   if (FLAG_BULK_DISPLAY == TRUE && show_highlight_legend == TRUE) {
+
     for (index_high in 1:how_many_hi) {
-      multiple_high_down_offset <- (index_high - 1) * stair
-
-      if (index_high == 1) {
-        x11 <- new_base_for_second_legend_normalized + highlight_x_offset
-        x22 <- new_base_for_second_legend_normalized - index_high * (new_step_adjusted) + highlight_x_offset
-
-        # v145: Calculate and output legend title coordinates
-        highlight_title_y <- y_off_base + 0.7 + (width / 400) + man_adjust_image_of_second_legend + highlight_y_offset
-        cat(file=stderr(), paste0("\n=== v145: LEGEND COORDINATES ===\n"))
-        cat(file=stderr(), paste0("  Highlight Legend Title '", high_title_list[[index_high]], "':\n"))
-        cat(file=stderr(), paste0("    x = ", round(x11, 4), "\n"))
-        cat(file=stderr(), paste0("    y = ", round(highlight_title_y, 4), "\n"))
-        cat(file=stderr(), paste0("    size = ", round(size_title, 2), "\n"))
-
-        # v133: Title position with highlight_y_offset
-        p <- p + annotate(
-          geom = "text",
-          label = high_title_list[[index_high]], size = size_title,
-          x = x11,
-          y = highlight_title_y,
-          hjust = 0, vjust = 0,
-          fontface = "bold"
-        )
-
-        if (how_many_hi > 1) {
-          # v145: Use transparency from high_alpha_list instead of hardcoded 0.5
-          current_alpha <- if (length(high_alpha_list) >= index_high && !is.null(high_alpha_list[[index_high]])) {
-            high_alpha_list[[index_high]]
-          } else {
-            0.5
-          }
-          p <- p + geom_ellipse(
-            aes(x0 = x22, y0 = y_off_base + 0.7 + (width / 400) + man_adjust_image_of_second_legend + highlight_y_offset,
-                a = a, b = b, angle = 0),
-            fill = high_color_list[[index_high]], alpha = current_alpha, linetype = "blank", show.legend = FALSE
-          )
-        }
-      }
-
-      # v148: Use transparency from high_alpha_list instead of hardcoded 0.5
-      cat(file=stderr(), paste0("\n=== v148: LEGEND ELLIPSE (high", index_high, ") ===\n"))
-
+      # Get alpha for this highlight
       current_alpha <- if (length(high_alpha_list) >= index_high && !is.null(high_alpha_list[[index_high]])) {
         high_alpha_list[[index_high]]
       } else {
         0.5
       }
 
-      cat(file=stderr(), paste0("  Alpha (same as plot): ", current_alpha, "\n"))
-      cat(file=stderr(), paste0("  Dimensions (same as plot): a=", round(a, 4), ", b=", round(b, 4), "\n"))
-      cat(file=stderr(), paste0("  v148: Now using SAME size as plot ellipse for visual match\n"))
-      cat(file=stderr(), paste0("================================================\n"))
+      cat(file=stderr(), paste0("\n=== v153: HIGHLIGHT LEGEND ", index_high, " (GROB) ===\n"))
+      cat(file=stderr(), paste0("  Alpha: ", current_alpha, "\n"))
+      cat(file=stderr(), paste0("  Color: ", high_color_list[[index_high]], "\n"))
+      cat(file=stderr(), paste0("  NPC position - x:", round(current_npc_x, 3), ", y:", round(current_npc_y, 3), "\n"))
 
-      # v148: Output legend label coordinates with coordinate system explanation
-      label_x <- x22 + extra
-      label_y <- y_off_base - 3.2 - highlight_title_gap + highlight_y_offset
-      ellipse_y <- y_off_base + 1 + man_adjust_image_of_second_legend + highlight_y_offset
-      cat(file=stderr(), paste0("\n  Highlight Legend '", high_label_list[[index_high]], "' (PLOT COORDINATES):\n"))
-      cat(file=stderr(), paste0("    Label position: x=", round(label_x, 2), ", y=", round(label_y, 2), "\n"))
-      cat(file=stderr(), paste0("    Ellipse position: x=", round(label_x, 2), ", y=", round(ellipse_y, 2), "\n"))
-      cat(file=stderr(), paste0("    (Use highlight_x_offset/highlight_y_offset in Legend tab to adjust)\n"))
+      # Create grobs for this highlight legend
+      # Title
+      if (index_high == 1) {
+        title_grob <- grid::textGrob(
+          label = high_title_list[[index_high]],
+          x = grid::unit(current_npc_y, "npc"),
+          y = grid::unit(current_npc_x, "npc"),
+          hjust = 1, vjust = 1,
+          gp = grid::gpar(fontsize = title_fontsize, fontface = "bold")
+        )
 
-      # v152: Label position with offsets and title_gap
-      # CRITICAL FIX: Create a data frame for legend ellipse, EXACTLY like plot ellipse does!
-      # The plot ellipse has: geom_ellipse(data = high_nodes_table1, aes(...), alpha = alpha_val)
-      # The legend ellipse was MISSING the data parameter - this caused alpha to not work!
-      # v152b: Use unique column names (leg_*) to avoid conflicts with environment variables
-      # and add inherit.aes=FALSE to isolate from new_scale_fill() effects
-      legend_ellipse_data <- data.frame(
-        leg_x0 = label_x,
-        leg_y0 = ellipse_y,
-        leg_a = a,
-        leg_b = b
+        # Add title to plot
+        p <- p + ggplot2::annotation_custom(
+          grob = title_grob,
+          xmin = -Inf, xmax = Inf, ymin = -Inf, ymax = Inf
+        )
+
+        current_npc_x <- current_npc_x - 0.04  # Move down for ellipse
+      }
+
+      # Ellipse - create as a filled polygon approximation
+      # Generate ellipse points
+      theta <- seq(0, 2*pi, length.out = 50)
+      ellipse_width <- 0.02  # NPC units
+      ellipse_height <- 0.03  # NPC units
+      ellipse_center_y <- current_npc_y - 0.02
+      ellipse_center_x <- current_npc_x
+
+      ellipse_xs <- ellipse_center_y + ellipse_width * cos(theta)
+      ellipse_ys <- ellipse_center_x + ellipse_height * sin(theta)
+
+      ellipse_grob <- grid::polygonGrob(
+        x = grid::unit(ellipse_xs, "npc"),
+        y = grid::unit(ellipse_ys, "npc"),
+        gp = grid::gpar(
+          fill = high_color_list[[index_high]],
+          alpha = current_alpha,
+          col = NA  # No border
+        )
       )
 
-      cat(file=stderr(), paste0("  v152: Legend ellipse data frame created with alpha=", current_alpha, "\n"))
-
-      p <- p + annotate(
-        geom = "text",
-        label = high_label_list[[index_high]], size = size_text,
-        x = label_x,
-        y = label_y
-      ) + geom_ellipse(
-        data = legend_ellipse_data,  # v152: NOW HAS data parameter like plot ellipse!
-        aes(x0 = leg_x0, y0 = leg_y0, a = leg_a, b = leg_b, angle = 0),
-        fill = high_color_list[[index_high]], alpha = current_alpha, colour = NA, linetype = "blank",
-        show.legend = FALSE, inherit.aes = FALSE  # v152b: inherit.aes=FALSE to isolate from heatmap scales
+      p <- p + ggplot2::annotation_custom(
+        grob = ellipse_grob,
+        xmin = -Inf, xmax = Inf, ymin = -Inf, ymax = Inf
       )
+
+      # Label
+      label_grob <- grid::textGrob(
+        label = high_label_list[[index_high]],
+        x = grid::unit(ellipse_center_y - ellipse_width - 0.01, "npc"),
+        y = grid::unit(ellipse_center_x, "npc"),
+        hjust = 1, vjust = 0.5,
+        gp = grid::gpar(fontsize = text_fontsize)
+      )
+
+      p <- p + ggplot2::annotation_custom(
+        grob = label_grob,
+        xmin = -Inf, xmax = Inf, ymin = -Inf, ymax = Inf
+      )
+
+      cat(file=stderr(), paste0("  v153: Ellipse center - npc_x:", round(ellipse_center_x, 3),
+                                 ", npc_y:", round(ellipse_center_y, 3), "\n"))
+
+      # Move down for next highlight or bootstrap
+      current_npc_x <- current_npc_x - 0.08
     }
   }
 
   # v138: Only draw bootstrap legend if show_bootstrap_legend is TRUE
   if (show_boot_flag == TRUE && show_bootstrap_legend == TRUE) {
     if (boot_values$'format' == 'triangles') {
-      # v149: Bootstrap legend settings - cap sizes to reasonable values
-      # v145: Use custom sizes if provided, otherwise use scaled defaults
-      default_boot_title_size <- size_title * 0.15  # v149: Reduced from 0.25 to 0.15
-      if (default_boot_title_size > 3) {
-        default_boot_title_size <- 3  # v149: Cap at 3 (reduced from 4)
-      }
-      if (default_boot_title_size < 2) {
-        default_boot_title_size <- 2  # v149: Minimum size of 2
-      }
+
+      # Apply bootstrap offsets
+      boot_npc_x <- current_npc_x - 0.02 + npc_bootstrap_x_offset
+      boot_npc_y <- base_npc_y + npc_bootstrap_y_offset
+
+      # Bootstrap title size
+      default_boot_title_size <- min(size_title * 0.6, 3)
       boot_title_size <- if (!is.null(bootstrap_title_size_mult)) bootstrap_title_size_mult else default_boot_title_size
-      boot_text_size <- if (!is.null(bootstrap_text_size_mult)) bootstrap_text_size_mult else (size_text * 0.15)  # v149: Reduced from 0.25
+      boot_text_size <- if (!is.null(bootstrap_text_size_mult)) bootstrap_text_size_mult else (size_text * 0.6)
+      boot_title_fontsize <- boot_title_size * 3
+      boot_text_fontsize <- boot_text_size * 3
 
-      # v151: Apply bootstrap offsets to base positions
-      # CRITICAL: Reduced y-offsets from +6 to +1 to prevent expanding plot range
-      boot_x_base <- x22 - new_big_step + bootstrap_x_offset
-      boot_y_base <- y_off_base + bootstrap_y_offset
+      cat(file=stderr(), paste0("\n=== v153: BOOTSTRAP LEGEND (GROB) ===\n"))
+      cat(file=stderr(), paste0("  NPC position - x:", round(boot_npc_x, 3), ", y:", round(boot_npc_y, 3), "\n"))
+      cat(file=stderr(), paste0("  Title fontsize:", boot_title_fontsize, "\n"))
 
-      # v151: Title position - reduced offset to prevent range expansion
-      # Previously used +6 which pushed legends far beyond tips (e.g., y=91 for 80 tips)
-      # Now using +1 to keep legends closer to the data range
-      boot_title_y <- boot_y_base + 1
-      boot_triangles_y <- boot_y_base + 1 - bootstrap_title_gap  # Triangles below title
-      boot_labels_y <- boot_y_base + 1 - bootstrap_title_gap - bootstrap_label_gap  # Labels below triangles
-      boot_title_x <- boot_x_base + 2 * extra + bootstrap_title_x_offset
-
-      # v148: Output Bootstrap legend coordinates with coordinate system explanation
-      cat(file=stderr(), paste0("\n  Bootstrap Legend (PLOT COORDINATES):\n"))
-      cat(file=stderr(), paste0("    Title position: x=", round(boot_title_x, 2), ", y=", round(boot_title_y, 2), "\n"))
-      cat(file=stderr(), paste0("    Triangles position: y=", round(boot_triangles_y, 2), "\n"))
-      cat(file=stderr(), paste0("    Labels position: y=", round(boot_labels_y, 2), "\n"))
-      cat(file=stderr(), paste0("    Title size: ", round(boot_title_size, 2), "\n"))
-      cat(file=stderr(), paste0("    (Use bootstrap_x_offset/bootstrap_y_offset in Legend tab to adjust)\n"))
-
-      # v143: bootstrap_title_x_offset moves the title further to the right
-      p <- p + annotate(
-        geom = "text",
-        label = "Bootstrap", size = boot_title_size,
-        x = boot_title_x,
-        y = boot_title_y, hjust = 0, vjust = 0,
-        fontface = "bold"
-      ) + annotate(
-        geom = "text",
-        label = ">70%", size = boot_text_size,
-        x = boot_x_base - new_step + 3 * extra,
-        y = boot_labels_y
-      ) + annotate(
-        geom = "text",
-        label = ">80%", size = boot_text_size,
-        x = boot_x_base - 2 * new_step + 3 * extra,
-        y = boot_labels_y
-      ) + annotate(
-        geom = "text",
-        label = ">90%", size = boot_text_size,
-        x = boot_x_base - 3 * new_step + 3 * extra,
-        y = boot_labels_y
-      ) + annotate(
-        geom = "point",
-        shape = 24, size = size_90 + bootstrap_label_size,
-        x = boot_x_base - 3 * new_step + 3 * extra,
-        y = boot_triangles_y + man_adjust_image_of_second_legend,
-        fill = "grey36", colour = "grey20", alpha = 1/2
-      ) + annotate(
-        geom = "point",
-        shape = 24, size = size_80 + bootstrap_label_size,
-        x = boot_x_base - 2 * new_step + 3 * extra,
-        y = boot_triangles_y + man_adjust_image_of_second_legend,
-        fill = "grey36", colour = "grey20", alpha = 1/2
-      ) + annotate(
-        geom = "point",
-        shape = 24, size = size_70 + bootstrap_label_size,
-        x = boot_x_base - new_step + 3 * extra,
-        y = boot_triangles_y + man_adjust_image_of_second_legend,
-        fill = "grey36", colour = "grey20", alpha = 1/2
+      # Bootstrap title
+      boot_title_grob <- grid::textGrob(
+        label = "Bootstrap",
+        x = grid::unit(boot_npc_y, "npc"),
+        y = grid::unit(boot_npc_x, "npc"),
+        hjust = 1, vjust = 1,
+        gp = grid::gpar(fontsize = boot_title_fontsize, fontface = "bold")
       )
+
+      p <- p + ggplot2::annotation_custom(
+        grob = boot_title_grob,
+        xmin = -Inf, xmax = Inf, ymin = -Inf, ymax = Inf
+      )
+
+      # Triangle positions (horizontal spacing)
+      triangle_spacing <- 0.04
+      triangle_npc_x <- boot_npc_x - 0.04
+      triangle_base_y <- boot_npc_y - 0.02
+
+      # Triangle sizes (in npc units, proportional to bootstrap values)
+      tri_size_90 <- 0.015
+      tri_size_80 <- 0.012
+      tri_size_70 <- 0.009
+
+      # Create triangles as polygon grobs
+      for (i in 1:3) {
+        tri_y <- triangle_base_y - (i-1) * triangle_spacing
+        tri_size <- c(tri_size_90, tri_size_80, tri_size_70)[i]
+        tri_label <- c(">90%", ">80%", ">70%")[i]
+
+        # Triangle points (pointing up)
+        tri_xs <- c(tri_y - tri_size, tri_y + tri_size, tri_y)
+        tri_ys <- c(triangle_npc_x - tri_size, triangle_npc_x - tri_size, triangle_npc_x + tri_size)
+
+        triangle_grob <- grid::polygonGrob(
+          x = grid::unit(tri_xs, "npc"),
+          y = grid::unit(tri_ys, "npc"),
+          gp = grid::gpar(fill = "grey36", col = "grey20", alpha = 0.5)
+        )
+
+        p <- p + ggplot2::annotation_custom(
+          grob = triangle_grob,
+          xmin = -Inf, xmax = Inf, ymin = -Inf, ymax = Inf
+        )
+
+        # Triangle label
+        label_grob <- grid::textGrob(
+          label = tri_label,
+          x = grid::unit(tri_y - tri_size - 0.01, "npc"),
+          y = grid::unit(triangle_npc_x, "npc"),
+          hjust = 1, vjust = 0.5,
+          gp = grid::gpar(fontsize = boot_text_fontsize)
+        )
+
+        p <- p + ggplot2::annotation_custom(
+          grob = label_grob,
+          xmin = -Inf, xmax = Inf, ymin = -Inf, ymax = Inf
+        )
+      }
+
+      cat(file=stderr(), paste0("  v153: Bootstrap triangles added at npc_x:", round(triangle_npc_x, 3), "\n"))
     }
   }
 
-  # v151: Comprehensive debug output summarizing all legend element positions
-  cat(file=stderr(), paste0("\n=== v151: LEGEND ELEMENTS SUMMARY ===\n"))
-  cat(file=stderr(), paste0("  y_off_base (baseline for legends): ", y_off_base, "\n"))
-  cat(file=stderr(), paste0("  new_base_for_second_legend_normalized (x-baseline): ", new_base_for_second_legend_normalized, "\n"))
+  # v153: Debug summary
+  cat(file=stderr(), paste0("\n=== v153: LEGEND ELEMENTS SUMMARY (GROB-BASED) ===\n"))
+  cat(file=stderr(), paste0("  Using NPC coordinates - legends should NOT expand data range\n"))
   cat(file=stderr(), paste0("  Tree has ", sum(p$data$isTip == TRUE, na.rm=TRUE), " tips\n"))
-  cat(file=stderr(), paste0("  Current p$data y-range: ", round(min(p$data$y, na.rm=TRUE), 2), " to ", round(max(p$data$y, na.rm=TRUE), 2), "\n"))
-  cat(file=stderr(), paste0("  Current p$data x-range: ", round(min(p$data$x, na.rm=TRUE), 2), " to ", round(max(p$data$x, na.rm=TRUE), 2), "\n"))
-  cat(file=stderr(), paste0("=====================================\n"))
+  cat(file=stderr(), paste0("  p$data y-range (should be unchanged): ", round(min(p$data$y, na.rm=TRUE), 2), " to ", round(max(p$data$y, na.rm=TRUE), 2), "\n"))
+  cat(file=stderr(), paste0("  p$data x-range (should be unchanged): ", round(min(p$data$x, na.rm=TRUE), 2), " to ", round(max(p$data$x, na.rm=TRUE), 2), "\n"))
+  cat(file=stderr(), paste0("=================================================\n"))
 
   return(p)
 }
@@ -6985,7 +6952,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
 # Define UI
 ui <- dashboardPage(
-  dashboardHeader(title = "Lineage Tree Plotter v152"),
+  dashboardHeader(title = "Lineage Tree Plotter v153"),
   
   dashboardSidebar(
     width = 300,
@@ -7041,17 +7008,17 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v152 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v153 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
-                            "New in v152:",
+                            "New in v153:",
                             tags$ul(
-                              tags$li("Legend ellipse transparency: ROOT CAUSE FIXED - legend ellipse was MISSING the 'data=' parameter that plot ellipse has. Now both use identical geom_ellipse() calls with data frame.")
+                              tags$li("OPTION B: Legends now use grid grobs with annotation_custom() positioned in NPC (normalized panel coordinates) instead of data coordinates - this prevents legends from expanding the plot data range"),
+                              tags$li("Highlight and Bootstrap legends should no longer cause tree distortion/shrinking")
                             ),
-                            "Previous fixes (v146-v151):",
+                            "Previous fixes (v152):",
                             tags$ul(
-                              tags$li("Legend alignment: y_off_base stays within data range, bootstrap offsets reduced"),
-                              tags$li("Ellipse x0 positioning: Fixed coordinate mismatch in heatmap mode"),
-                              tags$li("Shiny server: 100MB upload limit support"),
+                              tags$li("Legend ellipse transparency: ROOT CAUSE FIXED"),
+                              tags$li("Legend alignment improvements"),
                               tags$li("Plot scaling: Scale slider (25%-200%) in Extra tab")
                             )
                      )
