@@ -1753,19 +1753,27 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
       cat(file=stderr(), paste0("    Ellipse position: x=", round(label_x, 2), ", y=", round(ellipse_y, 2), "\n"))
       cat(file=stderr(), paste0("    (Use highlight_x_offset/highlight_y_offset in Legend tab to adjust)\n"))
 
-      # v151: Label position with offsets and title_gap
-      # CRITICAL FIX: Use alpha as SEPARATE PARAMETER just like PLOT ellipse does (line 1496)
-      # The plot ellipse uses: fill = color, alpha = alpha_val
-      # Previously we used scales::alpha() which does NOT work the same way!
+      # v152: Label position with offsets and title_gap
+      # CRITICAL FIX: Create a data frame for legend ellipse, EXACTLY like plot ellipse does!
+      # The plot ellipse has: geom_ellipse(data = high_nodes_table1, aes(...), alpha = alpha_val)
+      # The legend ellipse was MISSING the data parameter - this caused alpha to not work!
+      legend_ellipse_data <- data.frame(
+        x0 = label_x,
+        y0 = ellipse_y,
+        a = a,
+        b = b
+      )
+
+      cat(file=stderr(), paste0("  v152: Legend ellipse data frame created with alpha=", current_alpha, "\n"))
+
       p <- p + annotate(
         geom = "text",
         label = high_label_list[[index_high]], size = size_text,
         x = label_x,
         y = label_y
       ) + geom_ellipse(
-        aes(x0 = label_x,
-            y0 = ellipse_y,
-            a = a, b = b, angle = 0),
+        data = legend_ellipse_data,  # v152: NOW HAS data parameter like plot ellipse!
+        aes(x0 = x0, y0 = y0, a = a, b = b, angle = 0),
         fill = high_color_list[[index_high]], alpha = current_alpha, colour = NA, linetype = "blank", show.legend = FALSE
       )
     }
@@ -6974,7 +6982,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
 # Define UI
 ui <- dashboardPage(
-  dashboardHeader(title = "Lineage Tree Plotter v151"),
+  dashboardHeader(title = "Lineage Tree Plotter v152"),
   
   dashboardSidebar(
     width = 300,
@@ -7030,19 +7038,18 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v151 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v152 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
-                            "New in v151:",
+                            "New in v152:",
                             tags$ul(
-                              tags$li("Legend ellipse transparency: FIXED - now uses alpha parameter EXACTLY like plot ellipse (was using scales::alpha which doesn't work)"),
-                              tags$li("Legend alignment: FIXED - y_off_base now stays within data range, bootstrap offsets reduced from +6 to +1")
+                              tags$li("Legend ellipse transparency: ROOT CAUSE FIXED - legend ellipse was MISSING the 'data=' parameter that plot ellipse has. Now both use identical geom_ellipse() calls with data frame.")
                             ),
-                            "Previous fixes (v146-v150):",
+                            "Previous fixes (v146-v151):",
                             tags$ul(
+                              tags$li("Legend alignment: y_off_base stays within data range, bootstrap offsets reduced"),
                               tags$li("Ellipse x0 positioning: Fixed coordinate mismatch in heatmap mode"),
                               tags$li("Shiny server: 100MB upload limit support"),
-                              tags$li("Plot scaling: Scale slider (25%-200%) in Extra tab"),
-                              tags$li("Ellipse scaling: Proportional to tree ratio when heatmaps are added")
+                              tags$li("Plot scaling: Scale slider (25%-200%) in Extra tab")
                             )
                      )
             )
