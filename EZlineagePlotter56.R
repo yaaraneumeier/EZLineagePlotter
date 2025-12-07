@@ -42,6 +42,9 @@ options(shiny.maxRequestSize = 100*1024^2)
 # v148: Fixed ellipse x0 using SAME data source (p$data) for both tree_max and node positions
 #       Fixed legend ellipse size to match plot ellipse (removed man_multiply_elipse and +0.3)
 #       Changed y_off_base to position highlight/bootstrap legends on RIGHT side of plot
+# v149: Fixed legend ellipse transparency using scales::alpha() to embed alpha in fill color
+#       Repositioned legends to TOP-RIGHT using -(y_off_base-5) for x-position
+#       Reduced bootstrap title size (0.15 multiplier, capped at 3, min 2)
 
 ###### part 1 a:
 # ============================================================================
@@ -1632,10 +1635,15 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
     extra <- man_space_second_legend
     move <- 0
   } else {
-    new_base_for_second_legend_normalized <- boudariestt$xmax * 94 / 100 * (-1)
-    new_step <- boudariestt$xmax * 1 / 10 * (-1)
-    new_big_step <- boudariestt$xmax * 15 / 100 * (-1)
+    # v149: Position legends at TOP of plot, not bottom
+    # With coord_flip + scale_y_reverse, large negative x = visual TOP
+    # Use y_off_base (which is n_tips + 5) to calculate appropriate x-position
+    # This aligns highlight/bootstrap legends with ggplot legends at top-right
+    new_base_for_second_legend_normalized <- -(y_off_base - 5)  # Near top of plot (at -n_tips level)
+    new_step <- 2  # Fixed step for spacing between elements
+    new_big_step <- 5  # Fixed big step for bootstrap legend offset
     extra <- man_space_second_legend + 0.3
+    cat(file=stderr(), paste0("  v149: Legend x-position base: ", new_base_for_second_legend_normalized, " (for TOP alignment)\n"))
   }
   
   if (debug_mode == TRUE) {
@@ -1744,10 +1752,9 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
       cat(file=stderr(), paste0("    Ellipse position: x=", round(label_x, 2), ", y=", round(ellipse_y, 2), "\n"))
       cat(file=stderr(), paste0("    (Use highlight_x_offset/highlight_y_offset in Legend tab to adjust)\n"))
 
-      # v148: Label position with offsets and title_gap
-      # Use SAME dimensions as plot ellipse to ensure visual transparency match
-      # (Previously used a * man_multiply_elipse and b + 0.3 which made legend ellipse larger
-      # and therefore appear more opaque even with the same alpha value)
+      # v149: Label position with offsets and title_gap
+      # Use scales::alpha() to embed transparency directly in fill color
+      # This ensures alpha is applied correctly (previous method had alpha as separate param)
       p <- p + annotate(
         geom = "text",
         label = high_label_list[[index_high]], size = size_text,
@@ -1757,7 +1764,7 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
         aes(x0 = label_x,
             y0 = ellipse_y,
             a = a, b = b, angle = 0),
-        fill = high_color_list[[index_high]], alpha = current_alpha, linetype = "blank", show.legend = FALSE
+        fill = scales::alpha(high_color_list[[index_high]], current_alpha), linetype = "blank", show.legend = FALSE
       )
     }
   }
@@ -1765,14 +1772,17 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
   # v138: Only draw bootstrap legend if show_bootstrap_legend is TRUE
   if (show_boot_flag == TRUE && show_bootstrap_legend == TRUE) {
     if (boot_values$'format' == 'triangles') {
-      # v133: Bootstrap legend settings controlled from Legend tab
-      # v145: Use custom sizes if provided, otherwise use scaled defaults (capped at 4)
-      default_boot_title_size <- size_title * 0.25
-      if (default_boot_title_size > 4) {
-        default_boot_title_size <- 4  # v145: Cap to prevent huge titles
+      # v149: Bootstrap legend settings - cap sizes to reasonable values
+      # v145: Use custom sizes if provided, otherwise use scaled defaults
+      default_boot_title_size <- size_title * 0.15  # v149: Reduced from 0.25 to 0.15
+      if (default_boot_title_size > 3) {
+        default_boot_title_size <- 3  # v149: Cap at 3 (reduced from 4)
+      }
+      if (default_boot_title_size < 2) {
+        default_boot_title_size <- 2  # v149: Minimum size of 2
       }
       boot_title_size <- if (!is.null(bootstrap_title_size_mult)) bootstrap_title_size_mult else default_boot_title_size
-      boot_text_size <- if (!is.null(bootstrap_text_size_mult)) bootstrap_text_size_mult else (size_text * 0.25)
+      boot_text_size <- if (!is.null(bootstrap_text_size_mult)) bootstrap_text_size_mult else (size_text * 0.15)  # v149: Reduced from 0.25
 
       # v133: Apply bootstrap offsets to base positions
       boot_x_base <- x22 - new_big_step + bootstrap_x_offset
@@ -6948,7 +6958,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
 # Define UI
 ui <- dashboardPage(
-  dashboardHeader(title = "Lineage Tree Plotter v148"),
+  dashboardHeader(title = "Lineage Tree Plotter v149"),
   
   dashboardSidebar(
     width = 300,
@@ -7004,17 +7014,20 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v146 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v149 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
-                            "New in v146:",
+                            "New in v149:",
                             tags$ul(
-                              tags$li("Shiny server support: Added options(shiny.maxRequestSize = 100*1024^2) for 100MB uploads"),
-                              tags$li("Plot scaling: Added scale slider (25%-200%) in Extra tab to zoom plot without distortion"),
-                              tags$li("Ellipse scaling: Fixed ellipse dimensions when heatmaps are added - now scales proportionally to tree ratio"),
-                              tags$li("Ellipse y-offset: Fixed ellipse vertical positioning - now uses p$data when heat_flag=TRUE for correct alignment"),
-                              tags$li("Consistent proportions: All preview tabs now use imageOutput with auto height for consistent aspect ratio"),
-                              tags$li("Legend transparency debug: Added detailed debug output to trace transparency values through the entire pipeline"),
-                              tags$li("All legend coordinates: Added output for all legend positions (classification, heatmap, p-value, highlight, bootstrap)")
+                              tags$li("Legend ellipse transparency: Fixed using scales::alpha() to embed transparency in fill color"),
+                              tags$li("Legend alignment: Repositioned highlight/bootstrap legends to TOP-RIGHT (aligned with ggplot legends)"),
+                              tags$li("Bootstrap title size: Reduced default size and capped max to prevent oversized text"),
+                              tags$li("Ellipse x0 positioning: Fixed coordinate mismatch in heatmap mode using consistent data source")
+                            ),
+                            "Previous fixes (v146-v148):",
+                            tags$ul(
+                              tags$li("Shiny server: 100MB upload limit support"),
+                              tags$li("Plot scaling: Scale slider (25%-200%) in Extra tab"),
+                              tags$li("Ellipse scaling: Proportional to tree ratio when heatmaps are added")
                             )
                      )
             )
