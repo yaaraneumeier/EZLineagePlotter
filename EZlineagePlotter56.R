@@ -1753,12 +1753,10 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
       boot_npc_x <- current_npc_x - 0.02 + npc_bootstrap_x_offset
       boot_npc_y <- base_npc_y + npc_bootstrap_y_offset
 
-      # Bootstrap title size
-      default_boot_title_size <- min(size_title * 0.6, 3)
-      boot_title_size <- if (!is.null(bootstrap_title_size_mult)) bootstrap_title_size_mult else default_boot_title_size
-      boot_text_size <- if (!is.null(bootstrap_text_size_mult)) bootstrap_text_size_mult else (size_text * 0.6)
-      boot_title_fontsize <- boot_title_size * 3
-      boot_text_fontsize <- boot_text_size * 3
+      # Bootstrap title size - use same base as highlight title (size_font_legend_title)
+      default_boot_title_size <- size_font_legend_title  # Same as other legend titles
+      boot_title_fontsize <- if (!is.null(bootstrap_title_size_mult)) bootstrap_title_size_mult else default_boot_title_size
+      boot_text_fontsize <- if (!is.null(bootstrap_text_size_mult)) bootstrap_text_size_mult else size_font_legend_text
 
       cat(file=stderr(), paste0("\n=== v153: BOOTSTRAP LEGEND (GROB) ===\n"))
       cat(file=stderr(), paste0("  NPC position - x:", round(boot_npc_x, 3), ", y:", round(boot_npc_y, 3), "\n"))
