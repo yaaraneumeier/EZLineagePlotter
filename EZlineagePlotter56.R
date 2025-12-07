@@ -1807,7 +1807,8 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
 
   # Bootstrap legend info
   if (show_boot_flag == TRUE && show_bootstrap_legend == TRUE) {
-    if (!is.null(boot_values) && !is.na(boot_values) && boot_values$'format' == 'triangles') {
+    # boot_values is a list, so check if it's a valid list with 'format' element
+    if (!is.null(boot_values) && is.list(boot_values) && !is.null(boot_values$'format') && boot_values$'format' == 'triangles') {
       legend_info$bootstrap <- list(
         title_fontsize = boot_title_fontsize,
         text_fontsize = boot_text_fontsize
