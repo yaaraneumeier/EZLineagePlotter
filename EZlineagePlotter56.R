@@ -1648,17 +1648,15 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
   base_npc_y <- 0.98  # Near right edge of panel
   base_npc_x <- 0.95  # Near top of panel (after coord_flip, this is vertical position)
 
-  # Calculate text sizes in points
-  default_title_size <- min(size_font_legend_title * man_multiply_second_legend, 5)
-  size_title <- if (!is.null(highlight_title_size)) highlight_title_size else default_title_size
-  size_text <- if (!is.null(highlight_text_size)) highlight_text_size else (size_font_legend_text * man_multiply_second_legend_text * 0.8)
+  # v154: Title fontsize should EXACTLY match ggplot legend titles
+  # ggplot uses: legend.title = element_text(size = size_font_legend_title, face = "bold")
+  # So we use size_font_legend_title directly (it's already in points)
+  title_fontsize <- if (!is.null(highlight_title_size)) highlight_title_size else size_font_legend_title
+  text_fontsize <- if (!is.null(highlight_text_size)) highlight_text_size else size_font_legend_text
 
-  # Convert ggplot sizes to grid font sizes (approximate conversion)
-  title_fontsize <- size_title * 3  # ggplot size to points
-  text_fontsize <- size_text * 3
-
-  cat(file=stderr(), paste0("  v153: NPC base position - x:", base_npc_x, ", y:", base_npc_y, "\n"))
-  cat(file=stderr(), paste0("  v153: Title fontsize:", title_fontsize, ", Text fontsize:", text_fontsize, "\n"))
+  cat(file=stderr(), paste0("  v154: NPC base position - x:", base_npc_x, ", y:", base_npc_y, "\n"))
+  cat(file=stderr(), paste0("  v154: Title fontsize:", title_fontsize, " (matches ggplot legend.title size)\n"))
+  cat(file=stderr(), paste0("  v154: Text fontsize:", text_fontsize, "\n"))
 
   current_npc_x <- base_npc_x + npc_highlight_x_offset  # Vertical position
   current_npc_y <- base_npc_y + npc_highlight_y_offset  # Horizontal position (right side)
@@ -6952,7 +6950,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
 # Define UI
 ui <- dashboardPage(
-  dashboardHeader(title = "Lineage Tree Plotter v153"),
+  dashboardHeader(title = "Lineage Tree Plotter v154"),
   
   dashboardSidebar(
     width = 300,
@@ -7008,18 +7006,16 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v153 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v154 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
-                            "New in v153:",
+                            "New in v154:",
                             tags$ul(
-                              tags$li("OPTION B: Legends now use grid grobs with annotation_custom() positioned in NPC (normalized panel coordinates) instead of data coordinates - this prevents legends from expanding the plot data range"),
-                              tags$li("Highlight and Bootstrap legends should no longer cause tree distortion/shrinking")
+                              tags$li("Highlight title size now EXACTLY matches ggplot legend titles (uses size_font_legend_title directly)")
                             ),
-                            "Previous fixes (v152):",
+                            "Previous fixes (v153):",
                             tags$ul(
-                              tags$li("Legend ellipse transparency: ROOT CAUSE FIXED"),
-                              tags$li("Legend alignment improvements"),
-                              tags$li("Plot scaling: Scale slider (25%-200%) in Extra tab")
+                              tags$li("NPC-based legend positioning prevents plot distortion"),
+                              tags$li("Legend ellipse transparency fixed")
                             )
                      )
             )
