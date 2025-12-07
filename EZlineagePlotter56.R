@@ -1577,7 +1577,7 @@ func_highlight <- function(p, how_many_hi, heat_flag, high_color_list, a, b, man
   
   return(p)
 }
-# v156: Helper function to add custom legends to gtable's legend area
+# v157: Helper function to add custom legends to gtable's legend area
 # This places highlight and bootstrap legends alongside ggplot legends (Classification, Heatmap)
 # Uses absolute units and proper viewport to ensure visibility
 func.add.custom.legends.to.gtable <- function(gt, legend_info) {
@@ -1585,7 +1585,7 @@ func.add.custom.legends.to.gtable <- function(gt, legend_info) {
     return(gt)
   }
 
-  cat(file=stderr(), paste0("\n=== v156: ADDING CUSTOM LEGENDS TO GTABLE ===\n"))
+  cat(file=stderr(), paste0("\n=== v157: ADDING CUSTOM LEGENDS TO GTABLE ===\n"))
 
   # Find the guide-box-right in the gtable (where ggplot legends are)
   guide_box_idx <- which(gt$layout$name == "guide-box-right")
@@ -1603,9 +1603,7 @@ func.add.custom.legends.to.gtable <- function(gt, legend_info) {
   guide_col <- gt$layout$l[guide_box_idx]
   cat(file=stderr(), paste0("  Found guide-box at row ", guide_row, ", col ", guide_col, "\n"))
 
-  # v156: Build legend using gtable instead of free-positioned grobs
-  # This ensures proper layout and visibility
-
+  # v157: Build legend using simple grob list with fixed positioning
   # Calculate how many items we have
   n_highlight <- 0
   n_bootstrap <- 0
@@ -1621,130 +1619,111 @@ func.add.custom.legends.to.gtable <- function(gt, legend_info) {
     return(gt)
   }
 
-  # Build legend items as a proper gtable
-  legend_rows <- c()
-  legend_grobs <- list()
-  row_heights <- c()
+  # v157: Use fixed font sizes (ignore potentially corrupted passed values)
+  title_fontsize <- 12
+  text_fontsize <- 10
+
+  # Build all grobs with absolute positioning from top
+  legend_grobs <- grid::gList()
+  current_y <- grid::unit(1, "npc")  # Start from top
+  line_height <- grid::unit(18, "pt")
 
   # Highlight legend
   if (!is.null(legend_info$highlight) && legend_info$show_highlight) {
     hi <- legend_info$highlight
-    title_fontsize <- max(hi$title_fontsize, 10)
-    text_fontsize <- max(hi$text_fontsize, 8)
+    cat(file=stderr(), paste0("  Highlight legend: ", n_highlight, " items\n"))
 
-    cat(file=stderr(), paste0("  Highlight legend: ", n_highlight, " items, title_fs=", title_fontsize, ", text_fs=", text_fontsize, "\n"))
-
-    # Title row
-    title_grob <- grid::textGrob(
+    # Title
+    legend_grobs <- grid::gList(legend_grobs, grid::textGrob(
       label = hi$title,
       x = grid::unit(0.1, "cm"),
-      hjust = 0, vjust = 0.5,
+      y = current_y - grid::unit(5, "pt"),
+      hjust = 0, vjust = 1,
       gp = grid::gpar(fontsize = title_fontsize, fontface = "bold")
-    )
-    legend_grobs <- c(legend_grobs, list(title_grob))
-    row_heights <- c(row_heights, grid::unit(title_fontsize * 1.5, "pt"))
+    ))
+    current_y <- current_y - line_height
 
     # Each highlight item
     for (i in seq_along(hi$labels)) {
-      # Create a gTree with ellipse + text
+      # Ellipse key
       theta <- seq(0, 2*pi, length.out = 30)
-      key_size <- text_fontsize * 0.8
+      key_size <- 6  # points
 
-      ellipse_grob <- grid::polygonGrob(
-        x = grid::unit(0.5, "cm") + grid::unit(key_size * 0.7 * cos(theta), "pt"),
-        y = grid::unit(0.5, "npc") + grid::unit(key_size * 0.5 * sin(theta), "pt"),
+      legend_grobs <- grid::gList(legend_grobs, grid::polygonGrob(
+        x = grid::unit(0.5, "cm") + grid::unit(key_size * cos(theta), "pt"),
+        y = current_y - grid::unit(8, "pt") + grid::unit(key_size * 0.6 * sin(theta), "pt"),
         gp = grid::gpar(fill = hi$colors[[i]], alpha = hi$alphas[[i]], col = NA)
-      )
+      ))
 
-      label_grob <- grid::textGrob(
+      # Label
+      legend_grobs <- grid::gList(legend_grobs, grid::textGrob(
         label = hi$labels[[i]],
         x = grid::unit(1.2, "cm"),
+        y = current_y - grid::unit(8, "pt"),
         hjust = 0, vjust = 0.5,
         gp = grid::gpar(fontsize = text_fontsize)
-      )
-
-      item_grob <- grid::gTree(children = grid::gList(ellipse_grob, label_grob))
-      legend_grobs <- c(legend_grobs, list(item_grob))
-      row_heights <- c(row_heights, grid::unit(text_fontsize * 1.8, "pt"))
+      ))
+      current_y <- current_y - line_height
     }
-
-    # Gap row
-    row_heights <- c(row_heights, grid::unit(0.3, "cm"))
-    legend_grobs <- c(legend_grobs, list(grid::nullGrob()))
+    current_y <- current_y - grid::unit(10, "pt")  # Gap before bootstrap
   }
 
   # Bootstrap legend
   if (!is.null(legend_info$bootstrap) && legend_info$show_bootstrap) {
-    boot <- legend_info$bootstrap
-    boot_title_fontsize <- max(boot$title_fontsize, 10)
-    boot_text_fontsize <- max(boot$text_fontsize, 8)
+    cat(file=stderr(), paste0("  Bootstrap legend\n"))
 
-    cat(file=stderr(), paste0("  Bootstrap legend: title_fs=", boot_title_fontsize, ", text_fs=", boot_text_fontsize, "\n"))
-
-    # Title row
-    boot_title_grob <- grid::textGrob(
+    # Title
+    legend_grobs <- grid::gList(legend_grobs, grid::textGrob(
       label = "Bootstrap",
       x = grid::unit(0.1, "cm"),
-      hjust = 0, vjust = 0.5,
-      gp = grid::gpar(fontsize = boot_title_fontsize, fontface = "bold")
-    )
-    legend_grobs <- c(legend_grobs, list(boot_title_grob))
-    row_heights <- c(row_heights, grid::unit(boot_title_fontsize * 1.5, "pt"))
+      y = current_y - grid::unit(5, "pt"),
+      hjust = 0, vjust = 1,
+      gp = grid::gpar(fontsize = title_fontsize, fontface = "bold")
+    ))
+    current_y <- current_y - line_height
 
     # Bootstrap items
     tri_labels <- c(">90%", ">80%", ">70%")
-    tri_sizes <- c(boot_text_fontsize * 0.5, boot_text_fontsize * 0.4, boot_text_fontsize * 0.3)
+    tri_sizes <- c(5, 4, 3)  # points
 
     for (i in 1:3) {
       sz <- tri_sizes[i]
 
       # Triangle pointing up
-      tri_grob <- grid::polygonGrob(
+      legend_grobs <- grid::gList(legend_grobs, grid::polygonGrob(
         x = grid::unit(0.5, "cm") + grid::unit(c(-sz, sz, 0), "pt"),
-        y = grid::unit(0.5, "npc") + grid::unit(c(-sz*0.6, -sz*0.6, sz*0.8), "pt"),
+        y = current_y - grid::unit(8, "pt") + grid::unit(c(-sz*0.6, -sz*0.6, sz*0.8), "pt"),
         gp = grid::gpar(fill = "grey36", col = "grey20", alpha = 0.5)
-      )
+      ))
 
-      label_grob <- grid::textGrob(
+      # Label
+      legend_grobs <- grid::gList(legend_grobs, grid::textGrob(
         label = tri_labels[i],
         x = grid::unit(1.2, "cm"),
+        y = current_y - grid::unit(8, "pt"),
         hjust = 0, vjust = 0.5,
-        gp = grid::gpar(fontsize = boot_text_fontsize)
-      )
-
-      item_grob <- grid::gTree(children = grid::gList(tri_grob, label_grob))
-      legend_grobs <- c(legend_grobs, list(item_grob))
-      row_heights <- c(row_heights, grid::unit(boot_text_fontsize * 1.8, "pt"))
+        gp = grid::gpar(fontsize = text_fontsize)
+      ))
+      current_y <- current_y - line_height
     }
   }
 
-  # Create a gtable for our custom legends
-  n_rows <- length(legend_grobs)
-  custom_gt <- gtable::gtable(
-    widths = grid::unit(3, "cm"),  # Single column width
-    heights = do.call(grid::unit.c, as.list(row_heights))
-  )
+  # Calculate total height (approximate)
+  total_items <- n_highlight + n_bootstrap + (if(n_highlight > 0) 1 else 0) + (if(n_bootstrap > 0) 1 else 0)
+  total_height_cm <- total_items * 0.5 + 0.5
 
-  # Add each grob to its row
-  for (i in seq_along(legend_grobs)) {
-    custom_gt <- gtable::gtable_add_grob(
-      custom_gt,
-      grobs = legend_grobs[[i]],
-      t = i, l = 1
-    )
-  }
+  cat(file=stderr(), paste0("  Total items: ", total_items, ", height: ", total_height_cm, " cm\n"))
 
-  # Calculate total height needed
-  total_height <- sum(grid::convertHeight(do.call(grid::unit.c, as.list(row_heights)), "cm", valueOnly = TRUE))
-  cat(file=stderr(), paste0("  Custom legend height: ", round(total_height, 2), " cm\n"))
+  # Create a gTree with all the legend grobs
+  custom_legend <- grid::gTree(children = legend_grobs, vp = grid::viewport())
 
-  # Add a new row ABOVE the guide-box (pos = guide_row - 1 inserts BEFORE guide_row)
-  gt <- gtable::gtable_add_rows(gt, heights = grid::unit(total_height + 0.5, "cm"), pos = guide_row - 1)
+  # Add a new row ABOVE the guide-box
+  gt <- gtable::gtable_add_rows(gt, heights = grid::unit(total_height_cm, "cm"), pos = guide_row - 1)
 
-  # Since we added a row before guide_row, the new row IS at position guide_row
+  # Add our custom legend grob to the new row
   gt <- gtable::gtable_add_grob(
     gt,
-    grobs = custom_gt,
+    grobs = custom_legend,
     t = guide_row,
     l = guide_col,
     name = "custom-highlight-bootstrap-legend"
@@ -1759,7 +1738,7 @@ func.add.custom.legends.to.gtable <- function(gt, legend_info) {
 
 # Function to create the second legend
 # v145: Added high_alpha_list parameter for transparency control
-# v156: Modified to store legend info as attribute instead of using annotation_custom
+# v157: Modified to store legend info as attribute instead of using annotation_custom
 func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag, how_many_boxes,
                                     how_mant_rows, boudariestt, y_off_base, high_title_list,
                                     size_font_legend_title, high_label_list, size_font_legend_text,
@@ -1785,11 +1764,11 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
                                     # v145: Transparency list for legend ellipses
                                     high_alpha_list = NULL) {
 
-  # v156: GTABLE-BASED APPROACH
+  # v157: GTABLE-BASED APPROACH
   # Store legend specifications as an attribute on the plot object.
   # The rendering code will add these to the gtable's legend area (alongside ggplot legends).
 
-  cat(file=stderr(), paste0("\n=== v156: GTABLE-BASED LEGENDS ===\n"))
+  cat(file=stderr(), paste0("\n=== v157: GTABLE-BASED LEGENDS ===\n"))
   cat(file=stderr(), paste0("  Storing legend info as attribute for gtable insertion\n"))
   cat(file=stderr(), paste0("  Legends will appear in same area as ggplot legends (Classification, Heatmap)\n"))
 
@@ -1806,8 +1785,8 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
   boot_title_fontsize <- if (!is.null(bootstrap_title_size_mult)) bootstrap_title_size_mult else size_font_legend_title
   boot_text_fontsize <- if (!is.null(bootstrap_text_size_mult)) bootstrap_text_size_mult else size_font_legend_text
 
-  cat(file=stderr(), paste0("  v156: Title fontsize: ", title_fontsize, " (matches ggplot legend.title)\n"))
-  cat(file=stderr(), paste0("  v156: Text fontsize: ", text_fontsize, "\n"))
+  cat(file=stderr(), paste0("  v157: Title fontsize: ", title_fontsize, " (matches ggplot legend.title)\n"))
+  cat(file=stderr(), paste0("  v157: Text fontsize: ", text_fontsize, "\n"))
 
   # Build legend info structure
   legend_info <- list()
@@ -1830,7 +1809,7 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
       text_fontsize = text_fontsize
     )
 
-    cat(file=stderr(), paste0("  v156: Highlight legend: title='", highlight_title,
+    cat(file=stderr(), paste0("  v157: Highlight legend: title='", highlight_title,
                                "', ", length(high_label_list), " items\n"))
     for (i in seq_along(high_label_list)) {
       cat(file=stderr(), paste0("    Item ", i, ": label='", high_label_list[[i]],
@@ -1847,7 +1826,7 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
         title_fontsize = boot_title_fontsize,
         text_fontsize = boot_text_fontsize
       )
-      cat(file=stderr(), paste0("  v156: Bootstrap legend enabled\n"))
+      cat(file=stderr(), paste0("  v157: Bootstrap legend enabled\n"))
     }
   }
 
@@ -1857,8 +1836,8 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
   # Store legend info as attribute on the plot
   attr(p, "custom_legend_info") <- legend_info
 
-  cat(file=stderr(), paste0("  v156: Legend info stored as plot attribute\n"))
-  cat(file=stderr(), paste0("  v156: Will be added to gtable during rendering\n"))
+  cat(file=stderr(), paste0("  v157: Legend info stored as plot attribute\n"))
+  cat(file=stderr(), paste0("  v157: Will be added to gtable during rendering\n"))
   cat(file=stderr(), paste0("=================================================\n"))
 
   return(p)
@@ -6866,14 +6845,14 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   # v88: Save the plot with comprehensive error handling and multiple fallbacks
   save_success <- FALSE
 
-  # v156: Check if plot has custom legend info for gtable insertion
+  # v157: Check if plot has custom legend info for gtable insertion
   custom_legend_info <- attr(p, "custom_legend_info")
 
-  # v156: Primary attempt - with gtable legend insertion if needed
+  # v157: Primary attempt - with gtable legend insertion if needed
   tryCatch({
     if (!is.null(custom_legend_info) && (length(custom_legend_info$highlight) > 0 || length(custom_legend_info$bootstrap) > 0)) {
       # Build gtable from plot
-      cat(file=stderr(), paste0("\n=== v156: Building gtable for custom legend insertion ===\n"))
+      cat(file=stderr(), paste0("\n=== v157: Building gtable for custom legend insertion ===\n"))
       gt <- ggplot2::ggplot_gtable(ggplot2::ggplot_build(p))
 
       # Add custom legends to gtable
@@ -6882,7 +6861,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       # Save the modified gtable
       ggsave(out_file_path, plot = gt, width = width, height = height, units = units_out, limitsize = FALSE)
       save_success <- TRUE
-      cat(file=stderr(), paste0("\n=== v156: Plot with custom legends saved successfully ===\n"))
+      cat(file=stderr(), paste0("\n=== v157: Plot with custom legends saved successfully ===\n"))
     } else {
       # No custom legends, use standard ggsave
       ggsave(out_file_path, plot = p, width = width, height = height, units = units_out, limitsize = FALSE)
@@ -6993,7 +6972,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
 # Define UI
 ui <- dashboardPage(
-  dashboardHeader(title = "Lineage Tree Plotter v156"),
+  dashboardHeader(title = "Lineage Tree Plotter v157"),
   
   dashboardSidebar(
     width = 300,
@@ -7049,9 +7028,9 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v156 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v157 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
-                            "New in v156:",
+                            "New in v157:",
                             tags$ul(
                               tags$li("FIXED LEGEND VISIBILITY: Custom legends now properly visible using nested gtable approach"),
                               tags$li("Legends appear ABOVE the ggplot guide-box with proper sizing and positioning")
