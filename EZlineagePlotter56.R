@@ -1753,9 +1753,10 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
       cat(file=stderr(), paste0("    Ellipse position: x=", round(label_x, 2), ", y=", round(ellipse_y, 2), "\n"))
       cat(file=stderr(), paste0("    (Use highlight_x_offset/highlight_y_offset in Legend tab to adjust)\n"))
 
-      # v150: Label position with offsets and title_gap
-      # Use scales::alpha() to embed transparency directly in fill color
-      # Add colour = NA to ensure no stroke/border affects the ellipse transparency
+      # v151: Label position with offsets and title_gap
+      # CRITICAL FIX: Use alpha as SEPARATE PARAMETER just like PLOT ellipse does (line 1496)
+      # The plot ellipse uses: fill = color, alpha = alpha_val
+      # Previously we used scales::alpha() which does NOT work the same way!
       p <- p + annotate(
         geom = "text",
         label = high_label_list[[index_high]], size = size_text,
@@ -1765,7 +1766,7 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
         aes(x0 = label_x,
             y0 = ellipse_y,
             a = a, b = b, angle = 0),
-        fill = scales::alpha(high_color_list[[index_high]], current_alpha), colour = NA, linetype = "blank", show.legend = FALSE
+        fill = high_color_list[[index_high]], alpha = current_alpha, colour = NA, linetype = "blank", show.legend = FALSE
       )
     }
   }
@@ -1785,14 +1786,17 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
       boot_title_size <- if (!is.null(bootstrap_title_size_mult)) bootstrap_title_size_mult else default_boot_title_size
       boot_text_size <- if (!is.null(bootstrap_text_size_mult)) bootstrap_text_size_mult else (size_text * 0.15)  # v149: Reduced from 0.25
 
-      # v133: Apply bootstrap offsets to base positions
+      # v151: Apply bootstrap offsets to base positions
+      # CRITICAL: Reduced y-offsets from +6 to +1 to prevent expanding plot range
       boot_x_base <- x22 - new_big_step + bootstrap_x_offset
       boot_y_base <- y_off_base + bootstrap_y_offset
 
-      # v133: Title position with y_offset and title_gap controls the distance to triangles
-      boot_title_y <- boot_y_base + 6
-      boot_triangles_y <- boot_y_base + 6 - bootstrap_title_gap  # Triangles below title
-      boot_labels_y <- boot_y_base + 6 - bootstrap_title_gap - bootstrap_label_gap  # Labels below triangles
+      # v151: Title position - reduced offset to prevent range expansion
+      # Previously used +6 which pushed legends far beyond tips (e.g., y=91 for 80 tips)
+      # Now using +1 to keep legends closer to the data range
+      boot_title_y <- boot_y_base + 1
+      boot_triangles_y <- boot_y_base + 1 - bootstrap_title_gap  # Triangles below title
+      boot_labels_y <- boot_y_base + 1 - bootstrap_title_gap - bootstrap_label_gap  # Labels below triangles
       boot_title_x <- boot_x_base + 2 * extra + bootstrap_title_x_offset
 
       # v148: Output Bootstrap legend coordinates with coordinate system explanation
@@ -1844,9 +1848,18 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
         y = boot_triangles_y + man_adjust_image_of_second_legend,
         fill = "grey36", colour = "grey20", alpha = 1/2
       )
-    }        
+    }
   }
-  
+
+  # v151: Comprehensive debug output summarizing all legend element positions
+  cat(file=stderr(), paste0("\n=== v151: LEGEND ELEMENTS SUMMARY ===\n"))
+  cat(file=stderr(), paste0("  y_off_base (baseline for legends): ", y_off_base, "\n"))
+  cat(file=stderr(), paste0("  new_base_for_second_legend_normalized (x-baseline): ", new_base_for_second_legend_normalized, "\n"))
+  cat(file=stderr(), paste0("  Tree has ", sum(p$data$isTip == TRUE, na.rm=TRUE), " tips\n"))
+  cat(file=stderr(), paste0("  Current p$data y-range: ", round(min(p$data$y, na.rm=TRUE), 2), " to ", round(max(p$data$y, na.rm=TRUE), 2), "\n"))
+  cat(file=stderr(), paste0("  Current p$data x-range: ", round(min(p$data$x, na.rm=TRUE), 2), " to ", round(max(p$data$x, na.rm=TRUE), 2), "\n"))
+  cat(file=stderr(), paste0("=====================================\n"))
+
   return(p)
 }
 
@@ -6633,13 +6646,15 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     cat(file=stderr(), paste0("  v133: bootstrap offsets - x:", bootstrap_x_off, ", y:", bootstrap_y_off, "\n"))
     cat(file=stderr(), paste0("  v138: show_highlight_legend:", show_highlight_leg, ", show_bootstrap_legend:", show_bootstrap_leg, "\n"))
 
-    # v148: Calculate y_off_base dynamically to position legends on the RIGHT side
+    # v151: Calculate y_off_base to position legends on the RIGHT side
     # With coord_flip + scale_y_reverse: y values become horizontal positions
     # y = 1 is at visual LEFT, y = max_tips is at visual RIGHT
-    # To align with ggplot legends (which are to the RIGHT), we need y > max_tips
+    # CRITICAL: Using y > max_tips EXPANDS the plot range and shrinks the tree!
+    # Solution: Use y = max_tips (not max_tips + 5) to minimize expansion
     n_tips <- sum(p$data$isTip == TRUE, na.rm = TRUE)
-    y_off_base <- n_tips + 5  # Position beyond the rightmost tips
-    cat(file=stderr(), paste0("  v148: Calculated y_off_base for RIGHT-side alignment: ", y_off_base, " (tips=", n_tips, ")\n"))
+    max_y_in_data <- max(p$data$y, na.rm = TRUE)
+    y_off_base <- max(n_tips, max_y_in_data)  # Stay within existing data range
+    cat(file=stderr(), paste0("  v151: y_off_base=", y_off_base, " (n_tips=", n_tips, ", max_y=", round(max_y_in_data, 2), ")\n"))
 
     # v95: Wrap in tryCatch to catch any errors
     p <- tryCatch({
@@ -6959,7 +6974,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
 # Define UI
 ui <- dashboardPage(
-  dashboardHeader(title = "Lineage Tree Plotter v150"),
+  dashboardHeader(title = "Lineage Tree Plotter v151"),
   
   dashboardSidebar(
     width = 300,
@@ -7015,14 +7030,14 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v150 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v151 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
-                            "New in v150:",
+                            "New in v151:",
                             tags$ul(
-                              tags$li("Legend ellipse transparency: Added colour=NA to ensure no stroke affects transparency"),
-                              tags$li("Legend alignment: Fixed to BOTTOM-RIGHT (small positive x=3 instead of large negative that expanded plot)")
+                              tags$li("Legend ellipse transparency: FIXED - now uses alpha parameter EXACTLY like plot ellipse (was using scales::alpha which doesn't work)"),
+                              tags$li("Legend alignment: FIXED - y_off_base now stays within data range, bootstrap offsets reduced from +6 to +1")
                             ),
-                            "Previous fixes (v146-v149):",
+                            "Previous fixes (v146-v150):",
                             tags$ul(
                               tags$li("Ellipse x0 positioning: Fixed coordinate mismatch in heatmap mode"),
                               tags$li("Shiny server: 100MB upload limit support"),
