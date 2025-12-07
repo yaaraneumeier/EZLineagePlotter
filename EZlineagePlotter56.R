@@ -1757,11 +1757,13 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
       # CRITICAL FIX: Create a data frame for legend ellipse, EXACTLY like plot ellipse does!
       # The plot ellipse has: geom_ellipse(data = high_nodes_table1, aes(...), alpha = alpha_val)
       # The legend ellipse was MISSING the data parameter - this caused alpha to not work!
+      # v152b: Use unique column names (leg_*) to avoid conflicts with environment variables
+      # and add inherit.aes=FALSE to isolate from new_scale_fill() effects
       legend_ellipse_data <- data.frame(
-        x0 = label_x,
-        y0 = ellipse_y,
-        a = a,
-        b = b
+        leg_x0 = label_x,
+        leg_y0 = ellipse_y,
+        leg_a = a,
+        leg_b = b
       )
 
       cat(file=stderr(), paste0("  v152: Legend ellipse data frame created with alpha=", current_alpha, "\n"))
@@ -1773,8 +1775,9 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
         y = label_y
       ) + geom_ellipse(
         data = legend_ellipse_data,  # v152: NOW HAS data parameter like plot ellipse!
-        aes(x0 = x0, y0 = y0, a = a, b = b, angle = 0),
-        fill = high_color_list[[index_high]], alpha = current_alpha, colour = NA, linetype = "blank", show.legend = FALSE
+        aes(x0 = leg_x0, y0 = leg_y0, a = leg_a, b = leg_b, angle = 0),
+        fill = high_color_list[[index_high]], alpha = current_alpha, colour = NA, linetype = "blank",
+        show.legend = FALSE, inherit.aes = FALSE  # v152b: inherit.aes=FALSE to isolate from heatmap scales
       )
     }
   }
