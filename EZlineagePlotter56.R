@@ -45,6 +45,11 @@ options(shiny.maxRequestSize = 100*1024^2)
 # v149: Fixed legend ellipse transparency using scales::alpha() to embed alpha in fill color
 #       Repositioned legends to TOP-RIGHT using -(y_off_base-5) for x-position
 #       Reduced bootstrap title size (0.15 multiplier, capped at 3, min 2)
+# v167: OPTION C TRIAL - Native ggplot legends approach
+# v168: Fixed legend bleeding with show.legend = c(shape = TRUE) and guides() override
+#       Partial success: Heatmap 2 & Classification fixed, Heatmap 1 & P value still affected
+# v169: Added SIZE and ALPHA scale overrides to guides() to fix P value legend bleeding
+#       All legends should now be unaffected by test legend point
 
 ###### part 1 a:
 # ============================================================================
@@ -1799,14 +1804,14 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
                                     show_highlight_legend = TRUE, show_bootstrap_legend = TRUE,
                                     high_alpha_list = NULL) {
 
-  # v168: OPTION C - NATIVE GGPLOT LEGENDS (with show.legend fix)
+  # v169: OPTION C - NATIVE GGPLOT LEGENDS (with comprehensive guide overrides)
   # Use ggplot's own legend system by adding invisible layers with aesthetics
   # This approach uses ggplot's native rendering, avoiding all gtable manipulation
-  # v168: Fixed legend bleeding issue with show.legend = c(shape = TRUE)
+  # v169: Fixed legend bleeding by adding size scale override (for P value legend)
 
-  cat(file=stderr(), paste0("\n=== v168: OPTION C - NATIVE GGPLOT LEGENDS ===\n"))
+  cat(file=stderr(), paste0("\n=== v169: OPTION C - NATIVE GGPLOT LEGENDS ===\n"))
   cat(file=stderr(), paste0("  Using native ggplot legend system (no gtable manipulation)\n"))
-  cat(file=stderr(), paste0("  v168: Fixed legend bleeding with show.legend = c(shape = TRUE)\n"))
+  cat(file=stderr(), paste0("  v169: Added size scale override to prevent bleeding into P value legend\n"))
 
   # Initialize high_alpha_list if NULL
   if (is.null(high_alpha_list) || length(high_alpha_list) == 0) {
@@ -1817,30 +1822,31 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
   title_fontsize <- if (!is.null(highlight_title_size)) highlight_title_size else size_font_legend_title
   text_fontsize <- if (!is.null(highlight_text_size)) highlight_text_size else size_font_legend_text
 
-  cat(file=stderr(), paste0("  v168: Title fontsize: ", title_fontsize, "\n"))
-  cat(file=stderr(), paste0("  v168: Text fontsize: ", text_fontsize, "\n"))
+  cat(file=stderr(), paste0("  v169: Title fontsize: ", title_fontsize, "\n"))
+  cat(file=stderr(), paste0("  v169: Text fontsize: ", text_fontsize, "\n"))
 
   # ============================================
-  # v168 TRIAL: Add a simple test legend using geom_point
+  # v169 TRIAL: Add a simple test legend using geom_point
   # This tests whether native ggplot legends work alongside existing legends
-  # v168: Uses show.legend = c(shape = TRUE) to prevent bleeding into other legends
+  # v169: Uses comprehensive guide overrides including SIZE for P value legend
   # ============================================
 
-  cat(file=stderr(), paste0("\n  v168 TRIAL: Adding test legend via geom_point\n"))
+  cat(file=stderr(), paste0("\n  v169 TRIAL: Adding test legend via geom_point\n"))
 
-  # v168: Use geom_point with shape aesthetic
+  # v169: Use geom_point with shape aesthetic
   # CRITICAL: We also add guides() to tell OTHER legends to NOT draw shapes
-  # This prevents our point from appearing in fill/color/linetype legend keys
+  # This prevents our point from appearing in fill/color/linetype/SIZE legend keys
   test_legend_data <- data.frame(
     x = NA_real_,
     y = NA_real_,
     test_legend = "TEST LEGEND ITEM"
   )
 
-  cat(file=stderr(), paste0("  v168: Created dummy data for test legend\n"))
+  cat(file=stderr(), paste0("  v169: Created dummy data for test legend\n"))
 
-  # v168: Add geom_point with shape aesthetic
+  # v169: Add geom_point with shape aesthetic
   # Then use guides() to override how OTHER legends draw their keys
+  # CRITICAL: Added SIZE override - P value legend uses size aesthetic!
   p <- p +
     geom_point(
       data = test_legend_data,
@@ -1852,22 +1858,26 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
       show.legend = c(shape = TRUE)
     ) +
     scale_shape_manual(
-      name = "v168 Test Legend",
+      name = "v169 Test Legend",
       values = c("TEST LEGEND ITEM" = 15),
       guide = guide_legend(order = 99)
     ) +
-    # v168: CRITICAL - Tell ALL OTHER legends to NOT draw our shape
-    # This prevents our red point from appearing in fill/color/linetype legend keys
+    # v169: CRITICAL - Tell ALL OTHER legends to NOT draw our shape
+    # This prevents our red point from appearing in ALL legend keys
+    # Added SIZE override - P value legend uses size aesthetic!
+    # Added ALPHA override - in case any legend uses alpha
     guides(
       fill = guide_legend(override.aes = list(shape = NA, linetype = 0)),
       colour = guide_legend(override.aes = list(shape = NA)),
       color = guide_legend(override.aes = list(shape = NA)),
-      linetype = guide_legend(override.aes = list(shape = NA))
+      linetype = guide_legend(override.aes = list(shape = NA)),
+      size = guide_legend(override.aes = list(shape = NA)),
+      alpha = guide_legend(override.aes = list(shape = NA))
     )
 
-  cat(file=stderr(), paste0("  v168: Added geom_point layer with shape aesthetic\n"))
-  cat(file=stderr(), paste0("  v168: Added guides() to prevent bleeding into other legends\n"))
-  cat(file=stderr(), paste0("  LOOK FOR: 'v168 Test Legend' with red square - should NOT affect other legend keys\n"))
+  cat(file=stderr(), paste0("  v169: Added geom_point layer with shape aesthetic\n"))
+  cat(file=stderr(), paste0("  v169: Added guides() with size/alpha overrides to prevent ALL legend bleeding\n"))
+  cat(file=stderr(), paste0("  LOOK FOR: 'v169 Test Legend' with red square - should NOT affect other legend keys\n"))
   cat(file=stderr(), paste0("=================================================\n"))
 
   return(p)
@@ -7043,18 +7053,18 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v168 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v169 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
-                            "New in v168:",
+                            "New in v169:",
                             tags$ul(
-                              tags$li("OPTION C: Native ggplot legends working!"),
-                              tags$li("Fixed legend bleeding with show.legend = c(shape = TRUE)"),
-                              tags$li("Test legend should NOT interfere with other legend keys")
+                              tags$li("Added SIZE scale override (fixes P value legend bleeding)"),
+                              tags$li("Added ALPHA scale override (comprehensive fix)"),
+                              tags$li("Test legend should now NOT interfere with ANY legend keys")
                             ),
                             "Previous:",
                             tags$ul(
-                              tags$li("v167: Option C worked but red point bled into other legends"),
-                              tags$li("v164-v166: gtable manipulation - failed")
+                              tags$li("v168: Partial fix - Heatmap 2 & Classification OK, but Heatmap 1 & P value still affected"),
+                              tags$li("v167: Option C worked but red point bled into other legends")
                             )
                      )
             )
