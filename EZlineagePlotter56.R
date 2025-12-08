@@ -6994,26 +6994,38 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
         guide_col <- gt$layout$l[guide_box_idx[1]]
         cat(file=stderr(), paste0("  guide-box-right found at row ", guide_row, ", col ", guide_col, "\n"))
 
-        # Use dynamic height from legend creation, or default
-        legend_height_val <- if (!is.null(custom_legend_height)) custom_legend_height else 100
-        legend_height <- grid::unit(legend_height_val, "pt")
-        cat(file=stderr(), paste0("  Legend height: ", legend_height_val, " pt\n"))
+        # v164 DIAGNOSTIC TEST: Create a SIMPLE test grob to verify insertion works
+        # This is a bright red background with bold black text
+        test_grob <- grid::grobTree(
+          grid::rectGrob(
+            gp = grid::gpar(fill = "red", col = "black", lwd = 2)
+          ),
+          grid::textGrob(
+            label = "TEST LEGEND",
+            gp = grid::gpar(fontsize = 14, fontface = "bold", col = "white")
+          )
+        )
+        cat(file=stderr(), paste0("  v164 DIAGNOSTIC: Created simple test grob (red box with white text)\n"))
+
+        # Use a fixed height for the test
+        legend_height <- grid::unit(50, "pt")
+        cat(file=stderr(), paste0("  Legend height: 50 pt (test)\n"))
 
         # Add a new row ABOVE the guide-box-right
         gt <- gtable::gtable_add_rows(gt, heights = legend_height, pos = guide_row - 1)
         cat(file=stderr(), paste0("  Added new row at position ", guide_row, "\n"))
 
-        # Insert our custom legend gtable into the new row, same column as guide-box
+        # Insert the TEST grob into the new row
         gt <- gtable::gtable_add_grob(
           gt,
-          grobs = custom_legend_grob,
-          t = guide_row,  # The new row (old guide_row position, now shifted)
+          grobs = test_grob,  # Using simple test grob instead of custom_legend_grob
+          t = guide_row,
           l = guide_col,
           r = guide_col,
           b = guide_row,
           name = "custom-highlight-bootstrap-legend"
         )
-        cat(file=stderr(), paste0("  Custom legend inserted at row ", guide_row, ", col ", guide_col, "\n"))
+        cat(file=stderr(), paste0("  TEST grob inserted at row ", guide_row, ", col ", guide_col, "\n"))
 
         # Debug: print final gtable structure
         cat(file=stderr(), paste0("  Final gtable: ", nrow(gt), " rows x ", ncol(gt), " cols\n"))
@@ -7021,7 +7033,8 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
         # Save the modified gtable
         ggsave(out_file_path, plot = gt, width = width, height = height, units = units_out, limitsize = FALSE)
         save_success <- TRUE
-        cat(file=stderr(), paste0("\n=== v164: Plot with custom legends saved successfully ===\n"))
+        cat(file=stderr(), paste0("\n=== v164: Plot with TEST LEGEND saved successfully ===\n"))
+        cat(file=stderr(), paste0("  DIAGNOSTIC: Look for red box with 'TEST LEGEND' above the other legends\n"))
 
       } else {
         cat(file=stderr(), paste0("  WARNING: guide-box-right not found, saving without custom legend insertion\n"))
