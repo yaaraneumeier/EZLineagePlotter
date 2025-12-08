@@ -1578,8 +1578,9 @@ func_highlight <- function(p, how_many_hi, heat_flag, high_color_list, a, b, man
   return(p)
 }
 # v160: Helper function to add custom legends to gtable's legend area
+# NOTE: This function is NOT CURRENTLY USED (v161 reverted to annotation-based approach)
+# Kept for potential future use if gtable approach is revisited
 # This places highlight and bootstrap legends alongside ggplot legends (Classification, Heatmap)
-# NEW: Adds legends as a new row in main gtable ABOVE guide-box (not nested inside)
 func.add.custom.legends.to.gtable <- function(gt, legend_info) {
   if (is.null(legend_info)) {
     return(gt)
@@ -1777,7 +1778,7 @@ func.add.custom.legends.to.gtable <- function(gt, legend_info) {
 
 # Function to create the second legend
 # v145: Added high_alpha_list parameter for transparency control
-# v160: Modified to store legend info as attribute instead of using annotation_custom
+# v161: REVERTED to v152 annotation-based approach (gtable approach from v153-v160 broke visibility)
 func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag, how_many_boxes,
                                     how_mant_rows, boudariestt, y_off_base, high_title_list,
                                     size_font_legend_title, high_label_list, size_font_legend_text,
@@ -1802,82 +1803,200 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
                                     show_highlight_legend = TRUE, show_bootstrap_legend = TRUE,
                                     # v145: Transparency list for legend ellipses
                                     high_alpha_list = NULL) {
+  # v161: REVERTED to v152 annotation-based approach
+  # The gtable approach (v153-v160) broke legend visibility
+  # This uses annotate() and geom_ellipse() which are proven to work
 
-  # v160: GTABLE-BASED APPROACH
-  # Store legend specifications as an attribute on the plot object.
-  # The rendering code will add these to the gtable's legend area (alongside ggplot legends).
+  cat(file=stderr(), paste0("\n=== v161: ANNOTATION-BASED LEGENDS (reverted from gtable) ===\n"))
 
-  cat(file=stderr(), paste0("\n=== v160: GTABLE-BASED LEGENDS ===\n"))
-  cat(file=stderr(), paste0("  Storing legend info as attribute for gtable insertion\n"))
-  cat(file=stderr(), paste0("  Legends will appear in same area as ggplot legends (Classification, Heatmap)\n"))
-
-  # Initialize high_alpha_list if NULL
+  # v146: Default alpha list if not provided
   if (is.null(high_alpha_list) || length(high_alpha_list) == 0) {
     high_alpha_list <- rep(0.5, how_many_hi)
   }
 
-  # Title fontsize should match ggplot legend titles
-  title_fontsize <- if (!is.null(highlight_title_size)) highlight_title_size else size_font_legend_title
-  text_fontsize <- if (!is.null(highlight_text_size)) highlight_text_size else size_font_legend_text
+  cat(file=stderr(), paste0("  high_alpha_list: ", paste(high_alpha_list, collapse=", "), "\n"))
+  cat(file=stderr(), paste0("  how_many_hi: ", how_many_hi, "\n"))
 
-  # Bootstrap title size
-  boot_title_fontsize <- if (!is.null(bootstrap_title_size_mult)) bootstrap_title_size_mult else size_font_legend_title
-  boot_text_fontsize <- if (!is.null(bootstrap_text_size_mult)) bootstrap_text_size_mult else size_font_legend_text
-
-  cat(file=stderr(), paste0("  v160: Title fontsize: ", title_fontsize, " (matches ggplot legend.title)\n"))
-  cat(file=stderr(), paste0("  v160: Text fontsize: ", text_fontsize, "\n"))
-
-  # Build legend info structure
-  legend_info <- list()
-
-  # Highlight legend info
-  if (FLAG_BULK_DISPLAY == TRUE && show_highlight_legend == TRUE && how_many_hi > 0) {
-    # Get first highlight title (or use "Highlight" if not available)
-    highlight_title <- if (!is.null(high_title_list) && length(high_title_list) > 0) {
-      high_title_list[[1]]
-    } else {
-      "Highlight"
-    }
-
-    legend_info$highlight <- list(
-      title = highlight_title,
-      labels = high_label_list,
-      colors = high_color_list,
-      alphas = high_alpha_list,
-      title_fontsize = title_fontsize,
-      text_fontsize = text_fontsize
-    )
-
-    cat(file=stderr(), paste0("  v160: Highlight legend: title='", highlight_title,
-                               "', ", length(high_label_list), " items\n"))
-    for (i in seq_along(high_label_list)) {
-      cat(file=stderr(), paste0("    Item ", i, ": label='", high_label_list[[i]],
-                                 "', color=", high_color_list[[i]],
-                                 ", alpha=", high_alpha_list[[i]], "\n"))
-    }
+  if (heat_flag == FALSE) {
+    new_base_for_second_legend_non <- 0.5 + 0.5 * (how_mant_rows) * 0.05 + 0.5 * how_many_boxes * 0.1
+    new_base_for_second_legend_normalized <- new_base_for_second_legend_non * x_range_min
+    new_step <- 0.02 * x_range_min * man_space_second_legend_multiplier + man_offset_for_highlight_legend_x
+    new_big_step <- 0.15 * x_range_min
+    extra <- man_space_second_legend
+    move <- 0
+  } else {
+    # v150: Position legends at BOTTOM-RIGHT of plot
+    new_base_for_second_legend_normalized <- 3
+    new_step <- 2
+    new_big_step <- 5
+    extra <- man_space_second_legend + 0.3
+    cat(file=stderr(), paste0("  v161: Legend x-position base: ", new_base_for_second_legend_normalized, " (y_off_base=", y_off_base, ")\n"))
   }
 
-  # Bootstrap legend info
-  if (show_boot_flag == TRUE && show_bootstrap_legend == TRUE) {
-    # boot_values is a list, so check if it's a valid list with 'format' element
-    if (!is.null(boot_values) && is.list(boot_values) && !is.null(boot_values$'format') && boot_values$'format' == 'triangles') {
-      legend_info$bootstrap <- list(
-        title_fontsize = boot_title_fontsize,
-        text_fontsize = boot_text_fontsize
+  yet_another_multiplier <- 0
+  if (FLAG_BULK_DISPLAY == TRUE) {
+    yet_another_multiplier <- 1.5
+  }
+
+  stair <- 0.05
+  multiple_high_up_offset <- stair * (how_many_hi - 1) * (-1)
+
+  norm <- 0.8
+  # v133: Use custom highlight legend sizes if provided, otherwise use defaults
+  default_title_size <- size_font_legend_title * man_multiply_second_legend_text
+  if (default_title_size > 5) {
+    default_title_size <- 5
+  }
+  size_title <- if (!is.null(highlight_title_size)) highlight_title_size else default_title_size
+  size_text <- if (!is.null(highlight_text_size)) highlight_text_size else (size_font_legend_text * man_multiply_second_legend * norm)
+
+  # v133: Apply highlight legend offsets
+  x11 <- new_base_for_second_legend_normalized + highlight_x_offset
+  x22 <- new_base_for_second_legend_normalized - new_step + highlight_x_offset
+
+  # v133: Apply highlight label gap to step calculation
+  new_step_adjusted <- new_step * highlight_label_gap * 2
+
+  # v138: Only draw highlight legend if show_highlight_legend is TRUE
+  if (FLAG_BULK_DISPLAY == TRUE && show_highlight_legend == TRUE) {
+    for (index_high in 1:how_many_hi) {
+      multiple_high_down_offset <- (index_high - 1) * stair
+
+      if (index_high == 1) {
+        x11 <- new_base_for_second_legend_normalized + highlight_x_offset
+        x22 <- new_base_for_second_legend_normalized - index_high * (new_step_adjusted) + highlight_x_offset
+
+        highlight_title_y <- y_off_base + 0.7 + (width / 400) + man_adjust_image_of_second_legend + highlight_y_offset
+        cat(file=stderr(), paste0("  v161: Highlight title '", high_title_list[[index_high]], "' at x=", round(x11, 2), ", y=", round(highlight_title_y, 2), "\n"))
+
+        # v133: Title position with highlight_y_offset
+        p <- p + annotate(
+          geom = "text",
+          label = high_title_list[[index_high]], size = size_title,
+          x = x11,
+          y = highlight_title_y,
+          hjust = 0, vjust = 0,
+          fontface = "bold"
+        )
+
+        if (how_many_hi > 1) {
+          current_alpha <- if (length(high_alpha_list) >= index_high && !is.null(high_alpha_list[[index_high]])) {
+            high_alpha_list[[index_high]]
+          } else {
+            0.5
+          }
+          p <- p + geom_ellipse(
+            aes(x0 = x22, y0 = y_off_base + 0.7 + (width / 400) + man_adjust_image_of_second_legend + highlight_y_offset,
+                a = a, b = b, angle = 0),
+            fill = high_color_list[[index_high]], alpha = current_alpha, linetype = "blank", show.legend = FALSE
+          )
+        }
+      }
+
+      current_alpha <- if (length(high_alpha_list) >= index_high && !is.null(high_alpha_list[[index_high]])) {
+        high_alpha_list[[index_high]]
+      } else {
+        0.5
+      }
+
+      label_x <- x22 + extra
+      label_y <- y_off_base - 3.2 - highlight_title_gap + highlight_y_offset
+      ellipse_y <- y_off_base + 1 + man_adjust_image_of_second_legend + highlight_y_offset
+
+      cat(file=stderr(), paste0("  v161: Highlight '", high_label_list[[index_high]], "' at x=", round(label_x, 2), ", y=", round(label_y, 2), "\n"))
+
+      # v152: Create data frame for legend ellipse
+      legend_ellipse_data <- data.frame(
+        leg_x0 = label_x,
+        leg_y0 = ellipse_y,
+        leg_a = a,
+        leg_b = b
       )
-      cat(file=stderr(), paste0("  v160: Bootstrap legend enabled\n"))
+
+      p <- p + annotate(
+        geom = "text",
+        label = high_label_list[[index_high]], size = size_text,
+        x = label_x,
+        y = label_y
+      ) + geom_ellipse(
+        data = legend_ellipse_data,
+        aes(x0 = leg_x0, y0 = leg_y0, a = leg_a, b = leg_b, angle = 0),
+        fill = high_color_list[[index_high]], alpha = current_alpha, colour = NA, linetype = "blank",
+        show.legend = FALSE, inherit.aes = FALSE
+      )
     }
   }
 
-  legend_info$show_highlight <- show_highlight_legend
-  legend_info$show_bootstrap <- show_bootstrap_legend
+  # v138: Only draw bootstrap legend if show_bootstrap_legend is TRUE
+  if (show_boot_flag == TRUE && show_bootstrap_legend == TRUE) {
+    if (is.list(boot_values) && !is.null(boot_values$'format') && boot_values$'format' == 'triangles') {
+      # v149: Bootstrap legend settings
+      default_boot_title_size <- size_title * 0.15
+      if (default_boot_title_size > 3) {
+        default_boot_title_size <- 3
+      }
+      if (default_boot_title_size < 2) {
+        default_boot_title_size <- 2
+      }
+      boot_title_size <- if (!is.null(bootstrap_title_size_mult)) bootstrap_title_size_mult else default_boot_title_size
+      boot_text_size <- if (!is.null(bootstrap_text_size_mult)) bootstrap_text_size_mult else (size_text * 0.15)
 
-  # Store legend info as attribute on the plot
-  attr(p, "custom_legend_info") <- legend_info
+      # v151: Apply bootstrap offsets to base positions
+      boot_x_base <- x22 - new_big_step + bootstrap_x_offset
+      boot_y_base <- y_off_base + bootstrap_y_offset
 
-  cat(file=stderr(), paste0("  v160: Legend info stored as plot attribute\n"))
-  cat(file=stderr(), paste0("  v160: Will be added to gtable during rendering\n"))
-  cat(file=stderr(), paste0("=================================================\n"))
+      boot_title_y <- boot_y_base + 1
+      boot_triangles_y <- boot_y_base + 1 - bootstrap_title_gap
+      boot_labels_y <- boot_y_base + 1 - bootstrap_title_gap - bootstrap_label_gap
+      boot_title_x <- boot_x_base + 2 * extra + bootstrap_title_x_offset
+
+      cat(file=stderr(), paste0("  v161: Bootstrap title at x=", round(boot_title_x, 2), ", y=", round(boot_title_y, 2), "\n"))
+
+      p <- p + annotate(
+        geom = "text",
+        label = "Bootstrap", size = boot_title_size,
+        x = boot_title_x,
+        y = boot_title_y, hjust = 0, vjust = 0,
+        fontface = "bold"
+      ) + annotate(
+        geom = "text",
+        label = ">70%", size = boot_text_size,
+        x = boot_x_base - new_step + 3 * extra,
+        y = boot_labels_y
+      ) + annotate(
+        geom = "text",
+        label = ">80%", size = boot_text_size,
+        x = boot_x_base - 2 * new_step + 3 * extra,
+        y = boot_labels_y
+      ) + annotate(
+        geom = "text",
+        label = ">90%", size = boot_text_size,
+        x = boot_x_base - 3 * new_step + 3 * extra,
+        y = boot_labels_y
+      ) + annotate(
+        geom = "point",
+        shape = 24, size = size_90 + bootstrap_label_size,
+        x = boot_x_base - 3 * new_step + 3 * extra,
+        y = boot_triangles_y + man_adjust_image_of_second_legend,
+        fill = "grey36", colour = "grey20", alpha = 1/2
+      ) + annotate(
+        geom = "point",
+        shape = 24, size = size_80 + bootstrap_label_size,
+        x = boot_x_base - 2 * new_step + 3 * extra,
+        y = boot_triangles_y + man_adjust_image_of_second_legend,
+        fill = "grey36", colour = "grey20", alpha = 1/2
+      ) + annotate(
+        geom = "point",
+        shape = 24, size = size_70 + bootstrap_label_size,
+        x = boot_x_base - new_step + 3 * extra,
+        y = boot_triangles_y + man_adjust_image_of_second_legend,
+        fill = "grey36", colour = "grey20", alpha = 1/2
+      )
+    }
+  }
+
+  cat(file=stderr(), paste0("  v161: Legend layers added successfully\n"))
+  cat(file=stderr(), paste0("=============================================================\n"))
 
   return(p)
 }
@@ -6884,29 +7003,12 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   # v88: Save the plot with comprehensive error handling and multiple fallbacks
   save_success <- FALSE
 
-  # v159: Check if plot has custom legend info for gtable insertion
-  custom_legend_info <- attr(p, "custom_legend_info")
-
-  # v159: Primary attempt - with gtable legend insertion if needed
+  # v161: Legends are now added as ggplot layers (annotate + geom_ellipse)
+  # No gtable manipulation needed - use standard ggsave
   tryCatch({
-    if (!is.null(custom_legend_info) && (length(custom_legend_info$highlight) > 0 || length(custom_legend_info$bootstrap) > 0)) {
-      # Build gtable from plot
-      cat(file=stderr(), paste0("\n=== v160: Building gtable for custom legend insertion ===\n"))
-      gt <- ggplot2::ggplot_gtable(ggplot2::ggplot_build(p))
-
-      # Add custom legends to gtable
-      gt <- func.add.custom.legends.to.gtable(gt, custom_legend_info)
-
-      # Save the modified gtable
-      ggsave(out_file_path, plot = gt, width = width, height = height, units = units_out, limitsize = FALSE)
-      save_success <- TRUE
-      cat(file=stderr(), paste0("\n=== v160: Plot with custom legends saved successfully ===\n"))
-    } else {
-      # No custom legends, use standard ggsave
-      ggsave(out_file_path, plot = p, width = width, height = height, units = units_out, limitsize = FALSE)
-      save_success <- TRUE
-      cat(file=stderr(), paste0("\n=== v88: Plot saved successfully ===\n"))
-    }
+    ggsave(out_file_path, plot = p, width = width, height = height, units = units_out, limitsize = FALSE)
+    save_success <- TRUE
+    cat(file=stderr(), paste0("\n=== v161: Plot saved successfully ===\n"))
   }, error = function(e) {
     cat(file=stderr(), paste0("\n=== v88: GGSAVE ERROR ===\n"))
     cat(file=stderr(), paste0("  Primary error: ", e$message, "\n"))
