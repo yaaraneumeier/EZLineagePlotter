@@ -1779,6 +1779,7 @@ func.add.custom.legends.to.gtable <- function(gt, legend_info) {
 # Function to create the second legend
 # v145: Added high_alpha_list parameter for transparency control
 # v161: REVERTED to v152 annotation-based approach (gtable approach from v153-v160 broke visibility)
+# v162: Fix plot distortion by setting coord_flip limits with clip="off"
 func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag, how_many_boxes,
                                     how_mant_rows, boudariestt, y_off_base, high_title_list,
                                     size_font_legend_title, high_label_list, size_font_legend_text,
@@ -1807,7 +1808,7 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
   # The gtable approach (v153-v160) broke legend visibility
   # This uses annotate() and geom_ellipse() which are proven to work
 
-  cat(file=stderr(), paste0("\n=== v161: ANNOTATION-BASED LEGENDS (reverted from gtable) ===\n"))
+  cat(file=stderr(), paste0("\n=== v162: ANNOTATION-BASED LEGENDS (with coord_flip fix) ===\n"))
 
   # v146: Default alpha list if not provided
   if (is.null(high_alpha_list) || length(high_alpha_list) == 0) {
@@ -1830,7 +1831,7 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
     new_step <- 2
     new_big_step <- 5
     extra <- man_space_second_legend + 0.3
-    cat(file=stderr(), paste0("  v161: Legend x-position base: ", new_base_for_second_legend_normalized, " (y_off_base=", y_off_base, ")\n"))
+    cat(file=stderr(), paste0("  v162: Legend x-position base: ", new_base_for_second_legend_normalized, " (y_off_base=", y_off_base, ")\n"))
   }
 
   yet_another_multiplier <- 0
@@ -1867,7 +1868,7 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
         x22 <- new_base_for_second_legend_normalized - index_high * (new_step_adjusted) + highlight_x_offset
 
         highlight_title_y <- y_off_base + 0.7 + (width / 400) + man_adjust_image_of_second_legend + highlight_y_offset
-        cat(file=stderr(), paste0("  v161: Highlight title '", high_title_list[[index_high]], "' at x=", round(x11, 2), ", y=", round(highlight_title_y, 2), "\n"))
+        cat(file=stderr(), paste0("  v162: Highlight title '", high_title_list[[index_high]], "' at x=", round(x11, 2), ", y=", round(highlight_title_y, 2), "\n"))
 
         # v133: Title position with highlight_y_offset
         p <- p + annotate(
@@ -1903,7 +1904,7 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
       label_y <- y_off_base - 3.2 - highlight_title_gap + highlight_y_offset
       ellipse_y <- y_off_base + 1 + man_adjust_image_of_second_legend + highlight_y_offset
 
-      cat(file=stderr(), paste0("  v161: Highlight '", high_label_list[[index_high]], "' at x=", round(label_x, 2), ", y=", round(label_y, 2), "\n"))
+      cat(file=stderr(), paste0("  v162: Highlight '", high_label_list[[index_high]], "' at x=", round(label_x, 2), ", y=", round(label_y, 2), "\n"))
 
       # v152: Create data frame for legend ellipse
       legend_ellipse_data <- data.frame(
@@ -1950,7 +1951,7 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
       boot_labels_y <- boot_y_base + 1 - bootstrap_title_gap - bootstrap_label_gap
       boot_title_x <- boot_x_base + 2 * extra + bootstrap_title_x_offset
 
-      cat(file=stderr(), paste0("  v161: Bootstrap title at x=", round(boot_title_x, 2), ", y=", round(boot_title_y, 2), "\n"))
+      cat(file=stderr(), paste0("  v162: Bootstrap title at x=", round(boot_title_x, 2), ", y=", round(boot_title_y, 2), "\n"))
 
       p <- p + annotate(
         geom = "text",
@@ -1995,7 +1996,41 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
     }
   }
 
-  cat(file=stderr(), paste0("  v161: Legend layers added successfully\n"))
+  cat(file=stderr(), paste0("  v162: Legend layers added successfully\n"))
+
+  # v162: FIX PLOT DISTORTION
+  # The legend coordinates (x=3, y=y_off_base+offset) are outside the tree data range
+  # This causes ggplot to expand the axis limits, which distorts/shrinks the tree
+  # Solution: Set explicit coordinate limits based on data range, with clip="off"
+  # This allows legends to be drawn OUTSIDE the visible area without expanding it
+
+  # Calculate proper coordinate limits from the actual data
+  # x-range: from tree root to heatmap edge (plus small margin)
+  # y-range: from 0 to n_tips (plus small margin)
+  if (heat_flag == TRUE) {
+    # With heatmap: x goes from negative (tree root) to positive (heatmap)
+    data_xmin <- boudariestt$xmin - 0.02  # Small margin on left
+    data_xmax <- boudariestt$xmax + 0.02  # Small margin on right
+  } else {
+    # Without heatmap: use standard range
+    data_xmin <- boudariestt$xmin - 0.02
+    data_xmax <- boudariestt$xmax + 0.02
+  }
+
+  # y-range: tips go from 1 to n_tips, add margin
+  # y_off_base is typically n_tips + 5, so n_tips = y_off_base - 5
+  n_tips_approx <- y_off_base - 5
+  data_ymin <- 0.5
+  data_ymax <- n_tips_approx + 0.5
+
+  cat(file=stderr(), paste0("  v162: Fixing coord limits to prevent distortion\n"))
+  cat(file=stderr(), paste0("  v162: data x-range: [", round(data_xmin, 3), ", ", round(data_xmax, 3), "]\n"))
+  cat(file=stderr(), paste0("  v162: data y-range: [", round(data_ymin, 3), ", ", round(data_ymax, 3), "]\n"))
+  cat(file=stderr(), paste0("  v162: Using clip='off' to allow legend drawing outside limits\n"))
+
+  # Replace coordinate system with fixed limits and clip="off"
+  p <- p + coord_flip(xlim = c(data_xmin, data_xmax), ylim = c(data_ymin, data_ymax), clip = "off")
+
   cat(file=stderr(), paste0("=============================================================\n"))
 
   return(p)
@@ -7003,12 +7038,12 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   # v88: Save the plot with comprehensive error handling and multiple fallbacks
   save_success <- FALSE
 
-  # v161: Legends are now added as ggplot layers (annotate + geom_ellipse)
+  # v162: Legends are added as ggplot layers with coord_flip(clip="off")
   # No gtable manipulation needed - use standard ggsave
   tryCatch({
     ggsave(out_file_path, plot = p, width = width, height = height, units = units_out, limitsize = FALSE)
     save_success <- TRUE
-    cat(file=stderr(), paste0("\n=== v161: Plot saved successfully ===\n"))
+    cat(file=stderr(), paste0("\n=== v162: Plot saved successfully ===\n"))
   }, error = function(e) {
     cat(file=stderr(), paste0("\n=== v88: GGSAVE ERROR ===\n"))
     cat(file=stderr(), paste0("  Primary error: ", e$message, "\n"))
