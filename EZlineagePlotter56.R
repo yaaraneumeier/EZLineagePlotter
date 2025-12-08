@@ -1828,41 +1828,46 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
 
   cat(file=stderr(), paste0("\n  v168 TRIAL: Adding test legend via geom_point\n"))
 
-  # v168: DIFFERENT APPROACH - Use geom_segment with linetype aesthetic
-  # Since linetype only applies to line geoms, it will NOT interfere with
-  # fill-based legends (heatmap tiles use fill, not linetype)
-  # The segment won't be drawn (NA coordinates) but legend shows a line
+  # v168: Use geom_point with shape aesthetic
+  # CRITICAL: We also add guides() to tell OTHER legends to NOT draw shapes
+  # This prevents our point from appearing in fill/color/linetype legend keys
   test_legend_data <- data.frame(
     x = NA_real_,
-    xend = NA_real_,
     y = NA_real_,
-    yend = NA_real_,
     test_legend = "TEST LEGEND ITEM"
   )
 
-  cat(file=stderr(), paste0("  v168: Created dummy data for test legend (using linetype approach)\n"))
+  cat(file=stderr(), paste0("  v168: Created dummy data for test legend\n"))
 
-  # v168: Add geom_segment with linetype aesthetic
-  # This creates a LINE in the legend, which won't interfere with fill legends
+  # v168: Add geom_point with shape aesthetic
+  # Then use guides() to override how OTHER legends draw their keys
   p <- p +
-    geom_segment(
+    geom_point(
       data = test_legend_data,
-      aes(x = x, xend = xend, y = y, yend = yend, linetype = test_legend),
+      aes(x = x, y = y, shape = test_legend),
+      size = 5,
       color = "red",
-      linewidth = 2,
       na.rm = TRUE,
       inherit.aes = FALSE,
-      show.legend = c(linetype = TRUE)
+      show.legend = c(shape = TRUE)
     ) +
-    scale_linetype_manual(
-      name = "v168 Test (line)",
-      values = c("TEST LEGEND ITEM" = "solid"),
+    scale_shape_manual(
+      name = "v168 Test Legend",
+      values = c("TEST LEGEND ITEM" = 15),
       guide = guide_legend(order = 99)
+    ) +
+    # v168: CRITICAL - Tell ALL OTHER legends to NOT draw our shape
+    # This prevents our red point from appearing in fill/color/linetype legend keys
+    guides(
+      fill = guide_legend(override.aes = list(shape = NA, linetype = 0)),
+      colour = guide_legend(override.aes = list(shape = NA)),
+      color = guide_legend(override.aes = list(shape = NA)),
+      linetype = guide_legend(override.aes = list(shape = NA))
     )
 
-  cat(file=stderr(), paste0("  v168: Added geom_segment layer with linetype aesthetic\n"))
-  cat(file=stderr(), paste0("  v168: linetype legends don't interfere with fill legends (tiles)\n"))
-  cat(file=stderr(), paste0("  LOOK FOR: 'v168 Test (line)' with red line - should NOT affect other legend keys\n"))
+  cat(file=stderr(), paste0("  v168: Added geom_point layer with shape aesthetic\n"))
+  cat(file=stderr(), paste0("  v168: Added guides() to prevent bleeding into other legends\n"))
+  cat(file=stderr(), paste0("  LOOK FOR: 'v168 Test Legend' with red square - should NOT affect other legend keys\n"))
   cat(file=stderr(), paste0("=================================================\n"))
 
   return(p)
