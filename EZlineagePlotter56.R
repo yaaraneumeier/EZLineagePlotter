@@ -6973,18 +6973,17 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   # v88: Save the plot with comprehensive error handling and multiple fallbacks
   save_success <- FALSE
 
-  # v165: DIAGNOSTIC TEST - Insert simple test grob to verify gtable insertion works
+  # v166: OPTION B - Insert test grob directly INTO guide-box-right (not as new row)
   custom_legend_grob <- attr(p, "custom_legend_grob")
   custom_legend_height <- attr(p, "custom_legend_height")
 
   if (!is.null(custom_legend_grob)) {
-    cat(file=stderr(), paste0("\n=== v165: DIAGNOSTIC - INSERTING TEST GROB INTO GTABLE ===\n"))
+    cat(file=stderr(), paste0("\n=== v166: OPTION B - INSERT INTO EXISTING GUIDE-BOX-RIGHT ===\n"))
 
     tryCatch({
       # Convert ggplot to gtable
       gt <- ggplot2::ggplotGrob(p)
       cat(file=stderr(), paste0("  gtable created: ", nrow(gt), " rows x ", ncol(gt), " cols\n"))
-      cat(file=stderr(), paste0("  gtable layout names: ", paste(gt$layout$name, collapse=", "), "\n"))
 
       # Find guide-box-right position
       guide_box_idx <- which(gt$layout$name == "guide-box-right")
@@ -6992,60 +6991,61 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       if (length(guide_box_idx) > 0) {
         guide_row <- gt$layout$t[guide_box_idx[1]]
         guide_col <- gt$layout$l[guide_box_idx[1]]
-        cat(file=stderr(), paste0("  guide-box-right found at row ", guide_row, ", col ", guide_col, "\n"))
+        cat(file=stderr(), paste0("  guide-box-right at row ", guide_row, ", col ", guide_col, "\n"))
 
-        # v165 DIAGNOSTIC TEST: Create a SIMPLE test grob to verify insertion works
-        # This is a bright red background with bold black text
+        # Get the existing guide-box grob
+        existing_grob <- gt$grobs[[guide_box_idx[1]]]
+        cat(file=stderr(), paste0("  Existing guide-box class: ", paste(class(existing_grob), collapse=", "), "\n"))
+
+        # v166: Create a simple test grob (red box with white text)
         test_grob <- grid::grobTree(
           grid::rectGrob(
+            width = grid::unit(1, "npc"),
+            height = grid::unit(40, "pt"),
             gp = grid::gpar(fill = "red", col = "black", lwd = 2)
           ),
           grid::textGrob(
             label = "TEST LEGEND",
-            gp = grid::gpar(fontsize = 14, fontface = "bold", col = "white")
+            gp = grid::gpar(fontsize = 12, fontface = "bold", col = "white")
+          ),
+          vp = grid::viewport(y = grid::unit(1, "npc"), just = "top", height = grid::unit(40, "pt"))
+        )
+        cat(file=stderr(), paste0("  v166: Created test grob (red box with white text)\n"))
+
+        # Create a combined grob: stack test_grob on top of existing_grob
+        combined_grob <- grid::grobTree(
+          # Test grob at the top
+          grid::gTree(
+            children = grid::gList(test_grob),
+            vp = grid::viewport(y = grid::unit(1, "npc"), just = "top", height = grid::unit(50, "pt"))
+          ),
+          # Existing legend below
+          grid::gTree(
+            children = grid::gList(existing_grob),
+            vp = grid::viewport(y = grid::unit(0, "npc"), just = "bottom", height = grid::unit(1, "npc") - grid::unit(50, "pt"))
           )
         )
-        cat(file=stderr(), paste0("  v165 DIAGNOSTIC: Created simple test grob (red box with white text)\n"))
+        cat(file=stderr(), paste0("  v166: Combined test grob with existing guide-box\n"))
 
-        # Use a fixed height for the test
-        legend_height <- grid::unit(50, "pt")
-        cat(file=stderr(), paste0("  Legend height: 50 pt (test)\n"))
-
-        # Add a new row ABOVE the guide-box-right
-        gt <- gtable::gtable_add_rows(gt, heights = legend_height, pos = guide_row - 1)
-        cat(file=stderr(), paste0("  Added new row at position ", guide_row, "\n"))
-
-        # Insert the TEST grob into the new row
-        gt <- gtable::gtable_add_grob(
-          gt,
-          grobs = test_grob,  # Using simple test grob instead of custom_legend_grob
-          t = guide_row,
-          l = guide_col,
-          r = guide_col,
-          b = guide_row,
-          name = "custom-highlight-bootstrap-legend"
-        )
-        cat(file=stderr(), paste0("  TEST grob inserted at row ", guide_row, ", col ", guide_col, "\n"))
-
-        # Debug: print final gtable structure
-        cat(file=stderr(), paste0("  Final gtable: ", nrow(gt), " rows x ", ncol(gt), " cols\n"))
+        # Replace the guide-box grob with our combined grob
+        gt$grobs[[guide_box_idx[1]]] <- combined_grob
+        cat(file=stderr(), paste0("  v166: Replaced guide-box-right grob with combined grob\n"))
 
         # Save the modified gtable
         ggsave(out_file_path, plot = gt, width = width, height = height, units = units_out, limitsize = FALSE)
         save_success <- TRUE
-        cat(file=stderr(), paste0("\n=== v165: Plot with TEST LEGEND saved successfully ===\n"))
-        cat(file=stderr(), paste0("  DIAGNOSTIC: Look for red box with 'TEST LEGEND' above the other legends\n"))
+        cat(file=stderr(), paste0("\n=== v166: Plot saved with OPTION B ===\n"))
+        cat(file=stderr(), paste0("  LOOK FOR: Red box with 'TEST LEGEND' at TOP of legends area\n"))
 
       } else {
-        cat(file=stderr(), paste0("  WARNING: guide-box-right not found, saving without custom legend insertion\n"))
+        cat(file=stderr(), paste0("  WARNING: guide-box-right not found\n"))
         ggsave(out_file_path, plot = p, width = width, height = height, units = units_out, limitsize = FALSE)
         save_success <- TRUE
       }
 
     }, error = function(e) {
-      cat(file=stderr(), paste0("\n=== v165: GTABLE ERROR ===\n"))
+      cat(file=stderr(), paste0("\n=== v166: ERROR ===\n"))
       cat(file=stderr(), paste0("  Error: ", e$message, "\n"))
-      cat(file=stderr(), paste0("  Traceback: ", paste(capture.output(traceback()), collapse="\n"), "\n"))
       cat(file=stderr(), paste0("  Falling back to standard ggsave\n"))
       tryCatch({
         ggsave(out_file_path, plot = p, width = width, height = height, units = units_out, limitsize = FALSE)
@@ -7060,7 +7060,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     tryCatch({
       ggsave(out_file_path, plot = p, width = width, height = height, units = units_out, limitsize = FALSE)
       save_success <- TRUE
-      cat(file=stderr(), paste0("\n=== v165: Plot saved successfully (no custom legends) ===\n"))
+      cat(file=stderr(), paste0("\n=== v166: Plot saved successfully (no custom legends) ===\n"))
     }, error = function(e) {
       cat(file=stderr(), paste0("\n=== v88: GGSAVE ERROR ===\n"))
       cat(file=stderr(), paste0("  Primary error: ", e$message, "\n"))
@@ -7222,18 +7222,18 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v159 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v166 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
-                            "New in v159:",
+                            "New in v166:",
                             tags$ul(
-                              tags$li("FIXED LEGEND VISIBILITY: Custom legends now properly visible using nested gtable approach"),
-                              tags$li("Legends appear ABOVE the ggplot guide-box with proper sizing and positioning")
+                              tags$li("OPTION B: Insert legend grob INTO existing guide-box-right cell"),
+                              tags$li("Testing if inserting into existing cell works vs adding new row")
                             ),
-                            "Previous fixes:",
+                            "Previous attempts:",
                             tags$ul(
-                              tags$li("v155: Gtable-based legend approach (alignment with ggplot legends)"),
-                              tags$li("v154: Title fontsize matches ggplot legend titles"),
-                              tags$li("v153: Plot distortion fixed")
+                              tags$li("v165: Diagnostic test - gtable new row insertion FAILED"),
+                              tags$li("v163: NPC-based grobs WORKED (visible, no distortion, but wrong position)"),
+                              tags$li("v152: annotation-based WORKED but distorted plot")
                             )
                      )
             )
