@@ -1799,12 +1799,14 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
                                     show_highlight_legend = TRUE, show_bootstrap_legend = TRUE,
                                     high_alpha_list = NULL) {
 
-  # v167: OPTION C - NATIVE GGPLOT LEGENDS
+  # v168: OPTION C - NATIVE GGPLOT LEGENDS (with show.legend fix)
   # Use ggplot's own legend system by adding invisible layers with aesthetics
   # This approach uses ggplot's native rendering, avoiding all gtable manipulation
+  # v168: Fixed legend bleeding issue with show.legend = c(shape = TRUE)
 
-  cat(file=stderr(), paste0("\n=== v167: OPTION C - NATIVE GGPLOT LEGENDS ===\n"))
+  cat(file=stderr(), paste0("\n=== v168: OPTION C - NATIVE GGPLOT LEGENDS ===\n"))
   cat(file=stderr(), paste0("  Using native ggplot legend system (no gtable manipulation)\n"))
+  cat(file=stderr(), paste0("  v168: Fixed legend bleeding with show.legend = c(shape = TRUE)\n"))
 
   # Initialize high_alpha_list if NULL
   if (is.null(high_alpha_list) || length(high_alpha_list) == 0) {
@@ -1815,15 +1817,16 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
   title_fontsize <- if (!is.null(highlight_title_size)) highlight_title_size else size_font_legend_title
   text_fontsize <- if (!is.null(highlight_text_size)) highlight_text_size else size_font_legend_text
 
-  cat(file=stderr(), paste0("  v167: Title fontsize: ", title_fontsize, "\n"))
-  cat(file=stderr(), paste0("  v167: Text fontsize: ", text_fontsize, "\n"))
+  cat(file=stderr(), paste0("  v168: Title fontsize: ", title_fontsize, "\n"))
+  cat(file=stderr(), paste0("  v168: Text fontsize: ", text_fontsize, "\n"))
 
   # ============================================
-  # v167 TRIAL: Add a simple test legend using geom_point
+  # v168 TRIAL: Add a simple test legend using geom_point
   # This tests whether native ggplot legends work alongside existing legends
+  # v168: Uses show.legend = c(shape = TRUE) to prevent bleeding into other legends
   # ============================================
 
-  cat(file=stderr(), paste0("\n  v167 TRIAL: Adding test legend via geom_point\n"))
+  cat(file=stderr(), paste0("\n  v168 TRIAL: Adding test legend via geom_point\n"))
 
   # Create dummy data for the test legend
   # Using NA coordinates so the points are invisible but legend still shows
@@ -1837,6 +1840,8 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
 
   # Add invisible geom_point layer that creates a legend entry
   # The point won't be drawn (NA coordinates) but the legend will appear
+  # v168: Use show.legend = c(shape = TRUE) to ONLY show in shape legend
+  # This prevents the red point from bleeding into other legend keys (fill, color, etc.)
   p <- p +
     geom_point(
       data = test_legend_data,
@@ -1844,17 +1849,17 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
       size = 5,
       color = "red",
       na.rm = TRUE,
-      show.legend = TRUE
+      show.legend = c(shape = TRUE)  # v168: Only show in shape legend, not fill/color/etc
     ) +
     scale_shape_manual(
-      name = "v167 Test Legend",
+      name = "v168 Test Legend",
       values = c("TEST LEGEND ITEM" = 15),
       guide = guide_legend(order = 99)
     )
 
-  cat(file=stderr(), paste0("  v167: Added geom_point layer with shape aesthetic\n"))
-  cat(file=stderr(), paste0("  v167: Added scale_shape_manual for legend\n"))
-  cat(file=stderr(), paste0("  LOOK FOR: 'v167 Test Legend' with red square in legends area\n"))
+  cat(file=stderr(), paste0("  v168: Added geom_point layer with shape aesthetic\n"))
+  cat(file=stderr(), paste0("  v168: show.legend = c(shape = TRUE) prevents bleeding into other legends\n"))
+  cat(file=stderr(), paste0("  LOOK FOR: 'v168 Test Legend' with red square - should NOT affect other legend keys\n"))
   cat(file=stderr(), paste0("=================================================\n"))
 
   return(p)
@@ -7030,18 +7035,18 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v167 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v168 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
-                            "New in v167:",
+                            "New in v168:",
                             tags$ul(
-                              tags$li("OPTION C TRIAL: Testing native ggplot legends (no gtable manipulation)"),
-                              tags$li("Added test legend via geom_point + scale_shape_manual"),
-                              tags$li("LOOK FOR: 'v167 Test Legend' with red square in legends area")
+                              tags$li("OPTION C: Native ggplot legends working!"),
+                              tags$li("Fixed legend bleeding with show.legend = c(shape = TRUE)"),
+                              tags$li("Test legend should NOT interfere with other legend keys")
                             ),
-                            "Previous attempts (all failed to show legends):",
+                            "Previous:",
                             tags$ul(
-                              tags$li("v164-v166: gtable manipulation approaches"),
-                              tags$li("v163: NPC-based (worked but wrong position)")
+                              tags$li("v167: Option C worked but red point bled into other legends"),
+                              tags$li("v164-v166: gtable manipulation - failed")
                             )
                      )
             )
