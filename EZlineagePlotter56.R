@@ -1836,20 +1836,23 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
     test_legend = "TEST LEGEND ITEM"
   )
 
-  cat(file=stderr(), paste0("  v167: Created dummy data for test legend\n"))
+  cat(file=stderr(), paste0("  v168: Created dummy data for test legend\n"))
 
   # Add invisible geom_point layer that creates a legend entry
   # The point won't be drawn (NA coordinates) but the legend will appear
-  # v168: Use show.legend = c(shape = TRUE) to ONLY show in shape legend
-  # This prevents the red point from bleeding into other legend keys (fill, color, etc.)
+  # v168: CRITICAL FIX - Must explicitly exclude from ALL other legend types
+  # The show.legend parameter must explicitly list FALSE for fill, color, size, alpha
+  # Otherwise the point will be drawn in other legends' keys
   p <- p +
     geom_point(
       data = test_legend_data,
       aes(x = x, y = y, shape = test_legend),
       size = 5,
       color = "red",
+      fill = NA,  # v168: No fill - prevents showing in fill legends
       na.rm = TRUE,
-      show.legend = c(shape = TRUE)  # v168: Only show in shape legend, not fill/color/etc
+      inherit.aes = FALSE,  # v168: Don't inherit any aesthetics from the plot
+      show.legend = c(shape = TRUE)  # v168: Only show in shape legend
     ) +
     scale_shape_manual(
       name = "v168 Test Legend",
@@ -1858,7 +1861,7 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
     )
 
   cat(file=stderr(), paste0("  v168: Added geom_point layer with shape aesthetic\n"))
-  cat(file=stderr(), paste0("  v168: show.legend = c(shape = TRUE) prevents bleeding into other legends\n"))
+  cat(file=stderr(), paste0("  v168: fill=NA + inherit.aes=FALSE prevents bleeding into other legends\n"))
   cat(file=stderr(), paste0("  LOOK FOR: 'v168 Test Legend' with red square - should NOT affect other legend keys\n"))
   cat(file=stderr(), paste0("=================================================\n"))
 
