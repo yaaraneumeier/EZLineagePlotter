@@ -6973,12 +6973,12 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   # v88: Save the plot with comprehensive error handling and multiple fallbacks
   save_success <- FALSE
 
-  # v164: Plan B Step 1 - Insert custom legend gtable above guide-box-right
+  # v165: DIAGNOSTIC TEST - Insert simple test grob to verify gtable insertion works
   custom_legend_grob <- attr(p, "custom_legend_grob")
   custom_legend_height <- attr(p, "custom_legend_height")
 
   if (!is.null(custom_legend_grob)) {
-    cat(file=stderr(), paste0("\n=== v164: INSERTING CUSTOM LEGENDS INTO GTABLE ===\n"))
+    cat(file=stderr(), paste0("\n=== v165: DIAGNOSTIC - INSERTING TEST GROB INTO GTABLE ===\n"))
 
     tryCatch({
       # Convert ggplot to gtable
@@ -6994,7 +6994,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
         guide_col <- gt$layout$l[guide_box_idx[1]]
         cat(file=stderr(), paste0("  guide-box-right found at row ", guide_row, ", col ", guide_col, "\n"))
 
-        # v164 DIAGNOSTIC TEST: Create a SIMPLE test grob to verify insertion works
+        # v165 DIAGNOSTIC TEST: Create a SIMPLE test grob to verify insertion works
         # This is a bright red background with bold black text
         test_grob <- grid::grobTree(
           grid::rectGrob(
@@ -7005,7 +7005,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             gp = grid::gpar(fontsize = 14, fontface = "bold", col = "white")
           )
         )
-        cat(file=stderr(), paste0("  v164 DIAGNOSTIC: Created simple test grob (red box with white text)\n"))
+        cat(file=stderr(), paste0("  v165 DIAGNOSTIC: Created simple test grob (red box with white text)\n"))
 
         # Use a fixed height for the test
         legend_height <- grid::unit(50, "pt")
@@ -7033,7 +7033,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
         # Save the modified gtable
         ggsave(out_file_path, plot = gt, width = width, height = height, units = units_out, limitsize = FALSE)
         save_success <- TRUE
-        cat(file=stderr(), paste0("\n=== v164: Plot with TEST LEGEND saved successfully ===\n"))
+        cat(file=stderr(), paste0("\n=== v165: Plot with TEST LEGEND saved successfully ===\n"))
         cat(file=stderr(), paste0("  DIAGNOSTIC: Look for red box with 'TEST LEGEND' above the other legends\n"))
 
       } else {
@@ -7043,7 +7043,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       }
 
     }, error = function(e) {
-      cat(file=stderr(), paste0("\n=== v164: GTABLE ERROR ===\n"))
+      cat(file=stderr(), paste0("\n=== v165: GTABLE ERROR ===\n"))
       cat(file=stderr(), paste0("  Error: ", e$message, "\n"))
       cat(file=stderr(), paste0("  Traceback: ", paste(capture.output(traceback()), collapse="\n"), "\n"))
       cat(file=stderr(), paste0("  Falling back to standard ggsave\n"))
@@ -7060,7 +7060,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     tryCatch({
       ggsave(out_file_path, plot = p, width = width, height = height, units = units_out, limitsize = FALSE)
       save_success <- TRUE
-      cat(file=stderr(), paste0("\n=== v164: Plot saved successfully (no custom legends) ===\n"))
+      cat(file=stderr(), paste0("\n=== v165: Plot saved successfully (no custom legends) ===\n"))
     }, error = function(e) {
       cat(file=stderr(), paste0("\n=== v88: GGSAVE ERROR ===\n"))
       cat(file=stderr(), paste0("  Primary error: ", e$message, "\n"))
