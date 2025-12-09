@@ -14461,12 +14461,19 @@ server <- function(input, output, session) {
           guides_list$size <- guide_legend(reverse = reverse_order)
         }
 
-        # v180: Heatmaps use fill aesthetic (single checkbox controls all)
+        # v180: Heatmaps use fill aesthetic
+        # NOTE: With ggnewscale, each heatmap has its own fill scale.
+        # Using guides(fill = ...) only affects the LAST fill scale, which can break
+        # earlier heatmaps. Only hide ALL fill legends if explicitly requested.
+        # When show_heatmap is TRUE, we don't override - let each scale keep its own guide.
         if (!isTRUE(legend_settings$show_heatmap)) {
+          # v180: To hide all fill legends with ggnewscale, we set fill to "none"
+          # This will hide the last scale's legend; earlier scales need their guides
+          # set to "none" when created. For now, this is a partial solution.
           guides_list$fill <- "none"
-        } else {
-          guides_list$fill <- guide_legend(reverse = reverse_order)
         }
+        # v180: When show_heatmap is TRUE, we DON'T add fill to guides_list
+        # This prevents overriding individual heatmap scale guides
 
         if (length(guides_list) > 0) {
           result <- result + do.call(guides, guides_list)
