@@ -7,6 +7,7 @@ A Shiny application for visualizing and analyzing phylogenetic trees with rich a
 ## Features
 
 - **Tree Visualization**: Display phylogenetic trees with customizable layouts
+- **Tree Rotation**: Rotate and reorder tree branches - flip clades, rotate nodes, and reroot the tree to optimize visual presentation
 - **Classification Coloring**: Color tree tips based on classification data from CSV files
 - **Multiple Heatmaps**: Add multiple heatmaps alongside the tree with discrete or continuous color scales
 - **Highlight Regions**: Draw ellipses around groups of related tips
