@@ -1626,37 +1626,10 @@ func_highlight <- function(p, how_many_hi, heat_flag, high_color_list, a, b, man
     }
   }
   
-  # Reorder layers for proper display - BUT ONLY IF ENOUGH LAYERS EXIST
-  # Bug #11 fix: Check layer count before reordering to prevent crashes
-  num_layers <- length(p$layers)
-  # v53: cat(file=stderr(), paste0("🔵 func_highlight: Plot has ", num_layers, " layers\n"))
-  
-  if (num_layers >= 8) {
-    # Only do layer reordering if we have enough layers
-    p1 <- p$layers[1]
-    p2 <- p$layers[2]
-    p7 <- p$layers[7]
-    p$layers[2] <- p7 
-    p$layers[7] <- p2
-    
-    p3 <- p$layers[3]
-    p4 <- p$layers[4]
-    p5 <- p$layers[5] 
-    p6 <- p$layers[6]
-    p7 <- p$layers[7]
-    p8 <- p$layers[8]
-    
-    p$layers[3] <- p6
-    p$layers[4] <- p7
-    p$layers[5] <- p8
-    p$layers[6] <- p3
-    p$layers[7] <- p4  
-    p$layers[8] <- p3
-    
-    # v53: cat(file=stderr(), "🔵 func_highlight: Layer reordering applied (8+ layers)\n")
-  } else {
-    # v53: cat(file=stderr(), paste0("🔵 func_highlight: Skipping layer reordering (only ", num_layers, " layers, need 8)\n"))
-  }
+  # v180: REMOVED legacy layer reordering code that was causing heatmap corruption
+  # The old code (Bug #11 fix) assumed a specific layer order and would scramble layers
+  # when there were 8+ layers. With multiple heatmaps (3+), this caused the first heatmap
+  # to disappear. Layer ordering is now handled by func.move.tiplabels.to.front() below.
 
   # v180: CRITICAL - Move tip labels to front AFTER ellipses are added
   # This ensures tip names are always visible on top of highlight ellipses
