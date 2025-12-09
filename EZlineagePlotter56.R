@@ -54,6 +54,8 @@ options(shiny.maxRequestSize = 100*1024^2)
 # v172: Tried ggnewscale::new_scale_fill() and new_scale("size") - still broke P value legend
 # v173: SHAPE-ONLY approach - use ONLY shape aesthetic for both legends
 #       This avoids ALL scale conflicts: fill (heatmaps), size (P value), colour (classification)
+# v174: Fixed Highlight ellipse colors/transparency using force() to capture closure
+#       Fixed Bootstrap triangle sizes to vary visibly (both width and height)
 
 ###### part 1 a:
 # ============================================================================
@@ -1808,14 +1810,16 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
                                     show_highlight_legend = TRUE, show_bootstrap_legend = TRUE,
                                     high_alpha_list = NULL) {
 
-  # v173: OPTION C - NATIVE GGPLOT LEGENDS (SHAPE-ONLY approach)
+  # v174: OPTION C - NATIVE GGPLOT LEGENDS (SHAPE-ONLY approach)
   # Use ONLY shape aesthetic to avoid conflicts with existing scales:
   # - fill: used by heatmaps
   # - size: used by P value legend
   # - colour: used by classification
   # By using only shape (not used elsewhere), we avoid ALL scale conflicts
+  # v174: Use force() to capture closure variables for key_glyph functions
+  # v174: Make bootstrap triangle sizes more distinct (vary width AND height)
 
-  cat(file=stderr(), paste0("\n=== v173: NATIVE GGPLOT LEGENDS - SHAPE-ONLY APPROACH ===\n"))
+  cat(file=stderr(), paste0("\n=== v174: NATIVE GGPLOT LEGENDS - SHAPE-ONLY APPROACH ===\n"))
   cat(file=stderr(), paste0("  Using ONLY shape aesthetic to avoid scale conflicts\n"))
   cat(file=stderr(), paste0("  This preserves: heatmap fill, P value size, classification colour\n"))
 
@@ -1830,12 +1834,13 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
   boot_title_fontsize <- if (!is.null(bootstrap_title_size_mult)) bootstrap_title_size_mult else size_font_legend_title
   boot_text_fontsize <- if (!is.null(bootstrap_text_size_mult)) bootstrap_text_size_mult else size_font_legend_text
 
-  cat(file=stderr(), paste0("  v173: Highlight title fontsize: ", title_fontsize, "\n"))
-  cat(file=stderr(), paste0("  v173: Bootstrap title fontsize: ", boot_title_fontsize, "\n"))
+  cat(file=stderr(), paste0("  v174: Highlight title fontsize: ", title_fontsize, "\n"))
+  cat(file=stderr(), paste0("  v174: Bootstrap title fontsize: ", boot_title_fontsize, "\n"))
 
   # ============================================
-  # v173: HIGHLIGHT LEGEND using shape aesthetic
+  # v174: HIGHLIGHT LEGEND using shape aesthetic
   # Custom key_glyph draws ellipses with correct colors/transparency
+  # v174: Use force() to properly capture closure variables
   # ============================================
   if (FLAG_BULK_DISPLAY == TRUE && show_highlight_legend == TRUE && how_many_hi > 0 &&
       !is.null(high_label_list) && length(high_label_list) > 0) {
@@ -1847,7 +1852,7 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
       "Highlight"
     }
 
-    cat(file=stderr(), paste0("\n  v173: Creating HIGHLIGHT legend (shape-only)\n"))
+    cat(file=stderr(), paste0("\n  v174: Creating HIGHLIGHT legend (shape-only)\n"))
     cat(file=stderr(), paste0("    Title: '", highlight_title, "'\n"))
     cat(file=stderr(), paste0("    Items: ", length(high_label_list), "\n"))
 
@@ -1859,9 +1864,11 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
       stringsAsFactors = FALSE
     )
 
-    # Store colors and alphas for use in key_glyph
+    # Store colors and alphas for use in key_glyph - use force() to capture
     highlight_colors <- setNames(unlist(high_color_list), unlist(high_label_list))
     highlight_alphas <- setNames(unlist(high_alpha_list), unlist(high_label_list))
+    force(highlight_colors)
+    force(highlight_alphas)
 
     for (i in seq_along(high_label_list)) {
       cat(file=stderr(), paste0("    Item ", i, ": '", high_label_list[[i]],
@@ -1869,28 +1876,35 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
                                  " alpha=", high_alpha_list[[i]], "\n"))
     }
 
-    # v173: Custom key_glyph for ELLIPSE - draws ellipse with stored color/alpha
-    draw_key_highlight_ellipse <- function(data, params, size) {
-      # Get the label from shape aesthetic
-      label <- as.character(data$shape)
-      if (is.null(label) || is.na(label) || label == "19") {
-        return(grid::nullGrob())
+    # v174: Custom key_glyph for ELLIPSE - draws ellipse with stored color/alpha
+    # Use local() to create a proper closure with captured values
+    draw_key_highlight_ellipse <- local({
+      colors_local <- highlight_colors
+      alphas_local <- highlight_alphas
+      function(data, params, size) {
+        # Get the label from shape aesthetic
+        label <- as.character(data$shape)
+        cat(file=stderr(), paste0("    v174: draw_key_highlight_ellipse called, label='", label, "'\n"))
+        if (is.null(label) || is.na(label) || label == "19") {
+          return(grid::nullGrob())
+        }
+        # Look up color and alpha for this label
+        fill_color <- colors_local[label]
+        fill_alpha <- alphas_local[label]
+        cat(file=stderr(), paste0("    v174: Looked up color='", fill_color, "', alpha='", fill_alpha, "'\n"))
+        if (is.na(fill_color)) fill_color <- "grey50"
+        if (is.na(fill_alpha)) fill_alpha <- 0.5
+        # Draw an ellipse
+        theta <- seq(0, 2*pi, length.out = 50)
+        ellipse_a <- 0.4
+        ellipse_b <- 0.25
+        grid::polygonGrob(
+          x = grid::unit(0.5 + ellipse_a * cos(theta), "npc"),
+          y = grid::unit(0.5 + ellipse_b * sin(theta), "npc"),
+          gp = grid::gpar(fill = fill_color, col = NA, alpha = fill_alpha)
+        )
       }
-      # Look up color and alpha for this label
-      fill_color <- highlight_colors[label]
-      fill_alpha <- highlight_alphas[label]
-      if (is.na(fill_color)) fill_color <- "grey50"
-      if (is.na(fill_alpha)) fill_alpha <- 0.5
-      # Draw an ellipse
-      theta <- seq(0, 2*pi, length.out = 50)
-      ellipse_a <- 0.4
-      ellipse_b <- 0.25
-      grid::polygonGrob(
-        x = grid::unit(0.5 + ellipse_a * cos(theta), "npc"),
-        y = grid::unit(0.5 + ellipse_b * sin(theta), "npc"),
-        gp = grid::gpar(fill = fill_color, col = NA, alpha = fill_alpha)
-      )
-    }
+    })
 
     # Add highlight legend using SHAPE aesthetic only
     p <- p +
@@ -1909,12 +1923,14 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
         guide = guide_legend(order = 97)
       )
 
-    cat(file=stderr(), paste0("  v173: Highlight legend added (shape-only, no fill/alpha scale)\n"))
+    cat(file=stderr(), paste0("  v174: Highlight legend added (shape-only, no fill/alpha scale)\n"))
   }
 
   # ============================================
-  # v173: BOOTSTRAP LEGEND using shape aesthetic
-  # Custom key_glyph draws triangles
+  # v174: BOOTSTRAP LEGEND using shape aesthetic
+  # Custom key_glyph draws triangles with varying sizes
+  # v174: Make sizes more distinct by varying both width AND height
+  # v174: Match tree's alpha=0.5, fill="grey36", col="grey20"
   # ============================================
   if (show_boot_flag == TRUE && show_bootstrap_legend == TRUE) {
     # Check if bootstrap is in triangles format
@@ -1924,14 +1940,16 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
       "triangles"  # default
     }
 
-    cat(file=stderr(), paste0("\n  v173: Bootstrap format: '", boot_format, "'\n"))
+    cat(file=stderr(), paste0("\n  v174: Bootstrap format: '", boot_format, "'\n"))
 
     if (boot_format == "triangles") {
-      cat(file=stderr(), paste0("  v173: Creating BOOTSTRAP legend (shape-only)\n"))
+      cat(file=stderr(), paste0("  v174: Creating BOOTSTRAP legend (shape-only)\n"))
 
-      # Bootstrap legend items
+      # Bootstrap legend items - match tree sizes
+      # Tree uses: size_90 = base+2, size_80 = base+1, size_70 = base
+      # So relative sizes are: 3, 2, 1 (normalized: 1.0, 0.67, 0.33)
       bootstrap_labels <- c(">90%", ">80%", ">70%")
-      bootstrap_sizes <- c(1.0, 0.8, 0.6)  # Scale factors for triangle size
+      bootstrap_sizes <- c(1.0, 0.7, 0.4)  # v174: More distinct size differences
 
       bootstrap_legend_data <- data.frame(
         x = rep(NA_real_, 3),
@@ -1940,26 +1958,49 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
         stringsAsFactors = FALSE
       )
 
-      # Store sizes for use in key_glyph
+      # Store sizes for use in key_glyph - use local() for proper closure
       bootstrap_size_map <- setNames(bootstrap_sizes, bootstrap_labels)
 
-      # v173: Custom key_glyph for TRIANGLE - draws triangle with varying size
-      draw_key_bootstrap_triangle <- function(data, params, size) {
-        # Get the label from shape aesthetic
-        label <- as.character(data$shape)
-        if (is.null(label) || is.na(label) || label == "19") {
-          return(grid::nullGrob())
+      cat(file=stderr(), paste0("  v174: Bootstrap size map: >90%=", bootstrap_sizes[1],
+                                 ", >80%=", bootstrap_sizes[2], ", >70%=", bootstrap_sizes[3], "\n"))
+
+      # v174: Custom key_glyph for TRIANGLE - draws triangle with varying size
+      # Use local() to create proper closure
+      draw_key_bootstrap_triangle <- local({
+        size_map_local <- bootstrap_size_map
+        function(data, params, size) {
+          # Get the label from shape aesthetic
+          label <- as.character(data$shape)
+          cat(file=stderr(), paste0("    v174: draw_key_bootstrap_triangle called, label='", label, "'\n"))
+          if (is.null(label) || is.na(label) || label == "19") {
+            return(grid::nullGrob())
+          }
+          # Look up size for this label
+          tri_scale <- size_map_local[label]
+          cat(file=stderr(), paste0("    v174: Triangle scale='", tri_scale, "'\n"))
+          if (is.na(tri_scale)) tri_scale <- 0.7
+
+          # v174: Vary BOTH width and height for more distinct size difference
+          # Width scales with tri_scale
+          # Height also scales (shorter triangles for smaller percentages)
+          base_width <- 0.4  # half-width at scale=1
+          base_height <- 0.5  # height at scale=1
+          tri_width <- base_width * tri_scale
+          tri_height <- base_height * tri_scale
+
+          # Center the triangle vertically
+          y_center <- 0.5
+          y_bottom <- y_center - tri_height/2
+          y_top <- y_center + tri_height/2
+
+          # Draw an upward-pointing triangle - match tree style
+          grid::polygonGrob(
+            x = grid::unit(c(0.5 - tri_width, 0.5 + tri_width, 0.5), "npc"),
+            y = grid::unit(c(y_bottom, y_bottom, y_top), "npc"),
+            gp = grid::gpar(fill = "grey36", col = "grey20", alpha = 0.5)  # v174: alpha=0.5 to match tree
+          )
         }
-        # Look up size for this label
-        tri_scale <- bootstrap_size_map[label]
-        if (is.na(tri_scale)) tri_scale <- 0.8
-        # Draw an upward-pointing triangle
-        grid::polygonGrob(
-          x = grid::unit(c(0.5 - 0.35*tri_scale, 0.5 + 0.35*tri_scale, 0.5), "npc"),
-          y = grid::unit(c(0.25, 0.25, 0.75), "npc"),
-          gp = grid::gpar(fill = "grey36", col = "grey20", alpha = 0.7)
-        )
-      }
+      })
 
       # Add bootstrap legend using SHAPE aesthetic only
       # Use new_scale("shape") to create a separate shape scale for bootstrap
@@ -1982,14 +2023,14 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
           guide = guide_legend(order = 98)
         )
 
-      cat(file=stderr(), paste0("  v173: Bootstrap legend added (shape-only, no size scale)\n"))
+      cat(file=stderr(), paste0("  v174: Bootstrap legend added (shape-only, no size scale)\n"))
     } else {
-      cat(file=stderr(), paste0("  v173: Bootstrap format '", boot_format, "' - no legend needed\n"))
+      cat(file=stderr(), paste0("  v174: Bootstrap format '", boot_format, "' - no legend needed\n"))
     }
   }
 
-  cat(file=stderr(), paste0("\n  v173: Highlight and Bootstrap legends complete (shape-only)\n"))
-  cat(file=stderr(), paste0("  v173: Existing scales preserved: fill (heatmaps), size (P value), colour (classification)\n"))
+  cat(file=stderr(), paste0("\n  v174: Highlight and Bootstrap legends complete (shape-only)\n"))
+  cat(file=stderr(), paste0("  v174: Existing scales preserved: fill (heatmaps), size (P value), colour (classification)\n"))
   cat(file=stderr(), paste0("=================================================\n"))
 
   return(p)
@@ -7165,18 +7206,18 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v173 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v174 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
-                            "New in v173:",
+                            "New in v174:",
                             tags$ul(
-                              tags$li("SHAPE-ONLY approach - no fill/size scale conflicts"),
-                              tags$li("Preserves: heatmap fill, P value size, classification colour"),
-                              tags$li("Custom key_glyph draws ellipses/triangles from shape data")
+                              tags$li("Fixed Highlight ellipse colors/transparency with local() closure"),
+                              tags$li("Fixed Bootstrap triangles: vary both width AND height"),
+                              tags$li("Bootstrap triangles now match tree style (alpha=0.5)")
                             ),
                             "Previous:",
                             tags$ul(
-                              tags$li("v172: ggnewscale still broke P value legend"),
-                              tags$li("v171: fill/size scales replaced existing ones")
+                              tags$li("v173: SHAPE-ONLY approach avoids scale conflicts"),
+                              tags$li("v172: ggnewscale still broke P value legend")
                             )
                      )
             )
