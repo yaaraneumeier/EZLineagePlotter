@@ -64,6 +64,14 @@ options(shiny.maxRequestSize = 100*1024^2)
 #       Problem: all items mapped to shape=15 made them indistinguishable
 # v178: Fix legend bleeding - return nullGrob if shape value not in our set
 #       Prevents ellipses/triangles from appearing on other legends
+# v179: Enhanced Legend, Extra, and Download tabs with new controls
+#       Added tree stretch, background color, symbol & spacing settings
+# v180: Multiple enhancements:
+#       - Fixed tip labels being hidden by highlight ellipses (layer order)
+#       - Added legends for bootstrap percentage/raw value display options
+#       - Added legend controls: key width/height, byrow, box background, margin
+#       - Fixed download preview to show full page with plot proportions preserved
+#       - Fixed Extra tab spinner animation
 
 ###### part 1 a:
 # ============================================================================
@@ -334,6 +342,54 @@ func.repair.ggtree.mapping <- function(p, verbose = FALSE) {
   # Only the top-level plot mapping sometimes gets corrupted to a data.frame.
 
   if (repaired && verbose) {
+    cat(file=stderr(), paste0("================================\n"))
+  }
+
+  return(p)
+}
+
+# v180: Function to move tip label layers to the end of the layer stack
+# This ensures tip labels render ON TOP of other elements (highlight ellipses, heatmaps, etc.)
+# Called after all layers are added and before final rendering
+func.move.tiplabels.to.front <- function(p, verbose = TRUE) {
+  if (is.null(p$layers) || length(p$layers) == 0) {
+    return(p)
+  }
+
+  if (verbose) {
+    cat(file=stderr(), paste0("\n=== v180: MOVING TIP LABELS TO FRONT ===\n"))
+    cat(file=stderr(), paste0("  Initial layers: ", length(p$layers), "\n"))
+  }
+
+  # Find all GeomText layers (tip labels are GeomText)
+  layer_types <- sapply(p$layers, function(l) class(l$geom)[1])
+  tiplab_indices <- which(layer_types == "GeomText")
+
+  if (length(tiplab_indices) == 0) {
+    if (verbose) {
+      cat(file=stderr(), paste0("  No GeomText (tip label) layers found\n"))
+    }
+    return(p)
+  }
+
+  if (verbose) {
+    cat(file=stderr(), paste0("  Found GeomText at indices: ", paste(tiplab_indices, collapse=", "), "\n"))
+  }
+
+  # Get the tip label layers
+  tiplab_layers <- p$layers[tiplab_indices]
+
+  # Get all other layers (non-tip-label)
+  other_indices <- setdiff(seq_along(p$layers), tiplab_indices)
+  other_layers <- p$layers[other_indices]
+
+  # Rebuild layers with tip labels at the end (renders on top)
+  p$layers <- c(other_layers, tiplab_layers)
+
+  if (verbose) {
+    new_layer_types <- sapply(p$layers, function(l) class(l$geom)[1])
+    cat(file=stderr(), paste0("  Reordered layers: ", paste(new_layer_types, collapse=", "), "\n"))
+    cat(file=stderr(), paste0("  GeomText now at end (renders on top)\n"))
     cat(file=stderr(), paste0("================================\n"))
   }
 
@@ -2058,12 +2114,136 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
         )
 
       cat(file=stderr(), paste0("  v178: Bootstrap legend added (shape values 1-3)\n"))
+    } else if (boot_format %in% c("numbered_color", "percentage_color")) {
+      # v180: Add grayscale gradient legend for color-coded bootstrap
+      cat(file=stderr(), paste0("  v180: Creating BOOTSTRAP color legend (grayscale gradient)\n"))
+
+      # Create legend data for grayscale gradient - shows percentage ranges with their colors
+      boot_color_labels <- c("0-10%", "20-30%", "40-50%", "60-70%", "80-90%", "100%")
+      boot_color_values <- c("gray98", "gray80", "gray60", "gray40", "gray20", "gray1")
+      boot_color_shape_values <- c(101, 102, 103, 104, 105, 106)  # v180: Unique shape values for bootstrap color
+
+      boot_color_legend_data <- data.frame(
+        x = rep(NA_real_, 6),
+        y = rep(NA_real_, 6),
+        bootstrap_color = factor(boot_color_labels, levels = boot_color_labels),
+        stringsAsFactors = FALSE
+      )
+
+      # v180: Create color lookup for key_glyph
+      shape_to_color <- setNames(boot_color_values, as.character(boot_color_shape_values))
+
+      # v180: Custom key_glyph for colored square
+      draw_key_bootstrap_color <- local({
+        shape_to_color_local <- shape_to_color
+        valid_shapes <- names(shape_to_color)
+        function(data, params, size) {
+          shape_val <- data$shape
+          if (is.null(shape_val) || length(shape_val) == 0) {
+            return(grid::nullGrob())
+          }
+          shape_key <- as.character(shape_val)
+          if (!(shape_key %in% valid_shapes)) {
+            return(grid::nullGrob())
+          }
+          fill_color <- shape_to_color_local[shape_key]
+          grid::rectGrob(
+            width = grid::unit(0.6, "npc"),
+            height = grid::unit(0.6, "npc"),
+            gp = grid::gpar(fill = fill_color, col = "grey50", lwd = 0.5)
+          )
+        }
+      })
+
+      # Add bootstrap color legend using new_scale("shape")
+      p <- p + ggnewscale::new_scale("shape")
+
+      p <- p +
+        geom_point(
+          data = boot_color_legend_data,
+          aes(x = x, y = y, shape = bootstrap_color),
+          size = 5,
+          na.rm = TRUE,
+          inherit.aes = FALSE,
+          show.legend = TRUE,
+          key_glyph = draw_key_bootstrap_color
+        ) +
+        scale_shape_manual(
+          name = "Bootstrap",
+          values = setNames(boot_color_shape_values, boot_color_labels),
+          guide = guide_legend(order = 98)
+        )
+
+      cat(file=stderr(), paste0("  v180: Bootstrap color legend added (grayscale gradient)\n"))
+    } else if (boot_format %in% c("raw", "percentage", "numbered_colored")) {
+      # v180: Add simple text legend for raw/percentage bootstrap values
+      cat(file=stderr(), paste0("  v180: Creating BOOTSTRAP value legend (text-based)\n"))
+
+      # Create legend showing sample bootstrap values
+      if (boot_format == "percentage") {
+        boot_text_labels <- c("100%", "90%", "80%", "70%")
+      } else {
+        boot_text_labels <- c("100", "90", "80", "70")
+      }
+      boot_text_shape_values <- c(111, 112, 113, 114)  # v180: Unique shape values
+
+      boot_text_legend_data <- data.frame(
+        x = rep(NA_real_, 4),
+        y = rep(NA_real_, 4),
+        bootstrap_text = factor(boot_text_labels, levels = boot_text_labels),
+        stringsAsFactors = FALSE
+      )
+
+      # v180: Custom key_glyph that draws text labels
+      draw_key_bootstrap_text <- local({
+        labels <- boot_text_labels
+        valid_shapes <- as.character(boot_text_shape_values)
+        function(data, params, size) {
+          shape_val <- data$shape
+          if (is.null(shape_val) || length(shape_val) == 0) {
+            return(grid::nullGrob())
+          }
+          shape_key <- as.character(shape_val)
+          if (!(shape_key %in% valid_shapes)) {
+            return(grid::nullGrob())
+          }
+          # Get index into labels
+          idx <- which(valid_shapes == shape_key)
+          if (length(idx) == 0) return(grid::nullGrob())
+          label_text <- labels[idx]
+          grid::textGrob(
+            label = label_text,
+            gp = grid::gpar(fontsize = 8, col = "black")
+          )
+        }
+      })
+
+      # Add bootstrap text legend using new_scale("shape")
+      p <- p + ggnewscale::new_scale("shape")
+
+      p <- p +
+        geom_point(
+          data = boot_text_legend_data,
+          aes(x = x, y = y, shape = bootstrap_text),
+          size = 5,
+          na.rm = TRUE,
+          inherit.aes = FALSE,
+          show.legend = TRUE,
+          key_glyph = draw_key_bootstrap_text
+        ) +
+        scale_shape_manual(
+          name = "Bootstrap",
+          values = setNames(boot_text_shape_values, boot_text_labels),
+          guide = guide_legend(order = 98)
+        )
+
+      cat(file=stderr(), paste0("  v180: Bootstrap text legend added for format '", boot_format, "'\n"))
     } else {
-      cat(file=stderr(), paste0("  v178: Bootstrap format '", boot_format, "' - no legend needed\n"))
+      cat(file=stderr(), paste0("  v180: Bootstrap format '", boot_format, "' - no legend defined\n"))
     }
   }
 
-  cat(file=stderr(), paste0("\n  v178: Highlight and Bootstrap legends complete (shape-only)\n"))
+  cat(file=stderr(), paste0("\n  v180: Highlight and Bootstrap legends complete\n"))
   cat(file=stderr(), paste0("  v178: Existing scales preserved: fill (heatmaps), size (P value), colour (classification)\n"))
   cat(file=stderr(), paste0("=================================================\n"))
 
@@ -6996,6 +7176,10 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   # This fixes the "@mapping must be <ggplot2::mapping>" error in newer ggplot2 versions
   p <- func.repair.ggtree.mapping(p)
 
+  # v180: Move tip labels to front so they render on top of highlight ellipses
+  # This ensures tip names are not hidden by other elements when heatmaps are added
+  p <- func.move.tiplabels.to.front(p)
+
   # v72: FINAL DEBUG - verify heatmap layer exists and inspect plot state
   cat(file=stderr(), paste0("\n=== v72: FINAL PLOT STATE BEFORE GGSAVE ===\n"))
   cat(file=stderr(), paste0("  Number of layers: ", length(p$layers), "\n"))
@@ -7779,7 +7963,7 @@ ui <- dashboardPage(
                           selected = "right")
             ),
 
-            # v179: Legend Visibility box - now with individual heatmap controls
+            # v180: Legend Visibility box - simplified heatmap control
             box(
               title = NULL,
               status = "info",
@@ -7790,11 +7974,8 @@ ui <- dashboardPage(
               checkboxInput("legend_show_classification", "Classification Legend", value = TRUE),
               checkboxInput("legend_show_highlight", "Highlight Legend", value = TRUE),
               checkboxInput("legend_show_bootstrap", "Bootstrap Legend", value = TRUE),
-              checkboxInput("legend_show_pvalue", "P Value Legend", value = TRUE),  # v179: Added P value checkbox
-              tags$hr(style = "margin: 10px 0;"),
-              tags$p(class = "text-muted", tags$small("Heatmap legends (control individually):")),
-              checkboxInput("legend_show_heatmap1", "Heatmap 1 Legend", value = TRUE),  # v179: Individual heatmap 1
-              checkboxInput("legend_show_heatmap2", "Heatmap 2 Legend", value = TRUE)   # v179: Individual heatmap 2
+              checkboxInput("legend_show_pvalue", "P Value Legend", value = TRUE),
+              checkboxInput("legend_show_heatmap", "Heatmap Legends", value = TRUE)  # v180: Simplified to single checkbox
             ),
 
             # Font Sizes box
@@ -7805,12 +7986,12 @@ ui <- dashboardPage(
               width = 12,
               tags$h4(icon("text-height"), " Font Sizes", style = "margin-top: 0;"),
               sliderInput("legend_title_size", "Legend Title Size",
-                          min = 4, max = 48, value = 12, step = 1),  # v122: Increased max from 24 to 48
+                          min = 4, max = 48, value = 12, step = 1),
               sliderInput("legend_text_size", "Legend Text Size",
-                          min = 2, max = 36, value = 10, step = 1)   # v122: Increased max from 18 to 36
+                          min = 2, max = 36, value = 10, step = 1)
             ),
 
-            # Symbol Settings box - v179: enhanced with more controls
+            # v180: Symbol & Spacing Settings box - enhanced with more controls
             box(
               title = NULL,
               status = "success",
@@ -7818,20 +7999,58 @@ ui <- dashboardPage(
               width = 12,
               tags$h4(icon("square"), " Symbol & Spacing Settings", style = "margin-top: 0;"),
               sliderInput("legend_key_size", "Legend Key Size (symbols)",
-                          min = 0.1, max = 5, value = 1, step = 0.1),  # v122: Increased max from 2 to 5
+                          min = 0.1, max = 5, value = 1, step = 0.1),
+              tags$hr(style = "margin: 10px 0;"),
+              tags$p(class = "text-muted", tags$small("Key dimensions:")),
+              fluidRow(
+                column(6,
+                  sliderInput("legend_key_width", "Key Width",
+                              min = 0.5, max = 3, value = 1, step = 0.1)
+                ),
+                column(6,
+                  sliderInput("legend_key_height", "Key Height",
+                              min = 0.5, max = 3, value = 1, step = 0.1)
+                )
+              ),
               tags$hr(style = "margin: 10px 0;"),
               tags$p(class = "text-muted", tags$small("Spacing between legends:")),
-              sliderInput("legend_spacing", "Horizontal Spacing (top/bottom legends)",
-                          min = 0.05, max = 3, value = 0.3, step = 0.05),  # v122: Increased max from 1 to 3
-              sliderInput("legend_spacing_vertical", "Vertical Spacing (left/right legends)",
-                          min = 0.1, max = 5, value = 1, step = 0.1),  # v179: New vertical spacing control
+              sliderInput("legend_spacing", "Horizontal Spacing (top/bottom)",
+                          min = 0.05, max = 3, value = 0.3, step = 0.05),
+              sliderInput("legend_spacing_vertical", "Vertical Spacing (left/right)",
+                          min = 0.1, max = 5, value = 1, step = 0.1),
               tags$hr(style = "margin: 10px 0;"),
               tags$p(class = "text-muted", tags$small("Spacing within each legend:")),
-              sliderInput("legend_key_spacing", "Key Spacing (between items in legend)",
-                          min = 0.05, max = 2, value = 0.2, step = 0.05),  # v179: New key spacing control
+              sliderInput("legend_title_key_spacing", "Title to Keys Spacing",
+                          min = 0, max = 2, value = 0.2, step = 0.05),  # v180: Renamed for clarity
+              sliderInput("legend_key_spacing", "Between Keys Spacing",
+                          min = 0, max = 2, value = 0.1, step = 0.05),  # v180: Actual key spacing
               tags$hr(style = "margin: 10px 0;"),
-              tags$p(class = "text-muted", tags$small("Key order (reverse items in legends):")),
-              checkboxInput("legend_reverse_order", "Reverse legend key order", value = FALSE)  # v179: Key order control
+              tags$p(class = "text-muted", tags$small("Legend layout:")),
+              checkboxInput("legend_byrow", "Arrange keys by row", value = FALSE),  # v180: legend.byrow
+              checkboxInput("legend_reverse_order", "Reverse key order", value = FALSE)
+            ),
+
+            # v180: Legend Background box
+            box(
+              title = NULL,
+              status = "warning",
+              solidHeader = FALSE,
+              width = 12,
+              collapsible = TRUE,
+              collapsed = TRUE,
+              tags$h4(icon("palette"), " Legend Background", style = "margin-top: 0;"),
+              tags$p(class = "text-muted", tags$small("Legend box appearance:")),
+              fluidRow(
+                column(6,
+                  colourpicker::colourInput("legend_box_background", "Box Background",
+                                            value = "transparent", showColour = "both",
+                                            allowTransparent = TRUE)
+                ),
+                column(6,
+                  sliderInput("legend_margin", "Legend Margin",
+                              min = 0, max = 2, value = 0.2, step = 0.05)
+                )
+              )
             ),
 
             # v179: Removed Highlight Legend Settings and Bootstrap Legend Settings
@@ -7893,7 +8112,7 @@ ui <- dashboardPage(
               ),
               span(id = "extra_status_processing",
                 style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #6c757d; color: #ffffff; font-size: 12px; font-weight: bold;",
-                icon("spinner"), " Processing..."
+                icon("spinner", class = "fa-spin"), " Processing..."
               ),
               span(id = "extra_status_ready",
                 style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #28a745; color: #ffffff; font-size: 12px;",
@@ -13232,31 +13451,37 @@ server <- function(input, output, session) {
   # ============================================
 
   # Observer for Apply Legend Settings button
-  # v179: Updated to use new controls (individual heatmaps, P value, vertical spacing, key spacing, reverse order)
+  # v180: Updated with new controls (key width/height, byrow, box background, margin)
   observeEvent(input$apply_legend_settings, {
-    cat(file=stderr(), "\n=== v179: APPLYING LEGEND SETTINGS ===\n")
+    cat(file=stderr(), "\n=== v180: APPLYING LEGEND SETTINGS ===\n")
 
     # Update legend settings in reactive values
-    # v179: Removed old highlight/bootstrap position settings, added new controls
     values$legend_settings <- list(
       position = input$legend_position,
-      # v179: Updated visibility controls
+      # Visibility controls
       show_classification = input$legend_show_classification,
       show_highlight = input$legend_show_highlight,
       show_bootstrap = input$legend_show_bootstrap,
-      show_pvalue = input$legend_show_pvalue,       # v179: New P value checkbox
-      show_heatmap1 = input$legend_show_heatmap1,   # v179: Individual heatmap 1
-      show_heatmap2 = input$legend_show_heatmap2,   # v179: Individual heatmap 2
+      show_pvalue = input$legend_show_pvalue,
+      show_heatmap = input$legend_show_heatmap,  # v180: Simplified to single checkbox
       # Font sizes
       title_size = input$legend_title_size,
       text_size = input$legend_text_size,
       key_size = input$legend_key_size,
-      # v179: Spacing controls
+      # v180: Key dimensions
+      key_width = input$legend_key_width,
+      key_height = input$legend_key_height,
+      # Spacing controls
       spacing = input$legend_spacing,
-      spacing_vertical = input$legend_spacing_vertical,  # v179: Vertical spacing for left/right legends
-      key_spacing = input$legend_key_spacing,            # v179: Spacing between items within legends
-      # v179: Key order
-      reverse_order = input$legend_reverse_order         # v179: Reverse key order option
+      spacing_vertical = input$legend_spacing_vertical,
+      title_key_spacing = input$legend_title_key_spacing,  # v180: Title to keys spacing
+      key_spacing = input$legend_key_spacing,              # v180: Between keys spacing
+      # Layout controls
+      byrow = input$legend_byrow,                # v180: legend.byrow
+      reverse_order = input$legend_reverse_order,
+      # v180: Background controls
+      box_background = input$legend_box_background,
+      margin = input$legend_margin
     )
 
     cat(file=stderr(), paste0("  Position: ", input$legend_position, "\n"))
@@ -13264,14 +13489,12 @@ server <- function(input, output, session) {
     cat(file=stderr(), paste0("  Show highlight: ", input$legend_show_highlight, "\n"))
     cat(file=stderr(), paste0("  Show bootstrap: ", input$legend_show_bootstrap, "\n"))
     cat(file=stderr(), paste0("  Show P value: ", input$legend_show_pvalue, "\n"))
-    cat(file=stderr(), paste0("  Show heatmap 1: ", input$legend_show_heatmap1, "\n"))
-    cat(file=stderr(), paste0("  Show heatmap 2: ", input$legend_show_heatmap2, "\n"))
-    cat(file=stderr(), paste0("  Title size: ", input$legend_title_size, "\n"))
-    cat(file=stderr(), paste0("  Text size: ", input$legend_text_size, "\n"))
-    cat(file=stderr(), paste0("  v179: Horizontal spacing: ", input$legend_spacing, "\n"))
-    cat(file=stderr(), paste0("  v179: Vertical spacing: ", input$legend_spacing_vertical, "\n"))
-    cat(file=stderr(), paste0("  v179: Key spacing: ", input$legend_key_spacing, "\n"))
-    cat(file=stderr(), paste0("  v179: Reverse order: ", input$legend_reverse_order, "\n"))
+    cat(file=stderr(), paste0("  Show heatmap: ", input$legend_show_heatmap, "\n"))
+    cat(file=stderr(), paste0("  v180: Key width: ", input$legend_key_width, ", height: ", input$legend_key_height, "\n"))
+    cat(file=stderr(), paste0("  v180: Title-key spacing: ", input$legend_title_key_spacing, "\n"))
+    cat(file=stderr(), paste0("  v180: Between keys spacing: ", input$legend_key_spacing, "\n"))
+    cat(file=stderr(), paste0("  v180: Byrow: ", input$legend_byrow, ", Reverse: ", input$legend_reverse_order, "\n"))
+    cat(file=stderr(), paste0("  v180: Box background: ", input$legend_box_background, ", Margin: ", input$legend_margin, "\n"))
     cat(file=stderr(), "======================================\n\n")
 
     # Regenerate plot with new legend settings
@@ -13287,22 +13510,21 @@ server <- function(input, output, session) {
   # v139: Observer to swap width/height when page orientation changes
   # Changed to always swap dimensions when orientation changes (not just when they don't match)
   # v141: Also regenerate plot to show the orientation change visually
-  # v179: Added "keep_proportions" option - if checked, don't swap dimensions (just change page)
+  # v180: Fixed "keep_proportions" - always swap PAGE dimensions, but plot stays proportional
   observeEvent(input$page_orientation, {
     current_width <- isolate(input$output_width)
     current_height <- isolate(input$output_height)
     keep_proportions <- isolate(input$keep_proportions)
 
-    cat(file=stderr(), paste0("\n=== v179: PAGE ORIENTATION CHANGED ===\n"))
+    cat(file=stderr(), paste0("\n=== v180: PAGE ORIENTATION CHANGED ===\n"))
     cat(file=stderr(), paste0("  Orientation: ", input$page_orientation, "\n"))
     cat(file=stderr(), paste0("  Keep proportions: ", keep_proportions, "\n"))
     cat(file=stderr(), paste0("  Current width: ", current_width, ", height: ", current_height, "\n"))
 
-    # v179: If keep_proportions is TRUE, don't swap width/height
-    if (isTRUE(keep_proportions)) {
-      cat(file=stderr(), "  v179: Keeping plot proportions - dimensions not swapped\n")
-      cat(file=stderr(), "  v179: Page orientation changed but plot stays same size\n")
-    } else if (!is.null(current_width) && !is.null(current_height)) {
+    # v180: ALWAYS swap page dimensions when orientation changes
+    # The keep_proportions option controls whether the PLOT stretches to fill the new page
+    # (handled separately in the rendering code with cowplot positioning)
+    if (!is.null(current_width) && !is.null(current_height)) {
       if (input$page_orientation == "landscape") {
         # Landscape: width should be > height
         if (current_width < current_height) {
@@ -13324,6 +13546,11 @@ server <- function(input, output, session) {
       }
     } else {
       cat(file=stderr(), "  WARNING: width or height is NULL, cannot swap\n")
+    }
+
+    # v180: Log the effect of keep_proportions
+    if (isTRUE(keep_proportions)) {
+      cat(file=stderr(), "  v180: Plot proportions preserved - plot won't stretch to fill new page\n")
     }
     cat(file=stderr(), "=== END PAGE ORIENTATION ===\n")
 
@@ -14264,10 +14491,10 @@ server <- function(input, output, session) {
       # v53: cat(file=stderr(), "=== Attempting to save plot ===\n")
 
       # v121: Apply legend settings from the Legend tab
-      # v179: Updated with new spacing and visibility controls
+      # v180: Enhanced with key dimensions, byrow, box background, margin controls
       legend_settings <- values$legend_settings
       if (!is.null(legend_settings)) {
-        cat(file=stderr(), paste0("\n=== v179: Applying legend settings to plot ===\n"))
+        cat(file=stderr(), paste0("\n=== v180: Applying legend settings to plot ===\n"))
         cat(file=stderr(), paste0("  Position: ", legend_settings$position, "\n"))
 
         # v125: Determine legend layout based on position
@@ -14275,25 +14502,40 @@ server <- function(input, output, session) {
         # For left/right: legends arranged vertically, with title next to values
         is_horizontal_position <- legend_settings$position %in% c("top", "bottom")
 
-        # v179: Get spacing values (use defaults if not set)
+        # v180: Get spacing values (use defaults if not set)
         h_spacing <- if (!is.null(legend_settings$spacing)) legend_settings$spacing else 0.3
         v_spacing <- if (!is.null(legend_settings$spacing_vertical)) legend_settings$spacing_vertical else 1
+        title_key_spacing <- if (!is.null(legend_settings$title_key_spacing)) legend_settings$title_key_spacing else 0.2
         key_spacing <- if (!is.null(legend_settings$key_spacing)) legend_settings$key_spacing else 0.2
+
+        # v180: Get key dimensions (use defaults if not set)
+        key_width <- if (!is.null(legend_settings$key_width)) legend_settings$key_width else 1
+        key_height <- if (!is.null(legend_settings$key_height)) legend_settings$key_height else 1
+
+        # v180: Get background settings
+        box_bg <- if (!is.null(legend_settings$box_background)) legend_settings$box_background else "transparent"
+        legend_margin_val <- if (!is.null(legend_settings$margin)) legend_settings$margin else 0.2
 
         # v179: Use horizontal spacing for top/bottom, vertical spacing for left/right
         spacing_val <- if (is_horizontal_position) h_spacing else v_spacing
 
         # Build theme modifications for legend
-        # v179: Added legend.key.spacing for spacing within legends
+        # v180: Added key width/height, title-key spacing, box background, margin
         legend_theme <- theme(
           legend.position = legend_settings$position,
           legend.title = element_text(size = legend_settings$title_size, face = "bold"),
           legend.text = element_text(size = legend_settings$text_size),
           legend.key.size = unit(legend_settings$key_size, "lines"),
+          legend.key.width = unit(key_width, "lines"),    # v180: Custom key width
+          legend.key.height = unit(key_height, "lines"),  # v180: Custom key height
           legend.spacing = unit(spacing_val, "cm"),
-          legend.spacing.x = unit(h_spacing, "cm"),  # v179: Explicit horizontal spacing
-          legend.spacing.y = unit(v_spacing, "cm"),  # v179: Explicit vertical spacing
-          legend.key.spacing = unit(key_spacing, "cm"),  # v179: Spacing between keys within legend
+          legend.spacing.x = unit(h_spacing, "cm"),
+          legend.spacing.y = unit(v_spacing, "cm"),
+          legend.key.spacing = unit(key_spacing, "cm"),           # v180: Between keys spacing
+          legend.key.spacing.y = unit(key_spacing, "cm"),         # v180: Vertical between keys
+          legend.title.position = "top",                           # v180: Title above keys
+          legend.box.background = element_rect(fill = box_bg, colour = NA),  # v180: Box background
+          legend.margin = margin(legend_margin_val, legend_margin_val, legend_margin_val, legend_margin_val, "cm"),  # v180
           # v125: For top/bottom, arrange legends horizontally but stack items vertically
           legend.box = if (is_horizontal_position) "horizontal" else "vertical",
           legend.direction = if (is_horizontal_position) "vertical" else "vertical"
@@ -14302,45 +14544,46 @@ server <- function(input, output, session) {
         # Apply the legend theme
         result <- result + legend_theme
 
-        cat(file=stderr(), paste0("  v179: Legend box=", if (is_horizontal_position) "horizontal" else "vertical",
+        cat(file=stderr(), paste0("  v180: Legend box=", if (is_horizontal_position) "horizontal" else "vertical",
                                    ", direction=vertical\n"))
-        cat(file=stderr(), paste0("  v179: H spacing=", h_spacing, ", V spacing=", v_spacing,
-                                   ", Key spacing=", key_spacing, "\n"))
+        cat(file=stderr(), paste0("  v180: Key dims: ", key_width, "x", key_height, " lines\n"))
+        cat(file=stderr(), paste0("  v180: Spacings - H:", h_spacing, ", V:", v_spacing,
+                                   ", Title-key:", title_key_spacing, ", Key:", key_spacing, "\n"))
+        cat(file=stderr(), paste0("  v180: Box bg:", box_bg, ", Margin:", legend_margin_val, "\n"))
 
-        # v179: Apply visibility controls using guides()
-        # Also apply reverse order if requested
+        # v180: Apply visibility controls using guides()
+        # Also apply reverse order and byrow if requested
         guides_list <- list()
         reverse_order <- isTRUE(legend_settings$reverse_order)
+        byrow <- isTRUE(legend_settings$byrow)
 
         # Hide specific legends based on visibility settings
+        # v180: Include byrow parameter in guide_legend calls
         if (!isTRUE(legend_settings$show_classification)) {
           guides_list$colour <- "none"
-        } else if (reverse_order) {
-          guides_list$colour <- guide_legend(reverse = TRUE)
+        } else {
+          guides_list$colour <- guide_legend(reverse = reverse_order, byrow = byrow)
         }
 
-        # v179: P value uses size aesthetic
+        # v180: P value uses size aesthetic
         if (!isTRUE(legend_settings$show_pvalue)) {
           guides_list$size <- "none"
-        } else if (reverse_order) {
-          guides_list$size <- guide_legend(reverse = TRUE)
+        } else {
+          guides_list$size <- guide_legend(reverse = reverse_order, byrow = byrow)
         }
 
-        # v179: Heatmaps use fill aesthetic
-        # Note: With ggnewscale, each heatmap has its own fill scale
-        # For simplicity, we hide all fill legends if either heatmap is hidden
-        # (More granular control would require tracking individual scale names)
-        if (!isTRUE(legend_settings$show_heatmap1) && !isTRUE(legend_settings$show_heatmap2)) {
+        # v180: Heatmaps use fill aesthetic (single checkbox controls all)
+        if (!isTRUE(legend_settings$show_heatmap)) {
           guides_list$fill <- "none"
-        } else if (reverse_order) {
-          guides_list$fill <- guide_legend(reverse = TRUE)
+        } else {
+          guides_list$fill <- guide_legend(reverse = reverse_order, byrow = byrow)
         }
 
         if (length(guides_list) > 0) {
           result <- result + do.call(guides, guides_list)
         }
 
-        cat(file=stderr(), paste0("  v179: Reverse order=", reverse_order, "\n"))
+        cat(file=stderr(), paste0("  v180: Reverse=", reverse_order, ", Byrow=", byrow, "\n"))
         cat(file=stderr(), paste0("  Legend settings applied successfully\n"))
       }
 
@@ -14369,6 +14612,9 @@ server <- function(input, output, session) {
         attr(result, "tree_stretch_x") <- tree_stretch_x
         attr(result, "tree_stretch_y") <- tree_stretch_y
         attr(result, "background_color") <- bg_color
+        # v180: Store keep_proportions setting for plot proportions preservation
+        keep_proportions <- if (!is.null(input$keep_proportions)) input$keep_proportions else FALSE
+        attr(result, "keep_proportions") <- keep_proportions
 
         if (plot_off_x != 0 || plot_off_y != 0 || plot_scale != 100) {
           cat(file=stderr(), paste0("\n=== v146: STORING PLOT POSITION & SCALE ===\n"))
@@ -14637,12 +14883,37 @@ server <- function(input, output, session) {
         if (is.null(tree_stretch_x)) tree_stretch_x <- 1
         if (is.null(tree_stretch_y)) tree_stretch_y <- 1
 
+        # v180: Get keep_proportions setting
+        keep_proportions <- attr(result, "keep_proportions")
+        if (is.null(keep_proportions)) keep_proportions <- FALSE
+
+        # v180: Calculate proportions adjustment when switching orientation
+        # Default page is landscape (width > height, aspect ratio ~1.414)
+        current_aspect <- preview_width / preview_height
+        landscape_aspect <- 29.7 / 21  # A4 landscape ratio (~1.414)
+
+        # v180: Check if we need proportions adjustment (portrait page with proportions preserved)
+        proportion_adj_w <- 1
+        proportion_adj_h <- 1
+        if (isTRUE(keep_proportions) && current_aspect < 1) {
+          # Portrait page - need to scale plot to fit landscape-shaped plot in portrait page
+          # The plot should maintain landscape proportions (wider than tall)
+          # Scale down to fit: width fits fully, height is proportionally smaller
+          proportion_adj_w <- 1  # Plot spans full width
+          proportion_adj_h <- current_aspect / landscape_aspect  # Scale height to maintain aspect ratio
+          cat(file=stderr(), paste0("\n=== v180: PRESERVING PLOT PROPORTIONS ===\n"))
+          cat(file=stderr(), paste0("  Current aspect: ", round(current_aspect, 3), " (portrait)\n"))
+          cat(file=stderr(), paste0("  Landscape aspect: ", round(landscape_aspect, 3), "\n"))
+          cat(file=stderr(), paste0("  Proportion adjustment: w=", round(proportion_adj_w, 3), ", h=", round(proportion_adj_h, 3), "\n"))
+        }
+
         # Check if we need to apply any transformation
         needs_transform <- (!is.null(offset_x) && !is.null(offset_y) && (offset_x != 0 || offset_y != 0)) ||
-                          scale_pct != 100 || tree_stretch_x != 1 || tree_stretch_y != 1
+                          scale_pct != 100 || tree_stretch_x != 1 || tree_stretch_y != 1 ||
+                          proportion_adj_w != 1 || proportion_adj_h != 1
 
         if (needs_transform) {
-          cat(file=stderr(), paste0("\n=== v179: APPLYING PLOT POSITION, SCALE AND STRETCH WITH COWPLOT ===\n"))
+          cat(file=stderr(), paste0("\n=== v180: APPLYING PLOT POSITION, SCALE, STRETCH AND PROPORTIONS WITH COWPLOT ===\n"))
 
           # Convert slider values to position offsets
           # X slider: -5 to 5 -> position offset of -0.25 to 0.25 (50% of canvas width total)
@@ -14658,8 +14929,9 @@ server <- function(input, output, session) {
 
           # v179: Apply tree stretch to width and height separately
           # This allows stretching the tree longer (x) or wider (y) independently
-          final_width <- scale_factor * tree_stretch_x
-          final_height <- scale_factor * tree_stretch_y
+          # v180: Also apply proportions adjustment
+          final_width <- scale_factor * tree_stretch_x * proportion_adj_w
+          final_height <- scale_factor * tree_stretch_y * proportion_adj_h
 
           # Calculate position to center the scaled plot
           # When scale_factor = 1, x = 0 + x_offset, y = 0 + y_offset (top-left)
@@ -14670,18 +14942,19 @@ server <- function(input, output, session) {
 
           cat(file=stderr(), paste0("  Scale: ", scale_pct, "% (factor: ", round(scale_factor, 3), ")\n"))
           cat(file=stderr(), paste0("  v179: Tree stretch X: ", tree_stretch_x, "x, Y: ", tree_stretch_y, "x\n"))
-          cat(file=stderr(), paste0("  v179: Final dimensions: width=", round(final_width, 3), ", height=", round(final_height, 3), "\n"))
+          cat(file=stderr(), paste0("  v180: Proportion adj W: ", round(proportion_adj_w, 3), ", H: ", round(proportion_adj_h, 3), "\n"))
+          cat(file=stderr(), paste0("  v180: Final dimensions: width=", round(final_width, 3), ", height=", round(final_height, 3), "\n"))
           cat(file=stderr(), paste0("  X position offset: ", round(x_pos_offset, 3), "\n"))
           cat(file=stderr(), paste0("  Y position offset: ", round(y_pos_offset, 3), "\n"))
           cat(file=stderr(), paste0("  Final position: (", round(center_x, 3), ", ", round(center_y, 3), ")\n"))
 
           # Use ggdraw to create a canvas and draw_plot to position and scale the plot
-          # v179: Now uses different width and height to allow tree stretching
+          # v180: Now includes proportions preservation for orientation changes
           plot_to_save <- cowplot::ggdraw() +
             cowplot::draw_plot(result, x = center_x, y = center_y,
                               width = final_width, height = final_height)
 
-          cat(file=stderr(), paste0("  v179: Plot wrapped in cowplot canvas with scale, stretch and offset positioning\n"))
+          cat(file=stderr(), paste0("  v180: Plot wrapped in cowplot canvas with scale, stretch, proportions and offset positioning\n"))
         }
 
         # v145: Apply custom images as TRUE overlays using cowplot::draw_image
@@ -15359,7 +15632,7 @@ server <- function(input, output, session) {
         dpi_val <- if (input$output_format %in% c("pdf", "svg")) 300 else 300
 
         # v146: Apply cowplot positioning AND scale for downloads too
-        # v179: Also apply tree stretch
+        # v180: Also apply tree stretch and proportions preservation
         plot_to_download <- values$current_plot
         offset_x <- attr(values$current_plot, "plot_offset_x")
         offset_y <- attr(values$current_plot, "plot_offset_y")
@@ -15370,18 +15643,33 @@ server <- function(input, output, session) {
         tree_stretch_y <- attr(values$current_plot, "tree_stretch_y")
         if (is.null(tree_stretch_x)) tree_stretch_x <- 1
         if (is.null(tree_stretch_y)) tree_stretch_y <- 1
+        # v180: Get keep_proportions setting
+        keep_proportions <- attr(values$current_plot, "keep_proportions")
+        if (is.null(keep_proportions)) keep_proportions <- FALSE
+
+        # v180: Calculate proportions adjustment for portrait pages
+        current_aspect <- width_in / height_in
+        landscape_aspect <- 29.7 / 21
+        proportion_adj_w <- 1
+        proportion_adj_h <- 1
+        if (isTRUE(keep_proportions) && current_aspect < 1) {
+          proportion_adj_w <- 1
+          proportion_adj_h <- current_aspect / landscape_aspect
+          cat(file=stderr(), paste0("v180: Download - preserving proportions, adj_h=", round(proportion_adj_h, 3), "\n"))
+        }
 
         needs_transform <- (!is.null(offset_x) && !is.null(offset_y) && (offset_x != 0 || offset_y != 0)) ||
-                          scale_pct != 100 || tree_stretch_x != 1 || tree_stretch_y != 1
+                          scale_pct != 100 || tree_stretch_x != 1 || tree_stretch_y != 1 ||
+                          proportion_adj_w != 1 || proportion_adj_h != 1
 
         if (needs_transform) {
           x_pos_offset <- if (!is.null(offset_x)) offset_x * 0.05 else 0
           y_pos_offset <- if (!is.null(offset_y)) offset_y * 0.05 else 0
           scale_factor <- scale_pct / 100
 
-          # v179: Apply tree stretch to width and height separately
-          final_width <- scale_factor * tree_stretch_x
-          final_height <- scale_factor * tree_stretch_y
+          # v180: Apply tree stretch and proportions preservation
+          final_width <- scale_factor * tree_stretch_x * proportion_adj_w
+          final_height <- scale_factor * tree_stretch_y * proportion_adj_h
 
           # Calculate position to center the scaled plot
           center_x <- (1 - final_width) / 2 + x_pos_offset
@@ -15390,7 +15678,7 @@ server <- function(input, output, session) {
           plot_to_download <- cowplot::ggdraw() +
             cowplot::draw_plot(values$current_plot, x = center_x, y = center_y,
                               width = final_width, height = final_height)
-          cat(file=stderr(), paste0("v179: Download plot with scale: ", scale_pct, "%, stretch: x=", tree_stretch_x, ", y=", tree_stretch_y, "\n"))
+          cat(file=stderr(), paste0("v180: Download plot with scale: ", scale_pct, "%, stretch: x=", tree_stretch_x, ", y=", tree_stretch_y, ", proportions adj: ", round(proportion_adj_h, 3), "\n"))
         }
 
         tryCatch({
