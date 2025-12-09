@@ -51,8 +51,9 @@ options(shiny.maxRequestSize = 100*1024^2)
 # v170: CRITICAL FIX - Custom key_glyph to prevent ALL legend bleeding
 # v171: Implement actual HIGHLIGHT and BOOTSTRAP legends using native ggplot
 #       BUG: scale_fill_manual and scale_size_manual REPLACED existing heatmap/P value scales
-# v172: CRITICAL FIX - Use ggnewscale::new_scale_fill() and new_scale("size")
-#       to create NEW scales without replacing existing heatmap fill and P value size scales
+# v172: Tried ggnewscale::new_scale_fill() and new_scale("size") - still broke P value legend
+# v173: SHAPE-ONLY approach - use ONLY shape aesthetic for both legends
+#       This avoids ALL scale conflicts: fill (heatmaps), size (P value), colour (classification)
 
 ###### part 1 a:
 # ============================================================================
@@ -1807,15 +1808,16 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
                                     show_highlight_legend = TRUE, show_bootstrap_legend = TRUE,
                                     high_alpha_list = NULL) {
 
-  # v172: OPTION C - NATIVE GGPLOT LEGENDS (Highlight + Bootstrap)
-  # Use ggplot's own legend system by adding invisible layers with aesthetics
-  # This approach uses ggplot's native rendering, avoiding all gtable manipulation
-  # v172: CRITICAL FIX - Use ggnewscale to create NEW fill/size scales
-  #       so we don't REPLACE existing heatmap fill and P value size scales
+  # v173: OPTION C - NATIVE GGPLOT LEGENDS (SHAPE-ONLY approach)
+  # Use ONLY shape aesthetic to avoid conflicts with existing scales:
+  # - fill: used by heatmaps
+  # - size: used by P value legend
+  # - colour: used by classification
+  # By using only shape (not used elsewhere), we avoid ALL scale conflicts
 
-  cat(file=stderr(), paste0("\n=== v172: NATIVE GGPLOT LEGENDS - HIGHLIGHT & BOOTSTRAP ===\n"))
-  cat(file=stderr(), paste0("  Using native ggplot legend system (no gtable manipulation)\n"))
-  cat(file=stderr(), paste0("  v172: Using ggnewscale to avoid replacing existing scales\n"))
+  cat(file=stderr(), paste0("\n=== v173: NATIVE GGPLOT LEGENDS - SHAPE-ONLY APPROACH ===\n"))
+  cat(file=stderr(), paste0("  Using ONLY shape aesthetic to avoid scale conflicts\n"))
+  cat(file=stderr(), paste0("  This preserves: heatmap fill, P value size, classification colour\n"))
 
   # Initialize high_alpha_list if NULL
   if (is.null(high_alpha_list) || length(high_alpha_list) == 0) {
@@ -1828,61 +1830,12 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
   boot_title_fontsize <- if (!is.null(bootstrap_title_size_mult)) bootstrap_title_size_mult else size_font_legend_title
   boot_text_fontsize <- if (!is.null(bootstrap_text_size_mult)) bootstrap_text_size_mult else size_font_legend_text
 
-  cat(file=stderr(), paste0("  v172: Highlight title fontsize: ", title_fontsize, "\n"))
-  cat(file=stderr(), paste0("  v172: Bootstrap title fontsize: ", boot_title_fontsize, "\n"))
+  cat(file=stderr(), paste0("  v173: Highlight title fontsize: ", title_fontsize, "\n"))
+  cat(file=stderr(), paste0("  v173: Bootstrap title fontsize: ", boot_title_fontsize, "\n"))
 
   # ============================================
-  # v172: Custom key_glyph for ELLIPSE (Highlight legend)
-  # Draws an ellipse shape in the legend key
-  # ============================================
-  draw_key_ellipse <- function(data, params, size) {
-    # Check if this is for our highlight legend (has highlight_item aesthetic)
-    if (is.null(data$highlight_item) || is.na(data$highlight_item)) {
-      return(grid::nullGrob())
-    }
-    # Draw an ellipse
-    theta <- seq(0, 2*pi, length.out = 50)
-    ellipse_a <- 0.4  # horizontal radius in npc
-    ellipse_b <- 0.25  # vertical radius in npc
-    grid::polygonGrob(
-      x = grid::unit(0.5 + ellipse_a * cos(theta), "npc"),
-      y = grid::unit(0.5 + ellipse_b * sin(theta), "npc"),
-      gp = grid::gpar(
-        fill = data$fill %||% "grey50",
-        col = NA,
-        alpha = data$alpha %||% 0.5
-      )
-    )
-  }
-
-  # ============================================
-  # v172: Custom key_glyph for TRIANGLE (Bootstrap legend)
-  # Draws a triangle shape in the legend key
-  # ============================================
-  draw_key_triangle <- function(data, params, size) {
-    # Check if this is for our bootstrap legend (has bootstrap_item aesthetic)
-    if (is.null(data$bootstrap_item) || is.na(data$bootstrap_item)) {
-      return(grid::nullGrob())
-    }
-    # Triangle size varies based on the item
-    tri_scale <- data$size %||% 3
-    tri_scale <- tri_scale / 5  # Normalize
-    # Draw an upward-pointing triangle
-    grid::polygonGrob(
-      x = grid::unit(c(0.5 - 0.3*tri_scale, 0.5 + 0.3*tri_scale, 0.5), "npc"),
-      y = grid::unit(c(0.3, 0.3, 0.7), "npc"),
-      gp = grid::gpar(
-        fill = "grey36",
-        col = "grey20",
-        alpha = 0.7
-      )
-    )
-  }
-
-  # ============================================
-  # v172: HIGHLIGHT LEGEND
-  # CRITICAL: Use new_scale_fill() to create a NEW fill scale
-  # This prevents replacing the heatmap's fill scale
+  # v173: HIGHLIGHT LEGEND using shape aesthetic
+  # Custom key_glyph draws ellipses with correct colors/transparency
   # ============================================
   if (FLAG_BULK_DISPLAY == TRUE && show_highlight_legend == TRUE && how_many_hi > 0 &&
       !is.null(high_label_list) && length(high_label_list) > 0) {
@@ -1894,23 +1847,21 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
       "Highlight"
     }
 
-    cat(file=stderr(), paste0("\n  v172: Creating HIGHLIGHT legend\n"))
+    cat(file=stderr(), paste0("\n  v173: Creating HIGHLIGHT legend (shape-only)\n"))
     cat(file=stderr(), paste0("    Title: '", highlight_title, "'\n"))
     cat(file=stderr(), paste0("    Items: ", length(high_label_list), "\n"))
 
-    # Create data frame for highlight legend
+    # Create data frame for highlight legend with color/alpha embedded
     highlight_legend_data <- data.frame(
       x = rep(NA_real_, length(high_label_list)),
       y = rep(NA_real_, length(high_label_list)),
-      highlight_item = unlist(high_label_list),
-      fill_color = unlist(high_color_list),
-      alpha_val = unlist(high_alpha_list),
+      highlight_shape = unlist(high_label_list),
       stringsAsFactors = FALSE
     )
 
-    # Create named vectors for scale_fill_manual and scale_alpha_manual
-    fill_values <- setNames(unlist(high_color_list), unlist(high_label_list))
-    alpha_values <- setNames(unlist(high_alpha_list), unlist(high_label_list))
+    # Store colors and alphas for use in key_glyph
+    highlight_colors <- setNames(unlist(high_color_list), unlist(high_label_list))
+    highlight_alphas <- setNames(unlist(high_alpha_list), unlist(high_label_list))
 
     for (i in seq_along(high_label_list)) {
       cat(file=stderr(), paste0("    Item ", i, ": '", high_label_list[[i]],
@@ -1918,43 +1869,52 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
                                  " alpha=", high_alpha_list[[i]], "\n"))
     }
 
-    # v172: CRITICAL - Add new_scale_fill() BEFORE our legend layer
-    # This creates a NEW fill scale that doesn't replace the heatmap's fill scale
-    cat(file=stderr(), paste0("  v172: Adding new_scale_fill() to preserve heatmap fill scale\n"))
-    p <- p + ggnewscale::new_scale_fill()
+    # v173: Custom key_glyph for ELLIPSE - draws ellipse with stored color/alpha
+    draw_key_highlight_ellipse <- function(data, params, size) {
+      # Get the label from shape aesthetic
+      label <- as.character(data$shape)
+      if (is.null(label) || is.na(label) || label == "19") {
+        return(grid::nullGrob())
+      }
+      # Look up color and alpha for this label
+      fill_color <- highlight_colors[label]
+      fill_alpha <- highlight_alphas[label]
+      if (is.na(fill_color)) fill_color <- "grey50"
+      if (is.na(fill_alpha)) fill_alpha <- 0.5
+      # Draw an ellipse
+      theta <- seq(0, 2*pi, length.out = 50)
+      ellipse_a <- 0.4
+      ellipse_b <- 0.25
+      grid::polygonGrob(
+        x = grid::unit(0.5 + ellipse_a * cos(theta), "npc"),
+        y = grid::unit(0.5 + ellipse_b * sin(theta), "npc"),
+        gp = grid::gpar(fill = fill_color, col = NA, alpha = fill_alpha)
+      )
+    }
 
-    # Add highlight legend using geom_point with custom key_glyph
+    # Add highlight legend using SHAPE aesthetic only
     p <- p +
       geom_point(
         data = highlight_legend_data,
-        aes(x = x, y = y,
-            highlight_item = highlight_item,
-            fill = highlight_item,
-            alpha = highlight_item),
+        aes(x = x, y = y, shape = highlight_shape),
         size = 5,
         na.rm = TRUE,
         inherit.aes = FALSE,
         show.legend = TRUE,
-        key_glyph = draw_key_ellipse
+        key_glyph = draw_key_highlight_ellipse
       ) +
-      scale_fill_manual(
+      scale_shape_manual(
         name = highlight_title,
-        values = fill_values,
-        guide = guide_legend(order = 97)
-      ) +
-      scale_alpha_manual(
-        name = highlight_title,
-        values = alpha_values,
+        values = setNames(rep(15, length(high_label_list)), unlist(high_label_list)),
         guide = guide_legend(order = 97)
       )
 
-    cat(file=stderr(), paste0("  v172: Highlight legend added with ", length(high_label_list), " items\n"))
+    cat(file=stderr(), paste0("  v173: Highlight legend added (shape-only, no fill/alpha scale)\n"))
   }
 
   # ============================================
-  # v172: BOOTSTRAP LEGEND (triangles format)
-  # CRITICAL: Use new_scale("size") to create a NEW size scale
-  # This prevents replacing the P value's size scale
+  # v173: BOOTSTRAP LEGEND using shape aesthetic
+  # Custom key_glyph draws triangles
   # ============================================
   if (show_boot_flag == TRUE && show_bootstrap_legend == TRUE) {
     # Check if bootstrap is in triangles format
@@ -1964,54 +1924,72 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
       "triangles"  # default
     }
 
-    cat(file=stderr(), paste0("\n  v172: Bootstrap format: '", boot_format, "'\n"))
+    cat(file=stderr(), paste0("\n  v173: Bootstrap format: '", boot_format, "'\n"))
 
     if (boot_format == "triangles") {
-      cat(file=stderr(), paste0("  v172: Creating BOOTSTRAP legend (triangles)\n"))
+      cat(file=stderr(), paste0("  v173: Creating BOOTSTRAP legend (shape-only)\n"))
 
       # Bootstrap legend items
       bootstrap_labels <- c(">90%", ">80%", ">70%")
-      bootstrap_sizes <- c(5, 4, 3)  # Relative sizes for triangles
+      bootstrap_sizes <- c(1.0, 0.8, 0.6)  # Scale factors for triangle size
 
       bootstrap_legend_data <- data.frame(
         x = rep(NA_real_, 3),
         y = rep(NA_real_, 3),
-        bootstrap_item = factor(bootstrap_labels, levels = bootstrap_labels),
-        tri_size = bootstrap_sizes,
+        bootstrap_shape = factor(bootstrap_labels, levels = bootstrap_labels),
         stringsAsFactors = FALSE
       )
 
-      # v172: CRITICAL - Add new_scale("size") BEFORE our legend layer
-      # This creates a NEW size scale that doesn't replace the P value's size scale
-      cat(file=stderr(), paste0("  v172: Adding new_scale('size') to preserve P value size scale\n"))
-      p <- p + ggnewscale::new_scale("size")
+      # Store sizes for use in key_glyph
+      bootstrap_size_map <- setNames(bootstrap_sizes, bootstrap_labels)
 
-      # Add bootstrap legend
+      # v173: Custom key_glyph for TRIANGLE - draws triangle with varying size
+      draw_key_bootstrap_triangle <- function(data, params, size) {
+        # Get the label from shape aesthetic
+        label <- as.character(data$shape)
+        if (is.null(label) || is.na(label) || label == "19") {
+          return(grid::nullGrob())
+        }
+        # Look up size for this label
+        tri_scale <- bootstrap_size_map[label]
+        if (is.na(tri_scale)) tri_scale <- 0.8
+        # Draw an upward-pointing triangle
+        grid::polygonGrob(
+          x = grid::unit(c(0.5 - 0.35*tri_scale, 0.5 + 0.35*tri_scale, 0.5), "npc"),
+          y = grid::unit(c(0.25, 0.25, 0.75), "npc"),
+          gp = grid::gpar(fill = "grey36", col = "grey20", alpha = 0.7)
+        )
+      }
+
+      # Add bootstrap legend using SHAPE aesthetic only
+      # Use new_scale("shape") to create a separate shape scale for bootstrap
+      p <- p + ggnewscale::new_scale("shape")
+
       p <- p +
         geom_point(
           data = bootstrap_legend_data,
-          aes(x = x, y = y,
-              bootstrap_item = bootstrap_item,
-              size = bootstrap_item),
+          aes(x = x, y = y, shape = bootstrap_shape),
+          size = 5,
           color = "grey36",
           na.rm = TRUE,
           inherit.aes = FALSE,
           show.legend = TRUE,
-          key_glyph = draw_key_triangle
+          key_glyph = draw_key_bootstrap_triangle
         ) +
-        scale_size_manual(
+        scale_shape_manual(
           name = "Bootstrap",
-          values = setNames(bootstrap_sizes, bootstrap_labels),
+          values = setNames(c(17, 17, 17), bootstrap_labels),  # triangles (not actually drawn)
           guide = guide_legend(order = 98)
         )
 
-      cat(file=stderr(), paste0("  v172: Bootstrap legend added with 3 triangle items\n"))
+      cat(file=stderr(), paste0("  v173: Bootstrap legend added (shape-only, no size scale)\n"))
     } else {
-      cat(file=stderr(), paste0("  v172: Bootstrap format '", boot_format, "' - no legend needed\n"))
+      cat(file=stderr(), paste0("  v173: Bootstrap format '", boot_format, "' - no legend needed\n"))
     }
   }
 
-  cat(file=stderr(), paste0("\n  v172: Highlight and Bootstrap legends complete\n"))
+  cat(file=stderr(), paste0("\n  v173: Highlight and Bootstrap legends complete (shape-only)\n"))
+  cat(file=stderr(), paste0("  v173: Existing scales preserved: fill (heatmaps), size (P value), colour (classification)\n"))
   cat(file=stderr(), paste0("=================================================\n"))
 
   return(p)
@@ -7187,18 +7165,18 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v172 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v173 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
-                            "New in v172:",
+                            "New in v173:",
                             tags$ul(
-                              tags$li("CRITICAL FIX: Use ggnewscale to create NEW scales"),
-                              tags$li("new_scale_fill() preserves heatmap fill scale"),
-                              tags$li("new_scale('size') preserves P value size scale")
+                              tags$li("SHAPE-ONLY approach - no fill/size scale conflicts"),
+                              tags$li("Preserves: heatmap fill, P value size, classification colour"),
+                              tags$li("Custom key_glyph draws ellipses/triangles from shape data")
                             ),
                             "Previous:",
                             tags$ul(
-                              tags$li("v171: Legends worked but REPLACED existing scales (broke heatmaps)"),
-                              tags$li("v170: Proved custom key_glyph prevents legend bleeding")
+                              tags$li("v172: ggnewscale still broke P value legend"),
+                              tags$li("v171: fill/size scales replaced existing ones")
                             )
                      )
             )
