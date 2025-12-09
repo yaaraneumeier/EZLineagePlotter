@@ -50,8 +50,9 @@ options(shiny.maxRequestSize = 100*1024^2)
 # v169: Added SIZE and ALPHA scale overrides to guides() - still only fixed LAST heatmap
 # v170: CRITICAL FIX - Custom key_glyph to prevent ALL legend bleeding
 # v171: Implement actual HIGHLIGHT and BOOTSTRAP legends using native ggplot
-#       Highlight: ellipses with colors/transparency from highlight settings
-#       Bootstrap: triangles with >90%, >80%, >70% labels (for triangles format)
+#       BUG: scale_fill_manual and scale_size_manual REPLACED existing heatmap/P value scales
+# v172: CRITICAL FIX - Use ggnewscale::new_scale_fill() and new_scale("size")
+#       to create NEW scales without replacing existing heatmap fill and P value size scales
 
 ###### part 1 a:
 # ============================================================================
@@ -1806,15 +1807,15 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
                                     show_highlight_legend = TRUE, show_bootstrap_legend = TRUE,
                                     high_alpha_list = NULL) {
 
-  # v171: OPTION C - NATIVE GGPLOT LEGENDS (Highlight + Bootstrap)
+  # v172: OPTION C - NATIVE GGPLOT LEGENDS (Highlight + Bootstrap)
   # Use ggplot's own legend system by adding invisible layers with aesthetics
   # This approach uses ggplot's native rendering, avoiding all gtable manipulation
-  # v171: Implement actual Highlight and Bootstrap legends (not test legends)
-  #       Highlight: ellipses with colors/transparency matching tree
-  #       Bootstrap: triangles with >90%, >80%, >70% labels
+  # v172: CRITICAL FIX - Use ggnewscale to create NEW fill/size scales
+  #       so we don't REPLACE existing heatmap fill and P value size scales
 
-  cat(file=stderr(), paste0("\n=== v171: NATIVE GGPLOT LEGENDS - HIGHLIGHT & BOOTSTRAP ===\n"))
+  cat(file=stderr(), paste0("\n=== v172: NATIVE GGPLOT LEGENDS - HIGHLIGHT & BOOTSTRAP ===\n"))
   cat(file=stderr(), paste0("  Using native ggplot legend system (no gtable manipulation)\n"))
+  cat(file=stderr(), paste0("  v172: Using ggnewscale to avoid replacing existing scales\n"))
 
   # Initialize high_alpha_list if NULL
   if (is.null(high_alpha_list) || length(high_alpha_list) == 0) {
@@ -1827,11 +1828,11 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
   boot_title_fontsize <- if (!is.null(bootstrap_title_size_mult)) bootstrap_title_size_mult else size_font_legend_title
   boot_text_fontsize <- if (!is.null(bootstrap_text_size_mult)) bootstrap_text_size_mult else size_font_legend_text
 
-  cat(file=stderr(), paste0("  v171: Highlight title fontsize: ", title_fontsize, "\n"))
-  cat(file=stderr(), paste0("  v171: Bootstrap title fontsize: ", boot_title_fontsize, "\n"))
+  cat(file=stderr(), paste0("  v172: Highlight title fontsize: ", title_fontsize, "\n"))
+  cat(file=stderr(), paste0("  v172: Bootstrap title fontsize: ", boot_title_fontsize, "\n"))
 
   # ============================================
-  # v171: Custom key_glyph for ELLIPSE (Highlight legend)
+  # v172: Custom key_glyph for ELLIPSE (Highlight legend)
   # Draws an ellipse shape in the legend key
   # ============================================
   draw_key_ellipse <- function(data, params, size) {
@@ -1855,7 +1856,7 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
   }
 
   # ============================================
-  # v171: Custom key_glyph for TRIANGLE (Bootstrap legend)
+  # v172: Custom key_glyph for TRIANGLE (Bootstrap legend)
   # Draws a triangle shape in the legend key
   # ============================================
   draw_key_triangle <- function(data, params, size) {
@@ -1879,7 +1880,9 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
   }
 
   # ============================================
-  # v171: HIGHLIGHT LEGEND
+  # v172: HIGHLIGHT LEGEND
+  # CRITICAL: Use new_scale_fill() to create a NEW fill scale
+  # This prevents replacing the heatmap's fill scale
   # ============================================
   if (FLAG_BULK_DISPLAY == TRUE && show_highlight_legend == TRUE && how_many_hi > 0 &&
       !is.null(high_label_list) && length(high_label_list) > 0) {
@@ -1891,7 +1894,7 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
       "Highlight"
     }
 
-    cat(file=stderr(), paste0("\n  v171: Creating HIGHLIGHT legend\n"))
+    cat(file=stderr(), paste0("\n  v172: Creating HIGHLIGHT legend\n"))
     cat(file=stderr(), paste0("    Title: '", highlight_title, "'\n"))
     cat(file=stderr(), paste0("    Items: ", length(high_label_list), "\n"))
 
@@ -1915,6 +1918,11 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
                                  " alpha=", high_alpha_list[[i]], "\n"))
     }
 
+    # v172: CRITICAL - Add new_scale_fill() BEFORE our legend layer
+    # This creates a NEW fill scale that doesn't replace the heatmap's fill scale
+    cat(file=stderr(), paste0("  v172: Adding new_scale_fill() to preserve heatmap fill scale\n"))
+    p <- p + ggnewscale::new_scale_fill()
+
     # Add highlight legend using geom_point with custom key_glyph
     p <- p +
       geom_point(
@@ -1932,8 +1940,7 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
       scale_fill_manual(
         name = highlight_title,
         values = fill_values,
-        guide = guide_legend(order = 97),
-        aesthetics = "fill"
+        guide = guide_legend(order = 97)
       ) +
       scale_alpha_manual(
         name = highlight_title,
@@ -1941,11 +1948,13 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
         guide = guide_legend(order = 97)
       )
 
-    cat(file=stderr(), paste0("  v171: Highlight legend added with ", length(high_label_list), " items\n"))
+    cat(file=stderr(), paste0("  v172: Highlight legend added with ", length(high_label_list), " items\n"))
   }
 
   # ============================================
-  # v171: BOOTSTRAP LEGEND (triangles format)
+  # v172: BOOTSTRAP LEGEND (triangles format)
+  # CRITICAL: Use new_scale("size") to create a NEW size scale
+  # This prevents replacing the P value's size scale
   # ============================================
   if (show_boot_flag == TRUE && show_bootstrap_legend == TRUE) {
     # Check if bootstrap is in triangles format
@@ -1955,10 +1964,10 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
       "triangles"  # default
     }
 
-    cat(file=stderr(), paste0("\n  v171: Bootstrap format: '", boot_format, "'\n"))
+    cat(file=stderr(), paste0("\n  v172: Bootstrap format: '", boot_format, "'\n"))
 
     if (boot_format == "triangles") {
-      cat(file=stderr(), paste0("  v171: Creating BOOTSTRAP legend (triangles)\n"))
+      cat(file=stderr(), paste0("  v172: Creating BOOTSTRAP legend (triangles)\n"))
 
       # Bootstrap legend items
       bootstrap_labels <- c(">90%", ">80%", ">70%")
@@ -1971,6 +1980,11 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
         tri_size = bootstrap_sizes,
         stringsAsFactors = FALSE
       )
+
+      # v172: CRITICAL - Add new_scale("size") BEFORE our legend layer
+      # This creates a NEW size scale that doesn't replace the P value's size scale
+      cat(file=stderr(), paste0("  v172: Adding new_scale('size') to preserve P value size scale\n"))
+      p <- p + ggnewscale::new_scale("size")
 
       # Add bootstrap legend
       p <- p +
@@ -1991,25 +2005,13 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
           guide = guide_legend(order = 98)
         )
 
-      cat(file=stderr(), paste0("  v171: Bootstrap legend added with 3 triangle items\n"))
+      cat(file=stderr(), paste0("  v172: Bootstrap legend added with 3 triangle items\n"))
     } else {
-      cat(file=stderr(), paste0("  v171: Bootstrap format '", boot_format, "' - no legend needed\n"))
+      cat(file=stderr(), paste0("  v172: Bootstrap format '", boot_format, "' - no legend needed\n"))
     }
   }
 
-  # ============================================
-  # v171: guides() overrides to prevent bleeding into existing legends
-  # ============================================
-  p <- p +
-    guides(
-      # Override existing fill legends to not show our custom aesthetics
-      fill = guide_legend(override.aes = list(alpha = 1)),
-      colour = guide_legend(override.aes = list(shape = NA)),
-      color = guide_legend(override.aes = list(shape = NA)),
-      linetype = guide_legend(override.aes = list(shape = NA))
-    )
-
-  cat(file=stderr(), paste0("\n  v171: Highlight and Bootstrap legends complete\n"))
+  cat(file=stderr(), paste0("\n  v172: Highlight and Bootstrap legends complete\n"))
   cat(file=stderr(), paste0("=================================================\n"))
 
   return(p)
@@ -7185,18 +7187,18 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v171 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v172 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
-                            "New in v171:",
+                            "New in v172:",
                             tags$ul(
-                              tags$li("Actual HIGHLIGHT legend with ellipses (color/transparency from settings)"),
-                              tags$li("Actual BOOTSTRAP legend with triangles (>90%, >80%, >70%)"),
-                              tags$li("Custom key_glyph for ellipse and triangle shapes")
+                              tags$li("CRITICAL FIX: Use ggnewscale to create NEW scales"),
+                              tags$li("new_scale_fill() preserves heatmap fill scale"),
+                              tags$li("new_scale('size') preserves P value size scale")
                             ),
                             "Previous:",
                             tags$ul(
-                              tags$li("v170: Proved custom key_glyph prevents legend bleeding"),
-                              tags$li("v169: guides() only fixed LAST heatmap scale")
+                              tags$li("v171: Legends worked but REPLACED existing scales (broke heatmaps)"),
+                              tags$li("v170: Proved custom key_glyph prevents legend bleeding")
                             )
                      )
             )
