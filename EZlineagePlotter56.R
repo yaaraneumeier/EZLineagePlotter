@@ -47,11 +47,11 @@ options(shiny.maxRequestSize = 100*1024^2)
 #       Reduced bootstrap title size (0.15 multiplier, capped at 3, min 2)
 # v167: OPTION C TRIAL - Native ggplot legends approach
 # v168: Fixed legend bleeding with show.legend = c(shape = TRUE) and guides() override
-#       Partial success: Heatmap 2 & Classification fixed, Heatmap 1 & P value still affected
 # v169: Added SIZE and ALPHA scale overrides to guides() - still only fixed LAST heatmap
 # v170: CRITICAL FIX - Custom key_glyph to prevent ALL legend bleeding
-#       The guides() override only affects the LAST fill scale after new_scale_fill()
-#       Custom key_glyph returns blank grob for non-shape legends, preventing ALL bleeding
+# v171: Implement actual HIGHLIGHT and BOOTSTRAP legends using native ggplot
+#       Highlight: ellipses with colors/transparency from highlight settings
+#       Bootstrap: triangles with >90%, >80%, >70% labels (for triangles format)
 
 ###### part 1 a:
 # ============================================================================
@@ -1806,17 +1806,15 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
                                     show_highlight_legend = TRUE, show_bootstrap_legend = TRUE,
                                     high_alpha_list = NULL) {
 
-  # v170: OPTION C - NATIVE GGPLOT LEGENDS (with custom key_glyph)
+  # v171: OPTION C - NATIVE GGPLOT LEGENDS (Highlight + Bootstrap)
   # Use ggplot's own legend system by adding invisible layers with aesthetics
   # This approach uses ggplot's native rendering, avoiding all gtable manipulation
-  # v170: CRITICAL FIX - Use custom key_glyph to prevent bleeding into ALL fill legends
-  #       The guides() override only affects the LAST fill scale after new_scale_fill()
-  #       With ggnewscale, earlier fill scales are "frozen" and can't be overridden
-  #       Solution: Custom key_glyph that returns blank for non-shape legends
+  # v171: Implement actual Highlight and Bootstrap legends (not test legends)
+  #       Highlight: ellipses with colors/transparency matching tree
+  #       Bootstrap: triangles with >90%, >80%, >70% labels
 
-  cat(file=stderr(), paste0("\n=== v170: OPTION C - NATIVE GGPLOT LEGENDS ===\n"))
+  cat(file=stderr(), paste0("\n=== v171: NATIVE GGPLOT LEGENDS - HIGHLIGHT & BOOTSTRAP ===\n"))
   cat(file=stderr(), paste0("  Using native ggplot legend system (no gtable manipulation)\n"))
-  cat(file=stderr(), paste0("  v170: Using custom key_glyph to prevent bleeding into ALL fill legends\n"))
 
   # Initialize high_alpha_list if NULL
   if (is.null(high_alpha_list) || length(high_alpha_list) == 0) {
@@ -1826,83 +1824,192 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
   # Title fontsize should match ggplot legend titles
   title_fontsize <- if (!is.null(highlight_title_size)) highlight_title_size else size_font_legend_title
   text_fontsize <- if (!is.null(highlight_text_size)) highlight_text_size else size_font_legend_text
+  boot_title_fontsize <- if (!is.null(bootstrap_title_size_mult)) bootstrap_title_size_mult else size_font_legend_title
+  boot_text_fontsize <- if (!is.null(bootstrap_text_size_mult)) bootstrap_text_size_mult else size_font_legend_text
 
-  cat(file=stderr(), paste0("  v170: Title fontsize: ", title_fontsize, "\n"))
-  cat(file=stderr(), paste0("  v170: Text fontsize: ", text_fontsize, "\n"))
+  cat(file=stderr(), paste0("  v171: Highlight title fontsize: ", title_fontsize, "\n"))
+  cat(file=stderr(), paste0("  v171: Bootstrap title fontsize: ", boot_title_fontsize, "\n"))
 
   # ============================================
-  # v170 TRIAL: Add a simple test legend using geom_point with CUSTOM KEY_GLYPH
-  # This tests whether native ggplot legends work alongside existing legends
-  # v170: Uses custom key_glyph that ONLY draws for shape legends
-  #       This prevents bleeding into ALL fill legends including those from ggnewscale
+  # v171: Custom key_glyph for ELLIPSE (Highlight legend)
+  # Draws an ellipse shape in the legend key
   # ============================================
-
-  cat(file=stderr(), paste0("\n  v170 TRIAL: Adding test legend via geom_point with custom key_glyph\n"))
-
-  # v170: Custom key_glyph function that only draws for shape legends
-  # When called for fill/colour/size legends, it returns a blank grob
-  # This is the ONLY reliable way to prevent bleeding with ggnewscale
-  draw_key_shape_only <- function(data, params, size) {
-    # v170: Check if shape is meaningful (not NA, not NULL, not default)
-    # For fill legends, shape will typically be NA or missing
-    if (is.null(data$shape) || is.na(data$shape) || identical(data$shape, 19)) {
-      # Return blank grob for non-shape legends
+  draw_key_ellipse <- function(data, params, size) {
+    # Check if this is for our highlight legend (has highlight_item aesthetic)
+    if (is.null(data$highlight_item) || is.na(data$highlight_item)) {
       return(grid::nullGrob())
     }
-    # For shape legends, draw the actual point
-    grid::pointsGrob(
-      x = 0.5, y = 0.5,
-      pch = data$shape,
+    # Draw an ellipse
+    theta <- seq(0, 2*pi, length.out = 50)
+    ellipse_a <- 0.4  # horizontal radius in npc
+    ellipse_b <- 0.25  # vertical radius in npc
+    grid::polygonGrob(
+      x = grid::unit(0.5 + ellipse_a * cos(theta), "npc"),
+      y = grid::unit(0.5 + ellipse_b * sin(theta), "npc"),
       gp = grid::gpar(
-        col = data$colour %||% "red",
-        fill = data$fill %||% NA,
-        fontsize = (data$size %||% 1.5) * .pt + (data$stroke %||% 0.5) * .stroke / 2,
-        lwd = (data$stroke %||% 0.5) * .stroke / 2
+        fill = data$fill %||% "grey50",
+        col = NA,
+        alpha = data$alpha %||% 0.5
       )
     )
   }
 
-  # v170: Use geom_point with shape aesthetic and CUSTOM KEY_GLYPH
-  test_legend_data <- data.frame(
-    x = NA_real_,
-    y = NA_real_,
-    test_legend = "TEST LEGEND ITEM"
-  )
+  # ============================================
+  # v171: Custom key_glyph for TRIANGLE (Bootstrap legend)
+  # Draws a triangle shape in the legend key
+  # ============================================
+  draw_key_triangle <- function(data, params, size) {
+    # Check if this is for our bootstrap legend (has bootstrap_item aesthetic)
+    if (is.null(data$bootstrap_item) || is.na(data$bootstrap_item)) {
+      return(grid::nullGrob())
+    }
+    # Triangle size varies based on the item
+    tri_scale <- data$size %||% 3
+    tri_scale <- tri_scale / 5  # Normalize
+    # Draw an upward-pointing triangle
+    grid::polygonGrob(
+      x = grid::unit(c(0.5 - 0.3*tri_scale, 0.5 + 0.3*tri_scale, 0.5), "npc"),
+      y = grid::unit(c(0.3, 0.3, 0.7), "npc"),
+      gp = grid::gpar(
+        fill = "grey36",
+        col = "grey20",
+        alpha = 0.7
+      )
+    )
+  }
 
-  cat(file=stderr(), paste0("  v170: Created dummy data for test legend\n"))
-  cat(file=stderr(), paste0("  v170: Using custom key_glyph to prevent fill legend bleeding\n"))
+  # ============================================
+  # v171: HIGHLIGHT LEGEND
+  # ============================================
+  if (FLAG_BULK_DISPLAY == TRUE && show_highlight_legend == TRUE && how_many_hi > 0 &&
+      !is.null(high_label_list) && length(high_label_list) > 0) {
 
-  # v170: Add geom_point with shape aesthetic and custom key_glyph
-  # The custom key_glyph ensures we ONLY draw in shape legends, not fill legends
-  p <- p +
-    geom_point(
-      data = test_legend_data,
-      aes(x = x, y = y, shape = test_legend),
-      size = 5,
-      color = "red",
-      na.rm = TRUE,
-      inherit.aes = FALSE,
-      show.legend = TRUE,
-      key_glyph = draw_key_shape_only
-    ) +
-    scale_shape_manual(
-      name = "v170 Test Legend",
-      values = c("TEST LEGEND ITEM" = 15),
-      guide = guide_legend(order = 99)
-    ) +
-    # v170: Keep guides() overrides as additional safety for non-ggnewscale legends
-    guides(
-      fill = guide_legend(override.aes = list(shape = NA, linetype = 0)),
-      colour = guide_legend(override.aes = list(shape = NA)),
-      color = guide_legend(override.aes = list(shape = NA)),
-      linetype = guide_legend(override.aes = list(shape = NA)),
-      size = guide_legend(override.aes = list(shape = NA)),
-      alpha = guide_legend(override.aes = list(shape = NA))
+    # Get highlight title
+    highlight_title <- if (!is.null(high_title_list) && length(high_title_list) > 0) {
+      high_title_list[[1]]
+    } else {
+      "Highlight"
+    }
+
+    cat(file=stderr(), paste0("\n  v171: Creating HIGHLIGHT legend\n"))
+    cat(file=stderr(), paste0("    Title: '", highlight_title, "'\n"))
+    cat(file=stderr(), paste0("    Items: ", length(high_label_list), "\n"))
+
+    # Create data frame for highlight legend
+    highlight_legend_data <- data.frame(
+      x = rep(NA_real_, length(high_label_list)),
+      y = rep(NA_real_, length(high_label_list)),
+      highlight_item = unlist(high_label_list),
+      fill_color = unlist(high_color_list),
+      alpha_val = unlist(high_alpha_list),
+      stringsAsFactors = FALSE
     )
 
-  cat(file=stderr(), paste0("  v170: Added geom_point layer with custom key_glyph\n"))
-  cat(file=stderr(), paste0("  v170: Custom key_glyph returns blank for fill legends, point for shape legends\n"))
-  cat(file=stderr(), paste0("  LOOK FOR: 'v170 Test Legend' with red square - should NOT affect ANY other legend keys\n"))
+    # Create named vectors for scale_fill_manual and scale_alpha_manual
+    fill_values <- setNames(unlist(high_color_list), unlist(high_label_list))
+    alpha_values <- setNames(unlist(high_alpha_list), unlist(high_label_list))
+
+    for (i in seq_along(high_label_list)) {
+      cat(file=stderr(), paste0("    Item ", i, ": '", high_label_list[[i]],
+                                 "' color=", high_color_list[[i]],
+                                 " alpha=", high_alpha_list[[i]], "\n"))
+    }
+
+    # Add highlight legend using geom_point with custom key_glyph
+    p <- p +
+      geom_point(
+        data = highlight_legend_data,
+        aes(x = x, y = y,
+            highlight_item = highlight_item,
+            fill = highlight_item,
+            alpha = highlight_item),
+        size = 5,
+        na.rm = TRUE,
+        inherit.aes = FALSE,
+        show.legend = TRUE,
+        key_glyph = draw_key_ellipse
+      ) +
+      scale_fill_manual(
+        name = highlight_title,
+        values = fill_values,
+        guide = guide_legend(order = 97),
+        aesthetics = "fill"
+      ) +
+      scale_alpha_manual(
+        name = highlight_title,
+        values = alpha_values,
+        guide = guide_legend(order = 97)
+      )
+
+    cat(file=stderr(), paste0("  v171: Highlight legend added with ", length(high_label_list), " items\n"))
+  }
+
+  # ============================================
+  # v171: BOOTSTRAP LEGEND (triangles format)
+  # ============================================
+  if (show_boot_flag == TRUE && show_bootstrap_legend == TRUE) {
+    # Check if bootstrap is in triangles format
+    boot_format <- if (!is.null(boot_values) && is.list(boot_values) && !is.null(boot_values$'format')) {
+      boot_values$'format'
+    } else {
+      "triangles"  # default
+    }
+
+    cat(file=stderr(), paste0("\n  v171: Bootstrap format: '", boot_format, "'\n"))
+
+    if (boot_format == "triangles") {
+      cat(file=stderr(), paste0("  v171: Creating BOOTSTRAP legend (triangles)\n"))
+
+      # Bootstrap legend items
+      bootstrap_labels <- c(">90%", ">80%", ">70%")
+      bootstrap_sizes <- c(5, 4, 3)  # Relative sizes for triangles
+
+      bootstrap_legend_data <- data.frame(
+        x = rep(NA_real_, 3),
+        y = rep(NA_real_, 3),
+        bootstrap_item = factor(bootstrap_labels, levels = bootstrap_labels),
+        tri_size = bootstrap_sizes,
+        stringsAsFactors = FALSE
+      )
+
+      # Add bootstrap legend
+      p <- p +
+        geom_point(
+          data = bootstrap_legend_data,
+          aes(x = x, y = y,
+              bootstrap_item = bootstrap_item,
+              size = bootstrap_item),
+          color = "grey36",
+          na.rm = TRUE,
+          inherit.aes = FALSE,
+          show.legend = TRUE,
+          key_glyph = draw_key_triangle
+        ) +
+        scale_size_manual(
+          name = "Bootstrap",
+          values = setNames(bootstrap_sizes, bootstrap_labels),
+          guide = guide_legend(order = 98)
+        )
+
+      cat(file=stderr(), paste0("  v171: Bootstrap legend added with 3 triangle items\n"))
+    } else {
+      cat(file=stderr(), paste0("  v171: Bootstrap format '", boot_format, "' - no legend needed\n"))
+    }
+  }
+
+  # ============================================
+  # v171: guides() overrides to prevent bleeding into existing legends
+  # ============================================
+  p <- p +
+    guides(
+      # Override existing fill legends to not show our custom aesthetics
+      fill = guide_legend(override.aes = list(alpha = 1)),
+      colour = guide_legend(override.aes = list(shape = NA)),
+      color = guide_legend(override.aes = list(shape = NA)),
+      linetype = guide_legend(override.aes = list(shape = NA))
+    )
+
+  cat(file=stderr(), paste0("\n  v171: Highlight and Bootstrap legends complete\n"))
   cat(file=stderr(), paste0("=================================================\n"))
 
   return(p)
@@ -7078,18 +7185,18 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v170 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v171 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
-                            "New in v170:",
+                            "New in v171:",
                             tags$ul(
-                              tags$li("Custom key_glyph to prevent ALL legend bleeding"),
-                              tags$li("Works with ggnewscale - fixes ALL heatmap legends"),
-                              tags$li("Test legend should NOT affect ANY legend keys (1, 2, 3, etc.)")
+                              tags$li("Actual HIGHLIGHT legend with ellipses (color/transparency from settings)"),
+                              tags$li("Actual BOOTSTRAP legend with triangles (>90%, >80%, >70%)"),
+                              tags$li("Custom key_glyph for ellipse and triangle shapes")
                             ),
                             "Previous:",
                             tags$ul(
-                              tags$li("v169: guides() only fixed LAST heatmap, not earlier ones"),
-                              tags$li("v168: Partial fix - only last fill scale was protected")
+                              tags$li("v170: Proved custom key_glyph prevents legend bleeding"),
+                              tags$li("v169: guides() only fixed LAST heatmap scale")
                             )
                      )
             )
