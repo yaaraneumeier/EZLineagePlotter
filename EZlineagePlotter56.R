@@ -73,6 +73,25 @@ options(shiny.maxRequestSize = 100*1024^2)
 #       - Fixed download preview to show full page with plot proportions preserved
 #       - Fixed Extra tab spinner animation
 #       - Bootstrap legend only for triangles format (no legend for percentage/raw)
+# S1: First stable release
+#       - Performance: Disabled verbose debug output
+#       - All v180 features included and tested
+
+# ============================================================================
+# VERSION S1 (STABLE RELEASE)
+# ============================================================================
+VERSION <- "S1"
+
+# Debug output control - set to TRUE to enable verbose console logging
+# For production/stable use, keep this FALSE for better performance
+DEBUG_VERBOSE <- FALSE
+
+# Helper function for debug output - only prints when DEBUG_VERBOSE is TRUE
+debug_cat <- function(...) {
+  if (DEBUG_VERBOSE) {
+    cat(file = stderr(), ...)
+  }
+}
 
 ###### part 1 a:
 # ============================================================================
@@ -323,18 +342,18 @@ func.repair.ggtree.mapping <- function(p, verbose = FALSE) {
   # Check if top-level mapping is valid (should be class "uneval" from aes())
   if (!inherits(p$mapping, "uneval")) {
     if (verbose) {
-      cat(file=stderr(), paste0("\n=== v82: Repairing corrupted plot mapping ===\n"))
-      cat(file=stderr(), paste0("  Original mapping class: ", paste(class(p$mapping), collapse=", "), "\n"))
+      debug_cat(paste0("\n=== v82: Repairing corrupted plot mapping ===\n"))
+      debug_cat(paste0("  Original mapping class: ", paste(class(p$mapping), collapse=", "), "\n"))
     }
 
     tryCatch({
       p$mapping <- aes()
       repaired <- TRUE
       if (verbose) {
-        cat(file=stderr(), paste0("  Fixed mapping class: ", paste(class(p$mapping), collapse=", "), "\n"))
+        debug_cat(paste0("  Fixed mapping class: ", paste(class(p$mapping), collapse=", "), "\n"))
       }
     }, error = function(e) {
-      cat(file=stderr(), paste0("  v82: Could not repair mapping: ", e$message, "\n"))
+      debug_cat(paste0("  v2: Could not repair mapping: ", e$message, "\n"))
     })
   }
 
@@ -343,7 +362,7 @@ func.repair.ggtree.mapping <- function(p, verbose = FALSE) {
   # Only the top-level plot mapping sometimes gets corrupted to a data.frame.
 
   if (repaired && verbose) {
-    cat(file=stderr(), paste0("================================\n"))
+    debug_cat(paste0("================================\n"))
   }
 
   return(p)
@@ -352,21 +371,21 @@ func.repair.ggtree.mapping <- function(p, verbose = FALSE) {
 # v180: Function to move tip label layers to the end of the layer stack
 # This ensures tip labels render ON TOP of other elements (highlight ellipses, heatmaps, etc.)
 # Called after all layers are added and before final rendering
-func.move.tiplabels.to.front <- function(p, verbose = TRUE) {
+func.move.tiplabels.to.front <- function(p, verbose = DEBUG_VERBOSE) {
   if (is.null(p$layers) || length(p$layers) == 0) {
     return(p)
   }
 
   if (verbose) {
-    cat(file=stderr(), paste0("\n=== v180: MOVING TIP LABELS TO FRONT ===\n"))
-    cat(file=stderr(), paste0("  Initial layers: ", length(p$layers), "\n"))
+    debug_cat(paste0("\n=== v180: MOVING TIP LABELS TO FRONT ===\n"))
+    debug_cat(paste0("  Initial layers: ", length(p$layers), "\n"))
   }
 
   # Find all text-like layers (tip labels can be GeomText, GeomLabel, or GeomTiplab)
   layer_types <- sapply(p$layers, function(l) class(l$geom)[1])
 
   if (verbose) {
-    cat(file=stderr(), paste0("  Layer types: ", paste(layer_types, collapse=", "), "\n"))
+    debug_cat(paste0("  Layer types: ", paste(layer_types, collapse=", "), "\n"))
   }
 
   # v180: Look for text-type layers that are likely tip labels
@@ -375,13 +394,13 @@ func.move.tiplabels.to.front <- function(p, verbose = TRUE) {
 
   if (length(tiplab_indices) == 0) {
     if (verbose) {
-      cat(file=stderr(), paste0("  No text layers (GeomText/GeomLabel) found\n"))
+      debug_cat(paste0("  No text layers (GeomText/GeomLabel) found\n"))
     }
     return(p)
   }
 
   if (verbose) {
-    cat(file=stderr(), paste0("  Found text layers at indices: ", paste(tiplab_indices, collapse=", "), "\n"))
+    debug_cat(paste0("  Found text layers at indices: ", paste(tiplab_indices, collapse=", "), "\n"))
   }
 
   # Get the tip label layers
@@ -396,9 +415,9 @@ func.move.tiplabels.to.front <- function(p, verbose = TRUE) {
 
   if (verbose) {
     new_layer_types <- sapply(p$layers, function(l) class(l$geom)[1])
-    cat(file=stderr(), paste0("  Reordered: ", paste(new_layer_types, collapse=", "), "\n"))
-    cat(file=stderr(), paste0("  Text layers now at end (render on top)\n"))
-    cat(file=stderr(), paste0("================================\n"))
+    debug_cat(paste0("  Reordered: ", paste(new_layer_types, collapse=", "), "\n"))
+    debug_cat(paste0("  Text layers now at end (render on top)\n"))
+    debug_cat(paste0("================================\n"))
   }
 
   return(p)
@@ -407,7 +426,7 @@ func.move.tiplabels.to.front <- function(p, verbose = TRUE) {
 # v71: Function to diagnose which layer is causing ggplot_build to fail
 func.diagnose.layer.issues <- function(p, verbose = TRUE) {
   if (verbose) {
-    cat(file=stderr(), paste0("\n=== v71: DIAGNOSING LAYER ISSUES ===\n"))
+    debug_cat(paste0("\n=== v71: DIAGNOSING LAYER ISSUES ===\n"))
   }
 
   problematic_layers <- c()
@@ -433,7 +452,7 @@ func.diagnose.layer.issues <- function(p, verbose = TRUE) {
         TRUE
       }, error = function(e) {
         if (verbose) {
-          cat(file=stderr(), paste0("  Layer ", i, " (", geom_class, "): FAILED - ", e$message, "\n"))
+          debug_cat(paste0("  Layer ", i, " (", geom_class, "): FAILED - ", e$message, "\n"))
         }
         FALSE
       })
@@ -441,18 +460,18 @@ func.diagnose.layer.issues <- function(p, verbose = TRUE) {
       if (!layer_ok) {
         problematic_layers <- c(problematic_layers, i)
       } else if (verbose) {
-        cat(file=stderr(), paste0("  Layer ", i, " (", geom_class, "): OK\n"))
+        debug_cat(paste0("  Layer ", i, " (", geom_class, "): OK\n"))
       }
     }
   }
 
   if (verbose) {
     if (length(problematic_layers) == 0) {
-      cat(file=stderr(), paste0("  No obvious layer issues detected\n"))
+      debug_cat(paste0("  No obvious layer issues detected\n"))
     } else {
-      cat(file=stderr(), paste0("  Problematic layers: ", paste(problematic_layers, collapse=", "), "\n"))
+      debug_cat(paste0("  Problematic layers: ", paste(problematic_layers, collapse=", "), "\n"))
     }
-    cat(file=stderr(), paste0("================================\n"))
+    debug_cat(paste0("================================\n"))
   }
 
   return(problematic_layers)
@@ -1529,10 +1548,10 @@ func_highlight <- function(p, how_many_hi, heat_flag, high_color_list, a, b, man
       # to ensure ellipses align with the transformed tree coordinates
       if (heat_flag == TRUE && "high1" %in% names(p$data)) {
         high_nodes_table1 <- p$data[p$data$high1 == TRUE,]
-        cat(file=stderr(), paste0("  v146: Using p$data for ellipse positioning (heat_flag=TRUE)\n"))
-        cat(file=stderr(), paste0("  v146: high_nodes_table1 rows: ", nrow(high_nodes_table1), "\n"))
+        debug_cat(paste0("  v46: Using p$data for ellipse positioning (heat_flag=TRUE)\n"))
+        debug_cat(paste0("  v46: high_nodes_table1 rows: ", nrow(high_nodes_table1), "\n"))
         if (nrow(high_nodes_table1) > 0) {
-          cat(file=stderr(), paste0("  v146: y-range: ", round(min(high_nodes_table1$y, na.rm=TRUE), 2),
+          debug_cat(paste0("  v46: y-range: ", round(min(high_nodes_table1$y, na.rm=TRUE), 2),
                                     " to ", round(max(high_nodes_table1$y, na.rm=TRUE), 2), "\n"))
         }
       } else {
@@ -1566,10 +1585,10 @@ func_highlight <- function(p, how_many_hi, heat_flag, high_color_list, a, b, man
       alpha_val <- if (length(high_alpha_list) >= 1 && !is.null(high_alpha_list[[1]])) high_alpha_list[[1]] else 0.5
 
       # v148: Debug output for PLOT ellipse alpha and dimensions
-      cat(file=stderr(), paste0("\n=== v148: PLOT ELLIPSE (high1) ===\n"))
-      cat(file=stderr(), paste0("  Alpha: ", alpha_val, "\n"))
-      cat(file=stderr(), paste0("  Dimensions: a=", round(a, 4), ", b=", round(b, 4), "\n"))
-      cat(file=stderr(), paste0("==================================\n"))
+      debug_cat(paste0("\n=== v148: PLOT ELLIPSE (high1) ===\n"))
+      debug_cat(paste0("  Alpha: ", alpha_val, "\n"))
+      debug_cat(paste0("  Dimensions: a=", round(a, 4), ", b=", round(b, 4), "\n"))
+      debug_cat(paste0("==================================\n"))
 
       if (heat_flag == FALSE) {
         p <- p +
@@ -1589,13 +1608,13 @@ func_highlight <- function(p, how_many_hi, heat_flag, high_color_list, a, b, man
         # Also get the original tree_max for comparison
         tree_max_x_original <- max(pr440_short_tips_TRY$data[,'x'], na.rm = TRUE)
 
-        cat(file=stderr(), paste0("\n=== v148: ELLIPSE X0 POSITIONING (heat mode) ===\n"))
-        cat(file=stderr(), paste0("  tree_max_x (from p$data tips): ", round(tree_max_x_from_p, 4), "\n"))
-        cat(file=stderr(), paste0("  tree_max_x (from pr440 - for reference): ", round(tree_max_x_original, 4), "\n"))
-        cat(file=stderr(), paste0("  man_adjust_elipse: ", man_adjust_elipse, "\n"))
-        cat(file=stderr(), paste0("  Sample node x values: ", paste(round(head(high_nodes_table1$x, 3), 4), collapse=", "), "\n"))
-        cat(file=stderr(), paste0("  Sample calculated x0: ", paste(round((tree_max_x_from_p - head(high_nodes_table1$x, 3)) * (-1) - man_adjust_elipse, 4), collapse=", "), "\n"))
-        cat(file=stderr(), paste0("=============================================\n"))
+        debug_cat(paste0("\n=== v148: ELLIPSE X0 POSITIONING (heat mode) ===\n"))
+        debug_cat(paste0("  tree_max_x (from p$data tips): ", round(tree_max_x_from_p, 4), "\n"))
+        debug_cat(paste0("  tree_max_x (from pr440 - for reference): ", round(tree_max_x_original, 4), "\n"))
+        debug_cat(paste0("  man_adjust_elipse: ", man_adjust_elipse, "\n"))
+        debug_cat(paste0("  Sample node x values: ", paste(round(head(high_nodes_table1$x, 3), 4), collapse=", "), "\n"))
+        debug_cat(paste0("  Sample calculated x0: ", paste(round((tree_max_x_from_p - head(high_nodes_table1$x, 3)) * (-1) - man_adjust_elipse, 4), collapse=", "), "\n"))
+        debug_cat(paste0("=============================================\n"))
 
         p <- p +
           geom_ellipse(data = high_nodes_table1,
@@ -1633,7 +1652,7 @@ func_highlight <- function(p, how_many_hi, heat_flag, high_color_list, a, b, man
 
   # v180: CRITICAL - Move tip labels to front AFTER ellipses are added
   # This ensures tip names are always visible on top of highlight ellipses
-  p <- func.move.tiplabels.to.front(p, verbose = TRUE)
+  p <- func.move.tiplabels.to.front(p, verbose = DEBUG_VERBOSE)
 
   return(p)
 }
@@ -1646,7 +1665,7 @@ func.add.custom.legends.to.gtable <- function(gt, legend_info) {
     return(gt)
   }
 
-  cat(file=stderr(), paste0("\n=== v160: ADDING CUSTOM LEGENDS TO GTABLE ===\n"))
+  debug_cat(paste0("\n=== v160: ADDING CUSTOM LEGENDS TO GTABLE ===\n"))
 
   # Find the guide-box that has actual content
   guide_box_names <- c("guide-box-right", "guide-box-bottom", "guide-box-left", "guide-box-top", "guide-box")
@@ -1661,7 +1680,7 @@ func.add.custom.legends.to.gtable <- function(gt, legend_info) {
       cell_width <- gt$widths[gb_col]
       width_cm <- tryCatch(grid::convertWidth(cell_width, "cm", valueOnly = TRUE), error = function(e) 0)
 
-      cat(file=stderr(), paste0("  Checking ", gb_name, " at row ", gb_row, ", col ", gb_col,
+      debug_cat(paste0("  Checking ", gb_name, " at row ", gb_row, ", col ", gb_col,
                                  " (width=", round(width_cm, 2), "cm)\n"))
 
       if (width_cm > 0.1) {
@@ -1675,7 +1694,7 @@ func.add.custom.legends.to.gtable <- function(gt, legend_info) {
   if (is.null(guide_box_idx)) {
     guide_box_idx <- which(gt$layout$name == "guide-box-right")[1]
     if (length(guide_box_idx) == 0) {
-      cat(file=stderr(), paste0("  ERROR: No guide-box found, skipping custom legends\n"))
+      debug_cat(paste0("  ERROR: No guide-box found, skipping custom legends\n"))
       return(gt)
     }
     guide_box_name <- "guide-box-right"
@@ -1683,7 +1702,7 @@ func.add.custom.legends.to.gtable <- function(gt, legend_info) {
 
   guide_row <- gt$layout$t[guide_box_idx]
   guide_col <- gt$layout$l[guide_box_idx]
-  cat(file=stderr(), paste0("  Using ", guide_box_name, " at row ", guide_row, ", col ", guide_col, "\n"))
+  debug_cat(paste0("  Using ", guide_box_name, " at row ", guide_row, ", col ", guide_col, "\n"))
 
   # Calculate legend content
   n_highlight <- 0
@@ -1696,11 +1715,11 @@ func.add.custom.legends.to.gtable <- function(gt, legend_info) {
   }
 
   if (n_highlight == 0 && n_bootstrap == 0) {
-    cat(file=stderr(), paste0("  No custom legends to add\n"))
+    debug_cat(paste0("  No custom legends to add\n"))
     return(gt)
   }
 
-  cat(file=stderr(), paste0("  Highlight: ", n_highlight, " items, Bootstrap: ", n_bootstrap, " items\n"))
+  debug_cat(paste0("  Highlight: ", n_highlight, " items, Bootstrap: ", n_bootstrap, " items\n"))
 
   # v160: Build legend as a proper nested gtable with rows for each item
   title_fontsize <- 12
@@ -1808,7 +1827,7 @@ func.add.custom.legends.to.gtable <- function(gt, legend_info) {
 
   # Calculate total height
   total_height <- grid::unit(n_rows * 0.5, "cm")
-  cat(file=stderr(), paste0("  Legend has ", n_rows, " rows, height=", n_rows * 0.5, "cm\n"))
+  debug_cat(paste0("  Legend has ", n_rows, " rows, height=", n_rows * 0.5, "cm\n"))
 
   # v160: NEW APPROACH - Add legend row to MAIN gtable directly above guide-box
   # This ensures visibility since it's at the top-level gtable, not nested inside
@@ -1828,9 +1847,9 @@ func.add.custom.legends.to.gtable <- function(gt, legend_info) {
     name = "custom-legend"
   )
 
-  cat(file=stderr(), paste0("  v160: Added legend as new row at position ", guide_row, " in main gtable\n"))
-  cat(file=stderr(), paste0("  v160: Legend placed in column ", guide_col, " (same as guide-box)\n"))
-  cat(file=stderr(), paste0("===============================================\n"))
+  debug_cat(paste0("  v60: Added legend as new row at position ", guide_row, " in main gtable\n"))
+  debug_cat(paste0("  v60: Legend placed in column ", guide_col, " (same as guide-box)\n"))
+  debug_cat(paste0("===============================================\n"))
 
   return(gt)
 }
@@ -1868,9 +1887,9 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
   # v178: Return nullGrob if shape value not in our set - prevents legend bleeding
   #       This stops ellipses/triangles from appearing on other legends
 
-  cat(file=stderr(), paste0("\n=== v178: NATIVE GGPLOT LEGENDS - SHAPE-ONLY APPROACH ===\n"))
-  cat(file=stderr(), paste0("  Using ONLY shape aesthetic to avoid scale conflicts\n"))
-  cat(file=stderr(), paste0("  v178: key_glyph returns nullGrob for shapes not in valid set\n"))
+  debug_cat(paste0("\n=== v178: NATIVE GGPLOT LEGENDS - SHAPE-ONLY APPROACH ===\n"))
+  debug_cat(paste0("  Using ONLY shape aesthetic to avoid scale conflicts\n"))
+  debug_cat(paste0("  v78: key_glyph returns nullGrob for shapes not in valid set\n"))
 
   # Initialize high_alpha_list if NULL
   if (is.null(high_alpha_list) || length(high_alpha_list) == 0) {
@@ -1883,8 +1902,8 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
   boot_title_fontsize <- if (!is.null(bootstrap_title_size_mult)) bootstrap_title_size_mult else size_font_legend_title
   boot_text_fontsize <- if (!is.null(bootstrap_text_size_mult)) bootstrap_text_size_mult else size_font_legend_text
 
-  cat(file=stderr(), paste0("  v178: Highlight title fontsize: ", title_fontsize, "\n"))
-  cat(file=stderr(), paste0("  v178: Bootstrap title fontsize: ", boot_title_fontsize, "\n"))
+  debug_cat(paste0("  v78: Highlight title fontsize: ", title_fontsize, "\n"))
+  debug_cat(paste0("  v78: Bootstrap title fontsize: ", boot_title_fontsize, "\n"))
 
   # ============================================
   # v178: HIGHLIGHT LEGEND using shape aesthetic
@@ -1901,9 +1920,9 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
       "Highlight"
     }
 
-    cat(file=stderr(), paste0("\n  v178: Creating HIGHLIGHT legend (shape-only)\n"))
-    cat(file=stderr(), paste0("    Title: '", highlight_title, "'\n"))
-    cat(file=stderr(), paste0("    Items: ", length(high_label_list), "\n"))
+    debug_cat(paste0("\n  v178: Creating HIGHLIGHT legend (shape-only)\n"))
+    debug_cat(paste0("    Title: '", highlight_title, "'\n"))
+    debug_cat(paste0("    Items: ", length(high_label_list), "\n"))
 
     # v177: Create unique shape values for each item (1, 2, 3, ...)
     n_highlights <- length(high_label_list)
@@ -1925,7 +1944,7 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
     shape_to_alpha <- setNames(unlist(high_alpha_list), as.character(highlight_shape_values))
 
     for (i in seq_along(high_label_list)) {
-      cat(file=stderr(), paste0("    Item ", i, ": shape=", i, " label='", high_label_list[[i]],
+      debug_cat(paste0("    Item ", i, ": shape=", i, " label='", high_label_list[[i]],
                                  "' color=", high_color_list[[i]],
                                  " alpha=", high_alpha_list[[i]], "\n"))
     }
@@ -1940,10 +1959,10 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
       function(data, params, size) {
         # v178: Get the shape value and use it to look up color/alpha
         shape_val <- data$shape
-        cat(file=stderr(), paste0("    v178: draw_key_highlight_ellipse called, shape=", shape_val, "\n"))
+        debug_cat(paste0("    v178: draw_key_highlight_ellipse called, shape=", shape_val, "\n"))
 
         if (is.null(shape_val) || length(shape_val) == 0) {
-          cat(file=stderr(), paste0("    v178: shape is NULL/empty, returning nullGrob\n"))
+          debug_cat(paste0("    v178: shape is NULL/empty, returning nullGrob\n"))
           return(grid::nullGrob())
         }
 
@@ -1952,14 +1971,14 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
         # v178: CRITICAL - Return nullGrob if this shape is not one of ours
         # This prevents ellipses from appearing on other legends (classification, heatmap, etc.)
         if (!(shape_key %in% valid_shapes)) {
-          cat(file=stderr(), paste0("    v178: shape ", shape_key, " not in valid set (", paste(valid_shapes, collapse=","), "), returning nullGrob\n"))
+          debug_cat(paste0("    v178: shape ", shape_key, " not in valid set (", paste(valid_shapes, collapse=","), "), returning nullGrob\n"))
           return(grid::nullGrob())
         }
 
         fill_color <- shape_to_color_local[shape_key]
         fill_alpha <- shape_to_alpha_local[shape_key]
 
-        cat(file=stderr(), paste0("    v178: Looked up color='", fill_color, "', alpha='", fill_alpha, "'\n"))
+        debug_cat(paste0("    v178: Looked up color='", fill_color, "', alpha='", fill_alpha, "'\n"))
 
         # v178: Extra safety - if lookup still returns NA, don't draw
         if (is.na(fill_color) || is.na(fill_alpha)) {
@@ -1994,7 +2013,7 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
         guide = guide_legend(order = 97)
       )
 
-    cat(file=stderr(), paste0("  v178: Highlight legend added (shape values 1-", n_highlights, ")\n"))
+    debug_cat(paste0("  v78: Highlight legend added (shape values 1-", n_highlights, ")\n"))
   }
 
   # ============================================
@@ -2011,10 +2030,10 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
       "triangles"  # default
     }
 
-    cat(file=stderr(), paste0("\n  v178: Bootstrap format: '", boot_format, "'\n"))
+    debug_cat(paste0("\n  v178: Bootstrap format: '", boot_format, "'\n"))
 
     if (boot_format == "triangles") {
-      cat(file=stderr(), paste0("  v178: Creating BOOTSTRAP legend (shape-only)\n"))
+      debug_cat(paste0("  v78: Creating BOOTSTRAP legend (shape-only)\n"))
 
       # Bootstrap legend items - match old legend sizes (5, 4, 3 pt)
       bootstrap_labels <- c(">90%", ">80%", ">70%")
@@ -2031,7 +2050,7 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
       # v177: Create mapping from shape value to size (in pt)
       shape_to_size <- setNames(bootstrap_pt_sizes, as.character(bootstrap_shape_values))
 
-      cat(file=stderr(), paste0("  v178: Bootstrap shape values: 1=5pt, 2=4pt, 3=3pt\n"))
+      debug_cat(paste0("  v78: Bootstrap shape values: 1=5pt, 2=4pt, 3=3pt\n"))
 
       # v178: Custom key_glyph for TRIANGLE - draws triangle with varying size
       # Uses shape value (1, 2, 3) to look up the correct size
@@ -2042,10 +2061,10 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
         function(data, params, size) {
           # v178: Get the shape value and use it to look up size
           shape_val <- data$shape
-          cat(file=stderr(), paste0("    v178: draw_key_bootstrap_triangle called, shape=", shape_val, "\n"))
+          debug_cat(paste0("    v178: draw_key_bootstrap_triangle called, shape=", shape_val, "\n"))
 
           if (is.null(shape_val) || length(shape_val) == 0) {
-            cat(file=stderr(), paste0("    v178: shape is NULL/empty, returning nullGrob\n"))
+            debug_cat(paste0("    v178: shape is NULL/empty, returning nullGrob\n"))
             return(grid::nullGrob())
           }
 
@@ -2054,13 +2073,13 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
           # v178: CRITICAL - Return nullGrob if this shape is not one of ours
           # This prevents triangles from appearing on other legends (classification, heatmap, highlight, etc.)
           if (!(shape_key %in% valid_shapes)) {
-            cat(file=stderr(), paste0("    v178: shape ", shape_key, " not in valid set (", paste(valid_shapes, collapse=","), "), returning nullGrob\n"))
+            debug_cat(paste0("    v178: shape ", shape_key, " not in valid set (", paste(valid_shapes, collapse=","), "), returning nullGrob\n"))
             return(grid::nullGrob())
           }
 
           sz <- shape_to_size_local[shape_key]
 
-          cat(file=stderr(), paste0("    v178: Triangle size='", sz, "pt'\n"))
+          debug_cat(paste0("    v178: Triangle size='", sz, "pt'\n"))
 
           # v178: Extra safety - if lookup returns NA, don't draw
           if (is.na(sz)) {
@@ -2098,16 +2117,16 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
           guide = guide_legend(order = 98)
         )
 
-      cat(file=stderr(), paste0("  v178: Bootstrap legend added (shape values 1-3)\n"))
+      debug_cat(paste0("  v78: Bootstrap legend added (shape values 1-3)\n"))
     } else {
       # v180: For non-triangle formats (percentage, raw, color-coded), show no legend
-      cat(file=stderr(), paste0("  v180: Bootstrap format '", boot_format, "' - no legend (only triangles have legend)\n"))
+      debug_cat(paste0("  v80: Bootstrap format '", boot_format, "' - no legend (only triangles have legend)\n"))
     }
   }
 
-  cat(file=stderr(), paste0("\n  v180: Highlight and Bootstrap legends complete\n"))
-  cat(file=stderr(), paste0("  v178: Existing scales preserved: fill (heatmaps), size (P value), colour (classification)\n"))
-  cat(file=stderr(), paste0("=================================================\n"))
+  debug_cat(paste0("\n  v180: Highlight and Bootstrap legends complete\n"))
+  debug_cat(paste0("  v78: Existing scales preserved: fill (heatmaps), size (P value), colour (classification)\n"))
+  debug_cat(paste0("=================================================\n"))
 
   return(p)
 }
@@ -2145,7 +2164,7 @@ func.make.highlight.params.NEW <- function(yaml_file, title.id, ids_list, tree44
   
   # === COMPREHENSIVE DEBUG OUTPUT ===
   # v53: cat(file=stderr(), "\nÃ°Å¸â€ÂÃ°Å¸â€ÂÃ°Å¸â€Â ENTERING func.make.highlight.params.NEW Ã°Å¸â€ÂÃ°Å¸â€ÂÃ°Å¸â€Â\n")
-  # v53: cat(file=stderr(), "==========================================\n")
+  # v53: debug_cat("==========================================\n")
   # v53: cat(file=stderr(), "hi_def structure:\n")
   # v54: str(hi_def)
   # v53: cat(file=stderr(), "\n")
@@ -2160,7 +2179,7 @@ func.make.highlight.params.NEW <- function(yaml_file, title.id, ids_list, tree44
   # v53: cat(file=stderr(), "\nFirst 3 rows of readfile440:\n")
   # v53: print(head(readfile440, 3))
   # v53: cat(file=stderr(), "\n")
-  # v53: cat(file=stderr(), "==========================================\n\n")
+  # v53: debug_cat("==========================================\n\n")
   # === END DEBUG ===
   
   len_hi <- length(hi_def$according)
@@ -2191,19 +2210,19 @@ func.make.highlight.params.NEW <- function(yaml_file, title.id, ids_list, tree44
 
   # v139: Extract transparency (alpha) for each highlight
   # v146: Added debug output to trace transparency values
-  cat(file=stderr(), paste0("\n=== v146: EXTRACTING HIGHLIGHT TRANSPARENCY ===\n"))
+  debug_cat(paste0("\n=== v146: EXTRACTING HIGHLIGHT TRANSPARENCY ===\n"))
   high_alpha_list <- c()
   for (in_hi in indexes_hi) {
     alpha_val <- hi_def$according[[in_hi]][[as.character(in_hi)]]$transparency
-    cat(file=stderr(), paste0("  Highlight ", in_hi, ":\n"))
-    cat(file=stderr(), paste0("    hi_def$according[[", in_hi, "]][[\"", in_hi, "\"]]$transparency = ",
+    debug_cat(paste0("  Highlight ", in_hi, ":\n"))
+    debug_cat(paste0("    hi_def$according[[", in_hi, "]][[\"", in_hi, "\"]]$transparency = ",
                               if(is.null(alpha_val)) "NULL" else alpha_val, "\n"))
     # Default to 0.5 if transparency not specified
     high_alpha_list[[in_hi]] <- if (!is.null(alpha_val)) alpha_val else 0.5
-    cat(file=stderr(), paste0("    high_alpha_list[[", in_hi, "]] = ", high_alpha_list[[in_hi]], "\n"))
+    debug_cat(paste0("    high_alpha_list[[", in_hi, "]] = ", high_alpha_list[[in_hi]], "\n"))
   }
-  cat(file=stderr(), paste0("  Final high_alpha_list: ", paste(high_alpha_list, collapse=", "), "\n"))
-  cat(file=stderr(), paste0("==============================================\n"))
+  debug_cat(paste0("  Final high_alpha_list: ", paste(high_alpha_list, collapse=", "), "\n"))
+  debug_cat(paste0("==============================================\n"))
 
   high_title_list <- c()
   for (in_hi in indexes_hi) {
@@ -2646,7 +2665,7 @@ func.print.lineage.tree <- function(conf_yaml_path,
   # v53: cat(file=stderr(), "Ã°Å¸â€Â flag_display_nod_number_on_tree:", flag_display_nod_number_on_tree, "\n")
   # v53: cat(file=stderr(), "Ã°Å¸â€Â highlight_manual_nodes received:", highlight_manual_nodes, "\n")
   # v53: cat(file=stderr(), "Ã°Å¸â€Â manual_nodes_to_highlight received:", paste(manual_nodes_to_highlight, collapse=", "), "\n")
-  # v53: cat(file=stderr(), "================================================\n\n")
+  # v53: debug_cat("================================================\n\n")
   
   yaml_file<- func.read_yaml(conf_yaml_path)
   
@@ -3093,19 +3112,19 @@ func.print.lineage.tree <- function(conf_yaml_path,
       heat_display_params_list <- c()
 
       # v56c: DEBUG - show what attributes are in the classification
-      cat(file=stderr(), paste0("\n=== v57: Classification attributes (att1): ", paste(att1, collapse=", "), " ===\n"))
+      debug_cat(paste0("\n=== v57: Classification attributes (att1): ", paste(att1, collapse=", "), " ===\n"))
 
       if ('heatmap_display' %in% att1) {
 
         # v56c: DEBUG
-        cat(file=stderr(), "\n=== v57: FOUND heatmap_display in classification ===\n")
+        debug_cat("\n=== v57: FOUND heatmap_display in classification ===\n")
 
         heat_definitions <- yaml_file[['visual definitions']]$'classification'[[disp_index]][[disp_indx_ch]]$heatmap_display
         heat_list_len <- length(heat_definitions)
-        cat(file=stderr(), paste0("  Number of heatmaps found: ", heat_list_len, "\n"))
-        cat(file=stderr(), paste0("  heat_definitions structure: ", class(heat_definitions), "\n"))
+        debug_cat(paste0("  Number of heatmaps found: ", heat_list_len, "\n"))
+        debug_cat(paste0("  heat_definitions structure: ", class(heat_definitions), "\n"))
         if (heat_list_len > 0) {
-          cat(file=stderr(), paste0("  First heatmap names: ", paste(names(heat_definitions[[1]]), collapse=", "), "\n"))
+          debug_cat(paste0("  First heatmap names: ", paste(names(heat_definitions[[1]]), collapse=", "), "\n"))
         }
         #print("heat_list_len is")
         #print(heat_list_len)
@@ -3276,15 +3295,15 @@ func.print.lineage.tree <- function(conf_yaml_path,
 
               # v117/v121: Get tip guide line settings (for discrete heatmaps)
               # v121: Added comprehensive debug logging
-              cat(file=stderr(), paste0("\n=== v121: TIP GUIDE SETTINGS DEBUG (discrete) ===\n"))
-              cat(file=stderr(), paste0("  heat_map_i_def names: ", paste(names(heat_map_i_def), collapse=", "), "\n"))
+              debug_cat(paste0("\n=== v121: TIP GUIDE SETTINGS DEBUG (discrete) ===\n"))
+              debug_cat(paste0("  heat_map_i_def names: ", paste(names(heat_map_i_def), collapse=", "), "\n"))
               if ('show_guides' %in% names(heat_map_i_def)) {
                 raw_val <- heat_map_i_def[['show_guides']]
-                cat(file=stderr(), paste0("  show_guides raw value: ", raw_val, " (class: ", class(raw_val), ")\n"))
+                debug_cat(paste0("  show_guides raw value: ", raw_val, " (class: ", class(raw_val), ")\n"))
                 param[['show_guides']] <- func.check.bin.val.from.conf(heat_map_i_def[['show_guides']])
-                cat(file=stderr(), paste0("  show_guides after conversion: ", param[['show_guides']], "\n"))
+                debug_cat(paste0("  show_guides after conversion: ", param[['show_guides']], "\n"))
               } else {
-                cat(file=stderr(), paste0("  show_guides NOT FOUND in heat_map_i_def\n"))
+                debug_cat(paste0("  show_guides NOT FOUND in heat_map_i_def\n"))
                 param[['show_guides']] <- FALSE
               }
               if ('guide_color1' %in% names(heat_map_i_def)) {
@@ -3462,15 +3481,15 @@ func.print.lineage.tree <- function(conf_yaml_path,
 
               # v117/v121: Get tip guide line settings (for continuous heatmaps)
               # v121: Added comprehensive debug logging
-              cat(file=stderr(), paste0("\n=== v121: TIP GUIDE SETTINGS DEBUG (continuous) ===\n"))
-              cat(file=stderr(), paste0("  heat_map_i_def names: ", paste(names(heat_map_i_def), collapse=", "), "\n"))
+              debug_cat(paste0("\n=== v121: TIP GUIDE SETTINGS DEBUG (continuous) ===\n"))
+              debug_cat(paste0("  heat_map_i_def names: ", paste(names(heat_map_i_def), collapse=", "), "\n"))
               if ('show_guides' %in% names(heat_map_i_def)) {
                 raw_val <- heat_map_i_def[['show_guides']]
-                cat(file=stderr(), paste0("  show_guides raw value: ", raw_val, " (class: ", class(raw_val), ")\n"))
+                debug_cat(paste0("  show_guides raw value: ", raw_val, " (class: ", class(raw_val), ")\n"))
                 param[['show_guides']] <- func.check.bin.val.from.conf(heat_map_i_def[['show_guides']])
-                cat(file=stderr(), paste0("  show_guides after conversion: ", param[['show_guides']], "\n"))
+                debug_cat(paste0("  show_guides after conversion: ", param[['show_guides']], "\n"))
               } else {
-                cat(file=stderr(), paste0("  show_guides NOT FOUND in heat_map_i_def\n"))
+                debug_cat(paste0("  show_guides NOT FOUND in heat_map_i_def\n"))
                 param[['show_guides']] <- FALSE
               }
               if ('guide_color1' %in% names(heat_map_i_def)) {
@@ -3527,21 +3546,21 @@ func.print.lineage.tree <- function(conf_yaml_path,
               
             } else {
               # v57: DEBUG - trace column extraction
-              cat(file=stderr(), paste0("\n=== v57: Extracting heatmap columns from 'according' ===\n"))
-              cat(file=stderr(), paste0("  acc_heat_list length: ", length(acc_heat_list), "\n"))
+              debug_cat(paste0("\n=== v57: Extracting heatmap columns from 'according' ===\n"))
+              debug_cat(paste0("  acc_heat_list length: ", length(acc_heat_list), "\n"))
               ind <-1
               for (j in acc_heat_list) {
 
                 j1 <- names(j)
-                cat(file=stderr(), paste0("  Column ", ind, ": j1=", j1, "\n"))
+                debug_cat(paste0("  Column ", ind, ": j1=", j1, "\n"))
 
                 ind<- ind+1
                 j2<- j[[j1]]
-                cat(file=stderr(), paste0("    j2 (column name)=", j2, "\n"))
+                debug_cat(paste0("    j2 (column name)=", j2, "\n"))
 
                 l_titles_for_heat <- c(l_titles_for_heat,j2)
               }
-              cat(file=stderr(), paste0("  Final l_titles_for_heat: ", paste(l_titles_for_heat, collapse=", "), "\n"))
+              debug_cat(paste0("  Final l_titles_for_heat: ", paste(l_titles_for_heat, collapse=", "), "\n"))
             }
             
             
@@ -3574,19 +3593,19 @@ func.print.lineage.tree <- function(conf_yaml_path,
             l_titles_for_heat <- as.character(l_titles_for_heat)
 
             # v57: DEBUG - show column validation
-            cat(file=stderr(), paste0("\n=== v57: Validating heatmap columns ===\n"))
-            cat(file=stderr(), paste0("  title.id: ", title.id, "\n"))
-            cat(file=stderr(), paste0("  l_titles_for_heat: ", paste(l_titles_for_heat, collapse=", "), "\n"))
-            cat(file=stderr(), paste0("  Available CSV columns: ", paste(head(names(readfile440), 10), collapse=", "), "...\n"))
+            debug_cat(paste0("\n=== v57: Validating heatmap columns ===\n"))
+            debug_cat(paste0("  title.id: ", title.id, "\n"))
+            debug_cat(paste0("  l_titles_for_heat: ", paste(l_titles_for_heat, collapse=", "), "\n"))
+            debug_cat(paste0("  Available CSV columns: ", paste(head(names(readfile440), 10), collapse=", "), "...\n"))
 
             valid_columns <- c(title.id, l_titles_for_heat)
             valid_columns <- valid_columns[valid_columns %in% names(readfile440)]
-            cat(file=stderr(), paste0("  Valid columns (after filtering): ", paste(valid_columns, collapse=", "), "\n"))
-            cat(file=stderr(), paste0("  Number of valid columns: ", length(valid_columns), "\n"))
+            debug_cat(paste0("  Valid columns (after filtering): ", paste(valid_columns, collapse=", "), "\n"))
+            debug_cat(paste0("  Number of valid columns: ", length(valid_columns), "\n"))
 
             # Select only the valid columns
             df_heat_temp <- readfile440[, valid_columns, drop = FALSE]
-            cat(file=stderr(), paste0("  df_heat_temp dimensions: ", nrow(df_heat_temp), " rows x ", ncol(df_heat_temp), " cols\n"))
+            debug_cat(paste0("  df_heat_temp dimensions: ", nrow(df_heat_temp), " rows x ", ncol(df_heat_temp), " cols\n"))
             
             #print("df_heat_temp is")
             #print(df_heat_temp)
@@ -3631,15 +3650,15 @@ func.print.lineage.tree <- function(conf_yaml_path,
             ggtree_labels <- g_check_tip$label
 
             # v66: DEBUG - show initial state
-            cat(file=stderr(), paste0("\n=== v66: TIP LABEL EXTRACTION DEBUG ===\n"))
-            cat(file=stderr(), paste0("  ggtree_labels NA count: ", sum(is.na(ggtree_labels)), " out of ", length(ggtree_labels), "\n"))
-            cat(file=stderr(), paste0("  tree440$tip.label sample: ", paste(head(tree440$tip.label, 5), collapse=", "), "\n"))
-            cat(file=stderr(), paste0("  g_check_tip$node sample: ", paste(head(g_check_tip$node, 5), collapse=", "), "\n"))
+            debug_cat(paste0("\n=== v66: TIP LABEL EXTRACTION DEBUG ===\n"))
+            debug_cat(paste0("  ggtree_labels NA count: ", sum(is.na(ggtree_labels)), " out of ", length(ggtree_labels), "\n"))
+            debug_cat(paste0("  tree440$tip.label sample: ", paste(head(tree440$tip.label, 5), collapse=", "), "\n"))
+            debug_cat(paste0("  g_check_tip$node sample: ", paste(head(g_check_tip$node, 5), collapse=", "), "\n"))
 
             # v66: Check if ANY labels are NA or empty - if so, use tree440$tip.label
             # This is more robust than only checking if ALL are NA
             if (any(is.na(ggtree_labels)) || any(ggtree_labels == "")) {
-              cat(file=stderr(), paste0("  v66: Found NA/empty labels in ggtree, using tree440$tip.label\n"))
+              debug_cat(paste0("  v6: Found NA/empty labels in ggtree, using tree440$tip.label\n"))
 
               # For tip nodes, node IDs 1 to Ntip correspond directly to tree$tip.label indices
               tip_node_ids <- g_check_tip$node
@@ -3648,16 +3667,16 @@ func.print.lineage.tree <- function(conf_yaml_path,
               # Validate that node IDs are in valid range
               if (all(tip_node_ids >= 1 & tip_node_ids <= ntips)) {
                 ggtree_labels <- tree440$tip.label[tip_node_ids]
-                cat(file=stderr(), paste0("  v66: Successfully extracted labels from tree440$tip.label\n"))
+                debug_cat(paste0("  v6: Successfully extracted labels from tree440$tip.label\n"))
               } else {
                 # Fallback: use tip labels in their original order from tree440
-                cat(file=stderr(), paste0("  v66: WARNING - node IDs out of range, using tree tip order\n"))
+                debug_cat(paste0("  v6: WARNING - node IDs out of range, using tree tip order\n"))
                 # Order g_check_tip by y coordinate (visual order) and assign labels
                 tip_order <- order(g_check_tip$y)
                 ggtree_labels <- tree440$tip.label[tip_order]
               }
 
-              cat(file=stderr(), paste0("  v66: After fix, ggtree_labels sample: ", paste(head(ggtree_labels, 5), collapse=", "), "\n"))
+              debug_cat(paste0("  v6: After fix, ggtree_labels sample: ", paste(head(ggtree_labels, 5), collapse=", "), "\n"))
             }
 
             # v60: FIX - Logic was inverted! When id_tip_trim_flag == TRUE, apply trimming
@@ -3677,24 +3696,24 @@ func.print.lineage.tree <- function(conf_yaml_path,
             
             
             # v58: DEBUG - Show matching details
-            cat(file=stderr(), paste0("\n=== v58: Matching heatmap data to tree tips ===\n"))
-            cat(file=stderr(), paste0("  tip_list length: ", length(tip_list), "\n"))
-            cat(file=stderr(), paste0("  tip_list sample: ", paste(head(tip_list, 5), collapse=", "), "\n"))
-            cat(file=stderr(), paste0("  CSV ID column (", title.id, ") sample: ", paste(head(df_heat_temp[[title.id]], 5), collapse=", "), "\n"))
+            debug_cat(paste0("\n=== v58: Matching heatmap data to tree tips ===\n"))
+            debug_cat(paste0("  tip_list length: ", length(tip_list), "\n"))
+            debug_cat(paste0("  tip_list sample: ", paste(head(tip_list, 5), collapse=", "), "\n"))
+            debug_cat(paste0("  CSV ID column (", title.id, ") sample: ", paste(head(df_heat_temp[[title.id]], 5), collapse=", "), "\n"))
 
             # Check for matches before applying
             matches <- match(tip_list, df_heat_temp[[title.id]])
             num_matches <- sum(!is.na(matches))
-            cat(file=stderr(), paste0("  Number of matches found: ", num_matches, " out of ", length(tip_list), " tips\n"))
+            debug_cat(paste0("  Number of matches found: ", num_matches, " out of ", length(tip_list), " tips\n"))
 
             df_heat_temp <- df_heat_temp[matches,]
-            cat(file=stderr(), paste0("  After match(): ", nrow(df_heat_temp), " rows\n"))
+            debug_cat(paste0("  After match(): ", nrow(df_heat_temp), " rows\n"))
 
             ro= na.omit(df_heat_temp[[title.id]])
             df_heat_temp_filtered<- df_heat_temp[df_heat_temp[[title.id]] %in% (ro), ]
 
             df_heat_temp<- df_heat_temp_filtered
-            cat(file=stderr(), paste0("  After filtering NAs: ", nrow(df_heat_temp), " rows\n"))
+            debug_cat(paste0("  After filtering NAs: ", nrow(df_heat_temp), " rows\n"))
             # v53: print(df_heat_temp)
             # v53: print("df_heat_temp[[title.id]]) is")
             # v53: print(df_heat_temp[[title.id]])
@@ -3727,12 +3746,12 @@ func.print.lineage.tree <- function(conf_yaml_path,
             # v58: FIXED - Validate data and ensure unique rownames before setting
             if (nrow(df_heat_temp) == 0) {
               # Skip this heatmap if no data
-              cat(file=stderr(), paste0("  WARNING: No matching data for heatmap - skipping\n"))
+              debug_cat(paste0("  WARNING: No matching data for heatmap - skipping\n"))
               heat_display_vec <- c(heat_display_vec, FALSE)
               # v58: Reset heat_flag if no heatmaps have data
               if (indx_for_sav == 1) {
                 heat_flag <- FALSE
-                cat(file=stderr(), paste0("  Resetting heat_flag to FALSE\n"))
+                debug_cat(paste0("  Resetting heat_flag to FALSE\n"))
               }
               next
             }
@@ -4244,7 +4263,7 @@ func.print.lineage.tree <- function(conf_yaml_path,
       # v53: cat(file=stderr(), "Ã°Å¸â€Â Passing flag_display_nod_number_on_tree:", flag_display_nod_number_on_tree, "\n")
       # v53: cat(file=stderr(), "Ã°Å¸â€Â Passing highlight_manual_nodes:", highlight_manual_nodes, "\n")
       # v53: cat(file=stderr(), "Ã°Å¸â€Â Passing manual_nodes_to_highlight:", paste(manual_nodes_to_highlight, collapse=", "), "\n")
-      # v53: cat(file=stderr(), "================================================\n\n")
+      # v53: debug_cat("================================================\n\n")
       
       ou <-     func.make.plot.tree.heat.NEW(
         tree440 = tree440,
@@ -4504,7 +4523,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   # v53: cat(file=stderr(), "Ã°Å¸â€Â flag_display_nod_number_on_tree:", flag_display_nod_number_on_tree, "\n")
   # v53: cat(file=stderr(), "Ã°Å¸â€Â highlight_manual_nodes:", highlight_manual_nodes, "\n")
   # v53: cat(file=stderr(), "Ã°Å¸â€Â manual_nodes_to_highlight:", paste(manual_nodes_to_highlight, collapse=", "), "\n")
-  # v53: cat(file=stderr(), "================================================\n\n")
+  # v53: debug_cat("================================================\n\n")
   
   if (debug_mode == TRUE) {
     # v53: print("In func.make.plot.tree.HEAT")
@@ -5104,7 +5123,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   
   if (flag_display_nod_number_on_tree == TRUE) {
     # v53: cat(file=stderr(), "Ã°Å¸â€Â Ã¢Å“â€œ ADDING NODE NUMBERS with size:", node_number_font_size, "\n")
-    # v53: cat(file=stderr(), "================================================\n\n")
+    # v53: debug_cat("================================================\n\n")
     
     pr440_short_tips_TRY_new_with_boot_more1 <- pr440_short_tips_TRY_new_with_boot_more1 +
       geom_text(
@@ -5114,7 +5133,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       )
   } else {
     # v53: cat(file=stderr(), "Ã°Å¸â€Â Ã¢Å“â€” NODE NUMBERS NOT ENABLED\n")
-    # v53: cat(file=stderr(), "================================================\n\n")
+    # v53: debug_cat("================================================\n\n")
   }
   
   # Highlight manually selected nodes
@@ -5138,7 +5157,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     
     if (nrow(highlight_data) > 0) {
       # v53: cat(file=stderr(), "Ã°Å¸â€Â Ã¢Å“â€œÃ¢Å“â€œ ADDING RED CIRCLES to", nrow(highlight_data), "nodes\n")
-      # v53: cat(file=stderr(), "================================================\n\n")
+      # v53: debug_cat("================================================\n\n")
       
       pr440_short_tips_TRY_new_with_boot_more1 <- pr440_short_tips_TRY_new_with_boot_more1 +
         geom_point(data = highlight_data, 
@@ -5154,7 +5173,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       # v53: cat(file=stderr(), "Ã°Å¸â€Â Ã¢Å“â€”Ã¢Å“â€” NO MATCHING NODES FOUND IN DATA\n")
       # v53: cat(file=stderr(), "Ã°Å¸â€Â Available nodes in data (first 20):", 
       #     paste(head(unique(pr440_short_tips_TRY_new_with_boot_more1$data$node), 20), collapse=", "), "\n")
-      # v53: cat(file=stderr(), "================================================\n\n")
+      # v53: debug_cat("================================================\n\n")
     }
   } else {
     # v53: cat(file=stderr(), "Ã°Å¸â€Â Ã¢Å“â€” HIGHLIGHTING NOT ENABLED\n")
@@ -5164,7 +5183,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     if (is.na(manual_nodes_to_highlight[1])) {
       # v53: cat(file=stderr(), "Ã°Å¸â€Â   Reason: manual_nodes_to_highlight is NA\n")
     }
-    # v53: cat(file=stderr(), "================================================\n\n")
+    # v53: debug_cat("================================================\n\n")
   }
   
   # Get plot boundaries
@@ -5202,11 +5221,11 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   boudariestt <- tryCatch({
     func.find.plot.boundaries(tt_for_boundaries, debug_mode)
   }, error = function(e) {
-    cat(file=stderr(), paste0("  v132: Error computing boudariestt: ", e$message, "\n"))
+    debug_cat(paste0("  v32: Error computing boudariestt: ", e$message, "\n"))
     # Return default values if computation fails
     list(xmin = min(p$data$x, na.rm = TRUE), xmax = max(p$data$x, na.rm = TRUE))
   })
-  cat(file=stderr(), paste0("  v132: boudariestt initialized early: xmin=", boudariestt$xmin, ", xmax=", boudariestt$xmax, "\n"))
+  debug_cat(paste0("  v32: boudariestt initialized early: xmin=", boudariestt$xmin, ", xmax=", boudariestt$xmax, "\n"))
 
   # Handle highlighting if requested
   # v141: Only apply highlight here when NO heatmap, to prevent double highlighting
@@ -5243,11 +5262,11 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   # Add heatmap if requested
   # v99: MANUAL HEATMAP - Replaced gheatmap() with manual geom_tile() approach
   # because gheatmap was corrupting the plot's @mapping property
-  cat(file=stderr(), paste0("\n=== v99: HEATMAP RENDERING ===\n"))
-  cat(file=stderr(), paste0("  heat_flag: ", heat_flag, "\n"))
+  debug_cat(paste0("\n=== v99: HEATMAP RENDERING ===\n"))
+  debug_cat(paste0("  heat_flag: ", heat_flag, "\n"))
   if (heat_flag == TRUE) {
-    cat(file=stderr(), paste0("  heat_map_title_list length: ", length(heat_map_title_list), "\n"))
-    cat(file=stderr(), paste0("  dxdf440_for_heat length: ", length(dxdf440_for_heat), "\n"))
+    debug_cat(paste0("  heat_map_title_list length: ", length(heat_map_title_list), "\n"))
+    debug_cat(paste0("  dxdf440_for_heat length: ", length(dxdf440_for_heat), "\n"))
   }
 
   # v99: Save a backup of p before heatmap for fallback recovery
@@ -5258,18 +5277,18 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   boudariestt <- tryCatch({
     func.find.plot.boundaries(tt, debug_mode)
   }, error = function(e) {
-    cat(file=stderr(), paste0("  v132: Error refreshing boudariestt: ", e$message, "\n"))
+    debug_cat(paste0("  v32: Error refreshing boudariestt: ", e$message, "\n"))
     # Return default values if computation fails
     list(xmin = min(p$data$x, na.rm = TRUE), xmax = max(p$data$x, na.rm = TRUE))
   })
-  cat(file=stderr(), paste0("  v132: boudariestt refreshed: xmin=", boudariestt$xmin, ", xmax=", boudariestt$xmax, "\n"))
+  debug_cat(paste0("  v32: boudariestt refreshed: xmin=", boudariestt$xmin, ", xmax=", boudariestt$xmax, "\n"))
 
   # v122: MULTIPLE HEATMAPS IMPLEMENTATION
   # Refactored from v99 to support multiple heatmaps with spacing control
   # Each heatmap can have its own colors, type (discrete/continuous), and parameters
   if (heat_flag == TRUE && length(dxdf440_for_heat) > 0) {
-    cat(file=stderr(), paste0("\n=== v122: ENTERING MULTIPLE HEATMAPS CODE ===\n"))
-    cat(file=stderr(), paste0("  Number of heatmaps to render: ", length(dxdf440_for_heat), "\n"))
+    debug_cat(paste0("\n=== v122: ENTERING MULTIPLE HEATMAPS CODE ===\n"))
+    debug_cat(paste0("  Number of heatmaps to render: ", length(dxdf440_for_heat), "\n"))
 
     # v122: Get tree info once (shared across all heatmaps)
     tip_data <- subset(p$data, isTip == TRUE)
@@ -5284,65 +5303,65 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
     # v125: Use global gap setting for spacing between multiple heatmaps
     heatmap_spacing <- heatmap_global_gap * tree_width
-    cat(file=stderr(), paste0("  v125: heatmap_global_gap=", heatmap_global_gap, ", heatmap_spacing=", heatmap_spacing, "\n"))
+    debug_cat(paste0("  v25: heatmap_global_gap=", heatmap_global_gap, ", heatmap_spacing=", heatmap_spacing, "\n"))
 
     # v122: Loop through all heatmaps
     for (heat_idx in 1:length(dxdf440_for_heat)) {
-      cat(file=stderr(), paste0("\n=== v122: PROCESSING HEATMAP ", heat_idx, " of ", length(dxdf440_for_heat), " ===\n"))
+      debug_cat(paste0("\n=== v122: PROCESSING HEATMAP ", heat_idx, " of ", length(dxdf440_for_heat), " ===\n"))
 
       # Get this heatmap's data
       heat_data <- dxdf440_for_heat[[heat_idx]]
 
       # v122: Validate heatmap data
-      cat(file=stderr(), paste0("  Initial heat_data dimensions: ", nrow(heat_data), " x ", ncol(heat_data), "\n"))
+      debug_cat(paste0("  Initial heat_data dimensions: ", nrow(heat_data), " x ", ncol(heat_data), "\n"))
 
       # v122: Check if heat_data is valid - skip this heatmap if invalid
       if (is.null(heat_data) || !is.data.frame(heat_data) || nrow(heat_data) == 0) {
-        cat(file=stderr(), paste0("  ERROR: Invalid heatmap data - skipping heatmap ", heat_idx, "\n"))
+        debug_cat(paste0("  ERROR: Invalid heatmap data - skipping heatmap ", heat_idx, "\n"))
         next  # v122: Continue to next heatmap instead of stopping all heatmaps
       }
 
-      cat(file=stderr(), paste0("  Tree has ", length(tree_tips), " tips\n"))
+      debug_cat(paste0("  Tree has ", length(tree_tips), " tips\n"))
 
       # v122: Check current row names
       current_rownames <- rownames(heat_data)
-      cat(file=stderr(), paste0("  Current rownames: ", paste(head(current_rownames, 5), collapse=", "), "\n"))
+      debug_cat(paste0("  Current rownames: ", paste(head(current_rownames, 5), collapse=", "), "\n"))
 
       # v122: Verify row names are valid and match tree tips
       if (is.null(current_rownames) || all(current_rownames == as.character(1:nrow(heat_data)))) {
-        cat(file=stderr(), paste0("  WARNING: Heat data has default numeric row names - skipping heatmap ", heat_idx, "\n"))
+        debug_cat(paste0("  WARNING: Heat data has default numeric row names - skipping heatmap ", heat_idx, "\n"))
         next
       }
 
       # v122: Check how many row names match tree tips
       matching_tips <- sum(current_rownames %in% tree_tips)
-      cat(file=stderr(), paste0("  Row names matching tree tips: ", matching_tips, " / ", nrow(heat_data), "\n"))
+      debug_cat(paste0("  Row names matching tree tips: ", matching_tips, " / ", nrow(heat_data), "\n"))
 
       if (matching_tips == 0) {
-        cat(file=stderr(), paste0("  ERROR: No row names match tree tips - skipping heatmap ", heat_idx, "\n"))
+        debug_cat(paste0("  ERROR: No row names match tree tips - skipping heatmap ", heat_idx, "\n"))
         next
       } else if (matching_tips < nrow(heat_data)) {
-        cat(file=stderr(), paste0("  WARNING: Only ", matching_tips, " row names match - filtering data\n"))
+        debug_cat(paste0("  WARNING: Only ", matching_tips, " row names match - filtering data\n"))
         heat_data <- heat_data[current_rownames %in% tree_tips, , drop = FALSE]
-        cat(file=stderr(), paste0("  After filtering: ", nrow(heat_data), " rows\n"))
+        debug_cat(paste0("  After filtering: ", nrow(heat_data), " rows\n"))
       }
 
-      cat(file=stderr(), paste0("  heat_data dimensions: ", nrow(heat_data), " x ", ncol(heat_data), "\n"))
-      cat(file=stderr(), paste0("  heat_data rownames sample: ", paste(head(rownames(heat_data), 5), collapse=", "), "\n"))
-      cat(file=stderr(), paste0("  heat_data columns: ", paste(colnames(heat_data), collapse=", "), "\n"))
+      debug_cat(paste0("  heat_data dimensions: ", nrow(heat_data), " x ", ncol(heat_data), "\n"))
+      debug_cat(paste0("  heat_data rownames sample: ", paste(head(rownames(heat_data), 5), collapse=", "), "\n"))
+      debug_cat(paste0("  heat_data columns: ", paste(colnames(heat_data), collapse=", "), "\n"))
 
       # v122: Get heatmap parameters for THIS heatmap (use heat_idx, not 1)
       heat_param <- if (heat_idx <= length(heat_display_params_list)) heat_display_params_list[[heat_idx]] else list()
       is_discrete <- ifelse(!is.null(heat_param) && !is.na(heat_param['is_discrete']),
                             heat_param['is_discrete'] == TRUE, FALSE)
-      cat(file=stderr(), paste0("  is_discrete: ", is_discrete, "\n"))
+      debug_cat(paste0("  is_discrete: ", is_discrete, "\n"))
 
       # v122: Calculate heatmap positioning - use current_heatmap_x_start from previous heatmap
       # For first heatmap, this is tree_xmax; for subsequent, it's the end of the previous heatmap
       per_heatmap_distance <- if (!is.null(heat_param[['distance']])) heat_param[['distance']] else heatmap_tree_distance
       heatmap_offset <- tree_width * per_heatmap_distance
-      cat(file=stderr(), paste0("  per_heatmap_distance: ", per_heatmap_distance, "\n"))
-      cat(file=stderr(), paste0("  current_heatmap_x_start: ", current_heatmap_x_start, "\n"))
+      debug_cat(paste0("  per_heatmap_distance: ", per_heatmap_distance, "\n"))
+      debug_cat(paste0("  current_heatmap_x_start: ", current_heatmap_x_start, "\n"))
       # v113: Fixed row height and column width to be INDEPENDENT
       # In coord_flip context with ggtree:
       # - Data y (tip indices 1,2,3...) becomes visual x after flip
@@ -5371,7 +5390,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
         base_tip_spacing <- min(tip_spacings)  # v116: Use minimum to prevent default overlap
         mean_spacing <- mean(tip_spacings)
         median_spacing <- median(tip_spacings)
-        cat(file=stderr(), paste0("  v116: tip spacing stats: min=", base_tip_spacing,
+        debug_cat(paste0("  v16: tip spacing stats: min=", base_tip_spacing,
                                    ", median=", median_spacing,
                                    ", mean=", mean_spacing, "\n"))
       } else {
@@ -5383,24 +5402,24 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       # <1 means gaps, >1 means overlap
       tile_height <- base_tip_spacing * row_height_value
 
-      cat(file=stderr(), paste0("  v116: tip_y range: [", min(tip_y_positions), ", ", max(tip_y_positions), "]\n"))
-      cat(file=stderr(), paste0("  v116: n_tips: ", length(tip_y_positions), "\n"))
-      cat(file=stderr(), paste0("  v116: base_tip_spacing (min): ", base_tip_spacing, "\n"))
+      debug_cat(paste0("  v16: tip_y range: [", min(tip_y_positions), ", ", max(tip_y_positions), "]\n"))
+      debug_cat(paste0("  v16: n_tips: ", length(tip_y_positions), "\n"))
+      debug_cat(paste0("  v16: base_tip_spacing (min): ", base_tip_spacing, "\n"))
 
-      cat(file=stderr(), paste0("  column_width_value: ", column_width_value, "\n"))
-      cat(file=stderr(), paste0("  row_height_value: ", row_height_value, "\n"))
-      cat(file=stderr(), paste0("  tile_width (column spacing): ", tile_width, "\n"))
-      cat(file=stderr(), paste0("  tile_height (row height): ", tile_height, "\n"))
+      debug_cat(paste0("  column_width_value: ", column_width_value, "\n"))
+      debug_cat(paste0("  row_height_value: ", row_height_value, "\n"))
+      debug_cat(paste0("  tile_width (column spacing): ", tile_width, "\n"))
+      debug_cat(paste0("  tile_height (row height): ", tile_height, "\n"))
 
-      cat(file=stderr(), paste0("  tree_xmin: ", tree_xmin, "\n"))
-      cat(file=stderr(), paste0("  tree_xmax: ", tree_xmax, "\n"))
-      cat(file=stderr(), paste0("  tree_width: ", tree_width, "\n"))
-      cat(file=stderr(), paste0("  heatmap_offset: ", heatmap_offset, "\n"))
-      cat(file=stderr(), paste0("  tile_width: ", tile_width, "\n"))
+      debug_cat(paste0("  tree_xmin: ", tree_xmin, "\n"))
+      debug_cat(paste0("  tree_xmax: ", tree_xmax, "\n"))
+      debug_cat(paste0("  tree_width: ", tree_width, "\n"))
+      debug_cat(paste0("  heatmap_offset: ", heatmap_offset, "\n"))
+      debug_cat(paste0("  tile_width: ", tile_width, "\n"))
 
       # v99: Build heatmap data frame for geom_tile
       # We need: x (column position), y (tip position), fill (value)
-      cat(file=stderr(), paste0("\n=== v99: BUILDING HEATMAP TILE DATA ===\n"))
+      debug_cat(paste0("\n=== v99: BUILDING HEATMAP TILE DATA ===\n"))
 
       tile_data_list <- list()
       for (col_idx in 1:ncol(heat_data)) {
@@ -5444,13 +5463,13 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
       if (length(tile_data_list) > 0) {
         tile_df <- do.call(rbind, tile_data_list)
-        cat(file=stderr(), paste0("  Created tile_df with ", nrow(tile_df), " tiles\n"))
-        cat(file=stderr(), paste0("  x range: [", min(tile_df$x), ", ", max(tile_df$x), "]\n"))
-        cat(file=stderr(), paste0("  y range: [", min(tile_df$y), ", ", max(tile_df$y), "]\n"))
-        cat(file=stderr(), paste0("  Unique values: ", paste(unique(tile_df$value), collapse=", "), "\n"))
+        debug_cat(paste0("  Created tile_df with ", nrow(tile_df), " tiles\n"))
+        debug_cat(paste0("  x range: [", min(tile_df$x), ", ", max(tile_df$x), "]\n"))
+        debug_cat(paste0("  y range: [", min(tile_df$y), ", ", max(tile_df$y), "]\n"))
+        debug_cat(paste0("  Unique values: ", paste(unique(tile_df$value), collapse=", "), "\n"))
 
         # v99: Add heatmap tiles using geom_tile
-        cat(file=stderr(), paste0("\n=== v99: ADDING GEOM_TILE LAYER ===\n"))
+        debug_cat(paste0("\n=== v99: ADDING GEOM_TILE LAYER ===\n"))
 
         p <- tryCatch({
           # v112: Add tile layer with explicit aesthetics
@@ -5466,17 +5485,17 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
           grid_color <- if (!is.null(heat_param[['grid_color']])) heat_param[['grid_color']] else "#000000"
           grid_size <- if (!is.null(heat_param[['grid_size']])) as.numeric(heat_param[['grid_size']]) else 0.5
 
-          cat(file=stderr(), paste0("  v113: show_grid=", show_grid, " (class: ", class(show_grid), ")\n"))
-          cat(file=stderr(), paste0("  v113: grid_color=", grid_color, ", grid_size=", grid_size, "\n"))
+          debug_cat(paste0("  v13: show_grid=", show_grid, " (class: ", class(show_grid), ")\n"))
+          debug_cat(paste0("  v13: grid_color=", grid_color, ", grid_size=", grid_size, "\n"))
 
           # v113: Ensure show_grid is properly evaluated as boolean
           show_grid_bool <- isTRUE(show_grid) || identical(show_grid, TRUE) || identical(show_grid, "yes") || identical(show_grid, "TRUE")
-          cat(file=stderr(), paste0("  v113: show_grid_bool=", show_grid_bool, "\n"))
+          debug_cat(paste0("  v13: show_grid_bool=", show_grid_bool, "\n"))
 
           # v123: For heatmaps after the first, add new_scale_fill() BEFORE adding geom_tile
           # This is critical - the scale must be reset before the new layer that uses fill
           if (heat_idx > 1) {
-            cat(file=stderr(), paste0("  v123: Adding new_scale_fill() BEFORE geom_tile for heatmap ", heat_idx, "\n"))
+            debug_cat(paste0("  v23: Adding new_scale_fill() BEFORE geom_tile for heatmap ", heat_idx, "\n"))
             p <- p + ggnewscale::new_scale_fill()
           }
 
@@ -5549,7 +5568,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
               geom_segment(data = h_lines_df, aes(x = x, xend = xend, y = y, yend = yend),
                            color = grid_color, linewidth = grid_size, inherit.aes = FALSE)
 
-            cat(file=stderr(), paste0("  v115: Added explicit grid lines: ", nrow(v_lines_df), " vertical, ", nrow(h_lines_df), " horizontal\n"))
+            debug_cat(paste0("  v15: Added explicit grid lines: ", nrow(v_lines_df), " vertical, ", nrow(h_lines_df), " horizontal\n"))
           } else {
             p_with_tiles <- p + geom_tile(
               data = tile_df,
@@ -5560,7 +5579,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             )
           }
 
-          cat(file=stderr(), paste0("  geom_tile added successfully\n"))
+          debug_cat(paste0("  geom_tile added successfully\n"))
 
           # v100: Add color scale using user-selected colors
           na_color <- if (!is.null(heat_param[['na_color']])) heat_param[['na_color']] else "grey90"
@@ -5570,7 +5589,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
           # v123: new_scale_fill() is now added BEFORE geom_tile (see line ~4993)
 
           if (is_discrete) {
-            cat(file=stderr(), paste0("  Adding discrete color scale\n"))
+            debug_cat(paste0("  Adding discrete color scale\n"))
 
             # v100: Check for custom colors from user
             man_define_colors <- !is.null(heat_param['man_define_colors']) &&
@@ -5582,28 +5601,28 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             if (is.list(custom_colors_raw) && !is.null(names(custom_colors_raw))) {
               # Convert named list to named character vector
               custom_colors <- unlist(custom_colors_raw)
-              cat(file=stderr(), paste0("  v104: Converted custom_colors from named list to named vector\n"))
+              debug_cat(paste0("  v04: Converted custom_colors from named list to named vector\n"))
             } else {
               custom_colors <- custom_colors_raw
             }
 
-            cat(file=stderr(), paste0("  man_define_colors: ", man_define_colors, "\n"))
-            cat(file=stderr(), paste0("  custom_colors: ", paste(custom_colors, collapse=", "), "\n"))
-            cat(file=stderr(), paste0("  na_color: ", na_color, "\n"))
+            debug_cat(paste0("  man_define_colors: ", man_define_colors, "\n"))
+            debug_cat(paste0("  custom_colors: ", paste(custom_colors, collapse=", "), "\n"))
+            debug_cat(paste0("  na_color: ", na_color, "\n"))
 
             if (man_define_colors && !is.null(custom_colors) && length(custom_colors) > 0) {
               # v101: Use custom colors provided by user
-              cat(file=stderr(), paste0("  Using ", length(custom_colors), " custom colors from user\n"))
+              debug_cat(paste0("  Using ", length(custom_colors), " custom colors from user\n"))
 
               # v104: custom_colors should now be a named vector where names are the value labels
               # Debug: show what we received
-              cat(file=stderr(), paste0("  custom_colors names: ", paste(names(custom_colors), collapse=", "), "\n"))
-              cat(file=stderr(), paste0("  custom_colors values: ", paste(custom_colors, collapse=", "), "\n"))
+              debug_cat(paste0("  custom_colors names: ", paste(names(custom_colors), collapse=", "), "\n"))
+              debug_cat(paste0("  custom_colors values: ", paste(custom_colors, collapse=", "), "\n"))
 
               # Get unique values from data (excluding NA) to match with colors
               unique_vals <- unique(tile_df$value)
               unique_vals <- unique_vals[!is.na(unique_vals)]
-              cat(file=stderr(), paste0("  Unique values in data: ", paste(unique_vals, collapse=", "), "\n"))
+              debug_cat(paste0("  Unique values in data: ", paste(unique_vals, collapse=", "), "\n"))
 
               # v101: Fix color mapping - custom_colors is already a named vector
               # Match colors by value name, not by position
@@ -5613,13 +5632,13 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
                 # For any values not in custom_colors, use a fallback color
                 missing_vals <- unique_vals[is.na(color_vec)]
                 if (length(missing_vals) > 0) {
-                  cat(file=stderr(), paste0("  WARNING: Missing colors for: ", paste(missing_vals, collapse=", "), "\n"))
+                  debug_cat(paste0("  WARNING: Missing colors for: ", paste(missing_vals, collapse=", "), "\n"))
                   # Use grey for missing values
                   color_vec[is.na(color_vec)] <- "grey50"
                 }
               } else {
                 # Fallback: custom_colors is unnamed, use positional assignment (sorted order)
-                cat(file=stderr(), paste0("  custom_colors is unnamed, using positional assignment\n"))
+                debug_cat(paste0("  custom_colors is unnamed, using positional assignment\n"))
                 sorted_vals <- sort(unique_vals)
                 if (length(custom_colors) >= length(sorted_vals)) {
                   color_vec <- setNames(custom_colors[1:length(sorted_vals)], sorted_vals)
@@ -5627,7 +5646,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
                   color_vec <- setNames(rep(custom_colors, length.out = length(sorted_vals)), sorted_vals)
                 }
               }
-              cat(file=stderr(), paste0("  Color mapping: ", paste(names(color_vec), "=", color_vec, collapse=", "), "\n"))
+              debug_cat(paste0("  Color mapping: ", paste(names(color_vec), "=", color_vec, collapse=", "), "\n"))
 
               p_with_tiles <- p_with_tiles + scale_fill_manual(
                 values = color_vec,
@@ -5637,7 +5656,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             } else if (!is.null(custom_colors) && length(custom_colors) == 1 &&
                        custom_colors %in% rownames(RColorBrewer::brewer.pal.info)) {
               # v100: Use RColorBrewer palette
-              cat(file=stderr(), paste0("  Using RColorBrewer palette: ", custom_colors, "\n"))
+              debug_cat(paste0("  Using RColorBrewer palette: ", custom_colors, "\n"))
               p_with_tiles <- p_with_tiles + scale_fill_brewer(
                 palette = custom_colors,
                 name = heatmap_title,
@@ -5645,14 +5664,14 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
               )
             } else {
               # v100: Fallback to viridis
-              cat(file=stderr(), paste0("  Using default viridis palette\n"))
+              debug_cat(paste0("  Using default viridis palette\n"))
               p_with_tiles <- p_with_tiles + scale_fill_viridis_d(
                 name = heatmap_title,
                 na.value = na_color
               )
             }
           } else {
-            cat(file=stderr(), paste0("  Adding continuous color scale\n"))
+            debug_cat(paste0("  Adding continuous color scale\n"))
 
             # v100: Get continuous scale colors from parameters
             low_color <- if (!is.null(heat_param['low']) && !is.na(heat_param['low'])) heat_param['low'] else "beige"
@@ -5662,10 +5681,10 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             limits <- heat_param[['limits']]
 
             # v113: Debug output for continuous scale colors including NA color
-            cat(file=stderr(), paste0("  Colors: low=", low_color, ", mid=", mid_color, ", high=", high_color, "\n"))
-            cat(file=stderr(), paste0("  Midpoint: ", midpoint, "\n"))
-            cat(file=stderr(), paste0("  v113: na_color for continuous: ", na_color, "\n"))
-            cat(file=stderr(), paste0("  v113: heat_param na_color value: ", ifelse(is.null(heat_param[['na_color']]), "NULL", heat_param[['na_color']]), "\n"))
+            debug_cat(paste0("  Colors: low=", low_color, ", mid=", mid_color, ", high=", high_color, "\n"))
+            debug_cat(paste0("  Midpoint: ", midpoint, "\n"))
+            debug_cat(paste0("  v13: na_color for continuous: ", na_color, "\n"))
+            debug_cat(paste0("  v13: heat_param na_color value: ", ifelse(is.null(heat_param[['na_color']]), "NULL", heat_param[['na_color']]), "\n"))
 
             # v111: Values should already be numeric from tile building above
             # No need to convert here as the geom already has the numeric data
@@ -5688,12 +5707,12 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             }
           }
 
-          cat(file=stderr(), paste0("  Color scale added successfully\n"))
+          debug_cat(paste0("  Color scale added successfully\n"))
 
           # v105: Add row labels if enabled
           show_row_labels <- if (!is.null(heat_param[['show_row_labels']])) heat_param[['show_row_labels']] else FALSE
           if (show_row_labels) {
-            cat(file=stderr(), paste0("  Adding row labels...\n"))
+            debug_cat(paste0("  Adding row labels...\n"))
 
             row_label_source <- if (!is.null(heat_param[['row_label_source']])) heat_param[['row_label_source']] else "colnames"
             row_label_font_size <- if (!is.null(heat_param[['row_label_font_size']])) heat_param[['row_label_font_size']] else 2.5
@@ -5710,7 +5729,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
                   col_name  # Default to column name if not mapped
                 }
               })
-              cat(file=stderr(), paste0("  Using label mapping for ", length(labels_to_use), " columns\n"))
+              debug_cat(paste0("  Using label mapping for ", length(labels_to_use), " columns\n"))
             } else if (row_label_source == "custom" && nchar(custom_row_labels) > 0) {
               labels_to_use <- trimws(strsplit(custom_row_labels, ",")[[1]])
               # Pad or truncate to match number of columns
@@ -5724,7 +5743,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
               labels_to_use <- colnames(heat_data)
             }
 
-            cat(file=stderr(), paste0("  Row labels: ", paste(labels_to_use, collapse=", "), "\n"))
+            debug_cat(paste0("  Row labels: ", paste(labels_to_use, collapse=", "), "\n"))
 
             # v113: Improved row labels positioning
             # Labels appear below the heatmap (at lower y values than the tips)
@@ -5734,8 +5753,8 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             row_label_offset <- if (!is.null(heat_param[['row_label_offset']])) as.numeric(heat_param[['row_label_offset']]) else 1.0
             row_label_align <- if (!is.null(heat_param[['row_label_align']])) heat_param[['row_label_align']] else "left"
 
-            cat(file=stderr(), paste0("  v113: row_label_offset from heat_param: ", row_label_offset, "\n"))
-            cat(file=stderr(), paste0("  v113: row_label_align from heat_param: ", row_label_align, "\n"))
+            debug_cat(paste0("  v13: row_label_offset from heat_param: ", row_label_offset, "\n"))
+            debug_cat(paste0("  v13: row_label_align from heat_param: ", row_label_align, "\n"))
 
             # v113: Calculate label y position based on offset
             # Labels go below minimum tip y (which is typically 1)
@@ -5787,8 +5806,8 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
               angle = colnames_angle,
               inherit.aes = FALSE
             )
-            cat(file=stderr(), paste0("  Row labels added successfully\n"))
-            cat(file=stderr(), paste0("  Label position: label_y_pos=", label_y_pos, ", angle=", colnames_angle, ", hjust=", hjust_val, ", vjust=", vjust_val, "\n"))
+            debug_cat(paste0("  Row labels added successfully\n"))
+            debug_cat(paste0("  Label position: label_y_pos=", label_y_pos, ", angle=", colnames_angle, ", hjust=", hjust_val, ", vjust=", vjust_val, "\n"))
           }
 
           # v116/v119: Add tip guide lines (vertical lines from tips through heatmap)
@@ -5796,12 +5815,12 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
           show_guides_bool <- isTRUE(show_guides) || identical(show_guides, TRUE) || identical(show_guides, "yes") || identical(show_guides, "TRUE")
 
           # v119: Debug output to trace guide line settings
-          cat(file=stderr(), paste0("\n=== v119: TIP GUIDE LINES CHECK ===\n"))
-          cat(file=stderr(), paste0("  show_guides raw value: ", show_guides, " (class: ", class(show_guides), ")\n"))
-          cat(file=stderr(), paste0("  show_guides_bool: ", show_guides_bool, "\n"))
+          debug_cat(paste0("\n=== v119: TIP GUIDE LINES CHECK ===\n"))
+          debug_cat(paste0("  show_guides raw value: ", show_guides, " (class: ", class(show_guides), ")\n"))
+          debug_cat(paste0("  show_guides_bool: ", show_guides_bool, "\n"))
 
           if (show_guides_bool) {
-            cat(file=stderr(), paste0("\n=== v116: ADDING TIP GUIDE LINES ===\n"))
+            debug_cat(paste0("\n=== v116: ADDING TIP GUIDE LINES ===\n"))
 
             # Get guide line settings
             guide_color1 <- if (!is.null(heat_param[['guide_color1']])) heat_param[['guide_color1']] else "#CCCCCC"
@@ -5809,15 +5828,15 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             guide_alpha <- if (!is.null(heat_param[['guide_alpha']])) as.numeric(heat_param[['guide_alpha']]) else 0.3
             guide_width <- if (!is.null(heat_param[['guide_width']])) as.numeric(heat_param[['guide_width']]) else 0.5
 
-            cat(file=stderr(), paste0("  guide_color1: ", guide_color1, "\n"))
-            cat(file=stderr(), paste0("  guide_color2: ", guide_color2, "\n"))
-            cat(file=stderr(), paste0("  guide_alpha: ", guide_alpha, "\n"))
-            cat(file=stderr(), paste0("  guide_width: ", guide_width, "\n"))
+            debug_cat(paste0("  guide_color1: ", guide_color1, "\n"))
+            debug_cat(paste0("  guide_color2: ", guide_color2, "\n"))
+            debug_cat(paste0("  guide_alpha: ", guide_alpha, "\n"))
+            debug_cat(paste0("  guide_width: ", guide_width, "\n"))
 
             # v125: Get tip positions from tip_data to start guide lines at actual tip locations
             # Each tip may have a different x position based on branch lengths
             n_tips <- nrow(tip_data)
-            cat(file=stderr(), paste0("  Number of tips: ", n_tips, "\n"))
+            debug_cat(paste0("  Number of tips: ", n_tips, "\n"))
 
             # v125: Calculate x-end (right edge of heatmap)
             x_max <- max(tile_df$x) + tile_width / 2  # End at right edge of heatmap
@@ -5839,8 +5858,8 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             })
             guide_lines_df <- do.call(rbind, guide_lines_list)
 
-            cat(file=stderr(), paste0("  v125: Guide lines from individual tip x positions to x_max=", x_max, "\n"))
-            cat(file=stderr(), paste0("  v125: Tip x range: [", min(tip_data$x), ", ", max(tip_data$x), "]\n"))
+            debug_cat(paste0("  v25: Guide lines from individual tip x positions to x_max=", x_max, "\n"))
+            debug_cat(paste0("  v25: Tip x range: [", min(tip_data$x), ", ", max(tip_data$x), "]\n"))
 
             # Apply transparency to the colors
             guide_color1_alpha <- adjustcolor(guide_color1, alpha.f = guide_alpha)
@@ -5863,40 +5882,40 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
                 inherit.aes = FALSE
               )
 
-            cat(file=stderr(), paste0("  v116: Added ", n_tips, " tip guide lines\n"))
+            debug_cat(paste0("  v16: Added ", n_tips, " tip guide lines\n"))
           }
 
-          cat(file=stderr(), paste0("  Final layers: ", length(p_with_tiles$layers), "\n"))
+          debug_cat(paste0("  Final layers: ", length(p_with_tiles$layers), "\n"))
           p_with_tiles
 
         }, error = function(e) {
-          cat(file=stderr(), paste0("  ERROR adding heatmap: ", e$message, "\n"))
-          cat(file=stderr(), paste0("  Returning tree without heatmap\n"))
+          debug_cat(paste0("  ERROR adding heatmap: ", e$message, "\n"))
+          debug_cat(paste0("  Returning tree without heatmap\n"))
           p
         })
 
-        cat(file=stderr(), paste0("=== v122: HEATMAP ", heat_idx, " COMPLETE ===\n"))
-        cat(file=stderr(), paste0("  p layers after heatmap: ", length(p$layers), "\n"))
-        cat(file=stderr(), paste0("  Layer types: ", paste(sapply(p$layers, function(l) class(l$geom)[1]), collapse=", "), "\n"))
+        debug_cat(paste0("=== v122: HEATMAP ", heat_idx, " COMPLETE ===\n"))
+        debug_cat(paste0("  p layers after heatmap: ", length(p$layers), "\n"))
+        debug_cat(paste0("  Layer types: ", paste(sapply(p$layers, function(l) class(l$geom)[1]), collapse=", "), "\n"))
 
         # v125: Update current_heatmap_x_start for next heatmap
         # Calculate the rightmost x position of this heatmap + global gap
         this_heatmap_x_end <- max(tile_df$x) + tile_width / 2
         current_heatmap_x_start <- this_heatmap_x_end + heatmap_spacing  # v125: Add gap between heatmaps
-        cat(file=stderr(), paste0("  v125: Updated current_heatmap_x_start to ", current_heatmap_x_start, " (added gap=", heatmap_spacing, ")\n"))
+        debug_cat(paste0("  v25: Updated current_heatmap_x_start to ", current_heatmap_x_start, " (added gap=", heatmap_spacing, ")\n"))
 
       } else {
-        cat(file=stderr(), paste0("  WARNING: No tile data created - skipping heatmap ", heat_idx, "\n"))
+        debug_cat(paste0("  WARNING: No tile data created - skipping heatmap ", heat_idx, "\n"))
       }
     } # End of v122 for loop for this heatmap
   }
   # END v122 MULTIPLE HEATMAPS
 
   # v94: Track p right after heatmap block
-  cat(file=stderr(), paste0("\n=== v94: Immediately after simplified heatmap block ===\n"))
-  cat(file=stderr(), paste0("  heat_flag: ", heat_flag, "\n"))
-  cat(file=stderr(), paste0("  p layers: ", length(p$layers), "\n"))
-  cat(file=stderr(), paste0("  Layer types: ", paste(sapply(p$layers, function(l) class(l$geom)[1]), collapse=", "), "\n"))
+  debug_cat(paste0("\n=== v94: Immediately after simplified heatmap block ===\n"))
+  debug_cat(paste0("  heat_flag: ", heat_flag, "\n"))
+  debug_cat(paste0("  p layers: ", length(p$layers), "\n"))
+  debug_cat(paste0("  Layer types: ", paste(sapply(p$layers, function(l) class(l$geom)[1]), collapse=", "), "\n"))
 
   # ========================================================================
   # v91: ORIGINAL COMPLEX HEATMAP CODE COMMENTED OUT BELOW
@@ -5913,7 +5932,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
     # v63: DEBUG - show x range BEFORE scaling
     x_range_before <- range(tt_DISABLED$data$x, na.rm = TRUE)
-    cat(file=stderr(), paste0("\n=== v63: Pre-scaling x range: [", x_range_before[1], ", ", x_range_before[2], "] ===\n"))
+    debug_cat(paste0("\n=== v63: Pre-scaling x range: [", x_range_before[1], ", ", x_range_before[2], "] ===\n"))
 
     for (i in cc_totss) {
       par <- tt$data$parent[i]
@@ -5923,7 +5942,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
     # v63: DEBUG - show x range AFTER scaling
     x_range_after <- range(tt$data$x, na.rm = TRUE)
-    cat(file=stderr(), paste0("=== v63: Post-scaling x range: [", x_range_after[1], ", ", x_range_after[2], "] ===\n"))
+    debug_cat(paste0("=== v63: Post-scaling x range: [", x_range_after[1], ", ", x_range_after[2], "] ===\n"))
     
     how_many_tips <- length(tt$data$isTip)
     
@@ -6095,37 +6114,37 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       # for discrete data to work properly with ggplot2's discrete color scales.
       # Without factors, "Problem while setting up geom" errors occur during rendering.
       if (!is.null(heat_param) && heat_param['is_discrete'] == TRUE) {
-        cat(file=stderr(), paste0("\n=== v89: Converting discrete heatmap to factors ===\n"))
+        debug_cat(paste0("\n=== v89: Converting discrete heatmap to factors ===\n"))
         for (col_idx in 1:ncol(dxdf440_for_heat[[j1]])) {
           col_name <- colnames(dxdf440_for_heat[[j1]])[col_idx]
           col_vals <- dxdf440_for_heat[[j1]][, col_idx]
           unique_vals <- sort(unique(na.omit(col_vals)))
-          cat(file=stderr(), paste0("  Column '", col_name, "': ", length(unique_vals), " unique values\n"))
-          cat(file=stderr(), paste0("  Unique values: ", paste(head(unique_vals, 10), collapse=", "),
+          debug_cat(paste0("  Column '", col_name, "': ", length(unique_vals), " unique values\n"))
+          debug_cat(paste0("  Unique values: ", paste(head(unique_vals, 10), collapse=", "),
                                     if(length(unique_vals) > 10) "..." else "", "\n"))
           # v89: RESTORED - Convert to factor with sorted levels (REQUIRED for discrete heatmaps)
           dxdf440_for_heat[[j1]][, col_idx] <- factor(col_vals, levels = unique_vals)
-          cat(file=stderr(), paste0("  Converted to factor with ", length(unique_vals), " levels\n"))
+          debug_cat(paste0("  Converted to factor with ", length(unique_vals), " levels\n"))
         }
-        cat(file=stderr(), paste0("================================\n"))
+        debug_cat(paste0("================================\n"))
       }
 
       # Create the heatmap
       # v61: DEBUG - show data structure before gheatmap call
-      cat(file=stderr(), paste0("\n=== v61: GHEATMAP DATA DEBUG ===\n"))
-      cat(file=stderr(), paste0("  Heatmap index: j1=", j1, ", j=", j, "\n"))
+      debug_cat(paste0("\n=== v61: GHEATMAP DATA DEBUG ===\n"))
+      debug_cat(paste0("  Heatmap index: j1=", j1, ", j=", j, "\n"))
       heat_data <- dxdf440_for_heat[[j1]]
-      cat(file=stderr(), paste0("  heat_data dimensions: ", nrow(heat_data), " x ", ncol(heat_data), "\n"))
-      cat(file=stderr(), paste0("  heat_data rownames sample: ", paste(head(rownames(heat_data), 5), collapse=", "), "\n"))
-      cat(file=stderr(), paste0("  heat_data columns: ", paste(colnames(heat_data), collapse=", "), "\n"))
+      debug_cat(paste0("  heat_data dimensions: ", nrow(heat_data), " x ", ncol(heat_data), "\n"))
+      debug_cat(paste0("  heat_data rownames sample: ", paste(head(rownames(heat_data), 5), collapse=", "), "\n"))
+      debug_cat(paste0("  heat_data columns: ", paste(colnames(heat_data), collapse=", "), "\n"))
       tt_tips <- subset(tt$data, isTip == TRUE)
-      cat(file=stderr(), paste0("  Tree tip labels sample: ", paste(head(tt_tips$label, 5), collapse=", "), "\n"))
+      debug_cat(paste0("  Tree tip labels sample: ", paste(head(tt_tips$label, 5), collapse=", "), "\n"))
       # Check if rownames match tree tip labels
       matching_tips <- sum(rownames(heat_data) %in% tt_tips$label)
-      cat(file=stderr(), paste0("  Rownames matching tree tips: ", matching_tips, " / ", nrow(heat_data), "\n"))
-      cat(file=stderr(), paste0("  offset (new_heat_x): ", new_heat_x, "\n"))
-      cat(file=stderr(), paste0("  width (wi): ", wi, "\n"))
-      cat(file=stderr(), paste0("================================\n"))
+      debug_cat(paste0("  Rownames matching tree tips: ", matching_tips, " / ", nrow(heat_data), "\n"))
+      debug_cat(paste0("  offset (new_heat_x): ", new_heat_x, "\n"))
+      debug_cat(paste0("  width (wi): ", wi, "\n"))
+      debug_cat(paste0("================================\n"))
 
       # v83: RESTORED duplicate gheatmap pattern from v61 - THIS IS INTENTIONAL
       # The user confirmed this pattern was in the original lineage plotter code and is required.
@@ -6206,68 +6225,68 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
           if ("value" %in% names(layer$data)) {
             layer_vals <- unique(na.omit(layer$data$value))
             tile_values <- c(tile_values, layer_vals)
-            cat(file=stderr(), paste0("  v85: Found tile layer ", layer_idx, " with values: ",
+            debug_cat(paste0("  v5: Found tile layer ", layer_idx, " with values: ",
                                       paste(head(layer_vals, 5), collapse=", "), "\n"))
           }
         }
       }
       tile_values <- unique(tile_values)
-      cat(file=stderr(), paste0("  v85: All tile values: ", paste(tile_values, collapse=", "), "\n"))
+      debug_cat(paste0("  v5: All tile values: ", paste(tile_values, collapse=", "), "\n"))
 
       # v82: DEBUG - verify gheatmap result and tile layer data
-      cat(file=stderr(), paste0("\n=== v71: POST-GHEATMAP DEBUG ===\n"))
-      cat(file=stderr(), paste0("  Number of layers in plot: ", length(pr440_short_tips_TRY_heat$layers), "\n"))
+      debug_cat(paste0("\n=== v71: POST-GHEATMAP DEBUG ===\n"))
+      debug_cat(paste0("  Number of layers in plot: ", length(pr440_short_tips_TRY_heat$layers), "\n"))
       gheatmap_xrange <- range(pr440_short_tips_TRY_heat$data$x, na.rm = TRUE)
-      cat(file=stderr(), paste0("  Plot data x range: [", gheatmap_xrange[1], ", ", gheatmap_xrange[2], "]\n"))
+      debug_cat(paste0("  Plot data x range: [", gheatmap_xrange[1], ", ", gheatmap_xrange[2], "]\n"))
 
       # Check if there's rect/tile data (heatmap)
       layer_types <- sapply(pr440_short_tips_TRY_heat$layers, function(l) class(l$geom)[1])
-      cat(file=stderr(), paste0("  Layer geom types: ", paste(layer_types, collapse=", "), "\n"))
+      debug_cat(paste0("  Layer geom types: ", paste(layer_types, collapse=", "), "\n"))
 
       # v72: Enhanced debugging to find and inspect the GeomTile layer
       for (layer_idx in seq_along(pr440_short_tips_TRY_heat$layers)) {
         layer <- pr440_short_tips_TRY_heat$layers[[layer_idx]]
         if (inherits(layer$geom, "GeomTile")) {
-          cat(file=stderr(), paste0("  GeomTile found at layer ", layer_idx, "\n"))
+          debug_cat(paste0("  GeomTile found at layer ", layer_idx, "\n"))
           tryCatch({
             layer_data <- layer$data
             if (is.function(layer_data)) {
-              cat(file=stderr(), paste0("    Layer data is a function, evaluating...\n"))
+              debug_cat(paste0("    Layer data is a function, evaluating...\n"))
               layer_data <- layer_data(pr440_short_tips_TRY_heat$data)
             }
             if (!is.null(layer_data) && is.data.frame(layer_data)) {
-              cat(file=stderr(), paste0("    Layer data rows: ", nrow(layer_data), "\n"))
-              cat(file=stderr(), paste0("    Layer data columns: ", paste(names(layer_data), collapse=", "), "\n"))
+              debug_cat(paste0("    Layer data rows: ", nrow(layer_data), "\n"))
+              debug_cat(paste0("    Layer data columns: ", paste(names(layer_data), collapse=", "), "\n"))
               if ("x" %in% names(layer_data)) {
                 x_vals <- layer_data$x
-                cat(file=stderr(), paste0("    Tile x range: [", min(x_vals, na.rm=TRUE), ", ", max(x_vals, na.rm=TRUE), "]\n"))
+                debug_cat(paste0("    Tile x range: [", min(x_vals, na.rm=TRUE), ", ", max(x_vals, na.rm=TRUE), "]\n"))
               }
               if ("y" %in% names(layer_data)) {
                 y_vals <- layer_data$y
-                cat(file=stderr(), paste0("    Tile y range: [", min(y_vals, na.rm=TRUE), ", ", max(y_vals, na.rm=TRUE), "]\n"))
+                debug_cat(paste0("    Tile y range: [", min(y_vals, na.rm=TRUE), ", ", max(y_vals, na.rm=TRUE), "]\n"))
               }
               # v72: Check value column (this is what fill maps to in gheatmap)
               if ("value" %in% names(layer_data)) {
-                cat(file=stderr(), paste0("    Value column (unique): ", paste(unique(layer_data$value), collapse=", "), "\n"))
-                cat(file=stderr(), paste0("    Value column class: ", class(layer_data$value)[1], "\n"))
+                debug_cat(paste0("    Value column (unique): ", paste(unique(layer_data$value), collapse=", "), "\n"))
+                debug_cat(paste0("    Value column class: ", class(layer_data$value)[1], "\n"))
               }
               # v72: Check width column (tile width)
               if ("width" %in% names(layer_data)) {
                 width_vals <- layer_data$width
-                cat(file=stderr(), paste0("    Width values: [", min(width_vals, na.rm=TRUE), ", ", max(width_vals, na.rm=TRUE), "]\n"))
+                debug_cat(paste0("    Width values: [", min(width_vals, na.rm=TRUE), ", ", max(width_vals, na.rm=TRUE), "]\n"))
               }
               if ("fill" %in% names(layer_data)) {
-                cat(file=stderr(), paste0("    Fill values (first 5): ", paste(head(layer_data$fill, 5), collapse=", "), "\n"))
+                debug_cat(paste0("    Fill values (first 5): ", paste(head(layer_data$fill, 5), collapse=", "), "\n"))
               }
               # v72: Check the layer's aesthetic mapping
               if (!is.null(layer$mapping)) {
-                cat(file=stderr(), paste0("    Layer mapping: ", paste(names(layer$mapping), collapse=", "), "\n"))
+                debug_cat(paste0("    Layer mapping: ", paste(names(layer$mapping), collapse=", "), "\n"))
               }
             } else {
-              cat(file=stderr(), paste0("    WARNING: Layer data is not a data.frame: ", class(layer_data)[1], "\n"))
+              debug_cat(paste0("    WARNING: Layer data is not a data.frame: ", class(layer_data)[1], "\n"))
             }
           }, error = function(e) {
-            cat(file=stderr(), paste0("    ERROR accessing layer data: ", e$message, "\n"))
+            debug_cat(paste0("    ERROR accessing layer data: ", e$message, "\n"))
           })
         }
       }
@@ -6304,22 +6323,22 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
         # v82: Removed aggressive mapping repair - will do single repair at end of heatmap loop
       } else {
         # v65: DEBUG - trace discrete heatmap color path
-        cat(file=stderr(), paste0("\n=== v65: DISCRETE HEATMAP COLOR DEBUG ===\n"))
-        cat(file=stderr(), paste0("  heat_param['is_discrete']: ", heat_param['is_discrete'], "\n"))
-        cat(file=stderr(), paste0("  heat_param['man']: ", heat_param['man'], "\n"))
-        cat(file=stderr(), paste0("  heat_param['man_define_colors']: ", heat_param['man_define_colors'], "\n"))
-        cat(file=stderr(), paste0("  heat_param[['color_scale_option']]: ",
+        debug_cat(paste0("\n=== v65: DISCRETE HEATMAP COLOR DEBUG ===\n"))
+        debug_cat(paste0("  heat_param['is_discrete']: ", heat_param['is_discrete'], "\n"))
+        debug_cat(paste0("  heat_param['man']: ", heat_param['man'], "\n"))
+        debug_cat(paste0("  heat_param['man_define_colors']: ", heat_param['man_define_colors'], "\n"))
+        debug_cat(paste0("  heat_param[['color_scale_option']]: ",
                                   if(is.null(heat_param[['color_scale_option']])) "NULL"
                                   else paste(class(heat_param[['color_scale_option']]), collapse=", "), "\n"))
         if (!is.null(heat_param[['color_scale_option']])) {
-          cat(file=stderr(), paste0("  color_scale_option value: ",
+          debug_cat(paste0("  color_scale_option value: ",
                                     paste(heat_param[['color_scale_option']], collapse=", "), "\n"))
           if (is.list(heat_param[['color_scale_option']])) {
-            cat(file=stderr(), paste0("  color_scale_option$color_scale_option: ",
+            debug_cat(paste0("  color_scale_option$color_scale_option: ",
                                       heat_param[['color_scale_option']]$color_scale_option, "\n"))
           }
         }
-        cat(file=stderr(), paste0("========================================\n"))
+        debug_cat(paste0("========================================\n"))
 
         if (heat_param['man'] == FALSE) {
           if (heat_param['man_define_colors'] == FALSE) {
@@ -6327,13 +6346,13 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             # No more nested list handling needed after the fix at line 2616
             palette_name <- heat_param[['color_scale_option']]
 
-            cat(file=stderr(), paste0("\n=== v67: Discrete palette check ===\n"))
-            cat(file=stderr(), paste0("  palette_name: ", if(is.null(palette_name)) "NULL" else palette_name, "\n"))
+            debug_cat(paste0("\n=== v67: Discrete palette check ===\n"))
+            debug_cat(paste0("  palette_name: ", if(is.null(palette_name)) "NULL" else palette_name, "\n"))
             if (!is.null(palette_name)) {
-              cat(file=stderr(), paste0("  Is valid RColorBrewer palette: ",
+              debug_cat(paste0("  Is valid RColorBrewer palette: ",
                                         palette_name %in% rownames(RColorBrewer::brewer.pal.info), "\n"))
             }
-            cat(file=stderr(), paste0("================================\n"))
+            debug_cat(paste0("================================\n"))
 
             # v67: Use RColorBrewer palette if available, otherwise use default hue
             if (!is.null(palette_name) && is.character(palette_name) &&
@@ -6344,21 +6363,21 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
               max_colors <- RColorBrewer::brewer.pal.info[palette_name, "maxcolors"]
               n_colors <- min(n_vals, max_colors)
 
-              cat(file=stderr(), paste0("\n=== v67: Applying discrete palette ===\n"))
-              cat(file=stderr(), paste0("  Palette: ", palette_name, "\n"))
-              cat(file=stderr(), paste0("  Number of unique values: ", n_vals, "\n"))
-              cat(file=stderr(), paste0("  Colors to use: ", n_colors, "\n"))
-              cat(file=stderr(), paste0("================================\n"))
+              debug_cat(paste0("\n=== v67: Applying discrete palette ===\n"))
+              debug_cat(paste0("  Palette: ", palette_name, "\n"))
+              debug_cat(paste0("  Number of unique values: ", n_vals, "\n"))
+              debug_cat(paste0("  Colors to use: ", n_colors, "\n"))
+              debug_cat(paste0("================================\n"))
 
               # v70: Get NA color from heat_param (default white)
               na_color <- if (!is.null(heat_param[['na_color']])) heat_param[['na_color']] else "white"
-              cat(file=stderr(), paste0("  NA color: ", na_color, "\n"))
+              debug_cat(paste0("  NA color: ", na_color, "\n"))
 
               pr440_short_tips_TRY_heat <- pr440_short_tips_TRY_heat +
                 scale_fill_brewer(palette = palette_name, name = heat_map_title_list[[j1]], na.value = na_color)
               # v82: Removed aggressive mapping repair - will do single repair at end of heatmap loop
             } else {
-              cat(file=stderr(), paste0("  v67: Using default hue scale (no valid palette specified)\n"))
+              debug_cat(paste0("  v7: Using default hue scale (no valid palette specified)\n"))
               # v70: Get NA color from heat_param (default white)
               na_color <- if (!is.null(heat_param[['na_color']])) heat_param[['na_color']] else "white"
               pr440_short_tips_TRY_heat <- pr440_short_tips_TRY_heat +
@@ -6369,16 +6388,16 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             # v70: man_define_colors is TRUE - use custom color values
             # color_scale_option should be a named vector of colors
             custom_colors <- heat_param[['color_scale_option']]
-            cat(file=stderr(), paste0("\n=== v70: Applying custom discrete colors ===\n"))
-            cat(file=stderr(), paste0("  custom_colors class: ", paste(class(custom_colors), collapse=", "), "\n"))
-            cat(file=stderr(), paste0("  custom_colors length: ", length(custom_colors), "\n"))
-            cat(file=stderr(), paste0("  custom_colors names: ", paste(head(names(custom_colors), 10), collapse=", "), "\n"))
-            cat(file=stderr(), paste0("  custom_colors values: ", paste(head(custom_colors, 10), collapse=", "), "\n"))
+            debug_cat(paste0("\n=== v70: Applying custom discrete colors ===\n"))
+            debug_cat(paste0("  custom_colors class: ", paste(class(custom_colors), collapse=", "), "\n"))
+            debug_cat(paste0("  custom_colors length: ", length(custom_colors), "\n"))
+            debug_cat(paste0("  custom_colors names: ", paste(head(names(custom_colors), 10), collapse=", "), "\n"))
+            debug_cat(paste0("  custom_colors values: ", paste(head(custom_colors, 10), collapse=", "), "\n"))
 
             # v85: Use tile_values collected from actual tile layer data (not dxdf440_for_heat)
             # This ensures we match exactly what gheatmap created
             heat_data_vals <- tile_values
-            cat(file=stderr(), paste0("  v85: Using tile_values from layer: ", paste(head(heat_data_vals, 10), collapse=", "), "\n"))
+            debug_cat(paste0("  v5: Using tile_values from layer: ", paste(head(heat_data_vals, 10), collapse=", "), "\n"))
 
             # v73: Fix - properly subset custom_colors to match tile values
             # This prevents NA names which cause scale_fill_manual to fail
@@ -6386,7 +6405,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
             if (n_levels == 0) {
               # v85: If no tile values found, fall back to using dxdf440_for_heat
-              cat(file=stderr(), paste0("  v85: WARNING - no tile values found, using source data\n"))
+              debug_cat(paste0("  v5: WARNING - no tile values found, using source data\n"))
               for (col_idx in 1:ncol(dxdf440_for_heat[[j1]])) {
                 col_vals <- dxdf440_for_heat[[j1]][, col_idx]
                 if (is.factor(col_vals)) {
@@ -6406,9 +6425,9 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             }
 
             if (is.null(names(custom_colors)) || length(names(custom_colors)) == 0) {
-              cat(file=stderr(), paste0("  v73: WARNING - custom_colors has no names, subsetting and assigning by position\n"))
-              cat(file=stderr(), paste0("  v73: Number of tile values: ", n_levels, "\n"))
-              cat(file=stderr(), paste0("  v73: Number of custom colors: ", length(custom_colors), "\n"))
+              debug_cat(paste0("  v3: WARNING - custom_colors has no names, subsetting and assigning by position\n"))
+              debug_cat(paste0("  v3: Number of tile values: ", n_levels, "\n"))
+              debug_cat(paste0("  v3: Number of custom colors: ", length(custom_colors), "\n"))
 
               # CRITICAL: Only use as many colors as there are values
               if (n_levels > 0 && length(custom_colors) >= n_levels) {
@@ -6416,42 +6435,42 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
                 colors_to_use <- custom_colors[1:n_levels]
                 names(colors_to_use) <- as.character(heat_data_vals)
                 custom_colors <- colors_to_use
-                cat(file=stderr(), paste0("  v73: Subsetted to ", n_levels, " colors\n"))
-                cat(file=stderr(), paste0("  v73: Final names: ", paste(names(custom_colors), collapse=", "), "\n"))
-                cat(file=stderr(), paste0("  v73: Final values: ", paste(custom_colors, collapse=", "), "\n"))
+                debug_cat(paste0("  v3: Subsetted to ", n_levels, " colors\n"))
+                debug_cat(paste0("  v3: Final names: ", paste(names(custom_colors), collapse=", "), "\n"))
+                debug_cat(paste0("  v3: Final values: ", paste(custom_colors, collapse=", "), "\n"))
               } else if (n_levels > 0) {
                 # Not enough colors, recycle
-                cat(file=stderr(), paste0("  v73: WARNING - not enough colors, recycling\n"))
+                debug_cat(paste0("  v3: WARNING - not enough colors, recycling\n"))
                 colors_to_use <- rep(custom_colors, length.out = n_levels)
                 names(colors_to_use) <- as.character(heat_data_vals)
                 custom_colors <- colors_to_use
               }
             } else {
               # custom_colors already has names - ensure they match values
-              cat(file=stderr(), paste0("  v73: custom_colors already named: ", paste(names(custom_colors), collapse=", "), "\n"))
+              debug_cat(paste0("  v3: custom_colors already named: ", paste(names(custom_colors), collapse=", "), "\n"))
               # Only keep colors whose names are in heat_data_vals
               valid_names <- names(custom_colors) %in% as.character(heat_data_vals)
               if (any(valid_names)) {
                 custom_colors <- custom_colors[valid_names]
-                cat(file=stderr(), paste0("  v73: After filtering: ", paste(names(custom_colors), collapse=", "), "\n"))
+                debug_cat(paste0("  v3: After filtering: ", paste(names(custom_colors), collapse=", "), "\n"))
               }
             }
             # v70: Get NA color from heat_param (default white)
             na_color <- if (!is.null(heat_param[['na_color']])) heat_param[['na_color']] else "white"
-            cat(file=stderr(), paste0("  NA color: ", na_color, "\n"))
-            cat(file=stderr(), paste0("================================\n"))
+            debug_cat(paste0("  NA color: ", na_color, "\n"))
+            debug_cat(paste0("================================\n"))
 
             # v88: CRITICAL FIX - Test ggplot_build BEFORE applying scale to diagnose root cause
-            cat(file=stderr(), paste0("  v88: Testing ggplot_build BEFORE scale application...\n"))
+            debug_cat(paste0("  v8: Testing ggplot_build BEFORE scale application...\n"))
             pre_scale_ok <- tryCatch({
               test_build_pre <- ggplot2::ggplot_build(pr440_short_tips_TRY_heat)
-              cat(file=stderr(), paste0("  v88: Pre-scale ggplot_build: SUCCESS\n"))
+              debug_cat(paste0("  v8: Pre-scale ggplot_build: SUCCESS\n"))
               TRUE
             }, error = function(e) {
-              cat(file=stderr(), paste0("  v88: Pre-scale ggplot_build: FAILED - ", e$message, "\n"))
-              cat(file=stderr(), paste0("  v88: ERROR IS IN GHEATMAP OUTPUT, NOT SCALE\n"))
+              debug_cat(paste0("  v8: Pre-scale ggplot_build: FAILED - ", e$message, "\n"))
+              debug_cat(paste0("  v8: ERROR IS IN GHEATMAP OUTPUT, NOT SCALE\n"))
               # Get more info about the error
-              cat(file=stderr(), paste0("  v88: Checking individual layers...\n"))
+              debug_cat(paste0("  v8: Checking individual layers...\n"))
               for (li in seq_along(pr440_short_tips_TRY_heat$layers)) {
                 layer_test <- tryCatch({
                   # Try to compute layer data
@@ -6464,13 +6483,13 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
                   # Check if layer has valid mapping
                   if (!is.null(layer$mapping)) {
                     mapping_names <- names(layer$mapping)
-                    cat(file=stderr(), paste0("    Layer ", li, " (", class(layer$geom)[1], "): mapping=", paste(mapping_names, collapse=","), "\n"))
+                    debug_cat(paste0("    Layer ", li, " (", class(layer$geom)[1], "): mapping=", paste(mapping_names, collapse=","), "\n"))
                   } else {
-                    cat(file=stderr(), paste0("    Layer ", li, " (", class(layer$geom)[1], "): no mapping\n"))
+                    debug_cat(paste0("    Layer ", li, " (", class(layer$geom)[1], "): no mapping\n"))
                   }
                   TRUE
                 }, error = function(e2) {
-                  cat(file=stderr(), paste0("    Layer ", li, " (", class(pr440_short_tips_TRY_heat$layers[[li]]$geom)[1], "): FAILED - ", e2$message, "\n"))
+                  debug_cat(paste0("    Layer ", li, " (", class(pr440_short_tips_TRY_heat$layers[[li]]$geom)[1], "): FAILED - ", e2$message, "\n"))
                   FALSE
                 })
               }
@@ -6478,7 +6497,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             })
 
             # v88: Apply scale regardless of pre-test result (the scale itself isn't the problem)
-            cat(file=stderr(), paste0("  v88: Applying scale_fill_manual...\n"))
+            debug_cat(paste0("  v8: Applying scale_fill_manual...\n"))
             tryCatch({
               pr440_short_tips_TRY_heat <- pr440_short_tips_TRY_heat +
                 scale_fill_manual(
@@ -6486,26 +6505,26 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
                   name = heat_map_title_list[[j1]],
                   na.value = na_color
                 )
-              cat(file=stderr(), paste0("  v88: scale_fill_manual applied\n"))
+              debug_cat(paste0("  v8: scale_fill_manual applied\n"))
 
               # v88: Test after scale
               post_scale_ok <- tryCatch({
                 test_build_post <- ggplot2::ggplot_build(pr440_short_tips_TRY_heat)
-                cat(file=stderr(), paste0("  v88: Post-scale ggplot_build: SUCCESS\n"))
+                debug_cat(paste0("  v8: Post-scale ggplot_build: SUCCESS\n"))
                 TRUE
               }, error = function(e) {
-                cat(file=stderr(), paste0("  v88: Post-scale ggplot_build: FAILED - ", e$message, "\n"))
+                debug_cat(paste0("  v8: Post-scale ggplot_build: FAILED - ", e$message, "\n"))
                 FALSE
               })
 
             }, error = function(e) {
-              cat(file=stderr(), paste0("  v88: scale_fill_manual failed: ", e$message, "\n"))
-              cat(file=stderr(), paste0("  v88: Trying scale_fill_discrete as fallback\n"))
+              debug_cat(paste0("  v8: scale_fill_manual failed: ", e$message, "\n"))
+              debug_cat(paste0("  v8: Trying scale_fill_discrete as fallback\n"))
               tryCatch({
                 pr440_short_tips_TRY_heat <<- pr440_short_tips_TRY_heat +
                   scale_fill_discrete(name = heat_map_title_list[[j1]], na.value = na_color)
               }, error = function(e2) {
-                cat(file=stderr(), paste0("  v88: scale_fill_discrete also failed: ", e2$message, "\n"))
+                debug_cat(paste0("  v8: scale_fill_discrete also failed: ", e2$message, "\n"))
               })
             })
           }
@@ -6519,9 +6538,9 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       }
 
       # v68: DEBUG - after scale application
-      cat(file=stderr(), paste0("\n=== v68: After scale application ===\n"))
-      cat(file=stderr(), paste0("  j=", j, ", j1=", j1, "\n"))
-      cat(file=stderr(), paste0("================================\n"))
+      debug_cat(paste0("\n=== v68: After scale application ===\n"))
+      debug_cat(paste0("  j=", j, ", j1=", j1, "\n"))
+      debug_cat(paste0("================================\n"))
 
       # Apply theme for first heatmap
       if (j == 1) {
@@ -6585,22 +6604,22 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       }
       
       # v68: DEBUG - before func.calc call
-      cat(file=stderr(), paste0("\n=== v68: Before func.calc.min_col_x ===\n"))
+      debug_cat(paste0("\n=== v68: Before func.calc.min_col_x ===\n"))
 
       # Store position for next heatmap (wrapped in tryCatch to prevent errors from breaking the loop)
       min_col_x_of_frame_of_prev_heat <- tryCatch({
         func.calc.min_col_x_of_frame_of_prev_heat(pr440_short_tips_TRY_heat, colnames_sub_df_heat_j)
       }, error = function(e) {
-        cat(file=stderr(), paste0("  v68: WARNING - func.calc.min_col_x_of_frame_of_prev_heat failed: ", e$message, "\n"))
+        debug_cat(paste0("  v8: WARNING - func.calc.min_col_x_of_frame_of_prev_heat failed: ", e$message, "\n"))
         0  # Return default value
       })
 
-      cat(file=stderr(), paste0("  v68: min_col_x_of_frame_of_prev_heat = ", min_col_x_of_frame_of_prev_heat, "\n"))
-      cat(file=stderr(), paste0("================================\n"))
+      debug_cat(paste0("  v8: min_col_x_of_frame_of_prev_heat = ", min_col_x_of_frame_of_prev_heat, "\n"))
+      debug_cat(paste0("================================\n"))
     }
 
     # v68: DEBUG - after for loop
-    cat(file=stderr(), paste0("\n=== v68: After heatmap for loop ===\n"))
+    debug_cat(paste0("\n=== v68: After heatmap for loop ===\n"))
 
     # Update plot with heatmap
     p <- pr440_short_tips_TRY_heat
@@ -6612,21 +6631,21 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     problematic_layers <- func.diagnose.layer.issues(p, verbose = TRUE)
 
     # v71: Final heatmap state with layer analysis
-    cat(file=stderr(), paste0("\n=== v71: FINAL HEATMAP STATE ===\n"))
+    debug_cat(paste0("\n=== v71: FINAL HEATMAP STATE ===\n"))
     final_xrange <- range(p$data$x, na.rm = TRUE)
-    cat(file=stderr(), paste0("  Tree data x range: [", final_xrange[1], ", ", final_xrange[2], "]\n"))
-    cat(file=stderr(), paste0("  Number of layers: ", length(p$layers), "\n"))
+    debug_cat(paste0("  Tree data x range: [", final_xrange[1], ", ", final_xrange[2], "]\n"))
+    debug_cat(paste0("  Number of layers: ", length(p$layers), "\n"))
 
     # v71: Check for heatmap layer (GeomTile) and get its x coordinates
     layer_types <- sapply(p$layers, function(l) class(l$geom)[1])
-    cat(file=stderr(), paste0("  Layer types: ", paste(layer_types, collapse=", "), "\n"))
+    debug_cat(paste0("  Layer types: ", paste(layer_types, collapse=", "), "\n"))
 
     # v71: Find the GeomTile layer (heatmap) and get its data directly
     heatmap_xmax <- NULL
     for (i in seq_along(p$layers)) {
       layer <- p$layers[[i]]
       if (inherits(layer$geom, "GeomTile")) {
-        cat(file=stderr(), paste0("  Found GeomTile at layer ", i, "\n"))
+        debug_cat(paste0("  Found GeomTile at layer ", i, "\n"))
         # Try to access the layer data
         tryCatch({
           layer_data <- layer$data
@@ -6637,14 +6656,14 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             tile_x <- layer_data$x
             if (length(tile_x) > 0 && !all(is.na(tile_x))) {
               tile_xmax <- max(tile_x, na.rm = TRUE)
-              cat(file=stderr(), paste0("    GeomTile x range: [", min(tile_x, na.rm = TRUE), ", ", tile_xmax, "]\n"))
+              debug_cat(paste0("    GeomTile x range: [", min(tile_x, na.rm = TRUE), ", ", tile_xmax, "]\n"))
               heatmap_xmax <- tile_xmax
             }
           } else {
-            cat(file=stderr(), paste0("    GeomTile layer data does not have x column\n"))
+            debug_cat(paste0("    GeomTile layer data does not have x column\n"))
           }
         }, error = function(e) {
-          cat(file=stderr(), paste0("    Could not access GeomTile data: ", e$message, "\n"))
+          debug_cat(paste0("    Could not access GeomTile data: ", e$message, "\n"))
         })
       }
     }
@@ -6660,7 +6679,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             layer_x <- built$data[[i]]$x
             if (length(layer_x) > 0 && !all(is.na(layer_x))) {
               layer_xmax <- max(layer_x, na.rm = TRUE)
-              cat(file=stderr(), paste0("    Built layer ", i, " x range: [",
+              debug_cat(paste0("    Built layer ", i, " x range: [",
                                         min(layer_x, na.rm = TRUE), ", ", layer_xmax, "]\n"))
               if (is.null(heatmap_xmax) || layer_xmax > heatmap_xmax) {
                 heatmap_xmax <- layer_xmax
@@ -6669,10 +6688,10 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
           }
         }
       }, error = function(e) {
-        cat(file=stderr(), paste0("  v71: ggplot_build failed (will use fallback): ", e$message, "\n"))
+        debug_cat(paste0("  v1: ggplot_build failed (will use fallback): ", e$message, "\n"))
       })
     }
-    cat(file=stderr(), paste0("================================\n"))
+    debug_cat(paste0("================================\n"))
 
     # v71: Calculate expected x range using multiple methods
     # gheatmap places tiles at x positions based on tree width and offset
@@ -6696,28 +6715,28 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       ifelse(is.null(heatmap_xmax), calculated_xmax, heatmap_xmax + 0.5)
     )
 
-    cat(file=stderr(), paste0("\n=== v71: EXPANDING X-AXIS FOR HEATMAP ===\n"))
-    cat(file=stderr(), paste0("  Tree x range: [", final_xrange[1], ", ", final_xrange[2], "]\n"))
-    cat(file=stderr(), paste0("  Tree width: ", tree_width, "\n"))
-    cat(file=stderr(), paste0("  Heatmap offset (new_heat_x): ", new_heat_x, "\n"))
-    cat(file=stderr(), paste0("  Heatmap width (wi): ", wi, "\n"))
-    cat(file=stderr(), paste0("  Calculated x max: ", calculated_xmax, "\n"))
-    cat(file=stderr(), paste0("  Proportional x max: ", proportional_xmax, "\n"))
-    cat(file=stderr(), paste0("  Fixed margin x max: ", fixed_margin_xmax, "\n"))
-    cat(file=stderr(), paste0("  Detected from build: ", ifelse(is.null(heatmap_xmax), "NULL", heatmap_xmax), "\n"))
-    cat(file=stderr(), paste0("  Final expected max x: ", expected_xmax, "\n"))
-    cat(file=stderr(), paste0("  Setting coord_flip xlim to: [", final_xrange[1], ", ", expected_xmax, "]\n"))
-    cat(file=stderr(), paste0("========================================\n"))
+    debug_cat(paste0("\n=== v71: EXPANDING X-AXIS FOR HEATMAP ===\n"))
+    debug_cat(paste0("  Tree x range: [", final_xrange[1], ", ", final_xrange[2], "]\n"))
+    debug_cat(paste0("  Tree width: ", tree_width, "\n"))
+    debug_cat(paste0("  Heatmap offset (new_heat_x): ", new_heat_x, "\n"))
+    debug_cat(paste0("  Heatmap width (wi): ", wi, "\n"))
+    debug_cat(paste0("  Calculated x max: ", calculated_xmax, "\n"))
+    debug_cat(paste0("  Proportional x max: ", proportional_xmax, "\n"))
+    debug_cat(paste0("  Fixed margin x max: ", fixed_margin_xmax, "\n"))
+    debug_cat(paste0("  Detected from build: ", ifelse(is.null(heatmap_xmax), "NULL", heatmap_xmax), "\n"))
+    debug_cat(paste0("  Final expected max x: ", expected_xmax, "\n"))
+    debug_cat(paste0("  Setting coord_flip xlim to: [", final_xrange[1], ", ", expected_xmax, "]\n"))
+    debug_cat(paste0("========================================\n"))
 
     # v88: SIMPLIFIED EXPANSION - Skip expansion functions if plot can't be built
     # Test if plot is buildable before trying expansion
     plot_buildable <- tryCatch({
       ggplot2::ggplot_build(p)
-      cat(file=stderr(), paste0("  v88: Plot is buildable, proceeding with expansion\n"))
+      debug_cat(paste0("  v8: Plot is buildable, proceeding with expansion\n"))
       TRUE
     }, error = function(e) {
-      cat(file=stderr(), paste0("  v88: Plot is NOT buildable: ", e$message, "\n"))
-      cat(file=stderr(), paste0("  v88: Skipping expansion - will render plot as-is\n"))
+      debug_cat(paste0("  v8: Plot is NOT buildable: ", e$message, "\n"))
+      debug_cat(paste0("  v8: Skipping expansion - will render plot as-is\n"))
       FALSE
     })
 
@@ -6726,27 +6745,27 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       expansion_ratio <- (expected_xmax - final_xrange[2]) / abs(final_xrange[1] - final_xrange[2])
       expansion_ratio <- max(0.3, expansion_ratio)
 
-      cat(file=stderr(), paste0("  v88: Using hexpand() with ratio: ", expansion_ratio, "\n"))
+      debug_cat(paste0("  v8: Using hexpand() with ratio: ", expansion_ratio, "\n"))
 
       # v88: Try hexpand first
       expansion_success <- FALSE
       tryCatch({
         p <- p + ggtree::hexpand(ratio = expansion_ratio, direction = 1)
         expansion_success <- TRUE
-        cat(file=stderr(), paste0("  v88: hexpand applied successfully\n"))
+        debug_cat(paste0("  v8: hexpand applied successfully\n"))
       }, error = function(e) {
-        cat(file=stderr(), paste0("  v88: hexpand failed: ", e$message, "\n"))
+        debug_cat(paste0("  v8: hexpand failed: ", e$message, "\n"))
       })
 
       # v88: Fallback to xlim_expand
       if (!expansion_success) {
-        cat(file=stderr(), paste0("  v88: Trying xlim_expand fallback\n"))
+        debug_cat(paste0("  v8: Trying xlim_expand fallback\n"))
         tryCatch({
           p <- p + ggtree::xlim_expand(c(0, expected_xmax), "right")
           expansion_success <- TRUE
-          cat(file=stderr(), paste0("  v88: xlim_expand applied\n"))
+          debug_cat(paste0("  v8: xlim_expand applied\n"))
         }, error = function(e2) {
-          cat(file=stderr(), paste0("  v88: xlim_expand also failed: ", e2$message, "\n"))
+          debug_cat(paste0("  v8: xlim_expand also failed: ", e2$message, "\n"))
         })
       }
 
@@ -6756,9 +6775,9 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
           # Use geom_blank to expand plot limits without modifying coordinate system
           p <- p + geom_blank(data = data.frame(x = c(final_xrange[1], expected_xmax), y = c(1, 1)),
                               aes(x = x, y = y))
-          cat(file=stderr(), paste0("  v88: geom_blank expansion applied\n"))
+          debug_cat(paste0("  v8: geom_blank expansion applied\n"))
         }, error = function(e3) {
-          cat(file=stderr(), paste0("  v88: All expansion methods failed\n"))
+          debug_cat(paste0("  v8: All expansion methods failed\n"))
         })
       }
 
@@ -6766,7 +6785,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       p <- func.repair.ggtree.mapping(p)
     } else {
       # v88: Plot is not buildable - don't add any expansion, just try to render
-      cat(file=stderr(), paste0("  v88: WARNING - Plot cannot be built, skipping all expansion\n"))
+      debug_cat(paste0("  v8: WARNING - Plot cannot be built, skipping all expansion\n"))
     }
   }
   # ========================================================================
@@ -6784,10 +6803,10 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     boudariestt <- tryCatch({
       func.find.plot.boundaries(p, debug_mode)
     }, error = function(e) {
-      cat(file=stderr(), paste0("  v132: Error computing boudariestt (2nd block): ", e$message, "\n"))
+      debug_cat(paste0("  v32: Error computing boudariestt (2nd block): ", e$message, "\n"))
       list(xmin = min(p$data$x, na.rm = TRUE), xmax = max(p$data$x, na.rm = TRUE))
     })
-    cat(file=stderr(), paste0("  v132: boudariestt initialized (2nd block): xmin=", boudariestt$xmin, ", xmax=", boudariestt$xmax, "\n"))
+    debug_cat(paste0("  v32: boudariestt initialized (2nd block): xmin=", boudariestt$xmin, ", xmax=", boudariestt$xmax, "\n"))
   }
 
   # v139: Apply highlighting ONLY after heatmap (when heat_flag == TRUE)
@@ -6819,10 +6838,10 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     tree_ratio <- tree_width / max(total_width, tree_width)
     tree_ratio <- min(max(tree_ratio, 0.1), 1.0)
 
-    cat(file=stderr(), paste0("\n=== v146: ELLIPSE SCALING FOR HEATMAP ===\n"))
-    cat(file=stderr(), paste0("  Tree width: ", round(tree_width, 2), "\n"))
-    cat(file=stderr(), paste0("  Total plot width: ", round(total_width, 2), "\n"))
-    cat(file=stderr(), paste0("  Tree ratio (tree/total): ", round(tree_ratio, 3), "\n"))
+    debug_cat(paste0("\n=== v146: ELLIPSE SCALING FOR HEATMAP ===\n"))
+    debug_cat(paste0("  Tree width: ", round(tree_width, 2), "\n"))
+    debug_cat(paste0("  Total plot width: ", round(total_width, 2), "\n"))
+    debug_cat(paste0("  Tree ratio (tree/total): ", round(tree_ratio, 3), "\n"))
 
     # v146: Scale both height (a) and width (b) based on tree ratio
     # Use the same base calculation as non-heatmap case, then scale by tree_ratio
@@ -6832,11 +6851,11 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     a <- base_a * adjust_height_ecliplse
     b <- base_b * adjust_width_eclipse
 
-    cat(file=stderr(), paste0("  Base a (height): ", round(base_a, 4), "\n"))
-    cat(file=stderr(), paste0("  Base b (width): ", round(base_b, 4), "\n"))
-    cat(file=stderr(), paste0("  Final a (after user adjust): ", round(a, 4), "\n"))
-    cat(file=stderr(), paste0("  Final b (after user adjust): ", round(b, 4), "\n"))
-    cat(file=stderr(), paste0("=============================================\n"))
+    debug_cat(paste0("  Base a (height): ", round(base_a, 4), "\n"))
+    debug_cat(paste0("  Base b (width): ", round(base_b, 4), "\n"))
+    debug_cat(paste0("  Final a (after user adjust): ", round(a, 4), "\n"))
+    debug_cat(paste0("  Final b (after user adjust): ", round(b, 4), "\n"))
+    debug_cat(paste0("=============================================\n"))
 
     # v139: Pass high_alpha_list for transparency
     p <- func_highlight(
@@ -6851,24 +6870,24 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   }
   
   # v94: DEBUG - track layers after if(FALSE) block
-  cat(file=stderr(), paste0("\n=== v94: AFTER if(FALSE) block ===\n"))
-  cat(file=stderr(), paste0("  p layers: ", length(p$layers), "\n"))
-  cat(file=stderr(), paste0("  Layer types: ", paste(sapply(p$layers, function(l) class(l$geom)[1]), collapse=", "), "\n"))
-  cat(file=stderr(), paste0("================================\n"))
+  debug_cat(paste0("\n=== v94: AFTER if(FALSE) block ===\n"))
+  debug_cat(paste0("  p layers: ", length(p$layers), "\n"))
+  debug_cat(paste0("  Layer types: ", paste(sapply(p$layers, function(l) class(l$geom)[1]), collapse=", "), "\n"))
+  debug_cat(paste0("================================\n"))
 
   # Add second legend if heatmap exists
   if (length(heat_map_title_list) > 0) {
-    cat(file=stderr(), paste0("\n=== v95: Before func.make.second.legend ===\n"))
-    cat(file=stderr(), paste0("  p layers: ", length(p$layers), "\n"))
-    cat(file=stderr(), paste0("  heat_flag: ", heat_flag, "\n"))
-    cat(file=stderr(), paste0("  FLAG_BULK_DISPLAY: ", FLAG_BULK_DISPLAY, "\n"))
+    debug_cat(paste0("\n=== v95: Before func.make.second.legend ===\n"))
+    debug_cat(paste0("  p layers: ", length(p$layers), "\n"))
+    debug_cat(paste0("  heat_flag: ", heat_flag, "\n"))
+    debug_cat(paste0("  FLAG_BULK_DISPLAY: ", FLAG_BULK_DISPLAY, "\n"))
 
     # v95: Debug boudariestt
     if (exists("boudariestt") && !is.null(boudariestt)) {
-      cat(file=stderr(), paste0("  boudariestt$xmax: ", boudariestt$xmax, "\n"))
-      cat(file=stderr(), paste0("  boudariestt$xmin: ", boudariestt$xmin, "\n"))
+      debug_cat(paste0("  boudariestt$xmax: ", boudariestt$xmax, "\n"))
+      debug_cat(paste0("  boudariestt$xmin: ", boudariestt$xmin, "\n"))
     } else {
-      cat(file=stderr(), paste0("  WARNING: boudariestt is NULL or doesn't exist!\n"))
+      debug_cat(paste0("  WARNING: boudariestt is NULL or doesn't exist!\n"))
     }
 
     # v133: Get legend settings for highlight and bootstrap legends
@@ -6891,9 +6910,9 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     show_highlight_leg <- if (!is.null(legend_settings_local$show_highlight)) legend_settings_local$show_highlight else TRUE
     show_bootstrap_leg <- if (!is.null(legend_settings_local$show_bootstrap)) legend_settings_local$show_bootstrap else TRUE
 
-    cat(file=stderr(), paste0("  v133: highlight offsets - x:", highlight_x_off, ", y:", highlight_y_off, "\n"))
-    cat(file=stderr(), paste0("  v133: bootstrap offsets - x:", bootstrap_x_off, ", y:", bootstrap_y_off, "\n"))
-    cat(file=stderr(), paste0("  v138: show_highlight_legend:", show_highlight_leg, ", show_bootstrap_legend:", show_bootstrap_leg, "\n"))
+    debug_cat(paste0("  v33: highlight offsets - x:", highlight_x_off, ", y:", highlight_y_off, "\n"))
+    debug_cat(paste0("  v33: bootstrap offsets - x:", bootstrap_x_off, ", y:", bootstrap_y_off, "\n"))
+    debug_cat(paste0("  v38: show_highlight_legend:", show_highlight_leg, ", show_bootstrap_legend:", show_bootstrap_leg, "\n"))
 
     # v151: Calculate y_off_base to position legends on the RIGHT side
     # With coord_flip + scale_y_reverse: y values become horizontal positions
@@ -6903,7 +6922,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     n_tips <- sum(p$data$isTip == TRUE, na.rm = TRUE)
     max_y_in_data <- max(p$data$y, na.rm = TRUE)
     y_off_base <- max(n_tips, max_y_in_data)  # Stay within existing data range
-    cat(file=stderr(), paste0("  v151: y_off_base=", y_off_base, " (n_tips=", n_tips, ", max_y=", round(max_y_in_data, 2), ")\n"))
+    debug_cat(paste0("  v51: y_off_base=", y_off_base, " (n_tips=", n_tips, ", max_y=", round(max_y_in_data, 2), ")\n"))
 
     # v95: Wrap in tryCatch to catch any errors
     p <- tryCatch({
@@ -6960,39 +6979,39 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
         # v145: Pass transparency list for legend ellipses
         high_alpha_list = high_alpha_list
       )
-      cat(file=stderr(), paste0("  func.make.second.legend: SUCCESS\n"))
+      debug_cat(paste0("  func.make.second.legend: SUCCESS\n"))
       result
     }, error = function(e) {
-      cat(file=stderr(), paste0("  func.make.second.legend ERROR: ", e$message, "\n"))
-      cat(file=stderr(), paste0("  Returning plot without second legend modifications\n"))
+      debug_cat(paste0("  func.make.second.legend ERROR: ", e$message, "\n"))
+      debug_cat(paste0("  Returning plot without second legend modifications\n"))
       p  # Return original plot on error
     })
 
-    cat(file=stderr(), paste0("=== v95: After func.make.second.legend ===\n"))
-    cat(file=stderr(), paste0("  p layers: ", length(p$layers), "\n"))
-    cat(file=stderr(), paste0("  Layer types: ", paste(sapply(p$layers, function(l) class(l$geom)[1]), collapse=", "), "\n"))
+    debug_cat(paste0("=== v95: After func.make.second.legend ===\n"))
+    debug_cat(paste0("  p layers: ", length(p$layers), "\n"))
+    debug_cat(paste0("  Layer types: ", paste(sapply(p$layers, function(l) class(l$geom)[1]), collapse=", "), "\n"))
   }
 
   # v94: DEBUG - before bootstrap triangles
-  cat(file=stderr(), paste0("\n=== v94: Before bootstrap triangles ===\n"))
-  cat(file=stderr(), paste0("  p layers: ", length(p$layers), "\n"))
-  cat(file=stderr(), paste0("  Layer types: ", paste(sapply(p$layers, function(l) class(l$geom)[1]), collapse=", "), "\n"))
+  debug_cat(paste0("\n=== v94: Before bootstrap triangles ===\n"))
+  debug_cat(paste0("  p layers: ", length(p$layers), "\n"))
+  debug_cat(paste0("  Layer types: ", paste(sapply(p$layers, function(l) class(l$geom)[1]), collapse=", "), "\n"))
 
   # v96: FIX - Repair corrupted mapping BEFORE adding bootstrap triangles
   # gheatmap() corrupts the plot's @mapping attribute (changes it from ggplot2::mapping to data.frame)
   # This causes geom_nodepoint() calls below to crash silently
   # We must repair the mapping BEFORE adding any new layers
-  cat(file=stderr(), paste0("\n=== v96: Repairing mapping before bootstrap triangles ===\n"))
-  cat(file=stderr(), paste0("  Mapping class before repair: ", paste(class(p$mapping), collapse=", "), "\n"))
+  debug_cat(paste0("\n=== v96: Repairing mapping before bootstrap triangles ===\n"))
+  debug_cat(paste0("  Mapping class before repair: ", paste(class(p$mapping), collapse=", "), "\n"))
   p <- func.repair.ggtree.mapping(p, verbose = TRUE)
-  cat(file=stderr(), paste0("  Mapping class after repair: ", paste(class(p$mapping), collapse=", "), "\n"))
+  debug_cat(paste0("  Mapping class after repair: ", paste(class(p$mapping), collapse=", "), "\n"))
 
   # v90: Add bootstrap triangles AFTER heatmap processing to avoid "missing x and y" error
   # When gheatmap transforms the plot data, any geom_nodepoint layers added beforehand
   # lose their x and y aesthetic mappings. By adding them here (after gheatmap),
   # the layers are created with the correct data structure.
   if (bootstrap_triangles_enabled && !is.null(bootstrap_triangles_params)) {
-    cat(file=stderr(), paste0("\n=== v90: Adding bootstrap triangles after heatmap ===\n"))
+    debug_cat(paste0("\n=== v90: Adding bootstrap triangles after heatmap ===\n"))
     tryCatch({
       # v126: Reverted to v124 approach - separate geom_nodepoint for each bootstrap level
       # Using scale_size_manual with mapped size was conflicting with tree edge width scale
@@ -7015,12 +7034,12 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
           size = bootstrap_triangles_params$size_70, shape = 24, fill = "grey36", colour = "grey20",
           show.legend = FALSE, alpha = 1/2
         )
-      cat(file=stderr(), paste0("  Bootstrap triangles added successfully\n"))
+      debug_cat(paste0("  Bootstrap triangles added successfully\n"))
     }, error = function(e) {
-      cat(file=stderr(), paste0("  v96 ERROR adding bootstrap triangles: ", e$message, "\n"))
-      cat(file=stderr(), paste0("  Continuing without bootstrap triangles\n"))
+      debug_cat(paste0("  v6 ERROR adding bootstrap triangles: ", e$message, "\n"))
+      debug_cat(paste0("  Continuing without bootstrap triangles\n"))
     })
-    cat(file=stderr(), paste0("================================\n"))
+    debug_cat(paste0("================================\n"))
   }
 
   # Add score information if requested
@@ -7043,15 +7062,15 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   p <- func.move.tiplabels.to.front(p)
 
   # v72: FINAL DEBUG - verify heatmap layer exists and inspect plot state
-  cat(file=stderr(), paste0("\n=== v72: FINAL PLOT STATE BEFORE GGSAVE ===\n"))
-  cat(file=stderr(), paste0("  Number of layers: ", length(p$layers), "\n"))
+  debug_cat(paste0("\n=== v72: FINAL PLOT STATE BEFORE GGSAVE ===\n"))
+  debug_cat(paste0("  Number of layers: ", length(p$layers), "\n"))
   layer_types <- sapply(p$layers, function(l) class(l$geom)[1])
-  cat(file=stderr(), paste0("  Layer types: ", paste(layer_types, collapse=", "), "\n"))
+  debug_cat(paste0("  Layer types: ", paste(layer_types, collapse=", "), "\n"))
 
   # Check for GeomTile (heatmap)
   geomtile_idx <- which(layer_types == "GeomTile")
   if (length(geomtile_idx) > 0) {
-    cat(file=stderr(), paste0("  GeomTile found at layers: ", paste(geomtile_idx, collapse=", "), "\n"))
+    debug_cat(paste0("  GeomTile found at layers: ", paste(geomtile_idx, collapse=", "), "\n"))
     for (idx in geomtile_idx) {
       tryCatch({
         tile_layer <- p$layers[[idx]]
@@ -7060,28 +7079,28 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
           tile_data <- tile_data(p$data)
         }
         if (!is.null(tile_data) && is.data.frame(tile_data)) {
-          cat(file=stderr(), paste0("    Layer ", idx, " data rows: ", nrow(tile_data), "\n"))
+          debug_cat(paste0("    Layer ", idx, " data rows: ", nrow(tile_data), "\n"))
           if ("x" %in% names(tile_data)) {
-            cat(file=stderr(), paste0("    Layer ", idx, " x range: [", min(tile_data$x, na.rm=TRUE), ", ", max(tile_data$x, na.rm=TRUE), "]\n"))
+            debug_cat(paste0("    Layer ", idx, " x range: [", min(tile_data$x, na.rm=TRUE), ", ", max(tile_data$x, na.rm=TRUE), "]\n"))
           }
           if ("value" %in% names(tile_data)) {
-            cat(file=stderr(), paste0("    Layer ", idx, " values: ", paste(unique(tile_data$value), collapse=", "), "\n"))
+            debug_cat(paste0("    Layer ", idx, " values: ", paste(unique(tile_data$value), collapse=", "), "\n"))
           }
         }
       }, error = function(e) {
-        cat(file=stderr(), paste0("    ERROR: ", e$message, "\n"))
+        debug_cat(paste0("    ERROR: ", e$message, "\n"))
       })
     }
   } else {
-    cat(file=stderr(), paste0("  WARNING: No GeomTile layers found! Heatmap may not be displayed.\n"))
+    debug_cat(paste0("  WARNING: No GeomTile layers found! Heatmap may not be displayed.\n"))
   }
 
   # Check coordinate system
   if (!is.null(p$coordinates)) {
-    cat(file=stderr(), paste0("  Coordinate system: ", class(p$coordinates)[1], "\n"))
+    debug_cat(paste0("  Coordinate system: ", class(p$coordinates)[1], "\n"))
     if (inherits(p$coordinates, "CoordCartesian")) {
       if (!is.null(p$coordinates$limits$x)) {
-        cat(file=stderr(), paste0("  X limits: [", p$coordinates$limits$x[1], ", ", p$coordinates$limits$x[2], "]\n"))
+        debug_cat(paste0("  X limits: [", p$coordinates$limits$x[1], ", ", p$coordinates$limits$x[2], "]\n"))
       }
     }
   }
@@ -7089,13 +7108,13 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   # Try a final ggplot_build to get computed values
   tryCatch({
     final_built <- ggplot2::ggplot_build(p)
-    cat(file=stderr(), paste0("  ggplot_build successful\n"))
+    debug_cat(paste0("  ggplot_build successful\n"))
 
     # Find tile layer in built data
     for (i in seq_along(final_built$data)) {
       if ("fill" %in% names(final_built$data[[i]]) && "width" %in% names(final_built$data[[i]])) {
         bd <- final_built$data[[i]]
-        cat(file=stderr(), paste0("  Built layer ", i, ": ", nrow(bd), " rows, x=[",
+        debug_cat(paste0("  Built layer ", i, ": ", nrow(bd), " rows, x=[",
                                   min(bd$x, na.rm=TRUE), ", ", max(bd$x, na.rm=TRUE),
                                   "], fill=", paste(unique(bd$fill), collapse=","), "\n"))
       }
@@ -7106,14 +7125,14 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       for (panel_idx in seq_along(final_built$layout$panel_params)) {
         pp <- final_built$layout$panel_params[[panel_idx]]
         if (!is.null(pp$x.range)) {
-          cat(file=stderr(), paste0("  Panel ", panel_idx, " x.range: [", pp$x.range[1], ", ", pp$x.range[2], "]\n"))
+          debug_cat(paste0("  Panel ", panel_idx, " x.range: [", pp$x.range[1], ", ", pp$x.range[2], "]\n"))
         }
       }
     }
   }, error = function(e) {
-    cat(file=stderr(), paste0("  ggplot_build error: ", e$message, "\n"))
+    debug_cat(paste0("  ggplot_build error: ", e$message, "\n"))
   })
-  cat(file=stderr(), paste0("============================================\n"))
+  debug_cat(paste0("============================================\n"))
 
   # v88: Save the plot with comprehensive error handling and multiple fallbacks
   save_success <- FALSE
@@ -7121,33 +7140,33 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   # v167: OPTION C - Use standard ggsave (legends are native ggplot layers now)
   # No gtable manipulation needed - legends are part of the plot object
   tryCatch({
-    cat(file=stderr(), paste0("\n=== v167: Saving plot with native ggplot legends ===\n"))
+    debug_cat(paste0("\n=== v167: Saving plot with native ggplot legends ===\n"))
     ggsave(out_file_path, plot = p, width = width, height = height, units = units_out, limitsize = FALSE)
     save_success <- TRUE
-    cat(file=stderr(), paste0("=== v167: Plot saved successfully ===\n"))
-    cat(file=stderr(), paste0("  LOOK FOR: 'v167 Test Legend' with red square alongside other legends\n"))
+    debug_cat(paste0("=== v167: Plot saved successfully ===\n"))
+    debug_cat(paste0("  LOOK FOR: 'v167 Test Legend' with red square alongside other legends\n"))
   }, error = function(e) {
-    cat(file=stderr(), paste0("\n=== v167: GGSAVE ERROR ===\n"))
-    cat(file=stderr(), paste0("  Primary error: ", e$message, "\n"))
+    debug_cat(paste0("\n=== v167: GGSAVE ERROR ===\n"))
+    debug_cat(paste0("  Primary error: ", e$message, "\n"))
   })
 
   # v88: Fallback 1 - repair mapping and try again
   if (!save_success) {
-    cat(file=stderr(), paste0("  v88: Trying fallback 1 - repair mapping\n"))
+    debug_cat(paste0("  v8: Trying fallback 1 - repair mapping\n"))
     tryCatch({
       p_repaired <- func.repair.ggtree.mapping(p, verbose = TRUE)
       ggsave(out_file_path, plot = p_repaired, width = width, height = height,
              units = units_out, limitsize = FALSE)
       save_success <- TRUE
-      cat(file=stderr(), paste0("  v88: Fallback 1 succeeded\n"))
+      debug_cat(paste0("  v8: Fallback 1 succeeded\n"))
     }, error = function(e2) {
-      cat(file=stderr(), paste0("  v88: Fallback 1 failed: ", e2$message, "\n"))
+      debug_cat(paste0("  v8: Fallback 1 failed: ", e2$message, "\n"))
     })
   }
 
   # v88: Fallback 2 - remove heatmap scale and try with defaults
   if (!save_success && heat_flag) {
-    cat(file=stderr(), paste0("  v88: Trying fallback 2 - reset fill scale to defaults\n"))
+    debug_cat(paste0("  v8: Trying fallback 2 - reset fill scale to defaults\n"))
     tryCatch({
       # Create fresh plot with default scale
       p_default <- p + scale_fill_discrete(na.value = "white")
@@ -7155,15 +7174,15 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       ggsave(out_file_path, plot = p_default, width = width, height = height,
              units = units_out, limitsize = FALSE)
       save_success <- TRUE
-      cat(file=stderr(), paste0("  v88: Fallback 2 succeeded (using default colors)\n"))
+      debug_cat(paste0("  v8: Fallback 2 succeeded (using default colors)\n"))
     }, error = function(e3) {
-      cat(file=stderr(), paste0("  v88: Fallback 2 failed: ", e3$message, "\n"))
+      debug_cat(paste0("  v8: Fallback 2 failed: ", e3$message, "\n"))
     })
   }
 
   # v88: Fallback 3 - use print() to render instead of ggsave
   if (!save_success) {
-    cat(file=stderr(), paste0("  v88: Trying fallback 3 - direct PNG rendering\n"))
+    debug_cat(paste0("  v8: Trying fallback 3 - direct PNG rendering\n"))
     tryCatch({
       # Determine file extension
       file_ext <- tolower(tools::file_ext(out_file_path))
@@ -7177,31 +7196,31 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       print(p)
       dev.off()
       save_success <- TRUE
-      cat(file=stderr(), paste0("  v88: Fallback 3 succeeded\n"))
+      debug_cat(paste0("  v8: Fallback 3 succeeded\n"))
     }, error = function(e4) {
-      cat(file=stderr(), paste0("  v88: Fallback 3 failed: ", e4$message, "\n"))
+      debug_cat(paste0("  v8: Fallback 3 failed: ", e4$message, "\n"))
       tryCatch(dev.off(), error = function(x) {})  # Clean up device
     })
   }
 
   # v88: Final fallback - save tree without heatmap
   if (!save_success && heat_flag) {
-    cat(file=stderr(), paste0("  v88: Trying fallback 4 - save tree without heatmap\n"))
+    debug_cat(paste0("  v8: Trying fallback 4 - save tree without heatmap\n"))
     tryCatch({
       # Use the original tree plot (tt) without heatmap
       ggsave(out_file_path, plot = tt, width = width, height = height,
              units = units_out, limitsize = FALSE)
       save_success <- TRUE
-      cat(file=stderr(), paste0("  v88: Fallback 4 succeeded (saved tree only, no heatmap)\n"))
-      cat(file=stderr(), paste0("  v88: WARNING - Heatmap could not be rendered\n"))
+      debug_cat(paste0("  v8: Fallback 4 succeeded (saved tree only, no heatmap)\n"))
+      debug_cat(paste0("  v8: WARNING - Heatmap could not be rendered\n"))
     }, error = function(e5) {
-      cat(file=stderr(), paste0("  v88: Fallback 4 failed: ", e5$message, "\n"))
+      debug_cat(paste0("  v8: Fallback 4 failed: ", e5$message, "\n"))
       stop(e5)  # Re-throw if all fallbacks fail
     })
   }
 
   if (!save_success) {
-    cat(file=stderr(), paste0("  v88: All save attempts failed\n"))
+    debug_cat(paste0("  v8: All save attempts failed\n"))
     stop("Could not save plot after multiple attempts")
   }
 
@@ -7280,25 +7299,24 @@ ui <- dashboardPage(
         tabName = "data_upload",
         fluidRow(
           box(
-            title = "📌 Version Info",
+            title = "EZLineagePlotter - Stable Release",
             status = "success",
             solidHeader = TRUE,
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v179 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "Version S1 (Stable)"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
-                            "New in v179:",
+                            "Welcome to EZLineagePlotter! This is a stable release for phylogenetic tree visualization.",
+                            tags$br(), tags$br(),
+                            tags$strong("Key Features:"),
                             tags$ul(
-                              tags$li("LEGEND TAB: Individual heatmap checkboxes, P value checkbox, vertical spacing"),
-                              tags$li("LEGEND TAB: Key spacing, reverse key order option"),
-                              tags$li("EXTRA TAB: Tree stretch (length/width), background color"),
-                              tags$li("DOWNLOAD TAB: Keep proportions option for portrait mode")
-                            ),
-                            "Previous fixes:",
-                            tags$ul(
-                              tags$li("v178: Fixed legend bleeding - ellipses/triangles only on their own legends"),
-                              tags$li("v155: GTABLE-BASED LEGENDS for proper alignment")
+                              tags$li("Tree visualization with classification coloring"),
+                              tags$li("Multiple heatmaps with discrete/continuous color scales"),
+                              tags$li("Highlight regions with customizable ellipses"),
+                              tags$li("Bootstrap value display (triangles, percentages, colors)"),
+                              tags$li("Flexible legend positioning and styling"),
+                              tags$li("Export to PDF/PNG with custom dimensions")
                             )
                      )
             )
@@ -8641,8 +8659,8 @@ server <- function(input, output, session) {
   # Bootstrap checkbox observer
   # Bootstrap checkbox observer
   observeEvent(input$show_bootstrap, {
-    # v53: cat(file=stderr(), "\n===observeEvent show_bootstrap FIRED===\n")
-    # v53: cat(file=stderr(), "New value:", input$show_bootstrap, "\n")
+    # v53: debug_cat("\n===observeEvent show_bootstrap FIRED===\n")
+    # v53: debug_cat("New value:", input$show_bootstrap, "\n")
     # v53: cat(file=stderr(), "plot_ready:", values$plot_ready, "\n")
     
     req(values$plot_ready)
@@ -8658,31 +8676,31 @@ server <- function(input, output, session) {
   
   # Bootstrap format observer
   observeEvent(input$bootstrap_format, {
-    # v53: cat(file=stderr(), "\n===observeEvent bootstrap_format FIRED===\n")
+    # v53: debug_cat("\n===observeEvent bootstrap_format FIRED===\n")
     req(values$plot_ready, input$show_bootstrap == TRUE)
     generate_plot()
   }, ignoreInit = TRUE)
   
   # Bootstrap param observer
   observeEvent(input$bootstrap_param, {
-    # v53: cat(file=stderr(), "\n===observeEvent bootstrap_param FIRED===\n")
-    # v53: cat(file=stderr(), "New value:", input$bootstrap_param, "\n")
+    # v53: debug_cat("\n===observeEvent bootstrap_param FIRED===\n")
+    # v53: debug_cat("New value:", input$bootstrap_param, "\n")
     req(values$plot_ready, input$show_bootstrap == TRUE)
     generate_plot()
   }, ignoreInit = TRUE)
   
   # Bootstrap label size observer
   observeEvent(input$bootstrap_label_size, {
-    # v53: cat(file=stderr(), "\n===observeEvent bootstrap_label_size FIRED===\n")
-    # v53: cat(file=stderr(), "New value:", input$bootstrap_label_size, "\n")
+    # v53: debug_cat("\n===observeEvent bootstrap_label_size FIRED===\n")
+    # v53: debug_cat("New value:", input$bootstrap_label_size, "\n")
     req(values$plot_ready, input$show_bootstrap == TRUE)
     generate_plot()
   }, ignoreInit = TRUE)
 
   # v112: Bootstrap position offset observer - makes slider immediately responsive
   observeEvent(input$man_boot_x_offset, {
-    cat(file=stderr(), "\n===observeEvent man_boot_x_offset FIRED===\n")
-    cat(file=stderr(), "New value:", input$man_boot_x_offset, "\n")
+    debug_cat("\n===observeEvent man_boot_x_offset FIRED===\n")
+    debug_cat("New value:", input$man_boot_x_offset, "\n")
     req(values$plot_ready, input$show_bootstrap == TRUE)
     generate_plot()
   }, ignoreInit = TRUE)
@@ -9616,7 +9634,7 @@ server <- function(input, output, session) {
         
         if (!is.null(heatmaps_to_use) && length(heatmaps_to_use) > 0) {
           # v56c: DEBUG
-          cat(file=stderr(), paste0("\n=== v56c: Adding ", length(heatmaps_to_use), " heatmap(s) to classification ", i, " ===\n"))
+          debug_cat(paste0("\n=== v56c: Adding ", length(heatmaps_to_use), " heatmap(s) to classification ", i, " ===\n"))
 
           class_item[[as.character(i)]]$heatmap_display <- list()
 
@@ -9624,8 +9642,8 @@ server <- function(input, output, session) {
             heatmap_entry <- heatmaps_to_use[[j]]
 
             # v56c: DEBUG
-            cat(file=stderr(), paste0("  Processing heatmap ", j, ": ", heatmap_entry$title, "\n"))
-            cat(file=stderr(), paste0("    Columns: ", paste(heatmap_entry$columns, collapse=", "), "\n"))
+            debug_cat(paste0("  Processing heatmap ", j, ": ", heatmap_entry$title, "\n"))
+            debug_cat(paste0("    Columns: ", paste(heatmap_entry$columns, collapse=", "), "\n"))
 
             heatmap_item <- list()
             heatmap_item[[as.character(j)]] <- list(
@@ -9715,10 +9733,10 @@ server <- function(input, output, session) {
         highlight_to_apply <- NULL
 
         # v131: DEBUG - trace highlight decision
-        cat(file=stderr(), paste0("\n=== v131: HIGHLIGHT DECISION (classification ", i, ") ===\n"))
-        cat(file=stderr(), paste0("  temp_highlight_preview is NULL: ", is.null(values$temp_highlight_preview), "\n"))
-        cat(file=stderr(), paste0("  active_highlight_index: ", values$active_highlight_index, "\n"))
-        cat(file=stderr(), paste0("  highlights length: ", length(values$highlights), "\n"))
+        debug_cat(paste0("\n=== v131: HIGHLIGHT DECISION (classification ", i, ") ===\n"))
+        debug_cat(paste0("  temp_highlight_preview is NULL: ", is.null(values$temp_highlight_preview), "\n"))
+        debug_cat(paste0("  active_highlight_index: ", values$active_highlight_index, "\n"))
+        debug_cat(paste0("  highlights length: ", length(values$highlights), "\n"))
 
         # v53: cat(file=stderr(), "\n📝 === ADDING HIGHLIGHT TO CLASSIFICATION", i, "===\n")
         
@@ -9736,12 +9754,12 @@ server <- function(input, output, session) {
           # v53: cat(file=stderr(), "Ã°Å¸â€Ëœ Using saved highlight #", values$active_highlight_index, "\n")
           highlight_to_apply <- values$highlights[[values$active_highlight_index]]
         } else {
-          cat(file=stderr(), "  NO highlight source found (will set display='no')\n")
+          debug_cat("  NO highlight source found (will set display='no')\n")
         }
 
         # Apply highlight to THIS classification
         if (!is.null(highlight_to_apply)) {
-          cat(file=stderr(), paste0("  APPLYING highlight with ", length(highlight_to_apply$items), " items (display='yes')\n"))
+          debug_cat(paste0("  APPLYING highlight with ", length(highlight_to_apply$items), " items (display='yes')\n"))
           # v53: cat(file=stderr(), "Ã¢Å“â€œ Applying highlight to class_item\n")
           
           # Build highlight YAML structure
@@ -9818,7 +9836,7 @@ server <- function(input, output, session) {
       # v56: Add heatmaps to default classification if values$heatmaps is set
       if (!is.null(values$heatmaps) && length(values$heatmaps) > 0) {
         # v56c: DEBUG
-        cat(file=stderr(), paste0("\n=== v56c: Adding ", length(values$heatmaps), " heatmap(s) to DEFAULT classification ===\n"))
+        debug_cat(paste0("\n=== v56c: Adding ", length(values$heatmaps), " heatmap(s) to DEFAULT classification ===\n"))
 
         default_classification[["1"]]$heatmap_display <- list()
 
@@ -9826,8 +9844,8 @@ server <- function(input, output, session) {
           heatmap_entry <- values$heatmaps[[j]]
 
           # v56c: DEBUG
-          cat(file=stderr(), paste0("  Processing heatmap ", j, ": ", heatmap_entry$title, "\n"))
-          cat(file=stderr(), paste0("    Columns: ", paste(heatmap_entry$columns, collapse=", "), "\n"))
+          debug_cat(paste0("  Processing heatmap ", j, ": ", heatmap_entry$title, "\n"))
+          debug_cat(paste0("    Columns: ", paste(heatmap_entry$columns, collapse=", "), "\n"))
 
           heatmap_item <- list()
           heatmap_item[[as.character(j)]] <- list(
@@ -9846,7 +9864,7 @@ server <- function(input, output, session) {
               custom_colors_as_list <- as.list(heatmap_entry$custom_colors)
               names(custom_colors_as_list) <- names(heatmap_entry$custom_colors)
               heatmap_item[[as.character(j)]]$color_scale_option <- custom_colors_as_list
-              cat(file=stderr(), paste0("    v104: Storing ", length(custom_colors_as_list), " custom colors with names: ", paste(names(custom_colors_as_list), collapse=", "), "\n"))
+              debug_cat(paste0("    v104: Storing ", length(custom_colors_as_list), " custom colors with names: ", paste(names(custom_colors_as_list), collapse=", "), "\n"))
             } else {
               heatmap_item[[as.character(j)]]$color_scale_option <- heatmap_entry$color_scheme
             }
@@ -9917,10 +9935,10 @@ server <- function(input, output, session) {
       highlight_to_apply <- NULL
 
       # v131: DEBUG - trace highlight decision for default classification
-      cat(file=stderr(), paste0("\n=== v131: HIGHLIGHT DECISION (DEFAULT classification) ===\n"))
-      cat(file=stderr(), paste0("  temp_highlight_preview is NULL: ", is.null(values$temp_highlight_preview), "\n"))
-      cat(file=stderr(), paste0("  active_highlight_index: ", values$active_highlight_index, "\n"))
-      cat(file=stderr(), paste0("  highlights length: ", length(values$highlights), "\n"))
+      debug_cat(paste0("\n=== v131: HIGHLIGHT DECISION (DEFAULT classification) ===\n"))
+      debug_cat(paste0("  temp_highlight_preview is NULL: ", is.null(values$temp_highlight_preview), "\n"))
+      debug_cat(paste0("  active_highlight_index: ", values$active_highlight_index, "\n"))
+      debug_cat(paste0("  highlights length: ", length(values$highlights), "\n"))
 
       # Check if preview mode is active (match custom classification logic at line 8765)
       if (!is.null(values$temp_highlight_preview)) {
@@ -9935,7 +9953,7 @@ server <- function(input, output, session) {
 
       # Apply highlight to default classification
       if (!is.null(highlight_to_apply)) {
-        cat(file=stderr(), paste0("\n=== v129: Adding highlight to DEFAULT classification ===\n"))
+        debug_cat(paste0("\n=== v129: Adding highlight to DEFAULT classification ===\n"))
 
         # Build highlight YAML structure
         highlight_yaml <- list(
@@ -9964,10 +9982,10 @@ server <- function(input, output, session) {
 
         # ADD TO DEFAULT CLASSIFICATION
         default_classification[["1"]]$highlight <- highlight_yaml
-        cat(file=stderr(), paste0("  Highlight added with ", length(highlight_to_apply$items), " items\n"))
+        debug_cat(paste0("  Highlight added with ", length(highlight_to_apply$items), " items\n"))
       } else {
         # No highlight - disable it
-        cat(file=stderr(), "  NO highlight to apply (setting display='no')\n")
+        debug_cat("  NO highlight to apply (setting display='no')\n")
         default_classification[["1"]]$highlight <- list(display = "no")
       }
 
@@ -10859,13 +10877,13 @@ server <- function(input, output, session) {
     
     
     # v131: DEBUG - confirm temp_highlight_preview is set before generate_plot()
-    cat(file=stderr(), "\n=== v131: HIGHLIGHT BUTTON - BEFORE generate_plot() ===\n")
-    cat(file=stderr(), paste0("  temp_highlight_preview is NULL: ", is.null(values$temp_highlight_preview), "\n"))
+    debug_cat("\n=== v131: HIGHLIGHT BUTTON - BEFORE generate_plot() ===\n")
+    debug_cat(paste0("  temp_highlight_preview is NULL: ", is.null(values$temp_highlight_preview), "\n"))
     if (!is.null(values$temp_highlight_preview)) {
-      cat(file=stderr(), paste0("  temp_highlight_preview column: ", values$temp_highlight_preview$column, "\n"))
-      cat(file=stderr(), paste0("  temp_highlight_preview items: ", length(values$temp_highlight_preview$items), "\n"))
+      debug_cat(paste0("  temp_highlight_preview column: ", values$temp_highlight_preview$column, "\n"))
+      debug_cat(paste0("  temp_highlight_preview items: ", length(values$temp_highlight_preview$items), "\n"))
     }
-    cat(file=stderr(), "  CALLING generate_plot() NOW...\n")
+    debug_cat("  CALLING generate_plot() NOW...\n")
     values$debug_trace_id <- "HIGHLIGHT_BUTTON_PREVIEW"
     generate_plot()
     values$debug_trace_id <- NULL
@@ -12546,7 +12564,7 @@ server <- function(input, output, session) {
         }
 
         # Debug output to console
-        cat(file=stderr(), paste0("  v127 DETECTED TYPE DISPLAY: column=", first_col,
+        debug_cat(paste0("  v27 DETECTED TYPE DISPLAY: column=", first_col,
                                    ", detected=", detected_type, "\n"))
 
         # Return the styled label
@@ -12849,7 +12867,7 @@ server <- function(input, output, session) {
           matching_rows <- id_col_data %in% tree_tips
           if (any(matching_rows)) {
             filtered_data <- values$csv_data[matching_rows, , drop = FALSE]
-            cat(file=stderr(), paste0("v125: Filtered unique values from ", nrow(values$csv_data), " to ", nrow(filtered_data), " rows (tree tips)\n"))
+            debug_cat(paste0("v125: Filtered unique values from ", nrow(values$csv_data), " to ", nrow(filtered_data), " rows (tree tips)\n"))
           }
         }
 
@@ -13060,7 +13078,7 @@ server <- function(input, output, session) {
       # Priority: decimals = continuous, non-numeric = discrete, then check unique values
       actual_type <- current_forced_type  # v122: Default to forced type
       first_col <- cfg$columns[1]
-      cat(file=stderr(), paste0("  v122 AUTO-DETECT: auto_type=", current_auto_type,
+      debug_cat(paste0("  v22 AUTO-DETECT: auto_type=", current_auto_type,
                                  ", forced_type=", current_forced_type, "\n"))
       if (current_auto_type && !is.null(values$csv_data) && first_col %in% names(values$csv_data)) {
         col_data <- values$csv_data[[first_col]]
@@ -13089,7 +13107,7 @@ server <- function(input, output, session) {
           char_data <- as.character(na.omit(col_data))
           has_decimal_in_string <- any(grepl("\\.[0-9]+", char_data))
         }
-        cat(file=stderr(), paste0("  v117 AUTO-DETECT: has_decimal_in_string=", has_decimal_in_string, "\n"))
+        debug_cat(paste0("  v17 AUTO-DETECT: has_decimal_in_string=", has_decimal_in_string, "\n"))
 
         # v117: More aggressive conversion - try to convert any non-numeric column to numeric
         # First clean up NA-like strings
@@ -13111,7 +13129,7 @@ server <- function(input, output, session) {
         }
 
         # v117: Debug output for auto-detect troubleshooting
-        cat(file=stderr(), paste0("  v117 AUTO-DETECT: column=", first_col,
+        debug_cat(paste0("  v17 AUTO-DETECT: column=", first_col,
                                    ", is_numeric=", is_numeric,
                                    ", originally_numeric=", originally_numeric,
                                    ", converted=", converted_to_numeric,
@@ -13121,7 +13139,7 @@ server <- function(input, output, session) {
         if (!is_numeric) {
           # Non-numeric data is always discrete
           actual_type <- "discrete"
-          cat(file=stderr(), paste0("  v117 AUTO-DETECT: Result=discrete (non-numeric)\n"))
+          debug_cat(paste0("  v17 AUTO-DETECT: Result=discrete (non-numeric)\n"))
         } else {
           # v117: Check for decimal values with tolerance for floating-point precision
           epsilon <- 1e-6
@@ -13130,10 +13148,10 @@ server <- function(input, output, session) {
           # v117: Also use the string-based detection result
           if (!has_decimals && has_decimal_in_string) {
             has_decimals <- TRUE
-            cat(file=stderr(), paste0("  v117 AUTO-DETECT: decimal detected via string check\n"))
+            debug_cat(paste0("  v17 AUTO-DETECT: decimal detected via string check\n"))
           }
 
-          cat(file=stderr(), paste0("  v120 AUTO-DETECT: has_decimals=", has_decimals, "\n"))
+          debug_cat(paste0("  v20 AUTO-DETECT: has_decimals=", has_decimals, "\n"))
 
           # v120: Harmonized logic with UI section for consistent detection
           # Get value range for range-based checks
@@ -13142,17 +13160,17 @@ server <- function(input, output, session) {
           # v120: Decimals ALWAYS mean continuous (measurements, percentages, etc.)
           if (has_decimals) {
             actual_type <- "continuous"
-            cat(file=stderr(), paste0("  v120 AUTO-DETECT: Result=continuous (has decimals)\n"))
+            debug_cat(paste0("  v20 AUTO-DETECT: Result=continuous (has decimals)\n"))
           } else if (originally_numeric) {
             # v120: Originally numeric without decimals - match UI section logic
             is_boolean_like <- unique_vals <= 2 && val_range <= 1
             is_small_categorical <- unique_vals <= 3 && val_range <= 2
             if (is_boolean_like || is_small_categorical) {
               actual_type <- "discrete"
-              cat(file=stderr(), paste0("  v120 AUTO-DETECT: Result=discrete (boolean-like or small categorical)\n"))
+              debug_cat(paste0("  v20 AUTO-DETECT: Result=discrete (boolean-like or small categorical)\n"))
             } else {
               actual_type <- "continuous"
-              cat(file=stderr(), paste0("  v120 AUTO-DETECT: Result=continuous (originally numeric, many values)\n"))
+              debug_cat(paste0("  v20 AUTO-DETECT: Result=continuous (originally numeric, many values)\n"))
             }
           } else {
             # v123: Converted from character without decimals - more lenient for numeric-like data
@@ -13160,10 +13178,10 @@ server <- function(input, output, session) {
             # This catches integer sequences like 1,2,3,4,5 which are typically counts/scores
             if (unique_vals >= 5 || val_range >= 5) {
               actual_type <- "continuous"
-              cat(file=stderr(), paste0("  v123 AUTO-DETECT: Result=continuous (>=5 unique or range>=5)\n"))
+              debug_cat(paste0("  v23 AUTO-DETECT: Result=continuous (>=5 unique or range>=5)\n"))
             } else {
               actual_type <- "discrete"
-              cat(file=stderr(), paste0("  v123 AUTO-DETECT: Result=discrete (few unique, narrow range)\n"))
+              debug_cat(paste0("  v23 AUTO-DETECT: Result=discrete (few unique, narrow range)\n"))
             }
           }
         }
@@ -13290,16 +13308,16 @@ server <- function(input, output, session) {
     values$heatmap_global_gap <- if (!is.null(input$heatmap_global_gap)) input$heatmap_global_gap else 0.05
 
     # v56c: DEBUG - Print heatmap structure being applied
-    cat(file=stderr(), "\n=== v56c HEATMAP APPLY DEBUG ===\n")
-    cat(file=stderr(), "Number of heatmaps:", length(heatmaps_list), "\n")
+    debug_cat("\n=== v56c HEATMAP APPLY DEBUG ===\n")
+    debug_cat("Number of heatmaps:", length(heatmaps_list), "\n")
     for (h_idx in seq_along(heatmaps_list)) {
       hm <- heatmaps_list[[h_idx]]
-      cat(file=stderr(), paste0("  Heatmap ", h_idx, ":\n"))
-      cat(file=stderr(), paste0("    Title: ", hm$title, "\n"))
-      cat(file=stderr(), paste0("    Columns: ", paste(hm$columns, collapse=", "), "\n"))
-      cat(file=stderr(), paste0("    Is discrete: ", hm$is_discrete, "\n"))
+      debug_cat(paste0("  Heatmap ", h_idx, ":\n"))
+      debug_cat(paste0("    Title: ", hm$title, "\n"))
+      debug_cat(paste0("    Columns: ", paste(hm$columns, collapse=", "), "\n"))
+      debug_cat(paste0("    Is discrete: ", hm$is_discrete, "\n"))
     }
-    cat(file=stderr(), "================================\n\n")
+    debug_cat("================================\n\n")
 
     # Generate plot
     generate_plot()
@@ -13318,7 +13336,7 @@ server <- function(input, output, session) {
   # Observer for Apply Legend Settings button
   # v180: Updated with new controls (key width/height, byrow, box background, margin)
   observeEvent(input$apply_legend_settings, {
-    cat(file=stderr(), "\n=== v180: APPLYING LEGEND SETTINGS ===\n")
+    debug_cat("\n=== v180: APPLYING LEGEND SETTINGS ===\n")
 
     # Update legend settings in reactive values
     values$legend_settings <- list(
@@ -13348,18 +13366,18 @@ server <- function(input, output, session) {
       margin = input$legend_margin
     )
 
-    cat(file=stderr(), paste0("  Position: ", input$legend_position, "\n"))
-    cat(file=stderr(), paste0("  Show classification: ", input$legend_show_classification, "\n"))
-    cat(file=stderr(), paste0("  Show highlight: ", input$legend_show_highlight, "\n"))
-    cat(file=stderr(), paste0("  Show bootstrap: ", input$legend_show_bootstrap, "\n"))
-    cat(file=stderr(), paste0("  Show P value: ", input$legend_show_pvalue, "\n"))
-    cat(file=stderr(), paste0("  Show heatmap: ", input$legend_show_heatmap, "\n"))
-    cat(file=stderr(), paste0("  v180: Key width: ", input$legend_key_width, ", height: ", input$legend_key_height, "\n"))
-    cat(file=stderr(), paste0("  v180: Title-key spacing: ", input$legend_title_key_spacing, "\n"))
-    cat(file=stderr(), paste0("  v180: Between keys spacing: ", input$legend_key_spacing, "\n"))
-    cat(file=stderr(), paste0("  v180: Reverse order: ", input$legend_reverse_order, "\n"))
-    cat(file=stderr(), paste0("  v180: Box background: ", input$legend_box_background, ", Margin: ", input$legend_margin, "\n"))
-    cat(file=stderr(), "======================================\n\n")
+    debug_cat(paste0("  Position: ", input$legend_position, "\n"))
+    debug_cat(paste0("  Show classification: ", input$legend_show_classification, "\n"))
+    debug_cat(paste0("  Show highlight: ", input$legend_show_highlight, "\n"))
+    debug_cat(paste0("  Show bootstrap: ", input$legend_show_bootstrap, "\n"))
+    debug_cat(paste0("  Show P value: ", input$legend_show_pvalue, "\n"))
+    debug_cat(paste0("  Show heatmap: ", input$legend_show_heatmap, "\n"))
+    debug_cat(paste0("  v80: Key width: ", input$legend_key_width, ", height: ", input$legend_key_height, "\n"))
+    debug_cat(paste0("  v80: Title-key spacing: ", input$legend_title_key_spacing, "\n"))
+    debug_cat(paste0("  v80: Between keys spacing: ", input$legend_key_spacing, "\n"))
+    debug_cat(paste0("  v80: Reverse order: ", input$legend_reverse_order, "\n"))
+    debug_cat(paste0("  v80: Box background: ", input$legend_box_background, ", Margin: ", input$legend_margin, "\n"))
+    debug_cat("======================================\n\n")
 
     # Regenerate plot with new legend settings
     generate_plot()
@@ -13380,10 +13398,10 @@ server <- function(input, output, session) {
     current_height <- isolate(input$output_height)
     keep_proportions <- isolate(input$keep_proportions)
 
-    cat(file=stderr(), paste0("\n=== v180: PAGE ORIENTATION CHANGED ===\n"))
-    cat(file=stderr(), paste0("  Orientation: ", input$page_orientation, "\n"))
-    cat(file=stderr(), paste0("  Keep proportions: ", keep_proportions, "\n"))
-    cat(file=stderr(), paste0("  Current width: ", current_width, ", height: ", current_height, "\n"))
+    debug_cat(paste0("\n=== v180: PAGE ORIENTATION CHANGED ===\n"))
+    debug_cat(paste0("  Orientation: ", input$page_orientation, "\n"))
+    debug_cat(paste0("  Keep proportions: ", keep_proportions, "\n"))
+    debug_cat(paste0("  Current width: ", current_width, ", height: ", current_height, "\n"))
 
     # v180: ALWAYS swap page dimensions when orientation changes
     # The keep_proportions option controls whether the PLOT stretches to fill the new page
@@ -13392,38 +13410,38 @@ server <- function(input, output, session) {
       if (input$page_orientation == "landscape") {
         # Landscape: width should be > height
         if (current_width < current_height) {
-          cat(file=stderr(), paste0("  Swapping to landscape: width=", current_height, ", height=", current_width, "\n"))
+          debug_cat(paste0("  Swapping to landscape: width=", current_height, ", height=", current_width, "\n"))
           updateNumericInput(session, "output_width", value = current_height)
           updateNumericInput(session, "output_height", value = current_width)
         } else {
-          cat(file=stderr(), "  Already in landscape orientation (width >= height)\n")
+          debug_cat("  Already in landscape orientation (width >= height)\n")
         }
       } else {
         # Portrait: height should be > width
         if (current_width > current_height) {
-          cat(file=stderr(), paste0("  Swapping to portrait: width=", current_height, ", height=", current_width, "\n"))
+          debug_cat(paste0("  Swapping to portrait: width=", current_height, ", height=", current_width, "\n"))
           updateNumericInput(session, "output_width", value = current_height)
           updateNumericInput(session, "output_height", value = current_width)
         } else {
-          cat(file=stderr(), "  Already in portrait orientation (height >= width)\n")
+          debug_cat("  Already in portrait orientation (height >= width)\n")
         }
       }
     } else {
-      cat(file=stderr(), "  WARNING: width or height is NULL, cannot swap\n")
+      debug_cat("  WARNING: width or height is NULL, cannot swap\n")
     }
 
     # v180: Log the effect of keep_proportions
     if (isTRUE(keep_proportions)) {
-      cat(file=stderr(), "  v180: Plot proportions preserved - plot won't stretch to fill new page\n")
+      debug_cat("  v180: Plot proportions preserved - plot won't stretch to fill new page\n")
     }
-    cat(file=stderr(), "=== END PAGE ORIENTATION ===\n")
+    debug_cat("=== END PAGE ORIENTATION ===\n")
 
     # v143: Regenerate plot after a small delay to ensure new dimensions are available
     # updateNumericInput doesn't update input$ values immediately - they need a flush cycle
     if (!is.null(values$tree_data)) {
       shinyjs::delay(100, {
         generate_plot()
-        cat(file=stderr(), "  v143: Plot regenerated for orientation preview (after delay)\n")
+        debug_cat("  v143: Plot regenerated for orientation preview (after delay)\n")
       })
     }
   }, ignoreInit = TRUE)
@@ -13672,8 +13690,8 @@ server <- function(input, output, session) {
   
   # Tip font size
   observeEvent(input$tip_font_size, {
-    # v53: cat(file=stderr(), "\n===observeEvent tip_font_size FIRED===\n")
-    # v53: cat(file=stderr(), "New value:", input$tip_font_size, "\n")
+    # v53: debug_cat("\n===observeEvent tip_font_size FIRED===\n")
+    # v53: debug_cat("New value:", input$tip_font_size, "\n")
     # v53: cat(file=stderr(), "plot_ready:", values$plot_ready, "\n")
     req(values$plot_ready)  # Only if plot has been generated at least once
     # v53: cat(file=stderr(), "Calling generate_plot()...\n")
@@ -13683,40 +13701,40 @@ server <- function(input, output, session) {
   
   # Edge width
   observeEvent(input$edge_width, {
-    # v53: cat(file=stderr(), "\n===observeEvent edge_width FIRED===\n")
-    # v53: cat(file=stderr(), "New value:", input$edge_width, "\n")
+    # v53: debug_cat("\n===observeEvent edge_width FIRED===\n")
+    # v53: debug_cat("New value:", input$edge_width, "\n")
     req(values$plot_ready)
     generate_plot()
   }, ignoreInit = TRUE)
   
   # Tip length
   observeEvent(input$tip_length, {
-    # v53: cat(file=stderr(), "\n===observeEvent tip_length FIRED===\n")
-    # v53: cat(file=stderr(), "New value:", input$tip_length, "\n")
+    # v53: debug_cat("\n===observeEvent tip_length FIRED===\n")
+    # v53: debug_cat("New value:", input$tip_length, "\n")
     req(values$plot_ready)
     generate_plot()
   }, ignoreInit = TRUE)
   
   # Trim tips checkbox
   observeEvent(input$trim_tips, {
-    # v53: cat(file=stderr(), "\n===observeEvent trim_tips FIRED===\n")
-    # v53: cat(file=stderr(), "New value:", input$trim_tips, "\n")
+    # v53: debug_cat("\n===observeEvent trim_tips FIRED===\n")
+    # v53: debug_cat("New value:", input$trim_tips, "\n")
     req(values$plot_ready)
     generate_plot()
   }, ignoreInit = TRUE)
   
   # Display node numbers
   observeEvent(input$display_node_numbers, {
-    # v53: cat(file=stderr(), "\n===observeEvent display_node_numbers FIRED===\n")
-    # v53: cat(file=stderr(), "New value:", input$display_node_numbers, "\n")
+    # v53: debug_cat("\n===observeEvent display_node_numbers FIRED===\n")
+    # v53: debug_cat("New value:", input$display_node_numbers, "\n")
     req(values$plot_ready)
     generate_plot()
   }, ignoreInit = TRUE)
   
   # Ladderize
   observeEvent(input$ladderize, {
-    # v53: cat(file=stderr(), "\n===observeEvent ladderize FIRED===\n")
-    # v53: cat(file=stderr(), "New value:", input$ladderize, "\n")
+    # v53: debug_cat("\n===observeEvent ladderize FIRED===\n")
+    # v53: debug_cat("New value:", input$ladderize, "\n")
     req(values$plot_ready)
     generate_plot()
   }, ignoreInit = TRUE)
@@ -14087,7 +14105,7 @@ server <- function(input, output, session) {
       # v53: cat(file=stderr(), "Number of classifications:", length(values$yaml_data$`visual definitions`$classification), "\n")
       for (i in seq_along(values$yaml_data$`visual definitions`$classification)) {
         class_item <- values$yaml_data$`visual definitions`$classification[[i]]
-        # v53: cat(file=stderr(), paste0("Classification ", i, ":\n"))
+        # v53: debug_cat(paste0("Classification ", i, ":\n"))
         # v53: cat(file=stderr(), "  Title:", class_item[[as.character(i)]]$title, "\n")
         if (!is.null(class_item[[as.character(i)]]$according)) {
           # v53: cat(file=stderr(), "  Number of classes:", length(class_item[[as.character(i)]]$according), "\n")
@@ -14100,7 +14118,7 @@ server <- function(input, output, session) {
           }
         }
       }
-      # v53: cat(file=stderr(), "=====================================\n\n")
+      # v53: debug_cat("=====================================\n\n")
     }
     
     # DEBUG: Show trimming params before writing YAML
@@ -14116,39 +14134,39 @@ server <- function(input, output, session) {
 
     # v57: DEBUG - Show heatmap structure in YAML
     if (!is.null(yaml_data_modified$`visual definitions`$classification)) {
-      cat(file=stderr(), "\n=== v57 HEATMAP YAML DEBUG ===\n")
+      debug_cat("\n=== v57 HEATMAP YAML DEBUG ===\n")
       for (ci in seq_along(yaml_data_modified$`visual definitions`$classification)) {
         class_entry <- yaml_data_modified$`visual definitions`$classification[[ci]]
         class_key <- names(class_entry)[1]
-        cat(file=stderr(), paste0("Classification ", ci, " (key=", class_key, "):\n"))
-        cat(file=stderr(), paste0("  Has heatmap_display: ", !is.null(class_entry[[class_key]]$heatmap_display), "\n"))
+        debug_cat(paste0("Classification ", ci, " (key=", class_key, "):\n"))
+        debug_cat(paste0("  Has heatmap_display: ", !is.null(class_entry[[class_key]]$heatmap_display), "\n"))
         if (!is.null(class_entry[[class_key]]$heatmap_display)) {
-          cat(file=stderr(), paste0("  Number of heatmaps: ", length(class_entry[[class_key]]$heatmap_display), "\n"))
+          debug_cat(paste0("  Number of heatmaps: ", length(class_entry[[class_key]]$heatmap_display), "\n"))
           for (hi in seq_along(class_entry[[class_key]]$heatmap_display)) {
             hm <- class_entry[[class_key]]$heatmap_display[[hi]]
             hm_key <- names(hm)[1]
-            cat(file=stderr(), paste0("    Heatmap ", hi, " (key=", hm_key, "):\n"))
-            cat(file=stderr(), paste0("      Title: ", hm[[hm_key]]$title, "\n"))
-            cat(file=stderr(), paste0("      Display: ", hm[[hm_key]]$display, "\n"))
-            cat(file=stderr(), paste0("      According length: ", length(hm[[hm_key]]$according), "\n"))
+            debug_cat(paste0("    Heatmap ", hi, " (key=", hm_key, "):\n"))
+            debug_cat(paste0("      Title: ", hm[[hm_key]]$title, "\n"))
+            debug_cat(paste0("      Display: ", hm[[hm_key]]$display, "\n"))
+            debug_cat(paste0("      According length: ", length(hm[[hm_key]]$according), "\n"))
             if (length(hm[[hm_key]]$according) > 0) {
               for (ai in seq_along(hm[[hm_key]]$according)) {
                 acc <- hm[[hm_key]]$according[[ai]]
                 acc_key <- names(acc)[1]
-                cat(file=stderr(), paste0("        Column ", ai, ": ", acc[[acc_key]], "\n"))
+                debug_cat(paste0("        Column ", ai, ": ", acc[[acc_key]], "\n"))
               }
             }
           }
         }
       }
-      cat(file=stderr(), "==============================\n\n")
+      debug_cat("==============================\n\n")
     }
 
     # DEBUG: Also print part of the YAML file
     # v53: cat(file=stderr(), "\n=== YAML FILE CONTENT (first 50 lines) ===\n")
     yaml_lines <- readLines(temp_yaml_file, n = 50)
     # v53: cat(file=stderr(), paste(yaml_lines, collapse = "\n"), "\n")
-    # v53: cat(file=stderr(), "==========================================\n\n")
+    # v53: debug_cat("==========================================\n\n")
     
     # Define viridis_option_list
     viridis_option_list <- c("A", "B", "C", "D", "E")
@@ -14203,7 +14221,7 @@ server <- function(input, output, session) {
       # v53: cat(file=stderr(), "Ã°Å¸â€Â display_nodes_to_pass:", display_nodes_to_pass, "\n")
       # v53: cat(file=stderr(), "Ã°Å¸â€Â highlight_flag_to_pass:", highlight_flag_to_pass, "\n")
       # v53: cat(file=stderr(), "Ã°Å¸â€Â nodes_to_highlight_to_pass:", paste(nodes_to_highlight_to_pass, collapse=", "), "\n")
-      # v53: cat(file=stderr(), "================================================\n\n")
+      # v53: debug_cat("================================================\n\n")
       
       # Call func.print.lineage.tree with the temp YAML file
       # v54: Wrap in suppressWarnings to suppress -Inf and other harmless warnings
@@ -14266,7 +14284,7 @@ server <- function(input, output, session) {
           }
         }
       }
-      # v53: cat(file=stderr(), "====================================\n\n")
+      # v53: debug_cat("====================================\n\n")
       
       # Extract the plot from out_trees list
       # The function returns out_trees which is a list indexed by numbers like "1", "2", etc.
@@ -14314,7 +14332,7 @@ server <- function(input, output, session) {
       # v53: cat(file=stderr(), "Error message:", e$message, "\n")
       # v53: cat(file=stderr(), "Full error:\n")
       # v53: print(e)
-      # v53: cat(file=stderr(), "================================\n\n")
+      # v53: debug_cat("================================\n\n")
       
       # IMPORTANT: Hide progress bar when error occurs
       values$progress_visible <- FALSE
@@ -14346,7 +14364,7 @@ server <- function(input, output, session) {
       # v53: cat(file=stderr(), "result class:", class(result), "\n")
       # v53: cat(file=stderr(), "result inherits ggplot:", inherits(result, "ggplot"), "\n")
     }
-    # v53: cat(file=stderr(), "==============================\n\n")
+    # v53: debug_cat("==============================\n\n")
     
     # If we got a valid result
     # If we got a valid result
@@ -14358,8 +14376,8 @@ server <- function(input, output, session) {
       # v180: Enhanced with key dimensions, byrow, box background, margin controls
       legend_settings <- values$legend_settings
       if (!is.null(legend_settings)) {
-        cat(file=stderr(), paste0("\n=== v180: Applying legend settings to plot ===\n"))
-        cat(file=stderr(), paste0("  Position: ", legend_settings$position, "\n"))
+        debug_cat(paste0("\n=== v180: Applying legend settings to plot ===\n"))
+        debug_cat(paste0("  Position: ", legend_settings$position, "\n"))
 
         # v125: Determine legend layout based on position
         # For top/bottom: legends arranged horizontally, but each legend has title above values
@@ -14408,12 +14426,12 @@ server <- function(input, output, session) {
         # Apply the legend theme
         result <- result + legend_theme
 
-        cat(file=stderr(), paste0("  v180: Legend box=", if (is_horizontal_position) "horizontal" else "vertical",
+        debug_cat(paste0("  v80: Legend box=", if (is_horizontal_position) "horizontal" else "vertical",
                                    ", direction=vertical\n"))
-        cat(file=stderr(), paste0("  v180: Key dims: ", key_width, "x", key_height, " lines\n"))
-        cat(file=stderr(), paste0("  v180: Spacings - H:", h_spacing, ", V:", v_spacing,
+        debug_cat(paste0("  v80: Key dims: ", key_width, "x", key_height, " lines\n"))
+        debug_cat(paste0("  v80: Spacings - H:", h_spacing, ", V:", v_spacing,
                                    ", Title-key:", title_key_spacing, ", Key:", key_spacing, "\n"))
-        cat(file=stderr(), paste0("  v180: Box bg:", box_bg, ", Margin:", legend_margin_val, "\n"))
+        debug_cat(paste0("  v80: Box bg:", box_bg, ", Margin:", legend_margin_val, "\n"))
 
         # v180: Apply visibility controls using guides()
         # Also apply reverse order if requested
@@ -14452,8 +14470,8 @@ server <- function(input, output, session) {
           result <- result + do.call(guides, guides_list)
         }
 
-        cat(file=stderr(), paste0("  v180: Reverse order=", reverse_order, "\n"))
-        cat(file=stderr(), paste0("  Legend settings applied successfully\n"))
+        debug_cat(paste0("  v80: Reverse order=", reverse_order, "\n"))
+        debug_cat(paste0("  Legend settings applied successfully\n"))
       }
 
       # v130: Apply Extra tab settings (page title, custom texts, images)
@@ -14486,17 +14504,17 @@ server <- function(input, output, session) {
         attr(result, "keep_proportions") <- keep_proportions
 
         if (plot_off_x != 0 || plot_off_y != 0 || plot_scale != 100) {
-          cat(file=stderr(), paste0("\n=== v146: STORING PLOT POSITION & SCALE ===\n"))
-          cat(file=stderr(), paste0("  X offset: ", plot_off_x, " (positive = right)\n"))
-          cat(file=stderr(), paste0("  Y offset: ", plot_off_y, " (positive = up)\n"))
-          cat(file=stderr(), paste0("  Scale: ", plot_scale, "%\n"))
-          cat(file=stderr(), paste0("  v146: Offsets and scale will be applied via cowplot draw_plot during rendering\n"))
+          debug_cat(paste0("\n=== v146: STORING PLOT POSITION & SCALE ===\n"))
+          debug_cat(paste0("  X offset: ", plot_off_x, " (positive = right)\n"))
+          debug_cat(paste0("  Y offset: ", plot_off_y, " (positive = up)\n"))
+          debug_cat(paste0("  Scale: ", plot_scale, "%\n"))
+          debug_cat(paste0("  v46: Offsets and scale will be applied via cowplot draw_plot during rendering\n"))
         }
 
         # v179: Apply background color
         if (bg_color != "#FFFFFF") {
-          cat(file=stderr(), paste0("\n=== v179: APPLYING BACKGROUND COLOR ===\n"))
-          cat(file=stderr(), paste0("  Background: ", bg_color, "\n"))
+          debug_cat(paste0("\n=== v179: APPLYING BACKGROUND COLOR ===\n"))
+          debug_cat(paste0("  Background: ", bg_color, "\n"))
           result <- result + theme(
             plot.background = element_rect(fill = bg_color, colour = NA),
             panel.background = element_rect(fill = bg_color, colour = NA)
@@ -14505,30 +14523,30 @@ server <- function(input, output, session) {
 
         # v179: Log tree stretch values (applied during rendering)
         if (tree_stretch_x != 1 || tree_stretch_y != 1) {
-          cat(file=stderr(), paste0("\n=== v179: TREE STRETCH VALUES ===\n"))
-          cat(file=stderr(), paste0("  X stretch (length): ", tree_stretch_x, "x\n"))
-          cat(file=stderr(), paste0("  Y stretch (width): ", tree_stretch_y, "x\n"))
-          cat(file=stderr(), paste0("  v179: Stretch will be applied via coord transformation\n"))
+          debug_cat(paste0("\n=== v179: TREE STRETCH VALUES ===\n"))
+          debug_cat(paste0("  X stretch (length): ", tree_stretch_x, "x\n"))
+          debug_cat(paste0("  Y stretch (width): ", tree_stretch_y, "x\n"))
+          debug_cat(paste0("  v79: Stretch will be applied via coord transformation\n"))
         }
 
         # Apply page title
         page_title_settings <- values$page_title
 
         # v131: DEBUG - trace page title settings
-        cat(file=stderr(), paste0("\n=== v131: PAGE TITLE CHECK ===\n"))
-        cat(file=stderr(), paste0("  page_title_settings is NULL: ", is.null(page_title_settings), "\n"))
+        debug_cat(paste0("\n=== v131: PAGE TITLE CHECK ===\n"))
+        debug_cat(paste0("  page_title_settings is NULL: ", is.null(page_title_settings), "\n"))
         if (!is.null(page_title_settings)) {
-          cat(file=stderr(), paste0("  enabled: ", page_title_settings$enabled, "\n"))
-          cat(file=stderr(), paste0("  text: '", page_title_settings$text, "'\n"))
-          cat(file=stderr(), paste0("  text length: ", nchar(page_title_settings$text), "\n"))
+          debug_cat(paste0("  enabled: ", page_title_settings$enabled, "\n"))
+          debug_cat(paste0("  text: '", page_title_settings$text, "'\n"))
+          debug_cat(paste0("  text length: ", nchar(page_title_settings$text), "\n"))
         }
 
         if (!is.null(page_title_settings) && isTRUE(page_title_settings$enabled) &&
             !is.null(page_title_settings$text) && nchar(page_title_settings$text) > 0) {
-          cat(file=stderr(), paste0("\n=== v131: Applying page title ===\n"))
-          cat(file=stderr(), paste0("  Title: ", page_title_settings$text, "\n"))
-          cat(file=stderr(), paste0("  Size: ", page_title_settings$size, "\n"))
-          cat(file=stderr(), paste0("  Color: ", page_title_settings$color, "\n"))
+          debug_cat(paste0("\n=== v131: Applying page title ===\n"))
+          debug_cat(paste0("  Title: ", page_title_settings$text, "\n"))
+          debug_cat(paste0("  Size: ", page_title_settings$size, "\n"))
+          debug_cat(paste0("  Color: ", page_title_settings$color, "\n"))
 
           fontface <- if (page_title_settings$bold) "bold" else "plain"
           hjust_val <- page_title_settings$hjust
@@ -14545,13 +14563,13 @@ server <- function(input, output, session) {
 
           # Add underline if requested (using geom_segment as underline)
           if (isTRUE(page_title_settings$underline)) {
-            cat(file=stderr(), paste0("  Adding underline\n"))
+            debug_cat(paste0("  Adding underline\n"))
             # Note: Underline in ggplot title is complex, would need grid manipulation
             # For now, we document that underline is not fully supported
           }
-          cat(file=stderr(), paste0("  Page title applied successfully\n"))
+          debug_cat(paste0("  Page title applied successfully\n"))
         } else {
-          cat(file=stderr(), paste0("  Page title NOT applied (condition not met)\n"))
+          debug_cat(paste0("  Page title NOT applied (condition not met)\n"))
         }
 
         # v143: Apply custom text annotations as TRUE overlays using annotation_custom
@@ -14559,13 +14577,13 @@ server <- function(input, output, session) {
         # Unlike annotate() + coord_cartesian which can override ggtree's coordinate system
         custom_texts <- values$custom_texts
         if (!is.null(custom_texts) && length(custom_texts) > 0) {
-          cat(file=stderr(), paste0("\n=== v143: Applying ", length(custom_texts), " custom text(s) as TRUE OVERLAY ===\n"))
-          cat(file=stderr(), paste0("  Using annotation_custom with grid::textGrob (never affects plot limits)\n"))
+          debug_cat(paste0("\n=== v143: Applying ", length(custom_texts), " custom text(s) as TRUE OVERLAY ===\n"))
+          debug_cat(paste0("  Using annotation_custom with grid::textGrob (never affects plot limits)\n"))
 
           for (i in seq_along(custom_texts)) {
             txt <- custom_texts[[i]]
 
-            cat(file=stderr(), paste0("  Text ", i, ": \"", substr(txt$content, 1, 20), "...\" at normalized (",
+            debug_cat(paste0("  Text ", i, ": \"", substr(txt$content, 1, 20), "...\" at normalized (",
                                        round(txt$x, 2), ", ", round(txt$y, 2), ")\n"))
 
             # Create a text grob with proper formatting
@@ -14600,7 +14618,7 @@ server <- function(input, output, session) {
             )
           }
 
-          cat(file=stderr(), paste0("  v143: Text overlays applied - plot coordinates unchanged\n"))
+          debug_cat(paste0("  v43: Text overlays applied - plot coordinates unchanged\n"))
         }
 
         # v145: Store custom images for later application (after cowplot wrapping)
@@ -14608,41 +14626,41 @@ server <- function(input, output, session) {
         custom_images <- values$custom_images
         attr(result, "custom_images") <- custom_images
         if (!is.null(custom_images) && length(custom_images) > 0) {
-          cat(file=stderr(), paste0("\n=== v145: ", length(custom_images), " custom image(s) queued for overlay ===\n"))
+          debug_cat(paste0("\n=== v145: ", length(custom_images), " custom image(s) queued for overlay ===\n"))
         }
       }, error = function(e) {
-        cat(file=stderr(), paste0("  v130 Extra tab ERROR: ", e$message, "\n"))
+        debug_cat(paste0("  v30 Extra tab ERROR: ", e$message, "\n"))
       })
 
       # v180: CRITICAL - Move tip labels to front AFTER all layers are added
       # This ensures tip names are always visible on top of highlight ellipses
-      result <- func.move.tiplabels.to.front(result, verbose = TRUE)
+      result <- func.move.tiplabels.to.front(result, verbose = DEBUG_VERBOSE)
 
       # Store the plot with legend settings applied
       values$current_plot <- result
 
       # v148: Extract and output all legend coordinates with coordinate system explanations
       tryCatch({
-        cat(file=stderr(), paste0("\n=== v148: LEGEND COORDINATE SYSTEMS EXPLAINED ===\n"))
-        cat(file=stderr(), paste0("\n"))
-        cat(file=stderr(), paste0("NOTE: There are TWO different coordinate systems:\n"))
-        cat(file=stderr(), paste0("\n"))
-        cat(file=stderr(), paste0("1) PLOT COORDINATES (used by Highlight & Bootstrap legends):\n"))
-        cat(file=stderr(), paste0("   - These are DATA coordinates within the plot area\n"))
-        cat(file=stderr(), paste0("   - x = tree depth direction (after coord_flip: vertical position)\n"))
-        cat(file=stderr(), paste0("   - y = tip position direction (after coord_flip: horizontal position)\n"))
-        cat(file=stderr(), paste0("   - Negative x values place items below the tree baseline\n"))
-        cat(file=stderr(), paste0("   - Controlled via: highlight_x_offset, highlight_y_offset,\n"))
-        cat(file=stderr(), paste0("                     bootstrap_x_offset, bootstrap_y_offset in Legend tab\n"))
-        cat(file=stderr(), paste0("\n"))
-        cat(file=stderr(), paste0("2) GRID COORDINATES (used by Classification/Heatmap/P-value legends):\n"))
-        cat(file=stderr(), paste0("   - These are LAYOUT CELL positions in the rendered gtable\n"))
-        cat(file=stderr(), paste0("   - Not directly comparable to plot coordinates\n"))
-        cat(file=stderr(), paste0("   - Positioned by ggplot's legend.position theme setting\n"))
-        cat(file=stderr(), paste0("\n"))
-        cat(file=stderr(), paste0("To ALIGN legends: Use the Legend tab offset controls to move\n"))
-        cat(file=stderr(), paste0("Highlight/Bootstrap legends up/down/left/right until visually aligned.\n"))
-        cat(file=stderr(), paste0("\n"))
+        debug_cat(paste0("\n=== v148: LEGEND COORDINATE SYSTEMS EXPLAINED ===\n"))
+        debug_cat(paste0("\n"))
+        debug_cat(paste0("NOTE: There are TWO different coordinate systems:\n"))
+        debug_cat(paste0("\n"))
+        debug_cat(paste0("1) PLOT COORDINATES (used by Highlight & Bootstrap legends):\n"))
+        debug_cat(paste0("   - These are DATA coordinates within the plot area\n"))
+        debug_cat(paste0("   - x = tree depth direction (after coord_flip: vertical position)\n"))
+        debug_cat(paste0("   - y = tip position direction (after coord_flip: horizontal position)\n"))
+        debug_cat(paste0("   - Negative x values place items below the tree baseline\n"))
+        debug_cat(paste0("   - Controlled via: highlight_x_offset, highlight_y_offset,\n"))
+        debug_cat(paste0("                     bootstrap_x_offset, bootstrap_y_offset in Legend tab\n"))
+        debug_cat(paste0("\n"))
+        debug_cat(paste0("2) GRID COORDINATES (used by Classification/Heatmap/P-value legends):\n"))
+        debug_cat(paste0("   - These are LAYOUT CELL positions in the rendered gtable\n"))
+        debug_cat(paste0("   - Not directly comparable to plot coordinates\n"))
+        debug_cat(paste0("   - Positioned by ggplot's legend.position theme setting\n"))
+        debug_cat(paste0("\n"))
+        debug_cat(paste0("To ALIGN legends: Use the Legend tab offset controls to move\n"))
+        debug_cat(paste0("Highlight/Bootstrap legends up/down/left/right until visually aligned.\n"))
+        debug_cat(paste0("\n"))
 
         # Build the plot to extract grob information
         plot_build <- ggplot2::ggplot_build(result)
@@ -14651,17 +14669,17 @@ server <- function(input, output, session) {
         # Get plot data range to help understand coordinate scale
         if (!is.null(plot_build$layout$panel_params) && length(plot_build$layout$panel_params) > 0) {
           pp <- plot_build$layout$panel_params[[1]]
-          cat(file=stderr(), paste0("PLOT DATA RANGE (for reference):\n"))
+          debug_cat(paste0("PLOT DATA RANGE (for reference):\n"))
           if (!is.null(pp$x.range)) {
-            cat(file=stderr(), paste0("  x-axis range: ", round(pp$x.range[1], 2), " to ", round(pp$x.range[2], 2), "\n"))
+            debug_cat(paste0("  x-axis range: ", round(pp$x.range[1], 2), " to ", round(pp$x.range[2], 2), "\n"))
           }
           if (!is.null(pp$y.range)) {
-            cat(file=stderr(), paste0("  y-axis range: ", round(pp$y.range[1], 2), " to ", round(pp$y.range[2], 2), "\n"))
+            debug_cat(paste0("  y-axis range: ", round(pp$y.range[1], 2), " to ", round(pp$y.range[2], 2), "\n"))
           }
-          cat(file=stderr(), paste0("\n"))
+          debug_cat(paste0("\n"))
         }
 
-        cat(file=stderr(), paste0("GGPLOT LEGENDS (Grid Coordinates):\n"))
+        debug_cat(paste0("GGPLOT LEGENDS (Grid Coordinates):\n"))
         # Find all legend grobs
         legend_grobs <- which(grepl("guide-box", plot_gtable$layout$name))
         if (length(legend_grobs) > 0) {
@@ -14672,28 +14690,28 @@ server <- function(input, output, session) {
             leg_r <- plot_gtable$layout$r[leg_idx]
             leg_t <- plot_gtable$layout$t[leg_idx]
             leg_b <- plot_gtable$layout$b[leg_idx]
-            cat(file=stderr(), paste0("  Legend Box ", i, " ('", leg_name, "'):\n"))
-            cat(file=stderr(), paste0("    Grid cell: column ", leg_l, "-", leg_r, ", row ", leg_t, "-", leg_b, "\n"))
+            debug_cat(paste0("  Legend Box ", i, " ('", leg_name, "'):\n"))
+            debug_cat(paste0("    Grid cell: column ", leg_l, "-", leg_r, ", row ", leg_t, "-", leg_b, "\n"))
           }
         } else {
-          cat(file=stderr(), paste0("  No legend guide-boxes found in gtable\n"))
+          debug_cat(paste0("  No legend guide-boxes found in gtable\n"))
         }
 
         # Also extract legend titles from the built plot scales
         scales_info <- plot_build$plot$scales$scales
         if (!is.null(scales_info) && length(scales_info) > 0) {
-          cat(file=stderr(), paste0("\n  Active Scales with Legends:\n"))
+          debug_cat(paste0("\n  Active Scales with Legends:\n"))
           for (i in seq_along(scales_info)) {
             scale_obj <- scales_info[[i]]
             if (!is.null(scale_obj$name) && nchar(as.character(scale_obj$name)) > 0) {
-              cat(file=stderr(), paste0("    - '", scale_obj$name, "' (", paste(scale_obj$aesthetics, collapse=", "), ")\n"))
+              debug_cat(paste0("    - '", scale_obj$name, "' (", paste(scale_obj$aesthetics, collapse=", "), ")\n"))
             }
           }
         }
 
-        cat(file=stderr(), paste0("\n=================================================\n"))
+        debug_cat(paste0("\n=================================================\n"))
       }, error = function(e) {
-        cat(file=stderr(), paste0("  v148: Error extracting legend coords: ", e$message, "\n"))
+        debug_cat(paste0("  v48: Error extracting legend coords: ", e$message, "\n"))
       })
 
       # Create a unique temp file with timestamp to force browser refresh
@@ -14738,9 +14756,9 @@ server <- function(input, output, session) {
           preview_height <- preview_height * scale_factor
         }
 
-        cat(file=stderr(), paste0("  v145: Preview using DOWNLOAD TAB proportions\n"))
-        cat(file=stderr(), paste0("  v145: User dimensions: ", user_width, " x ", user_height, " ", user_units, "\n"))
-        cat(file=stderr(), paste0("  v145: Preview dimensions: ", round(preview_width, 2), " x ", round(preview_height, 2), " in\n"))
+        debug_cat(paste0("  v45: Preview using DOWNLOAD TAB proportions\n"))
+        debug_cat(paste0("  v45: User dimensions: ", user_width, " x ", user_height, " ", user_units, "\n"))
+        debug_cat(paste0("  v45: Preview dimensions: ", round(preview_width, 2), " x ", round(preview_height, 2), " in\n"))
 
         # v146: Apply plot position offsets AND scale using cowplot for true transformation
         # v179: Also apply tree stretch (different x/y scaling)
@@ -14774,10 +14792,10 @@ server <- function(input, output, session) {
           # Scale down to fit: width fits fully, height is proportionally smaller
           proportion_adj_w <- 1  # Plot spans full width
           proportion_adj_h <- current_aspect / landscape_aspect  # Scale height to maintain aspect ratio
-          cat(file=stderr(), paste0("\n=== v180: PRESERVING PLOT PROPORTIONS ===\n"))
-          cat(file=stderr(), paste0("  Current aspect: ", round(current_aspect, 3), " (portrait)\n"))
-          cat(file=stderr(), paste0("  Landscape aspect: ", round(landscape_aspect, 3), "\n"))
-          cat(file=stderr(), paste0("  Proportion adjustment: w=", round(proportion_adj_w, 3), ", h=", round(proportion_adj_h, 3), "\n"))
+          debug_cat(paste0("\n=== v180: PRESERVING PLOT PROPORTIONS ===\n"))
+          debug_cat(paste0("  Current aspect: ", round(current_aspect, 3), " (portrait)\n"))
+          debug_cat(paste0("  Landscape aspect: ", round(landscape_aspect, 3), "\n"))
+          debug_cat(paste0("  Proportion adjustment: w=", round(proportion_adj_w, 3), ", h=", round(proportion_adj_h, 3), "\n"))
         }
 
         # Check if we need to apply any transformation
@@ -14786,7 +14804,7 @@ server <- function(input, output, session) {
                           proportion_adj_w != 1 || proportion_adj_h != 1
 
         if (needs_transform) {
-          cat(file=stderr(), paste0("\n=== v180: APPLYING PLOT POSITION, SCALE, STRETCH AND PROPORTIONS WITH COWPLOT ===\n"))
+          debug_cat(paste0("\n=== v180: APPLYING PLOT POSITION, SCALE, STRETCH AND PROPORTIONS WITH COWPLOT ===\n"))
 
           # Convert slider values to position offsets
           # X slider: -5 to 5 -> position offset of -0.25 to 0.25 (50% of canvas width total)
@@ -14813,13 +14831,13 @@ server <- function(input, output, session) {
           center_x <- (1 - final_width) / 2 + x_pos_offset
           center_y <- (1 - final_height) / 2 + y_pos_offset
 
-          cat(file=stderr(), paste0("  Scale: ", scale_pct, "% (factor: ", round(scale_factor, 3), ")\n"))
-          cat(file=stderr(), paste0("  v179: Tree stretch X: ", tree_stretch_x, "x, Y: ", tree_stretch_y, "x\n"))
-          cat(file=stderr(), paste0("  v180: Proportion adj W: ", round(proportion_adj_w, 3), ", H: ", round(proportion_adj_h, 3), "\n"))
-          cat(file=stderr(), paste0("  v180: Final dimensions: width=", round(final_width, 3), ", height=", round(final_height, 3), "\n"))
-          cat(file=stderr(), paste0("  X position offset: ", round(x_pos_offset, 3), "\n"))
-          cat(file=stderr(), paste0("  Y position offset: ", round(y_pos_offset, 3), "\n"))
-          cat(file=stderr(), paste0("  Final position: (", round(center_x, 3), ", ", round(center_y, 3), ")\n"))
+          debug_cat(paste0("  Scale: ", scale_pct, "% (factor: ", round(scale_factor, 3), ")\n"))
+          debug_cat(paste0("  v79: Tree stretch X: ", tree_stretch_x, "x, Y: ", tree_stretch_y, "x\n"))
+          debug_cat(paste0("  v80: Proportion adj W: ", round(proportion_adj_w, 3), ", H: ", round(proportion_adj_h, 3), "\n"))
+          debug_cat(paste0("  v80: Final dimensions: width=", round(final_width, 3), ", height=", round(final_height, 3), "\n"))
+          debug_cat(paste0("  X position offset: ", round(x_pos_offset, 3), "\n"))
+          debug_cat(paste0("  Y position offset: ", round(y_pos_offset, 3), "\n"))
+          debug_cat(paste0("  Final position: (", round(center_x, 3), ", ", round(center_y, 3), ")\n"))
 
           # Use ggdraw to create a canvas and draw_plot to position and scale the plot
           # v180: Now includes proportions preservation for orientation changes
@@ -14827,14 +14845,14 @@ server <- function(input, output, session) {
             cowplot::draw_plot(result, x = center_x, y = center_y,
                               width = final_width, height = final_height)
 
-          cat(file=stderr(), paste0("  v180: Plot wrapped in cowplot canvas with scale, stretch, proportions and offset positioning\n"))
+          debug_cat(paste0("  v80: Plot wrapped in cowplot canvas with scale, stretch, proportions and offset positioning\n"))
         }
 
         # v145: Apply custom images as TRUE overlays using cowplot::draw_image
         # This is done AFTER cowplot wrapping to ensure images are on top
         custom_images <- attr(result, "custom_images")
         if (!is.null(custom_images) && length(custom_images) > 0) {
-          cat(file=stderr(), paste0("\n=== v145: Applying ", length(custom_images), " custom image(s) as TRUE OVERLAY ===\n"))
+          debug_cat(paste0("\n=== v145: Applying ", length(custom_images), " custom image(s) as TRUE OVERLAY ===\n"))
 
           # Ensure we have a cowplot canvas
           if (!inherits(plot_to_save, "ggdraw")) {
@@ -14845,9 +14863,9 @@ server <- function(input, output, session) {
             img <- custom_images[[i]]
             if (file.exists(img$path)) {
               tryCatch({
-                cat(file=stderr(), paste0("  Image ", i, ": ", img$name, "\n"))
-                cat(file=stderr(), paste0("    Position: (", round(img$x, 2), ", ", round(img$y, 2), ")\n"))
-                cat(file=stderr(), paste0("    Width: ", round(img$width, 3), "\n"))
+                debug_cat(paste0("  Image ", i, ": ", img$name, "\n"))
+                debug_cat(paste0("    Position: (", round(img$x, 2), ", ", round(img$y, 2), ")\n"))
+                debug_cat(paste0("    Width: ", round(img$width, 3), "\n"))
 
                 # Calculate height maintaining aspect ratio if not specified
                 img_height <- img$height
@@ -14864,7 +14882,7 @@ server <- function(input, output, session) {
                   if (!is.null(img_data)) {
                     img_aspect <- dim(img_data)[1] / dim(img_data)[2]
                     img_height <- img$width * img_aspect
-                    cat(file=stderr(), paste0("    Auto height: ", round(img_height, 3), " (aspect: ", round(img_aspect, 2), ")\n"))
+                    debug_cat(paste0("    Auto height: ", round(img_height, 3), " (aspect: ", round(img_aspect, 2), ")\n"))
                   } else {
                     img_height <- img$width  # Default to square if can't determine
                   }
@@ -14877,15 +14895,15 @@ server <- function(input, output, session) {
                                      y = img$y - img_height/2,  # Center vertically
                                      width = img$width,
                                      height = img_height)
-                cat(file=stderr(), paste0("    Image added as overlay using cowplot::draw_image\n"))
+                debug_cat(paste0("    Image added as overlay using cowplot::draw_image\n"))
               }, error = function(e) {
-                cat(file=stderr(), paste0("  ERROR loading image ", i, ": ", e$message, "\n"))
+                debug_cat(paste0("  ERROR loading image ", i, ": ", e$message, "\n"))
               })
             } else {
-              cat(file=stderr(), paste0("  Image ", i, ": File not found - ", img$path, "\n"))
+              debug_cat(paste0("  Image ", i, ": File not found - ", img$path, "\n"))
             }
           }
-          cat(file=stderr(), paste0("  v145: Custom images applied as overlays\n"))
+          debug_cat(paste0("  v45: Custom images applied as overlays\n"))
         }
 
         # v53: cat(file=stderr(), "Calling ggsave...\n")
@@ -14947,7 +14965,7 @@ server <- function(input, output, session) {
         show_status_click_to_generate()
       })
       
-      # v53: cat(file=stderr(), "==============================\n\n")
+      # v53: debug_cat("==============================\n\n")
     }
     
     # Ensure plot_generating is always reset
@@ -15528,7 +15546,7 @@ server <- function(input, output, session) {
         if (isTRUE(keep_proportions) && current_aspect < 1) {
           proportion_adj_w <- 1
           proportion_adj_h <- current_aspect / landscape_aspect
-          cat(file=stderr(), paste0("v180: Download - preserving proportions, adj_h=", round(proportion_adj_h, 3), "\n"))
+          debug_cat(paste0("v180: Download - preserving proportions, adj_h=", round(proportion_adj_h, 3), "\n"))
         }
 
         needs_transform <- (!is.null(offset_x) && !is.null(offset_y) && (offset_x != 0 || offset_y != 0)) ||
@@ -15551,7 +15569,7 @@ server <- function(input, output, session) {
           plot_to_download <- cowplot::ggdraw() +
             cowplot::draw_plot(values$current_plot, x = center_x, y = center_y,
                               width = final_width, height = final_height)
-          cat(file=stderr(), paste0("v180: Download plot with scale: ", scale_pct, "%, stretch: x=", tree_stretch_x, ", y=", tree_stretch_y, ", proportions adj: ", round(proportion_adj_h, 3), "\n"))
+          debug_cat(paste0("v180: Download plot with scale: ", scale_pct, "%, stretch: x=", tree_stretch_x, ", y=", tree_stretch_y, ", proportions adj: ", round(proportion_adj_h, 3), "\n"))
         }
 
         tryCatch({
@@ -15565,9 +15583,9 @@ server <- function(input, output, session) {
             device = input$output_format,
             limitsize = FALSE
           ))
-          cat(file=stderr(), paste0("v134: Download saved successfully: ", file, "\n"))
+          debug_cat(paste0("v134: Download saved successfully: ", file, "\n"))
         }, error = function(e) {
-          cat(file=stderr(), paste0("v134: Error saving download: ", e$message, "\n"))
+          debug_cat(paste0("v134: Error saving download: ", e$message, "\n"))
           # Fallback to basic plot if ggsave fails
           if (input$output_format %in% c("pdf", "svg")) {
             pdf(file, width = width_in, height = height_in)
@@ -15579,7 +15597,7 @@ server <- function(input, output, session) {
         })
       } else {
         # Fallback if no generated plot available
-        cat(file=stderr(), "v134: No current_plot available, using basic tree plot\n")
+        debug_cat("v134: No current_plot available, using basic tree plot\n")
         if (input$output_format %in% c("pdf", "svg")) {
           pdf(file, width = input$output_width/2.54, height = input$output_height/2.54)
         } else {
