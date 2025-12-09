@@ -1657,7 +1657,11 @@ func_highlight <- function(p, how_many_hi, heat_flag, high_color_list, a, b, man
   } else {
     # v53: cat(file=stderr(), paste0("🔵 func_highlight: Skipping layer reordering (only ", num_layers, " layers, need 8)\n"))
   }
-  
+
+  # v180: CRITICAL - Move tip labels to front AFTER ellipses are added
+  # This ensures tip names are always visible on top of highlight ellipses
+  p <- func.move.tiplabels.to.front(p, verbose = TRUE)
+
   return(p)
 }
 # v160: Helper function to add custom legends to gtable's legend area
