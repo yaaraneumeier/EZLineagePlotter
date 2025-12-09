@@ -62,6 +62,8 @@ options(shiny.maxRequestSize = 100*1024^2)
 #       as.character(NULL) returns character(0), causing "missing value" error
 # v177: Use unique shape values per legend item to identify items in key_glyph
 #       Problem: all items mapped to shape=15 made them indistinguishable
+# v178: Fix legend bleeding - return nullGrob if shape value not in our set
+#       Prevents ellipses/triangles from appearing on other legends
 
 ###### part 1 a:
 # ============================================================================
@@ -1816,19 +1818,18 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
                                     show_highlight_legend = TRUE, show_bootstrap_legend = TRUE,
                                     high_alpha_list = NULL) {
 
-  # v177: OPTION C - NATIVE GGPLOT LEGENDS (SHAPE-ONLY approach)
+  # v178: OPTION C - NATIVE GGPLOT LEGENDS (SHAPE-ONLY approach)
   # Use ONLY shape aesthetic to avoid conflicts with existing scales:
   # - fill: used by heatmaps
   # - size: used by P value legend
   # - colour: used by classification
   # By using only shape (not used elsewhere), we avoid ALL scale conflicts
-  # v177: Use UNIQUE shape values per legend item so key_glyph can identify them
-  #       Problem: all items mapped to shape=15 made them indistinguishable
-  #       Solution: Use shape values 1, 2, 3, ... and map back to labels
+  # v178: Return nullGrob if shape value not in our set - prevents legend bleeding
+  #       This stops ellipses/triangles from appearing on other legends
 
-  cat(file=stderr(), paste0("\n=== v177: NATIVE GGPLOT LEGENDS - SHAPE-ONLY APPROACH ===\n"))
+  cat(file=stderr(), paste0("\n=== v178: NATIVE GGPLOT LEGENDS - SHAPE-ONLY APPROACH ===\n"))
   cat(file=stderr(), paste0("  Using ONLY shape aesthetic to avoid scale conflicts\n"))
-  cat(file=stderr(), paste0("  v177: Using unique shape values per item for key_glyph identification\n"))
+  cat(file=stderr(), paste0("  v178: key_glyph returns nullGrob for shapes not in valid set\n"))
 
   # Initialize high_alpha_list if NULL
   if (is.null(high_alpha_list) || length(high_alpha_list) == 0) {
@@ -1841,13 +1842,13 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
   boot_title_fontsize <- if (!is.null(bootstrap_title_size_mult)) bootstrap_title_size_mult else size_font_legend_title
   boot_text_fontsize <- if (!is.null(bootstrap_text_size_mult)) bootstrap_text_size_mult else size_font_legend_text
 
-  cat(file=stderr(), paste0("  v177: Highlight title fontsize: ", title_fontsize, "\n"))
-  cat(file=stderr(), paste0("  v177: Bootstrap title fontsize: ", boot_title_fontsize, "\n"))
+  cat(file=stderr(), paste0("  v178: Highlight title fontsize: ", title_fontsize, "\n"))
+  cat(file=stderr(), paste0("  v178: Bootstrap title fontsize: ", boot_title_fontsize, "\n"))
 
   # ============================================
-  # v177: HIGHLIGHT LEGEND using shape aesthetic
+  # v178: HIGHLIGHT LEGEND using shape aesthetic
   # Custom key_glyph draws ellipses with correct colors/transparency
-  # v177: Use unique shape values per item so key_glyph can identify them
+  # v178: Returns nullGrob for shapes not in valid set (prevents bleeding)
   # ============================================
   if (FLAG_BULK_DISPLAY == TRUE && show_highlight_legend == TRUE && how_many_hi > 0 &&
       !is.null(high_label_list) && length(high_label_list) > 0) {
@@ -1859,7 +1860,7 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
       "Highlight"
     }
 
-    cat(file=stderr(), paste0("\n  v177: Creating HIGHLIGHT legend (shape-only)\n"))
+    cat(file=stderr(), paste0("\n  v178: Creating HIGHLIGHT legend (shape-only)\n"))
     cat(file=stderr(), paste0("    Title: '", highlight_title, "'\n"))
     cat(file=stderr(), paste0("    Items: ", length(high_label_list), "\n"))
 
@@ -1888,29 +1889,41 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
                                  " alpha=", high_alpha_list[[i]], "\n"))
     }
 
-    # v177: Custom key_glyph for ELLIPSE - draws ellipse with stored color/alpha
+    # v178: Custom key_glyph for ELLIPSE - draws ellipse with stored color/alpha
     # Uses shape value (1, 2, 3...) to look up the correct color and alpha
+    # v178: Returns nullGrob if shape value not in our set (prevents legend bleeding)
     draw_key_highlight_ellipse <- local({
       shape_to_color_local <- shape_to_color
       shape_to_alpha_local <- shape_to_alpha
+      valid_shapes <- names(shape_to_color)  # v178: Track valid shape values
       function(data, params, size) {
-        # v177: Get the shape value and use it to look up color/alpha
+        # v178: Get the shape value and use it to look up color/alpha
         shape_val <- data$shape
-        cat(file=stderr(), paste0("    v177: draw_key_highlight_ellipse called, shape=", shape_val, "\n"))
+        cat(file=stderr(), paste0("    v178: draw_key_highlight_ellipse called, shape=", shape_val, "\n"))
 
         if (is.null(shape_val) || length(shape_val) == 0) {
-          cat(file=stderr(), paste0("    v177: shape is NULL/empty, returning nullGrob\n"))
+          cat(file=stderr(), paste0("    v178: shape is NULL/empty, returning nullGrob\n"))
           return(grid::nullGrob())
         }
 
         shape_key <- as.character(shape_val)
+
+        # v178: CRITICAL - Return nullGrob if this shape is not one of ours
+        # This prevents ellipses from appearing on other legends (classification, heatmap, etc.)
+        if (!(shape_key %in% valid_shapes)) {
+          cat(file=stderr(), paste0("    v178: shape ", shape_key, " not in valid set (", paste(valid_shapes, collapse=","), "), returning nullGrob\n"))
+          return(grid::nullGrob())
+        }
+
         fill_color <- shape_to_color_local[shape_key]
         fill_alpha <- shape_to_alpha_local[shape_key]
 
-        cat(file=stderr(), paste0("    v177: Looked up color='", fill_color, "', alpha='", fill_alpha, "'\n"))
+        cat(file=stderr(), paste0("    v178: Looked up color='", fill_color, "', alpha='", fill_alpha, "'\n"))
 
-        if (is.na(fill_color)) fill_color <- "grey50"
-        if (is.na(fill_alpha)) fill_alpha <- 0.5
+        # v178: Extra safety - if lookup still returns NA, don't draw
+        if (is.na(fill_color) || is.na(fill_alpha)) {
+          return(grid::nullGrob())
+        }
 
         # Draw an ellipse matching old legend style (6pt x 4pt radius)
         theta <- seq(0, 2*pi, length.out = 30)
@@ -1940,14 +1953,14 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
         guide = guide_legend(order = 97)
       )
 
-    cat(file=stderr(), paste0("  v177: Highlight legend added (shape values 1-", n_highlights, ")\n"))
+    cat(file=stderr(), paste0("  v178: Highlight legend added (shape values 1-", n_highlights, ")\n"))
   }
 
   # ============================================
-  # v177: BOOTSTRAP LEGEND using shape aesthetic
+  # v178: BOOTSTRAP LEGEND using shape aesthetic
   # Custom key_glyph draws triangles with varying sizes
-  # v177: Use unique shape values (1, 2, 3) so key_glyph can identify them
-  # v177: Match tree's alpha=0.5, fill="grey36", col="grey20"
+  # v178: Returns nullGrob for shapes not in valid set (prevents bleeding)
+  # v178: Match tree's alpha=0.5, fill="grey36", col="grey20"
   # ============================================
   if (show_boot_flag == TRUE && show_bootstrap_legend == TRUE) {
     # Check if bootstrap is in triangles format
@@ -1957,14 +1970,14 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
       "triangles"  # default
     }
 
-    cat(file=stderr(), paste0("\n  v177: Bootstrap format: '", boot_format, "'\n"))
+    cat(file=stderr(), paste0("\n  v178: Bootstrap format: '", boot_format, "'\n"))
 
     if (boot_format == "triangles") {
-      cat(file=stderr(), paste0("  v177: Creating BOOTSTRAP legend (shape-only)\n"))
+      cat(file=stderr(), paste0("  v178: Creating BOOTSTRAP legend (shape-only)\n"))
 
       # Bootstrap legend items - match old legend sizes (5, 4, 3 pt)
       bootstrap_labels <- c(">90%", ">80%", ">70%")
-      bootstrap_shape_values <- c(1, 2, 3)  # v177: Unique shape values
+      bootstrap_shape_values <- c(1, 2, 3)  # v178: Unique shape values
       bootstrap_pt_sizes <- c(5, 4, 3)  # Match old legend: tri_sizes <- c(5, 4, 3)
 
       bootstrap_legend_data <- data.frame(
@@ -1977,28 +1990,41 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
       # v177: Create mapping from shape value to size (in pt)
       shape_to_size <- setNames(bootstrap_pt_sizes, as.character(bootstrap_shape_values))
 
-      cat(file=stderr(), paste0("  v177: Bootstrap shape values: 1=5pt, 2=4pt, 3=3pt\n"))
+      cat(file=stderr(), paste0("  v178: Bootstrap shape values: 1=5pt, 2=4pt, 3=3pt\n"))
 
-      # v177: Custom key_glyph for TRIANGLE - draws triangle with varying size
+      # v178: Custom key_glyph for TRIANGLE - draws triangle with varying size
       # Uses shape value (1, 2, 3) to look up the correct size
+      # v178: Returns nullGrob if shape value not in our set (prevents legend bleeding)
       draw_key_bootstrap_triangle <- local({
         shape_to_size_local <- shape_to_size
+        valid_shapes <- names(shape_to_size)  # v178: Track valid shape values ("1", "2", "3")
         function(data, params, size) {
-          # v177: Get the shape value and use it to look up size
+          # v178: Get the shape value and use it to look up size
           shape_val <- data$shape
-          cat(file=stderr(), paste0("    v177: draw_key_bootstrap_triangle called, shape=", shape_val, "\n"))
+          cat(file=stderr(), paste0("    v178: draw_key_bootstrap_triangle called, shape=", shape_val, "\n"))
 
           if (is.null(shape_val) || length(shape_val) == 0) {
-            cat(file=stderr(), paste0("    v177: shape is NULL/empty, returning nullGrob\n"))
+            cat(file=stderr(), paste0("    v178: shape is NULL/empty, returning nullGrob\n"))
             return(grid::nullGrob())
           }
 
           shape_key <- as.character(shape_val)
+
+          # v178: CRITICAL - Return nullGrob if this shape is not one of ours
+          # This prevents triangles from appearing on other legends (classification, heatmap, highlight, etc.)
+          if (!(shape_key %in% valid_shapes)) {
+            cat(file=stderr(), paste0("    v178: shape ", shape_key, " not in valid set (", paste(valid_shapes, collapse=","), "), returning nullGrob\n"))
+            return(grid::nullGrob())
+          }
+
           sz <- shape_to_size_local[shape_key]
 
-          cat(file=stderr(), paste0("    v177: Triangle size='", sz, "pt'\n"))
+          cat(file=stderr(), paste0("    v178: Triangle size='", sz, "pt'\n"))
 
-          if (is.na(sz)) sz <- 4  # default to medium size
+          # v178: Extra safety - if lookup returns NA, don't draw
+          if (is.na(sz)) {
+            return(grid::nullGrob())
+          }
 
           # Draw triangle matching old legend style
           # Old code: x = c(-sz, sz, 0), y = c(-sz*0.6, -sz*0.6, sz*0.8)
@@ -2031,14 +2057,14 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
           guide = guide_legend(order = 98)
         )
 
-      cat(file=stderr(), paste0("  v177: Bootstrap legend added (shape values 1-3)\n"))
+      cat(file=stderr(), paste0("  v178: Bootstrap legend added (shape values 1-3)\n"))
     } else {
-      cat(file=stderr(), paste0("  v177: Bootstrap format '", boot_format, "' - no legend needed\n"))
+      cat(file=stderr(), paste0("  v178: Bootstrap format '", boot_format, "' - no legend needed\n"))
     }
   }
 
-  cat(file=stderr(), paste0("\n  v177: Highlight and Bootstrap legends complete (shape-only)\n"))
-  cat(file=stderr(), paste0("  v177: Existing scales preserved: fill (heatmaps), size (P value), colour (classification)\n"))
+  cat(file=stderr(), paste0("\n  v178: Highlight and Bootstrap legends complete (shape-only)\n"))
+  cat(file=stderr(), paste0("  v178: Existing scales preserved: fill (heatmaps), size (P value), colour (classification)\n"))
   cat(file=stderr(), paste0("=================================================\n"))
 
   return(p)
@@ -7214,17 +7240,17 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v177 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v178 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
-                            "New in v177:",
+                            "New in v178:",
                             tags$ul(
-                              tags$li("Use UNIQUE shape values (1,2,3...) per legend item"),
-                              tags$li("key_glyph can now identify items by shape value"),
-                              tags$li("Ellipse uses 6pt x 4pt radius (matches old legend)")
+                              tags$li("FIX legend bleeding - ellipses/triangles only on their legends"),
+                              tags$li("Check valid_shapes set before drawing (return nullGrob if not)"),
+                              tags$li("Same approach as v170 fix for classification circles")
                             ),
                             "Previous:",
                             tags$ul(
-                              tags$li("v176: All items had same shape=15, indistinguishable"),
+                              tags$li("v177: Ellipses/triangles appeared on ALL legends"),
                               tags$li("v173: SHAPE-ONLY approach avoids scale conflicts")
                             )
                      )
