@@ -67,11 +67,12 @@ options(shiny.maxRequestSize = 100*1024^2)
 # v179: Enhanced Legend, Extra, and Download tabs with new controls
 #       Added tree stretch, background color, symbol & spacing settings
 # v180: Multiple enhancements:
-#       - Fixed tip labels being hidden by highlight ellipses (layer order)
-#       - Added legends for bootstrap percentage/raw value display options
-#       - Added legend controls: key width/height, byrow, box background, margin
+#       - Fixed tip labels being hidden by highlight ellipses (layer reordering)
+#       - Added legend controls: key width/height, box background, margin
+#       - Removed byrow, kept reverse order for legend item control
 #       - Fixed download preview to show full page with plot proportions preserved
 #       - Fixed Extra tab spinner animation
+#       - Bootstrap legend only for triangles format (no legend for percentage/raw)
 
 ###### part 1 a:
 # ============================================================================
@@ -361,19 +362,26 @@ func.move.tiplabels.to.front <- function(p, verbose = TRUE) {
     cat(file=stderr(), paste0("  Initial layers: ", length(p$layers), "\n"))
   }
 
-  # Find all GeomText layers (tip labels are GeomText)
+  # Find all text-like layers (tip labels can be GeomText, GeomLabel, or GeomTiplab)
   layer_types <- sapply(p$layers, function(l) class(l$geom)[1])
-  tiplab_indices <- which(layer_types == "GeomText")
+
+  if (verbose) {
+    cat(file=stderr(), paste0("  Layer types: ", paste(layer_types, collapse=", "), "\n"))
+  }
+
+  # v180: Look for text-type layers that are likely tip labels
+  # geom_tiplab creates GeomText layers
+  tiplab_indices <- which(layer_types %in% c("GeomText", "GeomLabel", "GeomTiplab"))
 
   if (length(tiplab_indices) == 0) {
     if (verbose) {
-      cat(file=stderr(), paste0("  No GeomText (tip label) layers found\n"))
+      cat(file=stderr(), paste0("  No text layers (GeomText/GeomLabel) found\n"))
     }
     return(p)
   }
 
   if (verbose) {
-    cat(file=stderr(), paste0("  Found GeomText at indices: ", paste(tiplab_indices, collapse=", "), "\n"))
+    cat(file=stderr(), paste0("  Found text layers at indices: ", paste(tiplab_indices, collapse=", "), "\n"))
   }
 
   # Get the tip label layers
@@ -388,8 +396,8 @@ func.move.tiplabels.to.front <- function(p, verbose = TRUE) {
 
   if (verbose) {
     new_layer_types <- sapply(p$layers, function(l) class(l$geom)[1])
-    cat(file=stderr(), paste0("  Reordered layers: ", paste(new_layer_types, collapse=", "), "\n"))
-    cat(file=stderr(), paste0("  GeomText now at end (renders on top)\n"))
+    cat(file=stderr(), paste0("  Reordered: ", paste(new_layer_types, collapse=", "), "\n"))
+    cat(file=stderr(), paste0("  Text layers now at end (render on top)\n"))
     cat(file=stderr(), paste0("================================\n"))
   }
 
@@ -2114,132 +2122,9 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
         )
 
       cat(file=stderr(), paste0("  v178: Bootstrap legend added (shape values 1-3)\n"))
-    } else if (boot_format %in% c("numbered_color", "percentage_color")) {
-      # v180: Add grayscale gradient legend for color-coded bootstrap
-      cat(file=stderr(), paste0("  v180: Creating BOOTSTRAP color legend (grayscale gradient)\n"))
-
-      # Create legend data for grayscale gradient - shows percentage ranges with their colors
-      boot_color_labels <- c("0-10%", "20-30%", "40-50%", "60-70%", "80-90%", "100%")
-      boot_color_values <- c("gray98", "gray80", "gray60", "gray40", "gray20", "gray1")
-      boot_color_shape_values <- c(101, 102, 103, 104, 105, 106)  # v180: Unique shape values for bootstrap color
-
-      boot_color_legend_data <- data.frame(
-        x = rep(NA_real_, 6),
-        y = rep(NA_real_, 6),
-        bootstrap_color = factor(boot_color_labels, levels = boot_color_labels),
-        stringsAsFactors = FALSE
-      )
-
-      # v180: Create color lookup for key_glyph
-      shape_to_color <- setNames(boot_color_values, as.character(boot_color_shape_values))
-
-      # v180: Custom key_glyph for colored square
-      draw_key_bootstrap_color <- local({
-        shape_to_color_local <- shape_to_color
-        valid_shapes <- names(shape_to_color)
-        function(data, params, size) {
-          shape_val <- data$shape
-          if (is.null(shape_val) || length(shape_val) == 0) {
-            return(grid::nullGrob())
-          }
-          shape_key <- as.character(shape_val)
-          if (!(shape_key %in% valid_shapes)) {
-            return(grid::nullGrob())
-          }
-          fill_color <- shape_to_color_local[shape_key]
-          grid::rectGrob(
-            width = grid::unit(0.6, "npc"),
-            height = grid::unit(0.6, "npc"),
-            gp = grid::gpar(fill = fill_color, col = "grey50", lwd = 0.5)
-          )
-        }
-      })
-
-      # Add bootstrap color legend using new_scale("shape")
-      p <- p + ggnewscale::new_scale("shape")
-
-      p <- p +
-        geom_point(
-          data = boot_color_legend_data,
-          aes(x = x, y = y, shape = bootstrap_color),
-          size = 5,
-          na.rm = TRUE,
-          inherit.aes = FALSE,
-          show.legend = TRUE,
-          key_glyph = draw_key_bootstrap_color
-        ) +
-        scale_shape_manual(
-          name = "Bootstrap",
-          values = setNames(boot_color_shape_values, boot_color_labels),
-          guide = guide_legend(order = 98)
-        )
-
-      cat(file=stderr(), paste0("  v180: Bootstrap color legend added (grayscale gradient)\n"))
-    } else if (boot_format %in% c("raw", "percentage", "numbered_colored")) {
-      # v180: Add simple text legend for raw/percentage bootstrap values
-      cat(file=stderr(), paste0("  v180: Creating BOOTSTRAP value legend (text-based)\n"))
-
-      # Create legend showing sample bootstrap values
-      if (boot_format == "percentage") {
-        boot_text_labels <- c("100%", "90%", "80%", "70%")
-      } else {
-        boot_text_labels <- c("100", "90", "80", "70")
-      }
-      boot_text_shape_values <- c(111, 112, 113, 114)  # v180: Unique shape values
-
-      boot_text_legend_data <- data.frame(
-        x = rep(NA_real_, 4),
-        y = rep(NA_real_, 4),
-        bootstrap_text = factor(boot_text_labels, levels = boot_text_labels),
-        stringsAsFactors = FALSE
-      )
-
-      # v180: Custom key_glyph that draws text labels
-      draw_key_bootstrap_text <- local({
-        labels <- boot_text_labels
-        valid_shapes <- as.character(boot_text_shape_values)
-        function(data, params, size) {
-          shape_val <- data$shape
-          if (is.null(shape_val) || length(shape_val) == 0) {
-            return(grid::nullGrob())
-          }
-          shape_key <- as.character(shape_val)
-          if (!(shape_key %in% valid_shapes)) {
-            return(grid::nullGrob())
-          }
-          # Get index into labels
-          idx <- which(valid_shapes == shape_key)
-          if (length(idx) == 0) return(grid::nullGrob())
-          label_text <- labels[idx]
-          grid::textGrob(
-            label = label_text,
-            gp = grid::gpar(fontsize = 8, col = "black")
-          )
-        }
-      })
-
-      # Add bootstrap text legend using new_scale("shape")
-      p <- p + ggnewscale::new_scale("shape")
-
-      p <- p +
-        geom_point(
-          data = boot_text_legend_data,
-          aes(x = x, y = y, shape = bootstrap_text),
-          size = 5,
-          na.rm = TRUE,
-          inherit.aes = FALSE,
-          show.legend = TRUE,
-          key_glyph = draw_key_bootstrap_text
-        ) +
-        scale_shape_manual(
-          name = "Bootstrap",
-          values = setNames(boot_text_shape_values, boot_text_labels),
-          guide = guide_legend(order = 98)
-        )
-
-      cat(file=stderr(), paste0("  v180: Bootstrap text legend added for format '", boot_format, "'\n"))
     } else {
-      cat(file=stderr(), paste0("  v180: Bootstrap format '", boot_format, "' - no legend defined\n"))
+      # v180: For non-triangle formats (percentage, raw, color-coded), show no legend
+      cat(file=stderr(), paste0("  v180: Bootstrap format '", boot_format, "' - no legend (only triangles have legend)\n"))
     }
   }
 
@@ -8025,9 +7910,12 @@ ui <- dashboardPage(
               sliderInput("legend_key_spacing", "Between Keys Spacing",
                           min = 0, max = 2, value = 0.1, step = 0.05),  # v180: Actual key spacing
               tags$hr(style = "margin: 10px 0;"),
-              tags$p(class = "text-muted", tags$small("Legend layout:")),
-              checkboxInput("legend_byrow", "Arrange keys by row", value = FALSE),  # v180: legend.byrow
-              checkboxInput("legend_reverse_order", "Reverse key order", value = FALSE)
+              tags$p(class = "text-muted", tags$small("Legend item order:")),
+              checkboxInput("legend_reverse_order", "Reverse item order in legends", value = FALSE),
+              tags$p(class = "text-muted", tags$small(
+                "Note: Legend item order is determined by the data order. ",
+                "Use this checkbox to reverse it."
+              ))
             ),
 
             # v180: Legend Background box
@@ -13477,7 +13365,6 @@ server <- function(input, output, session) {
       title_key_spacing = input$legend_title_key_spacing,  # v180: Title to keys spacing
       key_spacing = input$legend_key_spacing,              # v180: Between keys spacing
       # Layout controls
-      byrow = input$legend_byrow,                # v180: legend.byrow
       reverse_order = input$legend_reverse_order,
       # v180: Background controls
       box_background = input$legend_box_background,
@@ -13493,7 +13380,7 @@ server <- function(input, output, session) {
     cat(file=stderr(), paste0("  v180: Key width: ", input$legend_key_width, ", height: ", input$legend_key_height, "\n"))
     cat(file=stderr(), paste0("  v180: Title-key spacing: ", input$legend_title_key_spacing, "\n"))
     cat(file=stderr(), paste0("  v180: Between keys spacing: ", input$legend_key_spacing, "\n"))
-    cat(file=stderr(), paste0("  v180: Byrow: ", input$legend_byrow, ", Reverse: ", input$legend_reverse_order, "\n"))
+    cat(file=stderr(), paste0("  v180: Reverse order: ", input$legend_reverse_order, "\n"))
     cat(file=stderr(), paste0("  v180: Box background: ", input$legend_box_background, ", Margin: ", input$legend_margin, "\n"))
     cat(file=stderr(), "======================================\n\n")
 
@@ -14552,38 +14439,36 @@ server <- function(input, output, session) {
         cat(file=stderr(), paste0("  v180: Box bg:", box_bg, ", Margin:", legend_margin_val, "\n"))
 
         # v180: Apply visibility controls using guides()
-        # Also apply reverse order and byrow if requested
+        # Also apply reverse order if requested
         guides_list <- list()
         reverse_order <- isTRUE(legend_settings$reverse_order)
-        byrow <- isTRUE(legend_settings$byrow)
 
         # Hide specific legends based on visibility settings
-        # v180: Include byrow parameter in guide_legend calls
         if (!isTRUE(legend_settings$show_classification)) {
           guides_list$colour <- "none"
         } else {
-          guides_list$colour <- guide_legend(reverse = reverse_order, byrow = byrow)
+          guides_list$colour <- guide_legend(reverse = reverse_order)
         }
 
         # v180: P value uses size aesthetic
         if (!isTRUE(legend_settings$show_pvalue)) {
           guides_list$size <- "none"
         } else {
-          guides_list$size <- guide_legend(reverse = reverse_order, byrow = byrow)
+          guides_list$size <- guide_legend(reverse = reverse_order)
         }
 
         # v180: Heatmaps use fill aesthetic (single checkbox controls all)
         if (!isTRUE(legend_settings$show_heatmap)) {
           guides_list$fill <- "none"
         } else {
-          guides_list$fill <- guide_legend(reverse = reverse_order, byrow = byrow)
+          guides_list$fill <- guide_legend(reverse = reverse_order)
         }
 
         if (length(guides_list) > 0) {
           result <- result + do.call(guides, guides_list)
         }
 
-        cat(file=stderr(), paste0("  v180: Reverse=", reverse_order, ", Byrow=", byrow, "\n"))
+        cat(file=stderr(), paste0("  v180: Reverse order=", reverse_order, "\n"))
         cat(file=stderr(), paste0("  Legend settings applied successfully\n"))
       }
 
@@ -14744,6 +14629,10 @@ server <- function(input, output, session) {
       }, error = function(e) {
         cat(file=stderr(), paste0("  v130 Extra tab ERROR: ", e$message, "\n"))
       })
+
+      # v180: CRITICAL - Move tip labels to front AFTER all layers are added
+      # This ensures tip names are always visible on top of highlight ellipses
+      result <- func.move.tiplabels.to.front(result, verbose = TRUE)
 
       # Store the plot with legend settings applied
       values$current_plot <- result
