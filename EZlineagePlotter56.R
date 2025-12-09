@@ -48,8 +48,10 @@ options(shiny.maxRequestSize = 100*1024^2)
 # v167: OPTION C TRIAL - Native ggplot legends approach
 # v168: Fixed legend bleeding with show.legend = c(shape = TRUE) and guides() override
 #       Partial success: Heatmap 2 & Classification fixed, Heatmap 1 & P value still affected
-# v169: Added SIZE and ALPHA scale overrides to guides() to fix P value legend bleeding
-#       All legends should now be unaffected by test legend point
+# v169: Added SIZE and ALPHA scale overrides to guides() - still only fixed LAST heatmap
+# v170: CRITICAL FIX - Custom key_glyph to prevent ALL legend bleeding
+#       The guides() override only affects the LAST fill scale after new_scale_fill()
+#       Custom key_glyph returns blank grob for non-shape legends, preventing ALL bleeding
 
 ###### part 1 a:
 # ============================================================================
@@ -1804,14 +1806,17 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
                                     show_highlight_legend = TRUE, show_bootstrap_legend = TRUE,
                                     high_alpha_list = NULL) {
 
-  # v169: OPTION C - NATIVE GGPLOT LEGENDS (with comprehensive guide overrides)
+  # v170: OPTION C - NATIVE GGPLOT LEGENDS (with custom key_glyph)
   # Use ggplot's own legend system by adding invisible layers with aesthetics
   # This approach uses ggplot's native rendering, avoiding all gtable manipulation
-  # v169: Fixed legend bleeding by adding size scale override (for P value legend)
+  # v170: CRITICAL FIX - Use custom key_glyph to prevent bleeding into ALL fill legends
+  #       The guides() override only affects the LAST fill scale after new_scale_fill()
+  #       With ggnewscale, earlier fill scales are "frozen" and can't be overridden
+  #       Solution: Custom key_glyph that returns blank for non-shape legends
 
-  cat(file=stderr(), paste0("\n=== v169: OPTION C - NATIVE GGPLOT LEGENDS ===\n"))
+  cat(file=stderr(), paste0("\n=== v170: OPTION C - NATIVE GGPLOT LEGENDS ===\n"))
   cat(file=stderr(), paste0("  Using native ggplot legend system (no gtable manipulation)\n"))
-  cat(file=stderr(), paste0("  v169: Added size scale override to prevent bleeding into P value legend\n"))
+  cat(file=stderr(), paste0("  v170: Using custom key_glyph to prevent bleeding into ALL fill legends\n"))
 
   # Initialize high_alpha_list if NULL
   if (is.null(high_alpha_list) || length(high_alpha_list) == 0) {
@@ -1822,31 +1827,53 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
   title_fontsize <- if (!is.null(highlight_title_size)) highlight_title_size else size_font_legend_title
   text_fontsize <- if (!is.null(highlight_text_size)) highlight_text_size else size_font_legend_text
 
-  cat(file=stderr(), paste0("  v169: Title fontsize: ", title_fontsize, "\n"))
-  cat(file=stderr(), paste0("  v169: Text fontsize: ", text_fontsize, "\n"))
+  cat(file=stderr(), paste0("  v170: Title fontsize: ", title_fontsize, "\n"))
+  cat(file=stderr(), paste0("  v170: Text fontsize: ", text_fontsize, "\n"))
 
   # ============================================
-  # v169 TRIAL: Add a simple test legend using geom_point
+  # v170 TRIAL: Add a simple test legend using geom_point with CUSTOM KEY_GLYPH
   # This tests whether native ggplot legends work alongside existing legends
-  # v169: Uses comprehensive guide overrides including SIZE for P value legend
+  # v170: Uses custom key_glyph that ONLY draws for shape legends
+  #       This prevents bleeding into ALL fill legends including those from ggnewscale
   # ============================================
 
-  cat(file=stderr(), paste0("\n  v169 TRIAL: Adding test legend via geom_point\n"))
+  cat(file=stderr(), paste0("\n  v170 TRIAL: Adding test legend via geom_point with custom key_glyph\n"))
 
-  # v169: Use geom_point with shape aesthetic
-  # CRITICAL: We also add guides() to tell OTHER legends to NOT draw shapes
-  # This prevents our point from appearing in fill/color/linetype/SIZE legend keys
+  # v170: Custom key_glyph function that only draws for shape legends
+  # When called for fill/colour/size legends, it returns a blank grob
+  # This is the ONLY reliable way to prevent bleeding with ggnewscale
+  draw_key_shape_only <- function(data, params, size) {
+    # v170: Check if shape is meaningful (not NA, not NULL, not default)
+    # For fill legends, shape will typically be NA or missing
+    if (is.null(data$shape) || is.na(data$shape) || identical(data$shape, 19)) {
+      # Return blank grob for non-shape legends
+      return(grid::nullGrob())
+    }
+    # For shape legends, draw the actual point
+    grid::pointsGrob(
+      x = 0.5, y = 0.5,
+      pch = data$shape,
+      gp = grid::gpar(
+        col = data$colour %||% "red",
+        fill = data$fill %||% NA,
+        fontsize = (data$size %||% 1.5) * .pt + (data$stroke %||% 0.5) * .stroke / 2,
+        lwd = (data$stroke %||% 0.5) * .stroke / 2
+      )
+    )
+  }
+
+  # v170: Use geom_point with shape aesthetic and CUSTOM KEY_GLYPH
   test_legend_data <- data.frame(
     x = NA_real_,
     y = NA_real_,
     test_legend = "TEST LEGEND ITEM"
   )
 
-  cat(file=stderr(), paste0("  v169: Created dummy data for test legend\n"))
+  cat(file=stderr(), paste0("  v170: Created dummy data for test legend\n"))
+  cat(file=stderr(), paste0("  v170: Using custom key_glyph to prevent fill legend bleeding\n"))
 
-  # v169: Add geom_point with shape aesthetic
-  # Then use guides() to override how OTHER legends draw their keys
-  # CRITICAL: Added SIZE override - P value legend uses size aesthetic!
+  # v170: Add geom_point with shape aesthetic and custom key_glyph
+  # The custom key_glyph ensures we ONLY draw in shape legends, not fill legends
   p <- p +
     geom_point(
       data = test_legend_data,
@@ -1855,17 +1882,15 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
       color = "red",
       na.rm = TRUE,
       inherit.aes = FALSE,
-      show.legend = c(shape = TRUE)
+      show.legend = TRUE,
+      key_glyph = draw_key_shape_only
     ) +
     scale_shape_manual(
-      name = "v169 Test Legend",
+      name = "v170 Test Legend",
       values = c("TEST LEGEND ITEM" = 15),
       guide = guide_legend(order = 99)
     ) +
-    # v169: CRITICAL - Tell ALL OTHER legends to NOT draw our shape
-    # This prevents our red point from appearing in ALL legend keys
-    # Added SIZE override - P value legend uses size aesthetic!
-    # Added ALPHA override - in case any legend uses alpha
+    # v170: Keep guides() overrides as additional safety for non-ggnewscale legends
     guides(
       fill = guide_legend(override.aes = list(shape = NA, linetype = 0)),
       colour = guide_legend(override.aes = list(shape = NA)),
@@ -1875,9 +1900,9 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
       alpha = guide_legend(override.aes = list(shape = NA))
     )
 
-  cat(file=stderr(), paste0("  v169: Added geom_point layer with shape aesthetic\n"))
-  cat(file=stderr(), paste0("  v169: Added guides() with size/alpha overrides to prevent ALL legend bleeding\n"))
-  cat(file=stderr(), paste0("  LOOK FOR: 'v169 Test Legend' with red square - should NOT affect other legend keys\n"))
+  cat(file=stderr(), paste0("  v170: Added geom_point layer with custom key_glyph\n"))
+  cat(file=stderr(), paste0("  v170: Custom key_glyph returns blank for fill legends, point for shape legends\n"))
+  cat(file=stderr(), paste0("  LOOK FOR: 'v170 Test Legend' with red square - should NOT affect ANY other legend keys\n"))
   cat(file=stderr(), paste0("=================================================\n"))
 
   return(p)
@@ -7053,18 +7078,18 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "v169 Active!"),
+                     tags$h4(style = "color: #155724; margin: 0;", "v170 Active!"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
-                            "New in v169:",
+                            "New in v170:",
                             tags$ul(
-                              tags$li("Added SIZE scale override (fixes P value legend bleeding)"),
-                              tags$li("Added ALPHA scale override (comprehensive fix)"),
-                              tags$li("Test legend should now NOT interfere with ANY legend keys")
+                              tags$li("Custom key_glyph to prevent ALL legend bleeding"),
+                              tags$li("Works with ggnewscale - fixes ALL heatmap legends"),
+                              tags$li("Test legend should NOT affect ANY legend keys (1, 2, 3, etc.)")
                             ),
                             "Previous:",
                             tags$ul(
-                              tags$li("v168: Partial fix - Heatmap 2 & Classification OK, but Heatmap 1 & P value still affected"),
-                              tags$li("v167: Option C worked but red point bled into other legends")
+                              tags$li("v169: guides() only fixed LAST heatmap, not earlier ones"),
+                              tags$li("v168: Partial fix - only last fill scale was protected")
                             )
                      )
             )
