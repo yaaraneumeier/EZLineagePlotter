@@ -8401,6 +8401,60 @@ server <- function(input, output, session) {
   # This prevents the UI from rebuilding every time a slider or input changes
   heatmap_ui_trigger <- reactiveVal(0)
 
+  # ==========================================================================
+  # S1-PERF: DEBOUNCED REACTIVE INPUTS
+  # ==========================================================================
+  # These debounced versions prevent plot regeneration on every tiny slider movement.
+  # The delay (300ms) waits until the user stops adjusting before triggering updates.
+  # Use these instead of direct input$ values for sliders that affect plot rendering.
+
+  DEBOUNCE_MS <- 300  # Debounce delay in milliseconds
+
+  # Legend Tab sliders
+  legend_title_size_d <- debounce(reactive(input$legend_title_size), DEBOUNCE_MS)
+  legend_text_size_d <- debounce(reactive(input$legend_text_size), DEBOUNCE_MS)
+  legend_key_size_d <- debounce(reactive(input$legend_key_size), DEBOUNCE_MS)
+  legend_key_width_d <- debounce(reactive(input$legend_key_width), DEBOUNCE_MS)
+  legend_key_height_d <- debounce(reactive(input$legend_key_height), DEBOUNCE_MS)
+  legend_spacing_d <- debounce(reactive(input$legend_spacing), DEBOUNCE_MS)
+  legend_spacing_vertical_d <- debounce(reactive(input$legend_spacing_vertical), DEBOUNCE_MS)
+  legend_title_key_spacing_d <- debounce(reactive(input$legend_title_key_spacing), DEBOUNCE_MS)
+  legend_key_spacing_d <- debounce(reactive(input$legend_key_spacing), DEBOUNCE_MS)
+  legend_margin_d <- debounce(reactive(input$legend_margin), DEBOUNCE_MS)
+
+  # Extra Tab sliders
+  plot_offset_x_d <- debounce(reactive(input$plot_offset_x), DEBOUNCE_MS)
+  plot_offset_y_d <- debounce(reactive(input$plot_offset_y), DEBOUNCE_MS)
+  plot_scale_percent_d <- debounce(reactive(input$plot_scale_percent), DEBOUNCE_MS)
+  tree_stretch_x_d <- debounce(reactive(input$tree_stretch_x), DEBOUNCE_MS)
+  tree_stretch_y_d <- debounce(reactive(input$tree_stretch_y), DEBOUNCE_MS)
+  page_title_size_d <- debounce(reactive(input$page_title_size), DEBOUNCE_MS)
+  page_title_x_d <- debounce(reactive(input$page_title_x), DEBOUNCE_MS)
+  page_title_y_d <- debounce(reactive(input$page_title_y), DEBOUNCE_MS)
+
+  # Highlight sliders
+  highlight_offset_d <- debounce(reactive(input$highlight_offset), DEBOUNCE_MS)
+  highlight_vertical_offset_d <- debounce(reactive(input$highlight_vertical_offset), DEBOUNCE_MS)
+  highlight_adjust_height_d <- debounce(reactive(input$highlight_adjust_height), DEBOUNCE_MS)
+  highlight_adjust_width_d <- debounce(reactive(input$highlight_adjust_width), DEBOUNCE_MS)
+
+  # Bootstrap sliders
+  man_boot_x_offset_d <- debounce(reactive(input$man_boot_x_offset), DEBOUNCE_MS)
+  bootstrap_label_size_d <- debounce(reactive(input$bootstrap_label_size), DEBOUNCE_MS)
+
+  # Heatmap sliders
+  heatmap_global_gap_d <- debounce(reactive(input$heatmap_global_gap), DEBOUNCE_MS)
+
+  # Tree display sliders
+  tip_font_size_d <- debounce(reactive(input$tip_font_size), DEBOUNCE_MS)
+  edge_width_d <- debounce(reactive(input$edge_width), DEBOUNCE_MS)
+  node_number_font_size_d <- debounce(reactive(input$node_number_font_size), DEBOUNCE_MS)
+  tip_length_d <- debounce(reactive(input$tip_length), DEBOUNCE_MS)
+
+  # ==========================================================================
+  # END DEBOUNCED REACTIVE INPUTS
+  # ==========================================================================
+
   # v59: Helper functions to toggle status indicator via shinyjs (immediate UI updates)
   # Updated to toggle status indicators on ALL preview tabs (Tree Display, Classification, Bootstrap, Highlighting, Heatmap)
   show_status_waiting <- function() {
@@ -8698,12 +8752,15 @@ server <- function(input, output, session) {
   }, ignoreInit = TRUE)
 
   # v112: Bootstrap position offset observer - makes slider immediately responsive
-  observeEvent(input$man_boot_x_offset, {
-    debug_cat("\n===observeEvent man_boot_x_offset FIRED===\n")
-    debug_cat("New value:", input$man_boot_x_offset, "\n")
+  # S1-PERF: Using debounced version to prevent rapid plot regeneration
+  observe({
+    val <- man_boot_x_offset_d()
+    req(val)  # Don't run until value is available
     req(values$plot_ready, input$show_bootstrap == TRUE)
+    debug_cat("\n===observe man_boot_x_offset_d FIRED (debounced)===\n")
+    debug_cat("New value:", val, "\n")
     generate_plot()
-  }, ignoreInit = TRUE)
+  })
 
   # Process YAML configuration when loaded
   observeEvent(input$yaml_config, {
@@ -13689,31 +13746,31 @@ server <- function(input, output, session) {
   # These trigger plot regeneration when user changes display settings
   
   # Tip font size
-  observeEvent(input$tip_font_size, {
-    # v53: debug_cat("\n===observeEvent tip_font_size FIRED===\n")
-    # v53: debug_cat("New value:", input$tip_font_size, "\n")
-    # v53: cat(file=stderr(), "plot_ready:", values$plot_ready, "\n")
+  # S1-PERF: Using debounced version to prevent rapid plot regeneration
+  observe({
+    val <- tip_font_size_d()
+    req(val)
     req(values$plot_ready)  # Only if plot has been generated at least once
-    # v53: cat(file=stderr(), "Calling generate_plot()...\n")
     generate_plot()
-    # v53: cat(file=stderr(), "===observer complete===\n\n")
-  }, ignoreInit = TRUE)
-  
+  })
+
   # Edge width
-  observeEvent(input$edge_width, {
-    # v53: debug_cat("\n===observeEvent edge_width FIRED===\n")
-    # v53: debug_cat("New value:", input$edge_width, "\n")
+  # S1-PERF: Using debounced version to prevent rapid plot regeneration
+  observe({
+    val <- edge_width_d()
+    req(val)
     req(values$plot_ready)
     generate_plot()
-  }, ignoreInit = TRUE)
-  
+  })
+
   # Tip length
-  observeEvent(input$tip_length, {
-    # v53: debug_cat("\n===observeEvent tip_length FIRED===\n")
-    # v53: debug_cat("New value:", input$tip_length, "\n")
+  # S1-PERF: Using debounced version to prevent rapid plot regeneration
+  observe({
+    val <- tip_length_d()
+    req(val)
     req(values$plot_ready)
     generate_plot()
-  }, ignoreInit = TRUE)
+  })
   
   # Trim tips checkbox
   observeEvent(input$trim_tips, {
@@ -13850,15 +13907,14 @@ server <- function(input, output, session) {
   })
   
   # === NEW: Reactive observer for node number font size ===
-  observeEvent(input$node_number_font_size, {
+  # S1-PERF: Using debounced version to prevent rapid plot regeneration
+  observe({
+    val <- node_number_font_size_d()
+    req(val)
     req(values$plot_ready)
     req(input$display_node_numbers == TRUE)  # Only regenerate if node numbers are displayed
-    
-    # v53: cat(file=stderr(), "\nÃ°Å¸â€Â§ Font size slider changed to:", input$node_number_font_size, "\n")
-    # v53: cat(file=stderr(), "Ã°Å¸â€Â§ Regenerating plot...\n")
-    
     generate_plot()
-  }, ignoreInit = TRUE)  # Don't trigger on initialization
+  })
   
   # === NEW: Reactive observer for display node numbers checkbox ===
   observeEvent(input$display_node_numbers, {
@@ -15281,14 +15337,20 @@ server <- function(input, output, session) {
   })
 
   # v141: Observer for plot position X slider
-  observeEvent(input$plot_offset_x, {
-    values$plot_offset_x <- input$plot_offset_x
-  }, ignoreInit = TRUE)
+  # S1-PERF: Using debounced version to prevent rapid updates
+  observe({
+    val <- plot_offset_x_d()
+    req(!is.null(val))
+    values$plot_offset_x <- val
+  })
 
   # v141: Observer for plot position Y slider
-  observeEvent(input$plot_offset_y, {
-    values$plot_offset_y <- input$plot_offset_y
-  }, ignoreInit = TRUE)
+  # S1-PERF: Using debounced version to prevent rapid updates
+  observe({
+    val <- plot_offset_y_d()
+    req(!is.null(val))
+    values$plot_offset_y <- val
+  })
 
   # v141: Reset plot position button
   observeEvent(input$reset_plot_position, {
@@ -15299,9 +15361,12 @@ server <- function(input, output, session) {
   })
 
   # v146: Observer for plot scale slider
-  observeEvent(input$plot_scale_percent, {
-    values$plot_scale_percent <- input$plot_scale_percent
-  }, ignoreInit = TRUE)
+  # S1-PERF: Using debounced version to prevent rapid updates
+  observe({
+    val <- plot_scale_percent_d()
+    req(!is.null(val))
+    values$plot_scale_percent <- val
+  })
 
   # v146: Reset plot scale button
   observeEvent(input$reset_plot_scale, {
@@ -15310,14 +15375,20 @@ server <- function(input, output, session) {
   })
 
   # v179: Observer for tree stretch X slider (horizontal length)
-  observeEvent(input$tree_stretch_x, {
-    values$tree_stretch_x <- input$tree_stretch_x
-  }, ignoreInit = TRUE)
+  # S1-PERF: Using debounced version to prevent rapid updates
+  observe({
+    val <- tree_stretch_x_d()
+    req(!is.null(val))
+    values$tree_stretch_x <- val
+  })
 
   # v179: Observer for tree stretch Y slider (vertical width)
-  observeEvent(input$tree_stretch_y, {
-    values$tree_stretch_y <- input$tree_stretch_y
-  }, ignoreInit = TRUE)
+  # S1-PERF: Using debounced version to prevent rapid updates
+  observe({
+    val <- tree_stretch_y_d()
+    req(!is.null(val))
+    values$tree_stretch_y <- val
+  })
 
   # v179: Reset tree stretch button
   observeEvent(input$reset_tree_stretch, {
