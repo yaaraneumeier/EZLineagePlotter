@@ -15085,6 +15085,8 @@ server <- function(input, output, session) {
 
         # v53: cat(file=stderr(), "Calling ggsave...\n")
         # v54: Wrap in suppressWarnings to suppress scale warnings
+        cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] About to call ggsave at ", format(Sys.time(), "%H:%M:%OS3"), "\n"))
+        cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT]   temp_plot_file=", temp_plot_file, "\n"))
         suppressWarnings(ggsave(
           filename = temp_plot_file,
           plot = plot_to_save,
@@ -15094,6 +15096,7 @@ server <- function(input, output, session) {
           dpi = 150,
           limitsize = FALSE
         ))
+        cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] ggsave completed at ", format(Sys.time(), "%H:%M:%OS3"), "\n"))
         
         # v53: cat(file=stderr(), "ggsave completed\n")
         
@@ -15102,13 +15105,16 @@ server <- function(input, output, session) {
         
         # v53: cat(file=stderr(), "File exists after ggsave:", file.exists(temp_plot_file), "\n")
         
+        cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] Checking if file exists: ", temp_plot_file, "\n"))
         if (file.exists(temp_plot_file)) {
+          cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] SUCCESS: File exists! Size=", file.info(temp_plot_file)$size, " bytes\n"))
           # v53: cat(file=stderr(), "File size:", file.info(temp_plot_file)$size, "bytes\n")
 
           # Store the file path - this will trigger renderImage
           values$temp_plot_file <- temp_plot_file
           values$plot_ready <- TRUE
           values$plot_counter <- values$plot_counter + 1  # Increment to force reactive update
+          cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] plot_counter incremented to ", values$plot_counter, "\n"))
 
           # Hide progress - plot is ready!
           values$progress_visible <- FALSE
@@ -15116,11 +15122,13 @@ server <- function(input, output, session) {
           values$plot_generating <- FALSE  # Turn off generating indicator
 
           # v57: Show Ready status via shinyjs
+          cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] Calling show_status_ready()\n"))
           show_status_ready()
 
           # v53: cat(file=stderr(), "Plot saved successfully and path stored\n")
           # v53: cat(file=stderr(), "Plot counter now:", values$plot_counter, "\n")
         } else {
+          cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] ERROR: File does NOT exist after ggsave!\n"))
           # v53: cat(file=stderr(), "ERROR: File does not exist after ggsave\n")
           values$temp_plot_file <- NULL
           values$plot_ready <- FALSE
@@ -15129,8 +15137,9 @@ server <- function(input, output, session) {
           # v57: Show click to generate on error
           show_status_click_to_generate()
         }
-        
+
       }, error = function(e) {
+        cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] ERROR in tryCatch: ", e$message, "\n"))
         # v53: cat(file=stderr(), "ERROR saving plot:", e$message, "\n")
         # v53: cat(file=stderr(), "Full error:\n")
         # v53: print(e)
