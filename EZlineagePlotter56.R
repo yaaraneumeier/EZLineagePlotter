@@ -139,10 +139,12 @@ get_filename <- function(filepath) {
 
 # Function to check for string/integer mismatches and common prefixes/suffixes
 match_tree_ids_with_csv <- function(tree_labels, csv_ids) {
+  # S1-PERF: Optimized with vectorized operations instead of nested loops
+
   # Ensure tree_labels and csv_ids are character vectors
   tree_labels <- as.character(tree_labels)
   csv_ids <- as.character(csv_ids)
-  
+
   # Initialize matching results
   matched <- list(
     exact_matches = character(0),
@@ -150,120 +152,121 @@ match_tree_ids_with_csv <- function(tree_labels, csv_ids) {
     numeric_matches = list(),
     unmatched = character(0)
   )
-  
+
   # Create a copy of original tree labels
   tree_labels_original <- tree_labels
-  
-  # Try exact matches first
+
+  # Try exact matches first (already vectorized - good)
   exact_matches <- intersect(tree_labels, csv_ids)
   matched$exact_matches <- exact_matches
-  
+
   # Remove exact matches from consideration
   remaining_tree_labels <- setdiff(tree_labels, exact_matches)
-  
+
   if (length(remaining_tree_labels) > 0) {
-    # Try numeric conversion match
+    # S1-PERF: Vectorized numeric conversion
     numeric_tree <- suppressWarnings(as.numeric(remaining_tree_labels))
     numeric_csv <- suppressWarnings(as.numeric(csv_ids))
-    
+
     valid_numeric_tree <- !is.na(numeric_tree)
     valid_numeric_csv <- !is.na(numeric_csv)
-    
+
+    # S1-PERF: Use match() for numeric matching instead of loop
     if (any(valid_numeric_tree) && any(valid_numeric_csv)) {
-      for (i in which(valid_numeric_tree)) {
-        matches <- which(numeric_csv == numeric_tree[i])
-        if (length(matches) > 0) {
-          matched$numeric_matches[[remaining_tree_labels[i]]] <- csv_ids[matches]
+      numeric_tree_valid <- numeric_tree[valid_numeric_tree]
+      numeric_csv_valid <- numeric_csv[valid_numeric_csv]
+      csv_ids_valid <- csv_ids[valid_numeric_csv]
+
+      # Use match to find all numeric matches at once
+      match_indices <- match(numeric_tree_valid, numeric_csv_valid)
+      matched_mask <- !is.na(match_indices)
+
+      if (any(matched_mask)) {
+        matched_tree_labels <- remaining_tree_labels[valid_numeric_tree][matched_mask]
+        matched_csv_ids <- csv_ids_valid[match_indices[matched_mask]]
+        for (i in seq_along(matched_tree_labels)) {
+          matched$numeric_matches[[matched_tree_labels[i]]] <- matched_csv_ids[i]
         }
       }
     }
-    
-    # Try prefix/suffix matching
-    for (tree_label in remaining_tree_labels) {
-      if (tree_label %in% names(matched$numeric_matches)) next
-      
-      # Check if tree label is prefix or suffix of any csv id
-      prefix_matches <- character(0)
-      suffix_matches <- character(0)
-      csv_as_prefix <- character(0)  # Initialize here
-      csv_as_suffix <- character(0)  # Initialize here
-      
-      # Safely check for prefix/suffix matches
-      for (csv_id in csv_ids) {
-        # Skip NA values
-        if (is.na(tree_label) || is.na(csv_id)) next
-        
-        # Check for prefix match
-        if (grepl(paste0("^", tree_label), csv_id, fixed = FALSE)) {
-          prefix_matches <- c(prefix_matches, csv_id)
+
+    # S1-PERF: Vectorized prefix/suffix matching
+    # Only process labels not already matched
+    labels_to_check <- setdiff(remaining_tree_labels, names(matched$numeric_matches))
+
+    if (length(labels_to_check) > 0 && length(csv_ids) > 0) {
+      # Pre-filter: remove NA values
+      valid_csv <- csv_ids[!is.na(csv_ids)]
+
+      for (tree_label in labels_to_check) {
+        if (is.na(tree_label)) {
+          matched$unmatched <- c(matched$unmatched, tree_label)
+          next
         }
-        
-        # Check for suffix match
-        if (grepl(paste0(tree_label, "$"), csv_id, fixed = FALSE)) {
-          suffix_matches <- c(suffix_matches, csv_id)
+
+        # S1-PERF: Use startsWith/endsWith which are much faster than grepl
+        # Check if tree_label is prefix of any csv_id
+        prefix_matches <- valid_csv[startsWith(valid_csv, tree_label)]
+
+        # Check if tree_label is suffix of any csv_id
+        suffix_matches <- valid_csv[endsWith(valid_csv, tree_label)]
+
+        # Check if any csv_id is prefix of tree_label
+        csv_as_prefix <- valid_csv[vapply(valid_csv, function(x) startsWith(tree_label, x), logical(1))]
+
+        # Check if any csv_id is suffix of tree_label
+        csv_as_suffix <- valid_csv[vapply(valid_csv, function(x) endsWith(tree_label, x), logical(1))]
+
+        all_matches <- unique(c(prefix_matches, suffix_matches, csv_as_prefix, csv_as_suffix))
+
+        if (length(all_matches) > 0) {
+          matched$prefix_suffix_matches[[tree_label]] <- all_matches
+        } else {
+          matched$unmatched <- c(matched$unmatched, tree_label)
         }
-        
-        # Check if csv id is prefix of tree label
-        if (grepl(paste0("^", csv_id), tree_label, fixed = FALSE)) {
-          csv_as_prefix <- c(csv_as_prefix, csv_id)
-        }
-        
-        # Check if csv id is suffix of tree label
-        if (grepl(paste0(csv_id, "$"), tree_label, fixed = FALSE)) {
-          csv_as_suffix <- c(csv_as_suffix, csv_id)
-        }
-      }
-      
-      all_matches <- c(prefix_matches, suffix_matches, csv_as_prefix, csv_as_suffix)
-      
-      if (length(all_matches) > 0) {
-        matched$prefix_suffix_matches[[tree_label]] <- unique(all_matches)
-      } else {
-        matched$unmatched <- c(matched$unmatched, tree_label)
       }
     }
   }
-  
-  # Generate a mapping between tree labels and csv ids
+
+  # S1-PERF: Vectorized mapping construction
   final_mapping <- list()
-  
-  # Add exact matches
-  for (label in matched$exact_matches) {
-    final_mapping[[label]] <- label
+
+  # Add exact matches (vectorized)
+  if (length(matched$exact_matches) > 0) {
+    for (label in matched$exact_matches) {
+      final_mapping[[label]] <- label
+    }
   }
-  
+
   # Add numeric matches (pick first if multiple)
   for (tree_label in names(matched$numeric_matches)) {
     final_mapping[[tree_label]] <- matched$numeric_matches[[tree_label]][1]
   }
-  
+
   # Add prefix/suffix matches (pick first if multiple)
   for (tree_label in names(matched$prefix_suffix_matches)) {
     final_mapping[[tree_label]] <- matched$prefix_suffix_matches[[tree_label]][1]
   }
-  
-  # v53: print("final_mapping is")
-  # v53: print(final_mapping)
-  
+
   # Infer trimming parameters from the matching results
   id_tip_trim_flag <- FALSE
   id_tip_trim_start <- 1
   id_tip_trim_end <- NA
   id_tip_prefix <- ""
-  
+
   # Check if we need trimming based on the matches
   if (length(matched$exact_matches) == length(tree_labels_original)) {
     # Perfect exact matches - no trimming needed
     id_tip_trim_flag <- FALSE
   } else if (length(matched$prefix_suffix_matches) > 0) {
     # Analyze prefix/suffix patterns to determine trimming
-    
+
     # Sample a few matches to determine pattern
     sample_matches <- head(matched$prefix_suffix_matches, 5)
-    
+
     for (tree_label in names(sample_matches)) {
       csv_match <- matched$prefix_suffix_matches[[tree_label]][1]
-      
+
       # Check if tree label has a prefix that csv doesn't have
       if (nchar(tree_label) > nchar(csv_match)) {
         # Tree label is longer - likely has a prefix
@@ -295,7 +298,7 @@ match_tree_ids_with_csv <- function(tree_labels, csv_ids) {
     # Numeric matches - might need trimming
     id_tip_trim_flag <- TRUE
   }
-  
+
   # Add trimming parameters to the return
   return(list(
     mapping = final_mapping,
@@ -314,8 +317,8 @@ match_tree_ids_with_csv <- function(tree_labels, csv_ids) {
       id_tip_prefix = id_tip_prefix
     )
   ))
-  
-  
+
+
 }
 
 # Function to check if a value is TRUE/YES in various formats
