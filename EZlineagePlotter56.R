@@ -78,8 +78,13 @@ options(shiny.maxRequestSize = 100*1024^2)
 #       - All v180 features included and tested
 
 # ============================================================================
-# VERSION S1.3 (Performance - Layer Management Optimization)
+# VERSION S1.4 (Performance - Reduce Redundant Recalculations)
 # ============================================================================
+# S1.4: Performance optimization - Reduce redundant recalculations
+#       - Added plot_trigger mechanism to batch rapid updates (100ms debounce)
+#       - Converted observers to use request_plot_update() instead of direct generate_plot()
+#       - Removed duplicate guards in generate_plot() function
+#       - Reduced debug logging overhead
 # S1.3: Performance optimization - Layer management
 #       - Reduced func.move.tiplabels.to.front() calls from 3+ per render to 1
 #       - Removed redundant intermediate calls in func_highlight and func.print.lineage.tree
@@ -87,7 +92,7 @@ options(shiny.maxRequestSize = 100*1024^2)
 #       - Layer reordering now happens ONCE at the end in generate_plot()
 # S1.2: Fixed undefined x_range_min in func_highlight causing "Problem while
 #       computing aesthetics" error when adding 2+ highlights with a heatmap.
-VERSION <- "S1.3"
+VERSION <- "S1.4"
 
 # Debug output control - set to TRUE to enable verbose console logging
 # For production/stable use, keep this FALSE for better performance
@@ -7312,15 +7317,20 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #cce5ff; padding: 15px; border-radius: 5px; border: 2px solid #004085;",
-                     tags$h4(style = "color: #004085; margin: 0;", "Version S1.3 (Performance Optimization)"),
+                     tags$h4(style = "color: #004085; margin: 0;", "Version S1.4 (Performance Optimization)"),
                      tags$p(style = "margin: 10px 0 0 0; color: #004085;",
-                            "Optimized layer management for faster rendering.",
+                            "Reduced redundant recalculations for faster responsiveness.",
                             tags$br(), tags$br(),
-                            tags$strong("Performance improvements in S1.3:"),
+                            tags$strong("Performance improvements in S1.4:"),
                             tags$ul(
-                              tags$li("Reduced layer reordering calls from 3+ to 1 per render"),
-                              tags$li("Optimized func.move.tiplabels.to.front() with vapply"),
-                              tags$li("Removed redundant debug I/O overhead")
+                              tags$li("Plot trigger mechanism batches rapid updates (100ms debounce)"),
+                              tags$li("Observers use request_plot_update() for coordinated updates"),
+                              tags$li("Consolidated duplicate guards in generate_plot()"),
+                              tags$li("Reduced debug logging overhead")
+                            ),
+                            tags$strong("From S1.3:"),
+                            tags$ul(
+                              tags$li("Reduced layer reordering calls from 3+ to 1 per render")
                             ),
                             tags$strong("Bug fix from S1.2:"),
                             tags$ul(
@@ -8413,6 +8423,20 @@ server <- function(input, output, session) {
   
   classification_loading <- reactiveVal(FALSE)
 
+  # S1.4-PERF: Plot trigger mechanism to batch multiple rapid updates
+  # Instead of calling generate_plot() directly, observers increment this trigger.
+  # A debounced observer watches the trigger and calls generate_plot() once.
+  # This prevents redundant recalculations when multiple inputs change rapidly.
+  plot_trigger <- reactiveVal(0)
+
+  # S1.4-PERF: Debounced version of plot_trigger - batches rapid updates
+  plot_trigger_debounced <- debounce(reactive(plot_trigger()), 100)  # 100ms debounce
+
+  # S1.4-PERF: Helper function to request plot regeneration (use instead of direct generate_plot())
+  request_plot_update <- function() {
+    plot_trigger(plot_trigger() + 1)
+  }
+
   # v107: Trigger for heatmap UI regeneration - only fires when we need to rebuild the UI
   # (add/remove/reorder heatmaps, or when CSV data changes)
   # This prevents the UI from rebuilding every time a slider or input changes
@@ -8470,6 +8494,21 @@ server <- function(input, output, session) {
 
   # ==========================================================================
   # END DEBOUNCED REACTIVE INPUTS
+  # ==========================================================================
+
+  # ==========================================================================
+  # S1.4-PERF: DEBOUNCED PLOT REGENERATION OBSERVER
+  # ==========================================================================
+  # This single observer handles all debounced plot update requests.
+  # Instead of calling generate_plot() directly from many observers,
+  # use request_plot_update() which increments plot_trigger.
+  # This observer batches rapid updates and calls generate_plot() once.
+  observeEvent(plot_trigger_debounced(), {
+    req(values$plot_ready)  # Only regenerate if a plot exists
+    req(plot_trigger() > 0)  # Ignore initial value
+    cat(file=stderr(), "[PERF] Debounced plot trigger fired - regenerating plot\n")
+    generate_plot()
+  }, ignoreInit = TRUE)
   # ==========================================================================
 
   # v59: Helper functions to toggle status indicator via shinyjs (immediate UI updates)
@@ -8746,34 +8785,31 @@ server <- function(input, output, session) {
   }, ignoreInit = TRUE)
   
   # Bootstrap format observer
+  # S1.4-PERF: Using request_plot_update() for batched updates
   observeEvent(input$bootstrap_format, {
-    # v53: debug_cat("\n===observeEvent bootstrap_format FIRED===\n")
     req(values$plot_ready, input$show_bootstrap == TRUE)
-    generate_plot()
+    request_plot_update()
   }, ignoreInit = TRUE)
-  
+
   # Bootstrap param observer
+  # S1.4-PERF: Using request_plot_update() for batched updates
   observeEvent(input$bootstrap_param, {
-    # v53: debug_cat("\n===observeEvent bootstrap_param FIRED===\n")
-    # v53: debug_cat("New value:", input$bootstrap_param, "\n")
     req(values$plot_ready, input$show_bootstrap == TRUE)
-    generate_plot()
+    request_plot_update()
   }, ignoreInit = TRUE)
-  
+
   # Bootstrap label size observer
+  # S1.4-PERF: Using request_plot_update() for batched updates
   observeEvent(input$bootstrap_label_size, {
-    # v53: debug_cat("\n===observeEvent bootstrap_label_size FIRED===\n")
-    # v53: debug_cat("New value:", input$bootstrap_label_size, "\n")
     req(values$plot_ready, input$show_bootstrap == TRUE)
-    generate_plot()
+    request_plot_update()
   }, ignoreInit = TRUE)
 
   # v112: Bootstrap position offset observer - makes slider immediately responsive
-  # S1-PERF: Using debounced version to prevent rapid plot regeneration
+  # S1.4-PERF: Using request_plot_update() for batched updates
   observeEvent(man_boot_x_offset_d(), {
     req(values$plot_ready, input$show_bootstrap == TRUE)
-    debug_cat("\n===observe man_boot_x_offset_d FIRED (debounced)===\n")
-    generate_plot()
+    request_plot_update()
   }, ignoreInit = TRUE)
 
   # Process YAML configuration when loaded
@@ -13852,48 +13888,45 @@ server <- function(input, output, session) {
   # These trigger plot regeneration when user changes display settings
 
   # Tip font size
-  # S1-PERF: Using debounced version to prevent rapid plot regeneration
+  # S1.4-PERF: Using debounced input + request_plot_update() for batched updates
   observeEvent(tip_font_size_d(), {
     req(values$plot_ready)  # Only if plot has been generated at least once
-    generate_plot()
+    request_plot_update()
   }, ignoreInit = TRUE)
 
   # Edge width
-  # S1-PERF: Using debounced version to prevent rapid plot regeneration
+  # S1.4-PERF: Using debounced input + request_plot_update() for batched updates
   observeEvent(edge_width_d(), {
     req(values$plot_ready)
-    generate_plot()
+    request_plot_update()
   }, ignoreInit = TRUE)
 
   # Tip length
-  # S1-PERF: Using debounced version to prevent rapid plot regeneration
+  # S1.4-PERF: Using debounced input + request_plot_update() for batched updates
   observeEvent(tip_length_d(), {
     req(values$plot_ready)
-    generate_plot()
+    request_plot_update()
   }, ignoreInit = TRUE)
   
   # Trim tips checkbox
+  # S1.4-PERF: Using request_plot_update() for batched updates
   observeEvent(input$trim_tips, {
-    # v53: debug_cat("\n===observeEvent trim_tips FIRED===\n")
-    # v53: debug_cat("New value:", input$trim_tips, "\n")
     req(values$plot_ready)
-    generate_plot()
+    request_plot_update()
   }, ignoreInit = TRUE)
-  
+
   # Display node numbers
+  # S1.4-PERF: Using request_plot_update() for batched updates
   observeEvent(input$display_node_numbers, {
-    # v53: debug_cat("\n===observeEvent display_node_numbers FIRED===\n")
-    # v53: debug_cat("New value:", input$display_node_numbers, "\n")
     req(values$plot_ready)
-    generate_plot()
+    request_plot_update()
   }, ignoreInit = TRUE)
-  
+
   # Ladderize
+  # S1.4-PERF: Using request_plot_update() for batched updates
   observeEvent(input$ladderize, {
-    # v53: debug_cat("\n===observeEvent ladderize FIRED===\n")
-    # v53: debug_cat("New value:", input$ladderize, "\n")
     req(values$plot_ready)
-    generate_plot()
+    request_plot_update()
   }, ignoreInit = TRUE)
   
   validate_rotation <- function(num_groups, rotation_prefix) {
@@ -14007,32 +14040,21 @@ server <- function(input, output, session) {
   })
   
   # === NEW: Reactive observer for node number font size ===
-  # S1-PERF: Using debounced version to prevent rapid plot regeneration
+  # S1.4-PERF: Using debounced input + request_plot_update() for batched updates
   observeEvent(node_number_font_size_d(), {
     req(values$plot_ready)
     req(input$display_node_numbers == TRUE)  # Only regenerate if node numbers are displayed
-    generate_plot()
+    request_plot_update()
   }, ignoreInit = TRUE)
   
-  # === NEW: Reactive observer for display node numbers checkbox ===
-  observeEvent(input$display_node_numbers, {
-    req(values$plot_ready)
-    
-    # v53: cat(file=stderr(), "\nÃ°Å¸â€Â§ Display node numbers changed to:", input$display_node_numbers, "\n")
-    # v53: cat(file=stderr(), "Ã°Å¸â€Â§ Regenerating plot...\n")
-    
-    generate_plot()
-  }, ignoreInit = TRUE)
+  # S1.4-PERF: Removed duplicate display_node_numbers observer (already handled earlier)
   
-  # === NEW: Reactive observer for highlight checkbox ===
+  # === Reactive observer for highlight checkbox ===
+  # S1.4-PERF: Using request_plot_update() for batched updates
   observeEvent(input$highlight_selected_nodes, {
     req(values$plot_ready)
     req(input$nodes_to_rotate)  # Only if nodes are selected
-    
-    # v53: cat(file=stderr(), "\nÃ°Å¸â€Â§ Highlight checkbox changed to:", input$highlight_selected_nodes, "\n")
-    # v53: cat(file=stderr(), "Ã°Å¸â€Â§ Regenerating plot...\n")
-    
-    generate_plot()
+    request_plot_update()
   }, ignoreInit = TRUE)
   
   # ============================================================================
@@ -14051,79 +14073,24 @@ server <- function(input, output, session) {
       heat_map_legend = if(!is.null(input$heatmap_font_size)) input$heatmap_font_size else 3.8
     )
   }
-  
-  # Generate plot based on current settings
-  # Generate plot based on current settings
+
   # Generate plot based on current settings
   generate_plot <- function() {
-    # DEBUG-2ND-HIGHLIGHT: Entry point with timestamp and highlight count
-    cat(file=stderr(), paste0("\n[DEBUG-2ND-HIGHLIGHT] ========================================\n"))
-    cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] ENTER generate_plot() at ", format(Sys.time(), "%H:%M:%OS3"), "\n"))
-    num_classifications <- if (!is.null(values$classifications)) length(values$classifications) else 0
-    cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT]   num_classifications=", num_classifications, "\n"))
-    total_highlights <- 0
-    if (!is.null(values$classifications)) {
-      for (ci in seq_along(values$classifications)) {
-        if (!is.null(values$classifications[[ci]]$highlight) &&
-            isTRUE(values$classifications[[ci]]$highlight$enabled)) {
-          total_highlights <- total_highlights + 1
-          cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT]   Classification ", ci, " has highlight with ",
-                                   length(values$classifications[[ci]]$highlight$items), " items\n"))
-        }
-      }
-    }
-    cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT]   total_highlights=", total_highlights, "\n"))
-    cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] ========================================\n"))
+    # S1.4-PERF: Simplified entry logging (reduced from verbose DEBUG-2ND-HIGHLIGHT)
+    cat(file=stderr(), "[PERF] generate_plot() called\n")
 
-    # DEBUG-2ND-HIGHLIGHT: Entry point with timestamp and highlight count
-    # v53: cat(file=stderr(), "\nÃ°Å¸â€Âµ === generate_plot() ENTRY POINT ===\n")
-    # v53: cat(file=stderr(), "Ã°Å¸â€Âµ classification_loading():", classification_loading(), "\n")
-    # v53: cat(file=stderr(), "Ã°Å¸â€Âµ values$plot_generating:", values$plot_generating, "\n")
-    # v53: cat(file=stderr(), "Ã°Å¸â€Âµ values$tree is NULL:", is.null(values$tree), "\n")
-    # v53: cat(file=stderr(), "Ã°Å¸â€Âµ values$csv_data is NULL:", is.null(values$csv_data), "\n")
-    # v53: cat(file=stderr(), "Ã°Å¸â€Âµ values$temp_csv_path:", values$temp_csv_path, "\n")
-    # v53: cat(file=stderr(), "Ã°Å¸â€Âµ File exists:", file.exists(values$temp_csv_path), "\n\n")
-    
-    
-    # v53: cat(file=stderr(), "ðŸ”µ TRACE ID:", if (!is.null(values$debug_trace_id)) values$debug_trace_id else "UNKNOWN", "\n")
-    # v53: cat(file=stderr(), "\nÃ°Å¸â€Âµ === generate_plot() ENTRY ===\n")
-    # v53: cat(file=stderr(), "Ã°Å¸â€Âµ temp_highlight_preview is NULL:", is.null(values$temp_highlight_preview), "\n")
-    if (!is.null(values$temp_highlight_preview)) {
-      # v53: cat(file=stderr(), "Ã°Å¸â€Âµ temp_highlight_preview has", length(values$temp_highlight_preview$items), "items\n")
-    }
-    # v53: cat(file=stderr(), "\n")
-    
+    # === GUARD CHECKS (S1.4-PERF: consolidated - removed duplicate guards) ===
     if (classification_loading()) {
-      cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] EARLY RETURN: classification_loading() is TRUE\n"))
-      # v53: cat(file=stderr(), "Ã¢ÂÂ¸Ã¯Â¸Â Skipping plot generation - classification UI loading\n")
+      cat(file=stderr(), "[PERF] Skipping - classification UI loading\n")
       return(NULL)
     }
-    
-    # Don't generate if already generating (recursion guard)
-    if (!is.null(values$plot_generating) && values$plot_generating) {
-      cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] EARLY RETURN: plot_generating is TRUE (recursion guard)\n"))
-      # v53: cat(file=stderr(), "Ã¢Å¡Â Ã¯Â¸Â WARNING: Plot already generating. Preventing recursion.\n")
-      return(NULL)
-    }
-    
-    #if (classification_loading()) {
-    #  cat(file=stderr(), "Ã¢ÂÂ¸Ã¯Â¸Â Skipping plot generation - classification UI loading\n")
-    #  return(NULL)
-    #}
-    
-    if (classification_loading()) {
-      # v53: cat(file=stderr(), "Ã¢ÂÂ¸Ã¯Â¸Â Skipping plot generation - classification UI loading\n")
-      return(NULL)
-    }
-    
-    # Don't generate if already generating (recursion guard)
-    if (!is.null(values$plot_generating) && values$plot_generating) {
-      # v53: cat(file=stderr(), "Ã¢Å¡Â Ã¯Â¸Â WARNING: Plot already generating. Preventing recursion.\n")
-      return(NULL)
-    }
-    
 
-    # v53: cat(file=stderr(), "\n=== generate_plot() called ===\n")
+    # Dont generate if already generating (recursion guard)
+    if (!is.null(values$plot_generating) && values$plot_generating) {
+      cat(file=stderr(), "[PERF] Skipping - plot already generating\n")
+      return(NULL)
+    }
+    # === END GUARD CHECKS ===
 
     # v57: Show processing status IMMEDIATELY via shinyjs (before R blocks)
     show_status_processing()
