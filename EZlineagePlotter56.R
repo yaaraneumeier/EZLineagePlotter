@@ -78,8 +78,11 @@ options(shiny.maxRequestSize = 100*1024^2)
 #       - All v180 features included and tested
 
 # ============================================================================
-# VERSION S1.4 (Performance - Reduce Redundant Recalculations)
+# VERSION S1.5 (Bug Fix - Legend Background)
 # ============================================================================
+# S1.5: Fixed Legend Background not working
+#       - Added legend.background theme element for individual legend panel backgrounds
+#       - Previously only legend.box.background was set (outer container only)
 # S1.4: Performance optimization - Reduce redundant recalculations
 #       - Added plot_trigger mechanism to batch rapid updates (100ms debounce)
 #       - Converted observers to use request_plot_update() instead of direct generate_plot()
@@ -92,7 +95,7 @@ options(shiny.maxRequestSize = 100*1024^2)
 #       - Layer reordering now happens ONCE at the end in generate_plot()
 # S1.2: Fixed undefined x_range_min in func_highlight causing "Problem while
 #       computing aesthetics" error when adding 2+ highlights with a heatmap.
-VERSION <- "S1.4"
+VERSION <- "S1.5"
 
 # Debug output control - set to TRUE to enable verbose console logging
 # For production/stable use, keep this FALSE for better performance
@@ -7317,22 +7320,20 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #cce5ff; padding: 15px; border-radius: 5px; border: 2px solid #004085;",
-                     tags$h4(style = "color: #004085; margin: 0;", "Version S1.4 (Performance Optimization)"),
+                     tags$h4(style = "color: #004085; margin: 0;", "Version S1.5 (Bug Fix)"),
                      tags$p(style = "margin: 10px 0 0 0; color: #004085;",
-                            "Reduced redundant recalculations for faster responsiveness.",
+                            "Fixed Legend Background feature.",
                             tags$br(), tags$br(),
-                            tags$strong("Performance improvements in S1.4:"),
+                            tags$strong("Bug fix in S1.5:"),
                             tags$ul(
-                              tags$li("Plot trigger mechanism batches rapid updates (100ms debounce)"),
-                              tags$li("Observers use request_plot_update() for coordinated updates"),
-                              tags$li("Consolidated duplicate guards in generate_plot()"),
+                              tags$li("Legend Background color now works correctly")
+                            ),
+                            tags$strong("Performance from S1.4:"),
+                            tags$ul(
+                              tags$li("Plot trigger mechanism batches rapid updates"),
                               tags$li("Reduced debug logging overhead")
                             ),
-                            tags$strong("From S1.3:"),
-                            tags$ul(
-                              tags$li("Reduced layer reordering calls from 3+ to 1 per render")
-                            ),
-                            tags$strong("Bug fix from S1.2:"),
+                            tags$strong("Bug fixes from S1.2:"),
                             tags$ul(
                               tags$li("Fixed 2+ highlights with heatmap causing app to get stuck")
                             ),
@@ -14540,6 +14541,7 @@ server <- function(input, output, session) {
 
         # Build theme modifications for legend
         # v180: Added key width/height, title-key spacing, box background, margin
+        # S1.5: Fixed - added legend.background for individual legend panel backgrounds
         legend_theme <- theme(
           legend.position = legend_settings$position,
           legend.title = element_text(size = legend_settings$title_size, face = "bold"),
@@ -14553,7 +14555,8 @@ server <- function(input, output, session) {
           legend.key.spacing = unit(key_spacing, "cm"),           # v180: Between keys spacing
           legend.key.spacing.y = unit(key_spacing, "cm"),         # v180: Vertical between keys
           legend.title.position = "top",                           # v180: Title above keys
-          legend.box.background = element_rect(fill = box_bg, colour = NA),  # v180: Box background
+          legend.background = element_rect(fill = box_bg, colour = NA),      # S1.5: Individual legend backgrounds
+          legend.box.background = element_rect(fill = box_bg, colour = NA),  # v180: Outer box background
           legend.margin = margin(legend_margin_val, legend_margin_val, legend_margin_val, legend_margin_val, "cm"),  # v180
           # v125: For top/bottom, arrange legends horizontally but stack items vertically
           legend.box = if (is_horizontal_position) "horizontal" else "vertical",
