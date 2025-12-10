@@ -1651,11 +1651,11 @@ func_highlight <- function(p, how_many_hi, heat_flag, high_color_list, a, b, man
   # v180: REMOVED legacy layer reordering code that was causing heatmap corruption
   # The old code (Bug #11 fix) assumed a specific layer order and would scramble layers
   # when there were 8+ layers. With multiple heatmaps (3+), this caused the first heatmap
-  # to disappear. Layer ordering is now handled by func.move.tiplabels.to.front() below.
+  # to disappear. Layer ordering is now handled by func.move.tiplabels.to.front() at the
+  # END of func.print.lineage.tree (line ~7065), not here after each ellipse addition.
 
-  # v180: CRITICAL - Move tip labels to front AFTER ellipses are added
-  # This ensures tip names are always visible on top of highlight ellipses
-  p <- func.move.tiplabels.to.front(p, verbose = DEBUG_VERBOSE)
+  # S1-PERF: Removed intermediate func.move.tiplabels.to.front() call
+  # Tip labels only need to be moved once at the very end, not after each layer addition
 
   return(p)
 }
@@ -14750,9 +14750,9 @@ server <- function(input, output, session) {
         debug_cat(paste0("  v30 Extra tab ERROR: ", e$message, "\n"))
       })
 
-      # v180: CRITICAL - Move tip labels to front AFTER all layers are added
-      # This ensures tip names are always visible on top of highlight ellipses
-      result <- func.move.tiplabels.to.front(result, verbose = DEBUG_VERBOSE)
+      # S1-PERF: Removed redundant func.move.tiplabels.to.front() call
+      # func.print.lineage.tree already calls this at the end (line ~7065)
+      # Calling it again here was unnecessary and wasted CPU cycles
 
       # Store the plot with legend settings applied
       values$current_plot <- result
