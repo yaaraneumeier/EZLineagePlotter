@@ -8801,7 +8801,8 @@ server <- function(input, output, session) {
     if (!is.null(yaml_data$`Individual general definitions`$`mapping csv file`) && 
         file.exists(yaml_data$`Individual general definitions`$`mapping csv file`)) {
       csv_file <- yaml_data$`Individual general definitions`$`mapping csv file`
-      csv_data <- read.csv(csv_file)
+      # S1-PERF: Use readr::read_csv (from tidyverse) - ~5-10x faster than read.csv for large files
+      csv_data <- as.data.frame(readr::read_csv(csv_file, show_col_types = FALSE))
       values$csv_data <- csv_data
       # v107: Trigger heatmap UI regeneration when CSV data changes (new column choices)
       heatmap_ui_trigger(heatmap_ui_trigger() + 1)
@@ -9116,7 +9117,8 @@ server <- function(input, output, session) {
     
     # Read CSV file
     tryCatch({
-      csv_data <- read.csv(csv_file$datapath)
+      # S1-PERF: Use readr::read_csv (from tidyverse) - ~5-10x faster than read.csv for large files
+      csv_data <- as.data.frame(readr::read_csv(csv_file$datapath, show_col_types = FALSE))
       values$csv_data <- csv_data
       # v107: Trigger heatmap UI regeneration when CSV data changes (new column choices)
       heatmap_ui_trigger(heatmap_ui_trigger() + 1)
@@ -10225,12 +10227,9 @@ server <- function(input, output, session) {
         match_result$summary$numeric_matches > 0 || 
         match_result$summary$prefix_suffix_matches > 0) {
       
-      # Get all matched CSV IDs
-      matched_ids <- c()
-      for (mapping in match_result$mapping) {
-        matched_ids <- c(matched_ids, mapping)
-      }
-      matched_ids <- unique(matched_ids)
+      # S1-PERF: Get all matched CSV IDs using unlist() instead of loop
+      # Growing vectors in loops is O(n²) - unlist is O(n)
+      matched_ids <- unique(unlist(match_result$mapping, use.names = FALSE))
       
       # Filter CSV to only include matched rows
       values$filtered_csv <- filtered_csv[filtered_csv[[input$id_column]] %in% matched_ids, ]
