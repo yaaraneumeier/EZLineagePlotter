@@ -78,9 +78,12 @@ options(shiny.maxRequestSize = 100*1024^2)
 #       - All v180 features included and tested
 
 # ============================================================================
-# VERSION S1.2-debug (Debug - Investigating Second Highlight Issue)
+# VERSION S1.2 (Fix - Second Highlight with Heatmap Bug)
 # ============================================================================
-VERSION <- "S1.2-debug"
+# S1.2: Fixed undefined x_range_min in func_highlight causing "Problem while
+#       computing aesthetics" error when adding 2+ highlights with a heatmap.
+#       The second and third highlight ellipses were using an undefined variable.
+VERSION <- "S1.2"
 
 # Debug output control - set to TRUE to enable verbose console logging
 # For production/stable use, keep this FALSE for better performance
@@ -1641,20 +1644,28 @@ func_highlight <- function(p, how_many_hi, heat_flag, high_color_list, a, b, man
       # v139: Use high_alpha_list for transparency
       alpha_val2 <- if (length(high_alpha_list) >= 2 && !is.null(high_alpha_list[[2]])) high_alpha_list[[2]] else 0.5
 
+      # S1.2: Fixed - use same positioning logic as highlight 1 (was using undefined x_range_min)
+      # Get tree_max_x from p$data for consistent positioning
+      tree_max_x <- max(p$data[p$data$isTip == TRUE, 'x'], na.rm = TRUE)
+
       p <- p +
         geom_ellipse(data = high_nodes_table2,
-                     aes(x0 = ((max(p$data[,'x']) - x) * (x_range_min)),
-                         y0 = y, a = a, b = b, angle = 0),
+                     aes(x0 = ((tree_max_x - x) * (-1) - man_adjust_elipse),
+                         y0 = y + high_vertical_offset, a = a, b = b, angle = 0),
                      fill = high_color_list[[2]], alpha = alpha_val2, linetype = "blank", show.legend = FALSE)
     } else if (index_high == 3) {
-      high_nodes_table3 <- p$data[tree_TRY$data$high3 == TRUE,]
+      high_nodes_table3 <- p$data[p$data$high3 == TRUE,]
       # v139: Use high_alpha_list for transparency
       alpha_val3 <- if (length(high_alpha_list) >= 3 && !is.null(high_alpha_list[[3]])) high_alpha_list[[3]] else 0.5
 
+      # S1.2: Fixed - use same positioning logic as highlight 1 (was using undefined x_range_min)
+      # Get tree_max_x from p$data for consistent positioning
+      tree_max_x <- max(p$data[p$data$isTip == TRUE, 'x'], na.rm = TRUE)
+
       p <- p +
         geom_ellipse(data = high_nodes_table3,
-                     aes(x0 = ((max(pr440_short_tips_TRY$data[,'x']) - x) * (x_range_min)),
-                         y0 = y, a = a, b = b, angle = 0),
+                     aes(x0 = ((tree_max_x - x) * (-1) - man_adjust_elipse),
+                         y0 = y + high_vertical_offset, a = a, b = b, angle = 0),
                      fill = high_color_list[[3]], alpha = alpha_val3, linetype = "blank", show.legend = FALSE)
     }
   }
@@ -7321,14 +7332,14 @@ ui <- dashboardPage(
             solidHeader = TRUE,
             width = 12,
             collapsible = TRUE,
-            tags$div(style = "background: #fff3cd; padding: 15px; border-radius: 5px; border: 2px solid #856404;",
-                     tags$h4(style = "color: #856404; margin: 0;", "Version S1.2-debug (Investigating Second Highlight Issue)"),
-                     tags$p(style = "margin: 10px 0 0 0; color: #856404;",
-                            "Debug version with checkpoint logging to trace execution path.",
+            tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
+                     tags$h4(style = "color: #155724; margin: 0;", "Version S1.2 (Bug Fix Release)"),
+                     tags$p(style = "margin: 10px 0 0 0; color: #155724;",
+                            "Fixed: Second highlight with heatmap no longer causes app to get stuck.",
                             tags$br(), tags$br(),
-                            tags$strong("Debug checkpoints A-G added to trace generate_plot() flow"),
+                            tags$strong("Bug Fix in S1.2:"),
                             tags$ul(
-                              tags$li("Check console output for [DEBUG-2ND-HIGHLIGHT] CHECKPOINT messages")
+                              tags$li("Fixed undefined x_range_min error when adding 2+ highlights with heatmap")
                             ),
                             tags$strong("Base Features (from S1):"),
                             tags$ul(
