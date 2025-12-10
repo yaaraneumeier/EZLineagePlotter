@@ -10371,7 +10371,20 @@ server <- function(input, output, session) {
       if (!is.null(values$filtered_csv) && nrow(values$filtered_csv) > 0) {
         # v53: cat(file=stderr(), "Creating temp CSV file...\n")
         values$temp_csv_path <- tempfile(fileext = ".csv")
-        write.csv(values$filtered_csv, values$temp_csv_path, row.names = FALSE)
+
+        # S1-PERF: Filter out columns with empty/auto-generated names (like "...15355")
+        # These are likely empty columns that slow down CSV read/write significantly
+        csv_to_write <- values$filtered_csv
+        col_names <- names(csv_to_write)
+        # Keep only columns with real names (not starting with "..." or empty)
+        valid_cols <- !grepl("^\\.\\.\\.", col_names) & col_names != "" & !is.na(col_names)
+        if (sum(valid_cols) < length(col_names)) {
+          cat(file=stderr(), sprintf("[PERF] Filtering out %d empty/unnamed columns from temp CSV\n",
+              sum(!valid_cols)))
+          csv_to_write <- csv_to_write[, valid_cols, drop = FALSE]
+        }
+
+        write.csv(csv_to_write, values$temp_csv_path, row.names = FALSE)
         # v53: cat(file=stderr(), "Created temp CSV at:", values$temp_csv_path, "\n")
       } else {
         # v53: cat(file=stderr(), "WARNING: No filtered CSV data available for temp file\n")
@@ -14053,17 +14066,14 @@ server <- function(input, output, session) {
     values$plot_generating <- TRUE
     values$plot_ready <- FALSE  # Mark as not ready while generating
     #shiny::invalidateLater(0, session)
-    
-    # Small delay to ensure progress shows
-    # Give UI time to update
-    Sys.sleep(0.3)
-    
+
+    # S1-PERF: Removed Sys.sleep(0.3) - unnecessary delay
+
     values$progress_message <- "🎨 Generating your beautiful plot..."
     values$progress_visible <- TRUE
-    
-    # Another small delay to ensure progress bar shows
-    Sys.sleep(0.2)
-    
+
+    # S1-PERF: Removed Sys.sleep(0.2) - unnecessary delay
+
     # Check if we have the necessary data
     if (is.null(values$tree) || is.null(values$csv_data)) {
       # v53: cat(file=stderr(), "Missing required data (tree or csv_data)\n")
@@ -14101,12 +14111,8 @@ server <- function(input, output, session) {
       # v53: cat(file=stderr(), "No mappings found\n")
     }
     
-    # Filter CSV to only include matched rows
-    matched_ids <- c()
-    for (mapping in values$id_match$mapping) {
-      matched_ids <- c(matched_ids, mapping)
-    }
-    matched_ids <- unique(matched_ids)
+    # S1-PERF: Filter CSV to only include matched rows - use unlist instead of loop
+    matched_ids <- unique(unlist(values$id_match$mapping, use.names = FALSE))
     
     values$filtered_csv <- values$csv_data[values$csv_data[[input$id_column]] %in% matched_ids, ]
     # v53: print("Filtered CSV rows:")
