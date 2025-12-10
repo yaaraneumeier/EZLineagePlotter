@@ -10942,6 +10942,12 @@ server <- function(input, output, session) {
   # Update Preview button - FIXED for Windows
   # Update Preview button - SIMPLIFIED DEBUGGING
   observeEvent(input$update_highlight_preview, {
+    cat(file=stderr(), paste0("\n[DEBUG-2ND-HIGHLIGHT] *** UPDATE_HIGHLIGHT_PREVIEW CLICKED at ", format(Sys.time(), "%H:%M:%OS3"), " ***\n"))
+    cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT]   enable_highlight=", input$enable_highlight, "\n"))
+    cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT]   highlight_column=", input$highlight_column, "\n"))
+    cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT]   highlight_values=", paste(input$highlight_values, collapse=", "), "\n"))
+    cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT]   num highlight_values=", length(input$highlight_values), "\n"))
+
     
     # v53: cat(file=stderr(), "\n\nÃ°Å¸â€Â´Ã°Å¸â€Â´Ã°Å¸â€Â´ UPDATE HIGHLIGHT PREVIEW CLICKED Ã°Å¸â€Â´Ã°Å¸â€Â´Ã°Å¸â€Â´\n")
     
@@ -10971,8 +10977,9 @@ server <- function(input, output, session) {
       return(NULL)
     }
     
-    # v53: cat(file=stderr(), "Ã¢Å“â€œ All checks passed, collecting settings...\n")
-    
+    # v53: cat(file=stderr(), "Ã¢Å"â€œ All checks passed, collecting settings...\n")
+    cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT]   All checks passed, collecting highlight_items...\n"))
+
     # Collect settings for each value
     highlight_items <- lapply(seq_along(input$highlight_values), function(i) {
       val <- input$highlight_values[i]
@@ -10993,9 +11000,11 @@ server <- function(input, output, session) {
       )
     })
     
-    # v53: cat(file=stderr(), "Ã¢Å“â€œ Collected", length(highlight_items), "items\n")
-    
+    # v53: cat(file=stderr(), "Ã¢Å"â€œ Collected", length(highlight_items), "items\n")
+    cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT]   Collected ", length(highlight_items), " highlight_items\n"))
+
     # Store as temporary preview
+    cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT]   Storing temp_highlight_preview...\n"))
     values$temp_highlight_preview <- list(
       enabled = TRUE,
       title = input$highlight_title,
@@ -11032,8 +11041,10 @@ server <- function(input, output, session) {
       debug_cat(paste0("  temp_highlight_preview items: ", length(values$temp_highlight_preview$items), "\n"))
     }
     debug_cat("  CALLING generate_plot() NOW...\n")
+    cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT]   About to call generate_plot() at ", format(Sys.time(), "%H:%M:%OS3"), "\n"))
     values$debug_trace_id <- "HIGHLIGHT_BUTTON_PREVIEW"
     generate_plot()
+    cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT]   generate_plot() returned at ", format(Sys.time(), "%H:%M:%OS3"), "\n"))
     values$debug_trace_id <- NULL
     
     # v53: cat(file=stderr(), "Ã¢Å“â€œ generate_plot() completed\n\n")
@@ -14087,12 +14098,14 @@ server <- function(input, output, session) {
     # v53: cat(file=stderr(), "\n")
     
     if (classification_loading()) {
+      cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] EARLY RETURN: classification_loading() is TRUE\n"))
       # v53: cat(file=stderr(), "Ã¢ÂÂ¸Ã¯Â¸Â Skipping plot generation - classification UI loading\n")
       return(NULL)
     }
     
     # Don't generate if already generating (recursion guard)
     if (!is.null(values$plot_generating) && values$plot_generating) {
+      cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] EARLY RETURN: plot_generating is TRUE (recursion guard)\n"))
       # v53: cat(file=stderr(), "Ã¢Å¡Â Ã¯Â¸Â WARNING: Plot already generating. Preventing recursion.\n")
       return(NULL)
     }
