@@ -1654,8 +1654,9 @@ func_highlight <- function(p, how_many_hi, heat_flag, high_color_list, a, b, man
   # to disappear. Layer ordering is now handled by func.move.tiplabels.to.front() at the
   # END of func.print.lineage.tree (line ~7065), not here after each ellipse addition.
 
-  # S1-PERF: Removed intermediate func.move.tiplabels.to.front() call
-  # Tip labels only need to be moved once at the very end, not after each layer addition
+  # S1-PERF-REVERTED: Restored call - removing it caused second highlight to get stuck
+  # Multiple highlights require layer reordering after ellipses are added
+  p <- func.move.tiplabels.to.front(p, verbose = DEBUG_VERBOSE)
 
   return(p)
 }
@@ -14750,9 +14751,9 @@ server <- function(input, output, session) {
         debug_cat(paste0("  v30 Extra tab ERROR: ", e$message, "\n"))
       })
 
-      # S1-PERF: Removed redundant func.move.tiplabels.to.front() call
-      # func.print.lineage.tree already calls this at the end (line ~7065)
-      # Calling it again here was unnecessary and wasted CPU cycles
+      # S1-PERF-REVERTED: Restored call - removing it caused second highlight to get stuck
+      # Multiple highlights require layer reordering after all processing is complete
+      result <- func.move.tiplabels.to.front(result, verbose = DEBUG_VERBOSE)
 
       # Store the plot with legend settings applied
       values$current_plot <- result
