@@ -14543,7 +14543,17 @@ server <- function(input, output, session) {
         key_height <- if (!is.null(legend_settings$key_height)) legend_settings$key_height else 1
 
         # v180: Get background settings
-        box_bg <- if (!is.null(legend_settings$box_background)) legend_settings$box_background else "transparent"
+        # S1.5: Fix RGBA colors from colourpicker - extract RGB portion if 8-char hex
+        # colourpicker with allowTransparent=TRUE returns #RRGGBBAA format
+        # where AA is alpha (00=transparent, FF=opaque). We convert to #RRGGBB for ggplot2.
+        box_bg_raw <- if (!is.null(legend_settings$box_background)) legend_settings$box_background else "transparent"
+        if (!is.null(box_bg_raw) && nchar(box_bg_raw) == 9 && substr(box_bg_raw, 1, 1) == "#") {
+          # 8-char hex with # prefix = #RRGGBBAA, extract just #RRGGBB
+          box_bg <- substr(box_bg_raw, 1, 7)
+          cat(file=stderr(), paste0("[DEBUG] Converted RGBA '", box_bg_raw, "' to RGB '", box_bg, "'\n"))
+        } else {
+          box_bg <- box_bg_raw
+        }
         legend_margin_val <- if (!is.null(legend_settings$margin)) legend_settings$margin else 0.2
 
         # v179: Use horizontal spacing for top/bottom, vertical spacing for left/right
