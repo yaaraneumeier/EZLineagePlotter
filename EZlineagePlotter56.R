@@ -8757,14 +8757,11 @@ server <- function(input, output, session) {
 
   # v112: Bootstrap position offset observer - makes slider immediately responsive
   # S1-PERF: Using debounced version to prevent rapid plot regeneration
-  observe({
-    val <- man_boot_x_offset_d()
-    req(val)  # Don't run until value is available
+  observeEvent(man_boot_x_offset_d(), {
     req(values$plot_ready, input$show_bootstrap == TRUE)
     debug_cat("\n===observe man_boot_x_offset_d FIRED (debounced)===\n")
-    debug_cat("New value:", val, "\n")
     generate_plot()
-  })
+  }, ignoreInit = TRUE)
 
   # Process YAML configuration when loaded
   observeEvent(input$yaml_config, {
@@ -13748,33 +13745,27 @@ server <- function(input, output, session) {
   # })
   
   # These trigger plot regeneration when user changes display settings
-  
+
   # Tip font size
   # S1-PERF: Using debounced version to prevent rapid plot regeneration
-  observe({
-    val <- tip_font_size_d()
-    req(val)
+  observeEvent(tip_font_size_d(), {
     req(values$plot_ready)  # Only if plot has been generated at least once
     generate_plot()
-  })
+  }, ignoreInit = TRUE)
 
   # Edge width
   # S1-PERF: Using debounced version to prevent rapid plot regeneration
-  observe({
-    val <- edge_width_d()
-    req(val)
+  observeEvent(edge_width_d(), {
     req(values$plot_ready)
     generate_plot()
-  })
+  }, ignoreInit = TRUE)
 
   # Tip length
   # S1-PERF: Using debounced version to prevent rapid plot regeneration
-  observe({
-    val <- tip_length_d()
-    req(val)
+  observeEvent(tip_length_d(), {
     req(values$plot_ready)
     generate_plot()
-  })
+  }, ignoreInit = TRUE)
   
   # Trim tips checkbox
   observeEvent(input$trim_tips, {
@@ -13912,13 +13903,11 @@ server <- function(input, output, session) {
   
   # === NEW: Reactive observer for node number font size ===
   # S1-PERF: Using debounced version to prevent rapid plot regeneration
-  observe({
-    val <- node_number_font_size_d()
-    req(val)
+  observeEvent(node_number_font_size_d(), {
     req(values$plot_ready)
     req(input$display_node_numbers == TRUE)  # Only regenerate if node numbers are displayed
     generate_plot()
-  })
+  }, ignoreInit = TRUE)
   
   # === NEW: Reactive observer for display node numbers checkbox ===
   observeEvent(input$display_node_numbers, {
@@ -15342,19 +15331,15 @@ server <- function(input, output, session) {
 
   # v141: Observer for plot position X slider
   # S1-PERF: Using debounced version to prevent rapid updates
-  observe({
-    val <- plot_offset_x_d()
-    req(!is.null(val))
-    values$plot_offset_x <- val
-  })
+  observeEvent(plot_offset_x_d(), {
+    values$plot_offset_x <- plot_offset_x_d()
+  }, ignoreInit = TRUE)
 
   # v141: Observer for plot position Y slider
   # S1-PERF: Using debounced version to prevent rapid updates
-  observe({
-    val <- plot_offset_y_d()
-    req(!is.null(val))
-    values$plot_offset_y <- val
-  })
+  observeEvent(plot_offset_y_d(), {
+    values$plot_offset_y <- plot_offset_y_d()
+  }, ignoreInit = TRUE)
 
   # v141: Reset plot position button
   observeEvent(input$reset_plot_position, {
@@ -15366,11 +15351,9 @@ server <- function(input, output, session) {
 
   # v146: Observer for plot scale slider
   # S1-PERF: Using debounced version to prevent rapid updates
-  observe({
-    val <- plot_scale_percent_d()
-    req(!is.null(val))
-    values$plot_scale_percent <- val
-  })
+  observeEvent(plot_scale_percent_d(), {
+    values$plot_scale_percent <- plot_scale_percent_d()
+  }, ignoreInit = TRUE)
 
   # v146: Reset plot scale button
   observeEvent(input$reset_plot_scale, {
@@ -15380,19 +15363,15 @@ server <- function(input, output, session) {
 
   # v179: Observer for tree stretch X slider (horizontal length)
   # S1-PERF: Using debounced version to prevent rapid updates
-  observe({
-    val <- tree_stretch_x_d()
-    req(!is.null(val))
-    values$tree_stretch_x <- val
-  })
+  observeEvent(tree_stretch_x_d(), {
+    values$tree_stretch_x <- tree_stretch_x_d()
+  }, ignoreInit = TRUE)
 
   # v179: Observer for tree stretch Y slider (vertical width)
   # S1-PERF: Using debounced version to prevent rapid updates
-  observe({
-    val <- tree_stretch_y_d()
-    req(!is.null(val))
-    values$tree_stretch_y <- val
-  })
+  observeEvent(tree_stretch_y_d(), {
+    values$tree_stretch_y <- tree_stretch_y_d()
+  }, ignoreInit = TRUE)
 
   # v179: Reset tree stretch button
   observeEvent(input$reset_tree_stretch, {
