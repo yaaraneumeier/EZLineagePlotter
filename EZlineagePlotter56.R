@@ -78,11 +78,13 @@ options(shiny.maxRequestSize = 100*1024^2)
 #       - All v180 features included and tested
 
 # ============================================================================
-# VERSION S1.5 (Bug Fix - Legend Background)
+# VERSION S1.6 (Stable Release)
 # ============================================================================
+# S1.6: Stable release with performance optimizations and bug fixes
+#       - All S1.x improvements consolidated and tested
 # S1.5: Fixed Legend Background not working
 #       - Added legend.background theme element for individual legend panel backgrounds
-#       - Previously only legend.box.background was set (outer container only)
+#       - Fixed RGBA color handling from colourpicker (convert to RGB)
 # S1.4: Performance optimization - Reduce redundant recalculations
 #       - Added plot_trigger mechanism to batch rapid updates (100ms debounce)
 #       - Converted observers to use request_plot_update() instead of direct generate_plot()
@@ -95,7 +97,7 @@ options(shiny.maxRequestSize = 100*1024^2)
 #       - Layer reordering now happens ONCE at the end in generate_plot()
 # S1.2: Fixed undefined x_range_min in func_highlight causing "Problem while
 #       computing aesthetics" error when adding 2+ highlights with a heatmap.
-VERSION <- "S1.5"
+VERSION <- "S1.6"
 
 # Debug output control - set to TRUE to enable verbose console logging
 # For production/stable use, keep this FALSE for better performance
@@ -7319,23 +7321,21 @@ ui <- dashboardPage(
             solidHeader = TRUE,
             width = 12,
             collapsible = TRUE,
-            tags$div(style = "background: #cce5ff; padding: 15px; border-radius: 5px; border: 2px solid #004085;",
-                     tags$h4(style = "color: #004085; margin: 0;", "Version S1.5 (Bug Fix)"),
-                     tags$p(style = "margin: 10px 0 0 0; color: #004085;",
-                            "Fixed Legend Background feature.",
+            tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #155724;",
+                     tags$h4(style = "color: #155724; margin: 0;", "Version S1.6 (Stable)"),
+                     tags$p(style = "margin: 10px 0 0 0; color: #155724;",
+                            "Stable release with performance optimizations and bug fixes.",
                             tags$br(), tags$br(),
-                            tags$strong("Bug fix in S1.5:"),
+                            tags$strong("Performance improvements:"),
                             tags$ul(
-                              tags$li("Legend Background color now works correctly")
-                            ),
-                            tags$strong("Performance from S1.4:"),
-                            tags$ul(
+                              tags$li("Optimized layer management - faster rendering"),
                               tags$li("Plot trigger mechanism batches rapid updates"),
-                              tags$li("Reduced debug logging overhead")
+                              tags$li("Reduced redundant recalculations")
                             ),
-                            tags$strong("Bug fixes from S1.2:"),
+                            tags$strong("Bug fixes:"),
                             tags$ul(
-                              tags$li("Fixed 2+ highlights with heatmap causing app to get stuck")
+                              tags$li("Legend Background color now works correctly"),
+                              tags$li("Fixed 2+ highlights with heatmap issue")
                             ),
                             tags$strong("Base Features (from S1):"),
                             tags$ul(
@@ -14550,7 +14550,6 @@ server <- function(input, output, session) {
         if (!is.null(box_bg_raw) && nchar(box_bg_raw) == 9 && substr(box_bg_raw, 1, 1) == "#") {
           # 8-char hex with # prefix = #RRGGBBAA, extract just #RRGGBB
           box_bg <- substr(box_bg_raw, 1, 7)
-          cat(file=stderr(), paste0("[DEBUG] Converted RGBA '", box_bg_raw, "' to RGB '", box_bg, "'\n"))
         } else {
           box_bg <- box_bg_raw
         }
@@ -14562,7 +14561,6 @@ server <- function(input, output, session) {
         # Build theme modifications for legend
         # v180: Added key width/height, title-key spacing, box background, margin
         # S1.5: Fixed - added legend.background and legend.key for proper background coloring
-        cat(file=stderr(), paste0("[DEBUG] Legend box_bg value: '", box_bg, "'\n"))
         legend_theme <- theme(
           legend.position = legend_settings$position,
           legend.title = element_text(size = legend_settings$title_size, face = "bold"),
