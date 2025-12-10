@@ -78,12 +78,16 @@ options(shiny.maxRequestSize = 100*1024^2)
 #       - All v180 features included and tested
 
 # ============================================================================
-# VERSION S1.2 (Fix - Second Highlight with Heatmap Bug)
+# VERSION S1.3 (Performance - Layer Management Optimization)
 # ============================================================================
+# S1.3: Performance optimization - Layer management
+#       - Reduced func.move.tiplabels.to.front() calls from 3+ per render to 1
+#       - Removed redundant intermediate calls in func_highlight and func.print.lineage.tree
+#       - Optimized function: uses vapply instead of sapply, removed debug I/O overhead
+#       - Layer reordering now happens ONCE at the end in generate_plot()
 # S1.2: Fixed undefined x_range_min in func_highlight causing "Problem while
 #       computing aesthetics" error when adding 2+ highlights with a heatmap.
-#       The second and third highlight ellipses were using an undefined variable.
-VERSION <- "S1.2"
+VERSION <- "S1.3"
 
 # Debug output control - set to TRUE to enable verbose console logging
 # For production/stable use, keep this FALSE for better performance
@@ -376,62 +380,37 @@ func.repair.ggtree.mapping <- function(p, verbose = FALSE) {
 
 # v180: Function to move tip label layers to the end of the layer stack
 # This ensures tip labels render ON TOP of other elements (highlight ellipses, heatmaps, etc.)
-# Called after all layers are added and before final rendering
-func.move.tiplabels.to.front <- function(p, verbose = DEBUG_VERBOSE) {
-  # DEBUG-2ND-HIGHLIGHT: Track entry/exit of this function
-  cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] ENTER func.move.tiplabels.to.front at ", format(Sys.time(), "%H:%M:%OS3"), "\n"))
+# Called ONCE after all layers are added and before final rendering (in generate_plot)
+# S1.3-PERF: Optimized - removed redundant debug logging, uses vectorized operations
+func.move.tiplabels.to.front <- function(p, verbose = FALSE) {
+  # S1.3-PERF: Removed per-call debug logging to reduce I/O overhead
+  # Only log when verbose=TRUE (disabled by default now)
 
+  # Early exit: no layers to process
   if (is.null(p$layers) || length(p$layers) == 0) {
-    cat(file=stderr(), "[DEBUG-2ND-HIGHLIGHT] EXIT func.move.tiplabels.to.front (no layers)\n")
     return(p)
   }
 
-  if (verbose) {
-    debug_cat(paste0("\n=== v180: MOVING TIP LABELS TO FRONT ===\n"))
-    debug_cat(paste0("  Initial layers: ", length(p$layers), "\n"))
-  }
+  # S1.3-PERF: Use vapply for type-safe vectorized operation (faster than sapply)
+  layer_types <- vapply(p$layers, function(l) class(l$geom)[1], character(1))
 
-  # Find all text-like layers (tip labels can be GeomText, GeomLabel, or GeomTiplab)
-  layer_types <- sapply(p$layers, function(l) class(l$geom)[1])
-
-  if (verbose) {
-    debug_cat(paste0("  Layer types: ", paste(layer_types, collapse=", "), "\n"))
-  }
-
-  # v180: Look for text-type layers that are likely tip labels
-  # geom_tiplab creates GeomText layers
+  # Find text-type layers (tip labels: GeomText, GeomLabel, or GeomTiplab)
   tiplab_indices <- which(layer_types %in% c("GeomText", "GeomLabel", "GeomTiplab"))
 
+  # Early exit: no text layers to move
   if (length(tiplab_indices) == 0) {
-    if (verbose) {
-      debug_cat(paste0("  No text layers (GeomText/GeomLabel) found\n"))
-    }
-    cat(file=stderr(), "[DEBUG-2ND-HIGHLIGHT] EXIT func.move.tiplabels.to.front (no text layers)\n")
     return(p)
   }
 
-  if (verbose) {
-    debug_cat(paste0("  Found text layers at indices: ", paste(tiplab_indices, collapse=", "), "\n"))
-  }
-
-  # Get the tip label layers
-  tiplab_layers <- p$layers[tiplab_indices]
-
-  # Get all other layers (non-tip-label)
+  # S1.3-PERF: Single-operation layer reordering (vectorized)
   other_indices <- setdiff(seq_along(p$layers), tiplab_indices)
-  other_layers <- p$layers[other_indices]
-
-  # Rebuild layers with tip labels at the end (renders on top)
-  p$layers <- c(other_layers, tiplab_layers)
+  p$layers <- c(p$layers[other_indices], p$layers[tiplab_indices])
 
   if (verbose) {
-    new_layer_types <- sapply(p$layers, function(l) class(l$geom)[1])
-    debug_cat(paste0("  Reordered: ", paste(new_layer_types, collapse=", "), "\n"))
-    debug_cat(paste0("  Text layers now at end (render on top)\n"))
-    debug_cat(paste0("================================\n"))
+    debug_cat(paste0("[PERF] func.move.tiplabels.to.front: moved ", length(tiplab_indices),
+                     " text layer(s) to front\n"))
   }
 
-  cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] EXIT func.move.tiplabels.to.front at ", format(Sys.time(), "%H:%M:%OS3"), "\n"))
   return(p)
 }
 
@@ -1669,17 +1648,17 @@ func_highlight <- function(p, how_many_hi, heat_flag, high_color_list, a, b, man
                      fill = high_color_list[[3]], alpha = alpha_val3, linetype = "blank", show.legend = FALSE)
     }
   }
-  
+
   # v180: REMOVED legacy layer reordering code that was causing heatmap corruption
   # The old code (Bug #11 fix) assumed a specific layer order and would scramble layers
   # when there were 8+ layers. With multiple heatmaps (3+), this caused the first heatmap
   # to disappear. Layer ordering is now handled by func.move.tiplabels.to.front() at the
   # END of func.print.lineage.tree (line ~7065), not here after each ellipse addition.
 
-  # S1-PERF-REVERTED: Restored call - removing it caused second highlight to get stuck
-  # Multiple highlights require layer reordering after ellipses are added
-  cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] func_highlight: calling func.move.tiplabels.to.front at ", format(Sys.time(), "%H:%M:%OS3"), "\n"))
-  p <- func.move.tiplabels.to.front(p, verbose = DEBUG_VERBOSE)
+  # S1.3-PERF: Removed intermediate call to func.move.tiplabels.to.front() here
+  # Layer reordering is now done ONCE at the end in generate_plot()
+  # The "second highlight stuck" bug was caused by undefined x_range_min (fixed in S1.2),
+  # not by missing layer reordering calls. This saves ~2-3 redundant function calls per render.
 
   cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] EXIT func_highlight at ", format(Sys.time(), "%H:%M:%OS3"), ", layers=", length(p$layers), "\n"))
   return(p)
@@ -7085,9 +7064,9 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   # This fixes the "@mapping must be <ggplot2::mapping>" error in newer ggplot2 versions
   p <- func.repair.ggtree.mapping(p)
 
-  # v180: Move tip labels to front so they render on top of highlight ellipses
-  # This ensures tip names are not hidden by other elements when heatmaps are added
-  p <- func.move.tiplabels.to.front(p)
+  # S1.3-PERF: Removed intermediate call to func.move.tiplabels.to.front() here
+  # Layer reordering is now done ONCE at the end in generate_plot() to avoid redundant calls.
+  # v180 original comment: "Move tip labels to front so they render on top of highlight ellipses"
 
   # v72: FINAL DEBUG - verify heatmap layer exists and inspect plot state
   debug_cat(paste0("\n=== v72: FINAL PLOT STATE BEFORE GGSAVE ===\n"))
@@ -7332,14 +7311,20 @@ ui <- dashboardPage(
             solidHeader = TRUE,
             width = 12,
             collapsible = TRUE,
-            tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "Version S1.2 (Bug Fix Release)"),
-                     tags$p(style = "margin: 10px 0 0 0; color: #155724;",
-                            "Fixed: Second highlight with heatmap no longer causes app to get stuck.",
+            tags$div(style = "background: #cce5ff; padding: 15px; border-radius: 5px; border: 2px solid #004085;",
+                     tags$h4(style = "color: #004085; margin: 0;", "Version S1.3 (Performance Optimization)"),
+                     tags$p(style = "margin: 10px 0 0 0; color: #004085;",
+                            "Optimized layer management for faster rendering.",
                             tags$br(), tags$br(),
-                            tags$strong("Bug Fix in S1.2:"),
+                            tags$strong("Performance improvements in S1.3:"),
                             tags$ul(
-                              tags$li("Fixed undefined x_range_min error when adding 2+ highlights with heatmap")
+                              tags$li("Reduced layer reordering calls from 3+ to 1 per render"),
+                              tags$li("Optimized func.move.tiplabels.to.front() with vapply"),
+                              tags$li("Removed redundant debug I/O overhead")
+                            ),
+                            tags$strong("Bug fix from S1.2:"),
+                            tags$ul(
+                              tags$li("Fixed 2+ highlights with heatmap causing app to get stuck")
                             ),
                             tags$strong("Base Features (from S1):"),
                             tags$ul(
@@ -14817,11 +14802,10 @@ server <- function(input, output, session) {
         debug_cat(paste0("  v30 Extra tab ERROR: ", e$message, "\n"))
       })
 
-      # S1-PERF-REVERTED: Restored call - removing it caused second highlight to get stuck
-      # Multiple highlights require layer reordering after all processing is complete
-      cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] generate_plot: calling func.move.tiplabels.to.front at ", format(Sys.time(), "%H:%M:%OS3"), "\n"))
-      result <- func.move.tiplabels.to.front(result, verbose = DEBUG_VERBOSE)
-      cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] generate_plot: returned from func.move.tiplabels.to.front at ", format(Sys.time(), "%H:%M:%OS3"), "\n"))
+      # S1.3-PERF: This is now the ONLY call to func.move.tiplabels.to.front()
+      # Layer reordering happens once here after all layers are added, not after each step
+      # This reduces redundant calls from 3+ per render to just 1
+      result <- func.move.tiplabels.to.front(result)
 
       # Store the plot with legend settings applied
       cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] generate_plot: storing plot in values$current_plot at ", format(Sys.time(), "%H:%M:%OS3"), "\n"))
