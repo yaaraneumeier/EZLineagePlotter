@@ -375,7 +375,11 @@ func.repair.ggtree.mapping <- function(p, verbose = FALSE) {
 # This ensures tip labels render ON TOP of other elements (highlight ellipses, heatmaps, etc.)
 # Called after all layers are added and before final rendering
 func.move.tiplabels.to.front <- function(p, verbose = DEBUG_VERBOSE) {
+  # DEBUG-2ND-HIGHLIGHT: Track entry/exit of this function
+  cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] ENTER func.move.tiplabels.to.front at ", format(Sys.time(), "%H:%M:%OS3"), "\n"))
+
   if (is.null(p$layers) || length(p$layers) == 0) {
+    cat(file=stderr(), "[DEBUG-2ND-HIGHLIGHT] EXIT func.move.tiplabels.to.front (no layers)\n")
     return(p)
   }
 
@@ -399,6 +403,7 @@ func.move.tiplabels.to.front <- function(p, verbose = DEBUG_VERBOSE) {
     if (verbose) {
       debug_cat(paste0("  No text layers (GeomText/GeomLabel) found\n"))
     }
+    cat(file=stderr(), "[DEBUG-2ND-HIGHLIGHT] EXIT func.move.tiplabels.to.front (no text layers)\n")
     return(p)
   }
 
@@ -423,6 +428,7 @@ func.move.tiplabels.to.front <- function(p, verbose = DEBUG_VERBOSE) {
     debug_cat(paste0("================================\n"))
   }
 
+  cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] EXIT func.move.tiplabels.to.front at ", format(Sys.time(), "%H:%M:%OS3"), "\n"))
   return(p)
 }
 
@@ -1518,6 +1524,11 @@ func.make.leaves_id_ordered_for_df440 <- function(leaves_id_from_tree1, dxdf440_
 func_highlight <- function(p, how_many_hi, heat_flag, high_color_list, a, b, man_adjust_elipse, pr440_short_tips_TRY,
                            boudariestt, debug_mode = FALSE, high_offset = 0, high_vertical_offset = 0,
                            high_alpha_list = NULL) {
+  # DEBUG-2ND-HIGHLIGHT: Track entry with details
+  cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] ENTER func_highlight at ", format(Sys.time(), "%H:%M:%OS3"), "\n"))
+  cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT]   how_many_hi=", how_many_hi, ", heat_flag=", heat_flag, "\n"))
+  cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT]   p$layers count=", length(p$layers), "\n"))
+
   up_offset <- -1 # -3
   y_off_base <- -8
 
@@ -1656,8 +1667,10 @@ func_highlight <- function(p, how_many_hi, heat_flag, high_color_list, a, b, man
 
   # S1-PERF-REVERTED: Restored call - removing it caused second highlight to get stuck
   # Multiple highlights require layer reordering after ellipses are added
+  cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] func_highlight: calling func.move.tiplabels.to.front at ", format(Sys.time(), "%H:%M:%OS3"), "\n"))
   p <- func.move.tiplabels.to.front(p, verbose = DEBUG_VERBOSE)
 
+  cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] EXIT func_highlight at ", format(Sys.time(), "%H:%M:%OS3"), ", layers=", length(p$layers), "\n"))
   return(p)
 }
 # v160: Helper function to add custom legends to gtable's legend area
@@ -13748,9 +13761,17 @@ server <- function(input, output, session) {
   
   # Add highlight
   observeEvent(input$add_highlight, {
-    req(input$enable_highlight, input$highlight_column, input$highlight_values, 
+    cat(file=stderr(), paste0("\n[DEBUG-2ND-HIGHLIGHT] *** ADD_HIGHLIGHT OBSERVER TRIGGERED at ", format(Sys.time(), "%H:%M:%OS3"), " ***\n"))
+    cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT]   input$enable_highlight=", input$enable_highlight, "\n"))
+    cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT]   input$highlight_column=", input$highlight_column, "\n"))
+    cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT]   input$highlight_values=", paste(input$highlight_values, collapse=", "), "\n"))
+    cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT]   num_classifications=", length(values$classifications), "\n"))
+
+    req(input$enable_highlight, input$highlight_column, input$highlight_values,
         length(values$classifications) > 0)
-    
+
+    cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT]   req() passed, proceeding...\n"))
+
     # Get selected values and their colors
     selected_values <- input$highlight_values
     
@@ -14028,7 +14049,26 @@ server <- function(input, output, session) {
   # Generate plot based on current settings
   # Generate plot based on current settings
   generate_plot <- function() {
-    
+    # DEBUG-2ND-HIGHLIGHT: Entry point with timestamp and highlight count
+    cat(file=stderr(), paste0("\n[DEBUG-2ND-HIGHLIGHT] ========================================\n"))
+    cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] ENTER generate_plot() at ", format(Sys.time(), "%H:%M:%OS3"), "\n"))
+    num_classifications <- if (!is.null(values$classifications)) length(values$classifications) else 0
+    cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT]   num_classifications=", num_classifications, "\n"))
+    total_highlights <- 0
+    if (!is.null(values$classifications)) {
+      for (ci in seq_along(values$classifications)) {
+        if (!is.null(values$classifications[[ci]]$highlight) &&
+            isTRUE(values$classifications[[ci]]$highlight$enabled)) {
+          total_highlights <- total_highlights + 1
+          cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT]   Classification ", ci, " has highlight with ",
+                                   length(values$classifications[[ci]]$highlight$items), " items\n"))
+        }
+      }
+    }
+    cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT]   total_highlights=", total_highlights, "\n"))
+    cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] ========================================\n"))
+
+    # DEBUG-2ND-HIGHLIGHT: Entry point with timestamp and highlight count
     # v53: cat(file=stderr(), "\nÃ°Å¸â€Âµ === generate_plot() ENTRY POINT ===\n")
     # v53: cat(file=stderr(), "Ã°Å¸â€Âµ classification_loading():", classification_loading(), "\n")
     # v53: cat(file=stderr(), "Ã°Å¸â€Âµ values$plot_generating:", values$plot_generating, "\n")
@@ -14344,6 +14384,7 @@ server <- function(input, output, session) {
       
       # Call func.print.lineage.tree with the temp YAML file
       # v54: Wrap in suppressWarnings to suppress -Inf and other harmless warnings
+      cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] CALLING func.print.lineage.tree at ", format(Sys.time(), "%H:%M:%OS3"), "\n"))
       tree_result <- suppressWarnings(func.print.lineage.tree(
         conf_yaml_path = temp_yaml_file,
         width = width_val,
@@ -14388,7 +14429,8 @@ server <- function(input, output, session) {
         # v135: Pass legend settings for highlight/bootstrap legends
         legend_settings = values$legend_settings
       ))
-      
+      cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] RETURNED from func.print.lineage.tree at ", format(Sys.time(), "%H:%M:%OS3"), "\n"))
+
       # Debug output
       # v53: cat(file=stderr(), "\n=== AFTER func.print.lineage.tree ===\n")
       # v53: cat(file=stderr(), "tree_result is NULL:", is.null(tree_result), "\n")
@@ -14753,9 +14795,12 @@ server <- function(input, output, session) {
 
       # S1-PERF-REVERTED: Restored call - removing it caused second highlight to get stuck
       # Multiple highlights require layer reordering after all processing is complete
+      cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] generate_plot: calling func.move.tiplabels.to.front at ", format(Sys.time(), "%H:%M:%OS3"), "\n"))
       result <- func.move.tiplabels.to.front(result, verbose = DEBUG_VERBOSE)
+      cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] generate_plot: returned from func.move.tiplabels.to.front at ", format(Sys.time(), "%H:%M:%OS3"), "\n"))
 
       # Store the plot with legend settings applied
+      cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] generate_plot: storing plot in values$current_plot at ", format(Sys.time(), "%H:%M:%OS3"), "\n"))
       values$current_plot <- result
 
       # v148: Extract and output all legend coordinates with coordinate system explanations
@@ -15096,7 +15141,9 @@ server <- function(input, output, session) {
     # FAILSAFE: Always ensure plot_generating is reset
     values$plot_generating <- FALSE
     values$progress_visible <- FALSE
-    
+
+    cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] EXIT generate_plot() at ", format(Sys.time(), "%H:%M:%OS3"), "\n"))
+    cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] ========================================\n\n"))
     # v53: cat(file=stderr(), "Finished generate_plot()\n")
   }  # End of generate_plot function
   
