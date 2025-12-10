@@ -78,9 +78,9 @@ options(shiny.maxRequestSize = 100*1024^2)
 #       - All v180 features included and tested
 
 # ============================================================================
-# VERSION S1 (STABLE RELEASE)
+# VERSION S1.1-dev (Development - Performance Optimizations)
 # ============================================================================
-VERSION <- "S1"
+VERSION <- "S1.1-dev"
 
 # Debug output control - set to TRUE to enable verbose console logging
 # For production/stable use, keep this FALSE for better performance
@@ -7299,17 +7299,21 @@ ui <- dashboardPage(
         tabName = "data_upload",
         fluidRow(
           box(
-            title = "EZLineagePlotter - Stable Release",
-            status = "success",
+            title = "EZLineagePlotter - Development",
+            status = "info",
             solidHeader = TRUE,
             width = 12,
             collapsible = TRUE,
-            tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "Version S1 (Stable)"),
-                     tags$p(style = "margin: 10px 0 0 0; color: #155724;",
-                            "Welcome to EZLineagePlotter! This is a stable release for phylogenetic tree visualization.",
+            tags$div(style = "background: #cce5ff; padding: 15px; border-radius: 5px; border: 2px solid #004085;",
+                     tags$h4(style = "color: #004085; margin: 0;", "Version S1.1-dev (Performance Optimizations)"),
+                     tags$p(style = "margin: 10px 0 0 0; color: #004085;",
+                            "Development version with performance improvements.",
                             tags$br(), tags$br(),
-                            tags$strong("Key Features:"),
+                            tags$strong("New in S1.1-dev:"),
+                            tags$ul(
+                              tags$li("Debounced slider inputs (300ms) - smoother UI when adjusting sliders")
+                            ),
+                            tags$strong("Base Features (from S1):"),
                             tags$ul(
                               tags$li("Tree visualization with classification coloring"),
                               tags$li("Multiple heatmaps with discrete/continuous color scales"),
