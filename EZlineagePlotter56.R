@@ -8385,16 +8385,26 @@ server <- function(input, output, session) {
     plot_generating = FALSE,  # Whether plot is currently being generated
     plot_ready = FALSE,  # Whether plot is ready to display
     # v121: Legend settings
+    # S1.5: Added all missing defaults for proper legend styling
     legend_settings = list(
       position = "right",
       show_classification = TRUE,
       show_highlight = TRUE,
       show_bootstrap = TRUE,
       show_heatmap = TRUE,
+      show_pvalue = TRUE,
       title_size = 12,
       text_size = 10,
       key_size = 1,
-      spacing = 0.3
+      key_width = 1,
+      key_height = 1,
+      spacing = 0.3,
+      spacing_vertical = 1,
+      title_key_spacing = 0.2,
+      key_spacing = 0.2,
+      reverse_order = FALSE,
+      box_background = "transparent",
+      margin = 0.2
     ),
     # v130: Extra tab - page title, custom texts, and images
     page_title = list(
@@ -14541,7 +14551,8 @@ server <- function(input, output, session) {
 
         # Build theme modifications for legend
         # v180: Added key width/height, title-key spacing, box background, margin
-        # S1.5: Fixed - added legend.background for individual legend panel backgrounds
+        # S1.5: Fixed - added legend.background and legend.key for proper background coloring
+        cat(file=stderr(), paste0("[DEBUG] Legend box_bg value: '", box_bg, "'\n"))
         legend_theme <- theme(
           legend.position = legend_settings$position,
           legend.title = element_text(size = legend_settings$title_size, face = "bold"),
@@ -14549,6 +14560,7 @@ server <- function(input, output, session) {
           legend.key.size = unit(legend_settings$key_size, "lines"),
           legend.key.width = unit(key_width, "lines"),    # v180: Custom key width
           legend.key.height = unit(key_height, "lines"),  # v180: Custom key height
+          legend.key = element_rect(fill = box_bg, colour = NA),  # S1.5: Key backgrounds match legend bg
           legend.spacing = unit(spacing_val, "cm"),
           legend.spacing.x = unit(h_spacing, "cm"),
           legend.spacing.y = unit(v_spacing, "cm"),
