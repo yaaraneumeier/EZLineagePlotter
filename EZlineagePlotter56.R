@@ -10084,6 +10084,9 @@ server <- function(input, output, session) {
   # Match tree tip labels with CSV IDs
   # Match tree tip labels with CSV IDs
   match_tree_with_csv <- function() {
+    # S1-PERF: Timing instrumentation to identify bottlenecks
+    perf_start_total <- Sys.time()
+
     # Validate all required inputs before attempting match
     if (is.null(values$tree)) {
       # v53: cat(file=stderr(), "ERROR: Cannot match - No tree loaded\n")
@@ -10145,7 +10148,10 @@ server <- function(input, output, session) {
     
     # Filter CSV by individual if needed
     filtered_csv <- values$csv_data
-    
+
+    # S1-PERF: Time individual filtering
+    perf_filter_start <- Sys.time()
+
     # Only filter if not using all data and individual column/value are selected
     if (!input$use_all_data && 
         !is.null(input$individual_column) && input$individual_column != "" &&
@@ -10176,25 +10182,37 @@ server <- function(input, output, session) {
     } else {
       # v53: print("Using all data (no individual filtering)")
     }
-    
+
+    # S1-PERF: End individual filtering timing
+    perf_filter_end <- Sys.time()
+    cat(file=stderr(), sprintf("[PERF] Individual filtering: %.3f sec\n",
+        as.numeric(difftime(perf_filter_end, perf_filter_start, units="secs"))))
+
     # Store the filtered CSV for use in other functions
     values$filtered_by_individual <- filtered_csv
-    
+
     # Get tree tips and CSV IDs
     tree_labels <- values$tree$tip.label
     csv_ids <- filtered_csv[[input$id_column]]
-    
+
     # Debug output
     # v53: print("Tree tip labels (first few):")
     # v53: print(head(tree_labels))
     # v53: print("CSV IDs column:")
     # v53: print(head(csv_ids))
-    
+
+    # S1-PERF: Time ID matching
+    perf_match_start <- Sys.time()
+
     # Attempt to match tree labels with CSV IDs
     match_result <- match_tree_ids_with_csv(tree_labels, csv_ids)
     values$id_match <- match_result
-    
-    
+
+    # S1-PERF: End ID matching timing
+    perf_match_end <- Sys.time()
+    cat(file=stderr(), sprintf("[PERF] ID matching (match_tree_ids_with_csv): %.3f sec\n",
+        as.numeric(difftime(perf_match_end, perf_match_start, units="secs"))))
+
     # STORE THE INFERRED TRIMMING PARAMETERS
     values$trimming_params <- match_result$trimming_params
     
@@ -10219,7 +10237,10 @@ server <- function(input, output, session) {
     # Debug the match result
     # v53: print("Match result summary:")
     # v53: print(match_result$summary)
-    
+
+    # S1-PERF: Time filtered CSV creation
+    perf_filtcsv_start <- Sys.time()
+
     # Create filtered CSV data with only the matched rows
     if (match_result$summary$exact_matches > 0 || 
         match_result$summary$numeric_matches > 0 || 
@@ -10239,7 +10260,12 @@ server <- function(input, output, session) {
     } else {
       values$filtered_csv <- NULL
     }
-    
+
+    # S1-PERF: End filtered CSV creation timing
+    perf_filtcsv_end <- Sys.time()
+    cat(file=stderr(), sprintf("[PERF] Filtered CSV creation: %.3f sec\n",
+        as.numeric(difftime(perf_filtcsv_end, perf_filtcsv_start, units="secs"))))
+
     # ADD THIS DEBUG OUTPUT HERE:
     # v53: cat(file=stderr(), "\n=== AFTER FILTERING SECTION ===\n")
     # v53: cat(file=stderr(), "Made it past the filtering block\n")
@@ -10338,6 +10364,9 @@ server <- function(input, output, session) {
       # v53: cat(file=stderr(), "About to check filtered_csv for temp file creation\n")
       # v53: cat(file=stderr(), "values$filtered_csv is NULL:", is.null(values$filtered_csv), "\n")
       
+      # S1-PERF: Time temp CSV writing
+      perf_tempcsv_start <- Sys.time()
+
       # Create temp CSV file IMMEDIATELY after filtering, BEFORE generate_plot
       if (!is.null(values$filtered_csv) && nrow(values$filtered_csv) > 0) {
         # v53: cat(file=stderr(), "Creating temp CSV file...\n")
@@ -10347,6 +10376,11 @@ server <- function(input, output, session) {
       } else {
         # v53: cat(file=stderr(), "WARNING: No filtered CSV data available for temp file\n")
       }
+
+      # S1-PERF: End temp CSV writing timing
+      perf_tempcsv_end <- Sys.time()
+      cat(file=stderr(), sprintf("[PERF] Temp CSV write: %.3f sec\n",
+          as.numeric(difftime(perf_tempcsv_end, perf_tempcsv_start, units="secs"))))
       # v53: cat(file=stderr(), "About to call generate_plot()\n")
       
       # Debug: Check filtered CSV state
@@ -10359,11 +10393,24 @@ server <- function(input, output, session) {
       # v53: cat(file=stderr(), "Ã°Å¸â€Â temp CSV exists:", file.exists(values$temp_csv_path), "\n")
       # v53: cat(file=stderr(), "Ã°Å¸â€Â About to call generate_plot()...\n\n")
       
+      # S1-PERF: Time generate_plot
+      perf_genplot_start <- Sys.time()
+
       # v53: cat(file=stderr(), "About to call generate_plot()\n")
       # Generate initial plot
       generate_plot()
       # v53: cat(file=stderr(), "Finished generate_plot()\n")
-      
+
+      # S1-PERF: End generate_plot timing
+      perf_genplot_end <- Sys.time()
+      cat(file=stderr(), sprintf("[PERF] generate_plot(): %.3f sec\n",
+          as.numeric(difftime(perf_genplot_end, perf_genplot_start, units="secs"))))
+
+      # S1-PERF: Total time
+      perf_end_total <- Sys.time()
+      cat(file=stderr(), sprintf("[PERF] === TOTAL Process Data: %.3f sec ===\n",
+          as.numeric(difftime(perf_end_total, perf_start_total, units="secs"))))
+
       # Show notification based on match quality
       if (match_warning_val) {
         showNotification(
