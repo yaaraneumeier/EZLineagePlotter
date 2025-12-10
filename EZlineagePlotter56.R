@@ -9117,6 +9117,22 @@ server <- function(input, output, session) {
     # Read CSV file
     tryCatch({
       csv_data <- read.csv(csv_file$datapath)
+
+      # S1-PERF: Filter out columns with empty/auto-generated names IMMEDIATELY
+      # This fixes the "large number of options" warnings and speeds up all processing
+      # Patterns: "...XXXX" (readr), "X", "X.1", "X.2" (base R), empty names
+      col_names <- names(csv_data)
+      is_auto_named <- grepl("^\\.\\.\\.", col_names) |  # readr pattern: ...15372
+                       grepl("^X(\\.\\d+)?$", col_names) |  # base R pattern: X, X.1, X.2
+                       col_names == "" | is.na(col_names)
+      valid_cols <- !is_auto_named
+      if (sum(!valid_cols) > 0) {
+        removed_count <- sum(!valid_cols)
+        cat(file=stderr(), sprintf("[PERF] Removed %d empty/auto-named columns on CSV load (keeping %d)\n",
+            removed_count, sum(valid_cols)))
+        csv_data <- csv_data[, valid_cols, drop = FALSE]
+      }
+
       values$csv_data <- csv_data
       # v107: Trigger heatmap UI regeneration when CSV data changes (new column choices)
       heatmap_ui_trigger(heatmap_ui_trigger() + 1)
