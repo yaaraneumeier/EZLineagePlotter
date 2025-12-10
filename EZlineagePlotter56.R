@@ -8801,8 +8801,7 @@ server <- function(input, output, session) {
     if (!is.null(yaml_data$`Individual general definitions`$`mapping csv file`) && 
         file.exists(yaml_data$`Individual general definitions`$`mapping csv file`)) {
       csv_file <- yaml_data$`Individual general definitions`$`mapping csv file`
-      # S1-PERF: Use readr::read_csv (from tidyverse) - ~5-10x faster than read.csv for large files
-      csv_data <- as.data.frame(readr::read_csv(csv_file, show_col_types = FALSE))
+      csv_data <- read.csv(csv_file)
       values$csv_data <- csv_data
       # v107: Trigger heatmap UI regeneration when CSV data changes (new column choices)
       heatmap_ui_trigger(heatmap_ui_trigger() + 1)
@@ -9117,8 +9116,7 @@ server <- function(input, output, session) {
     
     # Read CSV file
     tryCatch({
-      # S1-PERF: Use readr::read_csv (from tidyverse) - ~5-10x faster than read.csv for large files
-      csv_data <- as.data.frame(readr::read_csv(csv_file$datapath, show_col_types = FALSE))
+      csv_data <- read.csv(csv_file$datapath)
       values$csv_data <- csv_data
       # v107: Trigger heatmap UI regeneration when CSV data changes (new column choices)
       heatmap_ui_trigger(heatmap_ui_trigger() + 1)
