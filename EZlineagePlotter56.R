@@ -15730,11 +15730,6 @@ server <- function(input, output, session) {
     })
   })
 
-  # Update YAML output
-  output$yaml_output <- renderText({
-    yaml::as.yaml(values$yaml_data, indent.mapping.sequence = TRUE)
-  })
-
   ###################
 
   # S1.62dev: Define YAML content reactive - COMPLETE export of all visual settings
