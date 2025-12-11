@@ -12852,12 +12852,54 @@ server <- function(input, output, session) {
       
       # Continuous palette change
       # S1.62dev: Fixed - also update values$heatmaps and trigger plot regeneration
+      # S1.62dev: Also update Low/High/Mid color inputs based on selected palette
       observeEvent(input[[paste0("heatmap_cont_palette_", i)]], {
         if (i <= length(values$heatmap_configs)) {
-          values$heatmap_configs[[i]]$cont_palette <- input[[paste0("heatmap_cont_palette_", i)]]
+          palette_name <- input[[paste0("heatmap_cont_palette_", i)]]
+          values$heatmap_configs[[i]]$cont_palette <- palette_name
+
+          # S1.62dev: Define color mappings for each palette
+          palette_colors <- list(
+            # Sequential palettes (low=light, high=dark)
+            Blues = list(low = "#DEEBF7", high = "#08519C", mid = "#6BAED6"),
+            Greens = list(low = "#E5F5E0", high = "#006D2C", mid = "#74C476"),
+            Reds = list(low = "#FEE0D2", high = "#A50F15", mid = "#FB6A4A"),
+            Purples = list(low = "#EFEDF5", high = "#54278F", mid = "#9E9AC8"),
+            Oranges = list(low = "#FEE6CE", high = "#A63603", mid = "#FD8D3C"),
+            # Viridis family
+            Viridis = list(low = "#FDE725", high = "#440154", mid = "#21918C"),
+            Plasma = list(low = "#F0F921", high = "#0D0887", mid = "#CC4778"),
+            Inferno = list(low = "#FCFFA4", high = "#000004", mid = "#BB3754"),
+            Magma = list(low = "#FCFDBF", high = "#000004", mid = "#B63679"),
+            # Diverging palettes (low=color1, mid=neutral, high=color2)
+            RdBu = list(low = "#2166AC", high = "#B2182B", mid = "#F7F7F7"),
+            RdYlGn = list(low = "#D73027", high = "#1A9850", mid = "#FFFFBF"),
+            PiYG = list(low = "#C51B7D", high = "#4D9221", mid = "#F7F7F7"),
+            BrBG = list(low = "#8C510A", high = "#01665E", mid = "#F5F5F5")
+          )
+
+          # Update color inputs if palette is recognized
+          if (palette_name %in% names(palette_colors)) {
+            colors <- palette_colors[[palette_name]]
+            colourpicker::updateColourInput(session, paste0("heatmap_low_color_", i), value = colors$low)
+            colourpicker::updateColourInput(session, paste0("heatmap_high_color_", i), value = colors$high)
+            colourpicker::updateColourInput(session, paste0("heatmap_mid_color_", i), value = colors$mid)
+
+            # Also update config
+            values$heatmap_configs[[i]]$low_color <- colors$low
+            values$heatmap_configs[[i]]$high_color <- colors$high
+            values$heatmap_configs[[i]]$mid_color <- colors$mid
+          }
+
           # S1.62dev: Also update values$heatmaps if it exists (heatmap was already applied)
           if (!is.null(values$heatmaps) && i <= length(values$heatmaps)) {
-            values$heatmaps[[i]]$cont_palette <- input[[paste0("heatmap_cont_palette_", i)]]
+            values$heatmaps[[i]]$cont_palette <- palette_name
+            if (palette_name %in% names(palette_colors)) {
+              colors <- palette_colors[[palette_name]]
+              values$heatmaps[[i]]$low_color <- colors$low
+              values$heatmaps[[i]]$high_color <- colors$high
+              values$heatmaps[[i]]$mid_color <- colors$mid
+            }
             request_plot_update()
           }
         }
@@ -15274,16 +15316,25 @@ server <- function(input, output, session) {
 
         debug_cat(paste0("GGPLOT LEGENDS (Grid Coordinates):\n"))
         # Find all legend grobs
-        legend_grobs <- which(grepl("guide-box", plot_gtable$layout$name))
+        # S1.62dev: Added safer NA handling to prevent "missing value where TRUE/FALSE needed"
+        layout_names <- plot_gtable$layout$name
+        if (!is.null(layout_names) && length(layout_names) > 0) {
+          # Use na.rm-safe grep that treats NA as FALSE
+          legend_grobs <- which(sapply(layout_names, function(x) {
+            !is.na(x) && grepl("guide-box", x)
+          }))
+        } else {
+          legend_grobs <- integer(0)
+        }
         if (length(legend_grobs) > 0) {
-          for (i in seq_along(legend_grobs)) {
-            leg_idx <- legend_grobs[i]
+          for (leg_i in seq_along(legend_grobs)) {
+            leg_idx <- legend_grobs[leg_i]
             leg_name <- plot_gtable$layout$name[leg_idx]
             leg_l <- plot_gtable$layout$l[leg_idx]
             leg_r <- plot_gtable$layout$r[leg_idx]
             leg_t <- plot_gtable$layout$t[leg_idx]
             leg_b <- plot_gtable$layout$b[leg_idx]
-            debug_cat(paste0("  Legend Box ", i, " ('", leg_name, "'):\n"))
+            debug_cat(paste0("  Legend Box ", leg_i, " ('", leg_name, "'):\n"))
             debug_cat(paste0("    Grid cell: column ", leg_l, "-", leg_r, ", row ", leg_t, "-", leg_b, "\n"))
           }
         } else {
@@ -15294,10 +15345,13 @@ server <- function(input, output, session) {
         scales_info <- plot_build$plot$scales$scales
         if (!is.null(scales_info) && length(scales_info) > 0) {
           debug_cat(paste0("\n  Active Scales with Legends:\n"))
-          for (i in seq_along(scales_info)) {
-            scale_obj <- scales_info[[i]]
-            if (!is.null(scale_obj$name) && nchar(as.character(scale_obj$name)) > 0) {
-              debug_cat(paste0("    - '", scale_obj$name, "' (", paste(scale_obj$aesthetics, collapse=", "), ")\n"))
+          for (scale_i in seq_along(scales_info)) {
+            scale_obj <- scales_info[[scale_i]]
+            # S1.62dev: Safer check for scale name - handle NA and NULL
+            scale_name <- tryCatch(scale_obj$name, error = function(e) NULL)
+            if (!is.null(scale_name) && !is.na(scale_name) && nchar(as.character(scale_name)) > 0) {
+              aesthetics_str <- tryCatch(paste(scale_obj$aesthetics, collapse=", "), error = function(e) "unknown")
+              debug_cat(paste0("    - '", scale_name, "' (", aesthetics_str, ")\n"))
             }
           }
         }
