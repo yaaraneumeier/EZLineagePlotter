@@ -3275,6 +3275,13 @@ func.print.lineage.tree <- function(conf_yaml_path,
                 param[['colnames_angle']] <- 45
               }
 
+              # S1.62dev: Get show_colnames flag (default TRUE)
+              if ('show_colnames' %in% names(heat_map_i_def)) {
+                param[['show_colnames']] <- func.check.bin.val.from.conf(heat_map_i_def[['show_colnames']])
+              } else {
+                param[['show_colnames']] <- TRUE
+              }
+
               # v105: Get row labels settings
               if ('show_row_labels' %in% names(heat_map_i_def)) {
                 param[['show_row_labels']] <- func.check.bin.val.from.conf(heat_map_i_def[['show_row_labels']])
@@ -3464,6 +3471,13 @@ func.print.lineage.tree <- function(conf_yaml_path,
                 param[['colnames_angle']] <- as.numeric(heat_map_i_def[['colnames_angle']])
               } else {
                 param[['colnames_angle']] <- 45
+              }
+
+              # S1.62dev: Get show_colnames flag (default TRUE) for continuous heatmaps too
+              if ('show_colnames' %in% names(heat_map_i_def)) {
+                param[['show_colnames']] <- func.check.bin.val.from.conf(heat_map_i_def[['show_colnames']])
+              } else {
+                param[['show_colnames']] <- TRUE
               }
 
               # v105: Get row labels settings for continuous heatmaps too
@@ -6112,13 +6126,15 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       p <- tt
       
       # Handle column names
-      if (is.na(flag_colnames[1])) {
-        for (a in 1:length(heat_map_title_list)) {
-          flag_colnames[a] <- FALSE
-        }
+      # S1.62dev: Use per-heatmap show_colnames from heat_param if available, else fall back to flag_colnames
+      show_colnames_for_heatmap <- TRUE  # default to showing
+      if (!is.null(heat_param) && 'show_colnames' %in% names(heat_param)) {
+        show_colnames_for_heatmap <- heat_param[['show_colnames']]
+      } else if (!is.na(flag_colnames[1]) && j1 <= length(flag_colnames)) {
+        show_colnames_for_heatmap <- flag_colnames[j1]
       }
-      
-      if (flag_colnames[j1] == FALSE) {
+
+      if (show_colnames_for_heatmap == FALSE) {
         dt <- dxdf440_for_heat[[j1]]
         colnames_len <- length(colnames(dt))
         custom_column_labels <- rep("", colnames_len)
@@ -9282,7 +9298,8 @@ server <- function(input, output, session) {
         new_config <- list(
           columns = if (!is.null(h$columns)) unlist(h$columns) else character(0),
           title = if (!is.null(h$title)) h$title else paste0("Heatmap ", i),
-          auto_type = FALSE,
+          # S1.62dev: Import auto_type flag, default to FALSE for backward compatibility
+          auto_type = if (!is.null(h$auto_type)) func.check.bin.val.from.conf(h$auto_type) else FALSE,
           type = if (!is.null(h$is_discrete) && func.check.bin.val.from.conf(h$is_discrete)) "discrete" else "continuous",
           show_colnames = if (!is.null(h$show_colnames)) func.check.bin.val.from.conf(h$show_colnames) else TRUE,
           colnames_angle = if (!is.null(h$colnames_angle)) as.numeric(h$colnames_angle) else 45,
@@ -10179,6 +10196,9 @@ server <- function(input, output, session) {
             # v109: Add colnames_angle
             heatmap_item[[as.character(j)]]$colnames_angle <- if (!is.null(heatmap_entry$colnames_angle)) heatmap_entry$colnames_angle else 45
 
+            # S1.62dev: Add show_colnames flag for column name visibility
+            heatmap_item[[as.character(j)]]$show_colnames <- if (!is.null(heatmap_entry$show_colnames) && heatmap_entry$show_colnames) "yes" else "no"
+
             # v105: Add row labels settings
             heatmap_item[[as.character(j)]]$show_row_labels <- if (!is.null(heatmap_entry$show_row_labels) && heatmap_entry$show_row_labels) "yes" else "no"
             heatmap_item[[as.character(j)]]$row_label_source <- if (!is.null(heatmap_entry$row_label_source)) heatmap_entry$row_label_source else "colnames"
@@ -10383,6 +10403,9 @@ server <- function(input, output, session) {
 
           # v109: Add colnames_angle
           heatmap_item[[as.character(j)]]$colnames_angle <- if (!is.null(heatmap_entry$colnames_angle)) heatmap_entry$colnames_angle else 45
+
+          # S1.62dev: Add show_colnames flag for column name visibility
+          heatmap_item[[as.character(j)]]$show_colnames <- if (!is.null(heatmap_entry$show_colnames) && heatmap_entry$show_colnames) "yes" else "no"
 
           # v105: Add row labels settings
           heatmap_item[[as.character(j)]]$show_row_labels <- if (!is.null(heatmap_entry$show_row_labels) && heatmap_entry$show_row_labels) "yes" else "no"
@@ -16003,14 +16026,22 @@ server <- function(input, output, session) {
         heatmap_list[[i]] <- list(
           display = "yes",
           title = if (!is.null(cfg$title)) cfg$title else paste0("Heatmap ", i),
-          # S1.62dev: Use actual_type (computed from auto-detect) if available, otherwise fall back to type
+          # S1.62dev: Use actual_type (computed from auto-detect) if available
+          # If auto_type is TRUE but actual_type not computed yet, default to "no" (continuous)
+          # Only use cfg$type when auto_type is FALSE (user explicitly set the type)
           is_discrete = if (!is.null(cfg$actual_type)) {
             if (cfg$actual_type == "discrete") "yes" else "no"
+          } else if (is.null(cfg$auto_type) || cfg$auto_type == TRUE) {
+            # auto_type is enabled but actual_type not computed - can't reliably determine
+            # Default to "no" (continuous) as safer fallback
+            "no"
           } else if (!is.null(cfg$type) && cfg$type == "discrete") {
             "yes"
           } else {
             "no"
           },
+          # S1.62dev: Export auto_type flag so import knows whether to re-detect
+          auto_type = if (!is.null(cfg$auto_type) && cfg$auto_type) "yes" else "no",
           columns = if (!is.null(cfg$columns)) as.list(cfg$columns) else list(),
           distance = if (!is.null(cfg$distance)) cfg$distance else 0.02,
           height = if (!is.null(cfg$height)) cfg$height else 0.8,
