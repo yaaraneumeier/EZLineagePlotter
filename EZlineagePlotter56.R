@@ -8900,7 +8900,9 @@ server <- function(input, output, session) {
     cat(file=stderr(), "[YAML-IMPORT] Tree and CSV are loaded, proceeding with YAML parse\n")
 
     # S1.62dev: Use withProgress for visible feedback during import
-    withProgress(message = 'Importing YAML settings...', value = 0.1, {
+    # Show progress bar at top of page with notification style
+    withProgress(message = 'Importing YAML settings...', value = 0, style = 'notification', {
+      setProgress(value = 0.05, message = "Importing YAML settings...", detail = "Reading file...")
       yaml_data <- parse_yaml_config(input$yaml_config$datapath)
       if ("error" %in% names(yaml_data)) {
         cat(file=stderr(), "[YAML-IMPORT] ERROR parsing YAML:", yaml_data$error, "\n")
@@ -8909,7 +8911,7 @@ server <- function(input, output, session) {
         return()
       }
       cat(file=stderr(), "[YAML-IMPORT] YAML parsed successfully\n")
-      incProgress(0.2, detail = "Parsing complete")
+      setProgress(value = 0.2, detail = "File parsed successfully...")
     cat(file=stderr(), "[YAML-IMPORT] YAML keys:", paste(names(yaml_data), collapse=", "), "\n")
 
     # S1.62dev: Track what settings were imported
@@ -8939,7 +8941,7 @@ server <- function(input, output, session) {
     # Load display settings
     if (!is.null(yaml_data$`visual definitions`)) {
       
-      incProgress(0.3, detail = "Loading display settings...")
+      setProgress(value = 0.3, detail = "Loading display settings...")
 
       # Load Bootstrap settings
       if (!is.null(yaml_data$`visual definitions`$Bootstrap)) {
@@ -9074,7 +9076,7 @@ server <- function(input, output, session) {
         }
       }
 
-      incProgress(0.5, detail = "Loading classifications...")
+      setProgress(value = 0.5, detail = "Loading classifications...")
 
       # Load Classification settings
       if (!is.null(yaml_data$`visual definitions`$classification)) {
@@ -9263,7 +9265,7 @@ server <- function(input, output, session) {
       imported_settings <- c(imported_settings, "Output settings")
     }
 
-    incProgress(0.6, detail = "Loading heatmaps...")
+    setProgress(value = 0.6, detail = "Loading heatmaps...")
 
     # S1.62dev: Import heatmaps from new format
     if (!is.null(yaml_data$`visual definitions`$heatmaps) &&
@@ -9322,6 +9324,8 @@ server <- function(input, output, session) {
           title = if (!is.null(cfg$title)) cfg$title else "Heatmap",
           columns = cfg$columns,
           is_discrete = if (!is.null(cfg$type) && cfg$type == "discrete") TRUE else FALSE,
+          # S1.62dev: Include show_colnames for column name visibility
+          show_colnames = if (!is.null(cfg$show_colnames)) cfg$show_colnames else TRUE,
           colnames_angle = if (!is.null(cfg$colnames_angle)) cfg$colnames_angle else 45,
           discrete_palette = if (!is.null(cfg$discrete_palette)) cfg$discrete_palette else "Set1",
           # S1.62dev: color_scheme is what the plot function actually reads for discrete heatmaps
@@ -9364,7 +9368,7 @@ server <- function(input, output, session) {
       cat(file=stderr(), "[YAML-IMPORT] Imported", length(values$heatmap_configs), "heatmap configs\n")
     }
 
-    incProgress(0.75, detail = "Loading highlights...")
+    setProgress(value = 0.75, detail = "Loading highlights...")
 
     # S1.62dev: Import highlights from new format
     if (!is.null(yaml_data$`visual definitions`$highlights) &&
@@ -9484,8 +9488,8 @@ server <- function(input, output, session) {
     # Generate plot with imported settings
     request_plot_update()
 
-    # S1.62dev: Set status message and hide progress indicator
-    incProgress(0.9, detail = "Finalizing...")
+    # S1.62dev: Set status message and finalize
+    setProgress(value = 0.95, detail = "Finalizing...")
 
     if (length(imported_settings) > 0) {
       values$yaml_import_status <- paste0(
@@ -13754,6 +13758,11 @@ server <- function(input, output, session) {
         }
       }
 
+      # S1.62dev: Store the computed actual_type in config for export
+      if (i <= length(values$heatmap_configs)) {
+        values$heatmap_configs[[i]]$actual_type <- actual_type
+      }
+
       # v105/v111: Read per-heatmap settings
       current_distance <- input[[paste0("heatmap_distance_", i)]]
       current_height <- input[[paste0("heatmap_height_", i)]]
@@ -15994,7 +16003,14 @@ server <- function(input, output, session) {
         heatmap_list[[i]] <- list(
           display = "yes",
           title = if (!is.null(cfg$title)) cfg$title else paste0("Heatmap ", i),
-          is_discrete = if (!is.null(cfg$type) && cfg$type == "discrete") "yes" else "no",
+          # S1.62dev: Use actual_type (computed from auto-detect) if available, otherwise fall back to type
+          is_discrete = if (!is.null(cfg$actual_type)) {
+            if (cfg$actual_type == "discrete") "yes" else "no"
+          } else if (!is.null(cfg$type) && cfg$type == "discrete") {
+            "yes"
+          } else {
+            "no"
+          },
           columns = if (!is.null(cfg$columns)) as.list(cfg$columns) else list(),
           distance = if (!is.null(cfg$distance)) cfg$distance else 0.02,
           height = if (!is.null(cfg$height)) cfg$height else 0.8,
