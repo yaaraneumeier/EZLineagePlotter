@@ -14938,21 +14938,19 @@ server <- function(input, output, session) {
       built_plot  # This will be the return value of tryCatch
       
     }, error = function(e) {
-      # Print full error details to console for debugging
-      # v53: cat(file=stderr(), "\n=== ERROR in generate_plot ===\n")
-      # v53: cat(file=stderr(), "Error message:", e$message, "\n")
-      # v53: cat(file=stderr(), "Full error:\n")
-      # v53: print(e)
-      # v53: debug_cat("================================\n\n")
-      
+      # S1.62dev: Print full error details to console for debugging
+      cat(file=stderr(), "\n=== ERROR in generate_plot tryCatch ===\n")
+      cat(file=stderr(), paste0("Error message: ", e$message, "\n"))
+      cat(file=stderr(), paste0("Error call: ", deparse(e$call), "\n"))
+
       # IMPORTANT: Hide progress bar when error occurs
       values$progress_visible <- FALSE
       values$progress_message <- ""
       values$plot_generating <- FALSE
-      
+
       # Show user-friendly notification
       showNotification(
-        paste("Plot generation failed:", e$message), 
+        paste("Plot generation failed:", e$message),
         type = "error",
         duration = 10
       )
@@ -15494,8 +15492,32 @@ server <- function(input, output, session) {
           debug_cat(paste0("  Y position offset: ", round(y_pos_offset, 3), "\n"))
           debug_cat(paste0("  Final position: (", round(center_x, 3), ", ", round(center_y, 3), ")\n"))
 
+          # S1.62dev: Validate cowplot parameters to prevent potential crashes
+          # Ensure dimensions are within reasonable bounds
+          if (final_width < 0.01) {
+            cat(file=stderr(), paste0("[WARN] final_width too small (", final_width, "), clamping to 0.01\n"))
+            final_width <- 0.01
+          }
+          if (final_height < 0.01) {
+            cat(file=stderr(), paste0("[WARN] final_height too small (", final_height, "), clamping to 0.01\n"))
+            final_height <- 0.01
+          }
+          if (final_width > 3) {
+            cat(file=stderr(), paste0("[WARN] final_width too large (", final_width, "), clamping to 3\n"))
+            final_width <- 3
+          }
+          if (final_height > 3) {
+            cat(file=stderr(), paste0("[WARN] final_height too large (", final_height, "), clamping to 3\n"))
+            final_height <- 3
+          }
+          # Recalculate center after clamping
+          center_x <- (1 - final_width) / 2 + x_pos_offset
+          center_y <- (1 - final_height) / 2 + y_pos_offset
+
           # Use ggdraw to create a canvas and draw_plot to position and scale the plot
           # v180: Now includes proportions preservation for orientation changes
+          cat(file=stderr(), paste0("[DEBUG] Creating cowplot canvas: x=", round(center_x,3), ", y=", round(center_y,3),
+                                   ", w=", round(final_width,3), ", h=", round(final_height,3), "\n"))
           plot_to_save <- cowplot::ggdraw() +
             cowplot::draw_plot(result, x = center_x, y = center_y,
                               width = final_width, height = final_height)
@@ -15567,8 +15589,20 @@ server <- function(input, output, session) {
 
         # v53: cat(file=stderr(), "Calling ggsave...\n")
         # v54: Wrap in suppressWarnings to suppress scale warnings
+        # S1.62dev: Added dimension logging for crash diagnosis
         cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] About to call ggsave at ", format(Sys.time(), "%H:%M:%OS3"), "\n"))
         cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT]   temp_plot_file=", temp_plot_file, "\n"))
+        cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT]   preview dimensions: ", round(preview_width, 2), "x", round(preview_height, 2), " in\n"))
+
+        # S1.62dev: Validate preview dimensions before ggsave
+        if (is.na(preview_width) || is.na(preview_height) ||
+            preview_width <= 0 || preview_height <= 0 ||
+            preview_width > 100 || preview_height > 100) {
+          cat(file=stderr(), paste0("[ERROR] Invalid preview dimensions! Using defaults.\n"))
+          preview_width <- if (is.na(preview_width) || preview_width <= 0 || preview_width > 100) 11.69 else preview_width
+          preview_height <- if (is.na(preview_height) || preview_height <= 0 || preview_height > 100) 8.27 else preview_height
+        }
+
         suppressWarnings(ggsave(
           filename = temp_plot_file,
           plot = plot_to_save,
