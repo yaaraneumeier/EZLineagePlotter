@@ -9183,6 +9183,92 @@ server <- function(input, output, session) {
       imported_settings <- c(imported_settings, "Output settings")
     }
 
+    # S1.62dev: Import heatmaps from new format
+    if (!is.null(yaml_data$`visual definitions`$heatmaps) &&
+        length(yaml_data$`visual definitions`$heatmaps) > 0) {
+      cat(file=stderr(), "[YAML-IMPORT] Found heatmaps section with", length(yaml_data$`visual definitions`$heatmaps), "heatmaps\n")
+
+      values$heatmap_configs <- list()
+      for (i in seq_along(yaml_data$`visual definitions`$heatmaps)) {
+        h <- yaml_data$`visual definitions`$heatmaps[[i]]
+
+        new_config <- list(
+          columns = if (!is.null(h$columns)) unlist(h$columns) else character(0),
+          title = if (!is.null(h$title)) h$title else paste0("Heatmap ", i),
+          auto_type = FALSE,
+          type = if (!is.null(h$is_discrete) && func.check.bin.val.from.conf(h$is_discrete)) "discrete" else "continuous",
+          show_colnames = if (!is.null(h$show_colnames)) func.check.bin.val.from.conf(h$show_colnames) else TRUE,
+          colnames_angle = if (!is.null(h$colnames_angle)) as.numeric(h$colnames_angle) else 45,
+          distance = if (!is.null(h$distance)) as.numeric(h$distance) else 0.02,
+          height = if (!is.null(h$height)) as.numeric(h$height) else 0.8,
+          show_row_labels = FALSE,
+          row_label_source = "colnames",
+          row_label_font_size = 2.5,
+          custom_row_labels = "",
+          discrete_palette = if (!is.null(h$discrete_palette)) h$discrete_palette else "Set1",
+          custom_discrete = FALSE,
+          custom_colors = list(),
+          cont_palette = if (!is.null(h$cont_palette)) h$cont_palette else "Blues",
+          low_color = if (!is.null(h$low_color)) h$low_color else "#FFFFCC",
+          high_color = if (!is.null(h$high_color)) h$high_color else "#006837",
+          use_midpoint = if (!is.null(h$use_midpoint)) func.check.bin.val.from.conf(h$use_midpoint) else FALSE,
+          mid_color = if (!is.null(h$mid_color)) h$mid_color else "#FFFF99",
+          midpoint = if (!is.null(h$midpoint)) as.numeric(h$midpoint) else 0,
+          # S1.61dev: Guide line settings
+          show_guide_lines = if (!is.null(h$show_guide_lines)) func.check.bin.val.from.conf(h$show_guide_lines) else FALSE,
+          guide_color1 = if (!is.null(h$guide_color1)) h$guide_color1 else "#CCCCCC",
+          guide_color2 = if (!is.null(h$guide_color2)) h$guide_color2 else "#EEEEEE",
+          guide_alpha = if (!is.null(h$guide_alpha)) as.numeric(h$guide_alpha) else 0.3,
+          guide_width = if (!is.null(h$guide_width)) as.numeric(h$guide_width) else 0.5,
+          guide_linetype = if (!is.null(h$guide_linetype)) h$guide_linetype else "solid"
+        )
+        values$heatmap_configs <- c(values$heatmap_configs, list(new_config))
+      }
+      # Trigger heatmap UI regeneration
+      heatmap_ui_trigger(heatmap_ui_trigger() + 1)
+      imported_settings <- c(imported_settings, "Heatmaps")
+      cat(file=stderr(), "[YAML-IMPORT] Imported", length(values$heatmap_configs), "heatmap configs\n")
+    }
+
+    # S1.62dev: Import legend settings from new format
+    if (!is.null(yaml_data$`visual definitions`$legend)) {
+      cat(file=stderr(), "[YAML-IMPORT] Found legend section\n")
+      leg <- yaml_data$`visual definitions`$legend
+
+      if (!is.null(leg$position)) {
+        values$legend_settings$position <- leg$position
+        updateSelectInput(session, "legend_position", selected = leg$position)
+      }
+      if (!is.null(leg$show_classification)) {
+        values$legend_settings$show_classification <- func.check.bin.val.from.conf(leg$show_classification)
+      }
+      if (!is.null(leg$show_highlight)) {
+        values$legend_settings$show_highlight <- func.check.bin.val.from.conf(leg$show_highlight)
+      }
+      if (!is.null(leg$show_bootstrap)) {
+        values$legend_settings$show_bootstrap <- func.check.bin.val.from.conf(leg$show_bootstrap)
+      }
+      if (!is.null(leg$show_heatmap)) {
+        values$legend_settings$show_heatmap <- func.check.bin.val.from.conf(leg$show_heatmap)
+      }
+      if (!is.null(leg$title_size)) {
+        values$legend_settings$title_size <- as.numeric(leg$title_size)
+        updateSliderInput(session, "legend_title_size", value = as.numeric(leg$title_size))
+      }
+      if (!is.null(leg$text_size)) {
+        values$legend_settings$text_size <- as.numeric(leg$text_size)
+        updateSliderInput(session, "legend_text_size", value = as.numeric(leg$text_size))
+      }
+      if (!is.null(leg$box_background)) {
+        values$legend_settings$box_background <- leg$box_background
+      }
+      if (!is.null(leg$margin)) {
+        values$legend_settings$margin <- as.numeric(leg$margin)
+        updateSliderInput(session, "legend_margin", value = as.numeric(leg$margin))
+      }
+      imported_settings <- c(imported_settings, "Legend")
+    }
+
     # S1.62dev: Track visual definitions imported
     if (!is.null(yaml_data$`visual definitions`)) {
       if (!is.null(yaml_data$`visual definitions`$Bootstrap)) {
@@ -9200,7 +9286,8 @@ server <- function(input, output, session) {
       if (!is.null(yaml_data$`visual definitions`$font_size)) {
         imported_settings <- c(imported_settings, "Font size")
       }
-      if (!is.null(yaml_data$`visual definitions`$classification)) {
+      if (!is.null(yaml_data$`visual definitions`$classification) &&
+          length(yaml_data$`visual definitions`$classification) > 0) {
         imported_settings <- c(imported_settings, "Classification")
       }
     }
@@ -15649,39 +15736,133 @@ server <- function(input, output, session) {
   })
 
   ###################
-  
-  # Define YAML content reactive
-  # Define YAML content reactive
+
+  # S1.62dev: Define YAML content reactive - COMPLETE export of all visual settings
   yaml_content <- reactive({
     # Check if we have the necessary data
     req(values$tree, values$csv_data)
-    
-    
+
+    # S1.62dev: Build classification list from values$classifications
+    classification_list <- list()
+    if (!is.null(values$classifications) && length(values$classifications) > 0) {
+      for (i in seq_along(values$classifications)) {
+        class_def <- values$classifications[[i]]
+
+        # Build the "according" list for this classification
+        according_list <- list()
+        if (!is.null(class_def$classes) && length(class_def$classes) > 0) {
+          for (j in seq_along(class_def$classes)) {
+            cls <- class_def$classes[[j]]
+            according_list[[j]] <- list()
+            according_list[[j]][[as.character(j)]] <- list(
+              title1 = if (!is.null(cls$column)) cls$column else "",
+              value1 = if (!is.null(cls$value)) cls$value else "",
+              display_name = if (!is.null(cls$display_name)) cls$display_name else "",
+              color = if (!is.null(cls$color)) cls$color else "#000000"
+            )
+          }
+        }
+
+        # Build highlight settings for this classification
+        highlight_list <- list(display = "no")
+        if (!is.null(class_def$highlight) && isTRUE(class_def$highlight$enabled)) {
+          highlight_list$display <- "yes"
+          highlight_list$according <- list()
+          if (!is.null(class_def$highlight$items) && length(class_def$highlight$items) > 0) {
+            for (j in seq_along(class_def$highlight$items)) {
+              hi <- class_def$highlight$items[[j]]
+              highlight_list$according[[j]] <- list()
+              highlight_list$according[[j]][[as.character(j)]] <- list(
+                title1 = if (!is.null(hi$column)) hi$column else "",
+                value1 = if (!is.null(hi$value)) hi$value else "",
+                display_name = if (!is.null(hi$display_name)) hi$display_name else "",
+                color = if (!is.null(hi$color)) hi$color else "#FF0000"
+              )
+            }
+          }
+        }
+
+        classification_list[[i]] <- list()
+        classification_list[[i]][[as.character(i)]] <- list(
+          title = if (!is.null(class_def$title)) class_def$title else "Classification",
+          column = if (!is.null(class_def$column)) class_def$column else "",
+          FDR_perc = if (!is.null(class_def$fdr)) class_def$fdr else 0.1,
+          non_cluster_title = if (!is.null(class_def$no_cluster_title)) class_def$no_cluster_title else "No cluster",
+          non_cluster_color = if (!is.null(class_def$no_cluster_color)) class_def$no_cluster_color else "gray",
+          according = according_list,
+          highlight = highlight_list
+        )
+      }
+    }
+
+    # S1.62dev: Build heatmap list from values$heatmap_configs
+    heatmap_list <- list()
+    if (!is.null(values$heatmap_configs) && length(values$heatmap_configs) > 0) {
+      for (i in seq_along(values$heatmap_configs)) {
+        cfg <- values$heatmap_configs[[i]]
+
+        heatmap_list[[i]] <- list(
+          display = "yes",
+          title = if (!is.null(cfg$title)) cfg$title else paste0("Heatmap ", i),
+          is_discrete = if (!is.null(cfg$type) && cfg$type == "discrete") "yes" else "no",
+          columns = if (!is.null(cfg$columns)) as.list(cfg$columns) else list(),
+          distance = if (!is.null(cfg$distance)) cfg$distance else 0.02,
+          height = if (!is.null(cfg$height)) cfg$height else 0.8,
+          show_colnames = if (!is.null(cfg$show_colnames) && cfg$show_colnames) "yes" else "no",
+          colnames_angle = if (!is.null(cfg$colnames_angle)) cfg$colnames_angle else 45,
+          discrete_palette = if (!is.null(cfg$discrete_palette)) cfg$discrete_palette else "Set1",
+          cont_palette = if (!is.null(cfg$cont_palette)) cfg$cont_palette else "Blues",
+          low_color = if (!is.null(cfg$low_color)) cfg$low_color else "#FFFFCC",
+          high_color = if (!is.null(cfg$high_color)) cfg$high_color else "#006837",
+          use_midpoint = if (!is.null(cfg$use_midpoint) && cfg$use_midpoint) "yes" else "no",
+          mid_color = if (!is.null(cfg$mid_color)) cfg$mid_color else "#FFFF99",
+          midpoint = if (!is.null(cfg$midpoint)) cfg$midpoint else 0,
+          # S1.61dev: Guide line settings
+          show_guide_lines = if (!is.null(cfg$show_guide_lines) && cfg$show_guide_lines) "yes" else "no",
+          guide_color1 = if (!is.null(cfg$guide_color1)) cfg$guide_color1 else "#CCCCCC",
+          guide_color2 = if (!is.null(cfg$guide_color2)) cfg$guide_color2 else "#EEEEEE",
+          guide_alpha = if (!is.null(cfg$guide_alpha)) cfg$guide_alpha else 0.3,
+          guide_width = if (!is.null(cfg$guide_width)) cfg$guide_width else 0.5,
+          guide_linetype = if (!is.null(cfg$guide_linetype)) cfg$guide_linetype else "solid"
+        )
+      }
+    }
+
+    # S1.62dev: Build legend settings from values$legend_settings
+    legend_settings_yaml <- list(
+      position = if (!is.null(values$legend_settings$position)) values$legend_settings$position else "right",
+      show_classification = if (!is.null(values$legend_settings$show_classification) && values$legend_settings$show_classification) "yes" else "no",
+      show_highlight = if (!is.null(values$legend_settings$show_highlight) && values$legend_settings$show_highlight) "yes" else "no",
+      show_bootstrap = if (!is.null(values$legend_settings$show_bootstrap) && values$legend_settings$show_bootstrap) "yes" else "no",
+      show_heatmap = if (!is.null(values$legend_settings$show_heatmap) && values$legend_settings$show_heatmap) "yes" else "no",
+      title_size = if (!is.null(values$legend_settings$title_size)) values$legend_settings$title_size else 12,
+      text_size = if (!is.null(values$legend_settings$text_size)) values$legend_settings$text_size else 10,
+      box_background = if (!is.null(values$legend_settings$box_background)) values$legend_settings$box_background else "transparent",
+      margin = if (!is.null(values$legend_settings$margin)) values$legend_settings$margin else 0.2
+    )
+
     # Create the YAML structure based on current settings
     yaml_data <- list(
       "Individual general definitions" = list(
         Individual = input$individual_name,
+        "individual column" = input$individual_column,
         "tree path" = if (!is.null(input$tree_file)) {
           list(input$tree_file$datapath)
         } else {
           list(NULL)
-        },  # Added missing comma here
+        },
         "mapping csv file" = if (!is.null(input$csv_file)) {
           input$csv_file$datapath
         } else {
           NULL
-        },  # Added missing comma here
+        },
         "out_file" = list(
           "base_path" = input$output_path,
           "file_type" = input$output_format,
           "optional text at beggining" = input$prefix_text,
           "optional text at end" = input$suffix_text,
           "replace name" = list(
-            flag = if (input$replace_name) {
-              "yes"
-            } else {
-              "no"
-            },
+            flag = if (input$replace_name) "yes" else "no",
             name = input$custom_name
           )
         )
@@ -15690,39 +15871,25 @@ server <- function(input, output, session) {
         "ID column" = input$id_column
       ),
       "visual definitions" = list(
-        "classification" = list(),
+        "classification" = classification_list,
+        "heatmaps" = heatmap_list,
+        "legend" = legend_settings_yaml,
         "Bootstrap" = list(
-          display = if (input$show_bootstrap) {
-            "yes"
-          } else {
-            "no"
-          },
+          display = if (input$show_bootstrap) "yes" else "no",
           format = input$bootstrap_format,
           param = as.character(input$bootstrap_param)
         ),
         "rotation1" = list(
-          display = if (input$enable_rotation && 
-                        (input$rotation_type == "primary" || input$rotation_type == "manual")) {
-            "yes"
-          } else {
-            "no"
-          },
-          according = list()
+          display = if (input$enable_rotation &&
+                        (input$rotation_type == "primary" || input$rotation_type == "manual")) "yes" else "no",
+          according = if (!is.null(values$rotation_settings$primary)) values$rotation_settings$primary else list()
         ),
         "rotation2" = list(
-          display = if (input$enable_rotation && input$rotation_type == "secondary") {
-            "yes"
-          } else {
-            "no"
-          },
-          according = list()
+          display = if (input$enable_rotation && input$rotation_type == "secondary") "yes" else "no",
+          according = if (!is.null(values$rotation_settings$secondary)) values$rotation_settings$secondary else list()
         ),
         "trim tips" = list(
-          display = if (input$trim_tips) {
-            "yes"
-          } else {
-            "no"
-          },
+          display = if (input$trim_tips) "yes" else "no",
           length = input$tip_length
         ),
         "edge_width_multiplier" = list(
@@ -15730,15 +15897,13 @@ server <- function(input, output, session) {
         ),
         "font_size" = list(
           tips = input$tip_font_size,
-          legend_title = 13,
-          legend_text = 10,
-          legend_box = 10,
-          heat_map_title = 137,
+          legend_title = if (!is.null(values$legend_settings$title_size)) values$legend_settings$title_size else 13,
+          legend_text = if (!is.null(values$legend_settings$text_size)) values$legend_settings$text_size else 10,
           heat_map_legend = input$heatmap_font_size
         )
       )
     )
-    
+
     # Convert to YAML text
     settings_to_yaml(yaml_data)
   })
