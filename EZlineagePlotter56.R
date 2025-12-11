@@ -8569,6 +8569,9 @@ server <- function(input, output, session) {
   node_number_font_size_d <- debounce(reactive(input$node_number_font_size), DEBOUNCE_MS)
   tip_length_d <- debounce(reactive(input$tip_length), DEBOUNCE_MS)
 
+  # S1.62dev: Background color (debounced to prevent rapid picker updates from causing lag)
+  background_color_d <- debounce(reactive(input$background_color), DEBOUNCE_MS)
+
   # ==========================================================================
   # END DEBOUNCED REACTIVE INPUTS
   # ==========================================================================
@@ -12835,16 +12838,28 @@ server <- function(input, output, session) {
       }, ignoreInit = TRUE)
       
       # Discrete palette change
+      # S1.62dev: Fixed - also update values$heatmaps and trigger plot regeneration
       observeEvent(input[[paste0("heatmap_discrete_palette_", i)]], {
         if (i <= length(values$heatmap_configs)) {
           values$heatmap_configs[[i]]$discrete_palette <- input[[paste0("heatmap_discrete_palette_", i)]]
+          # S1.62dev: Also update values$heatmaps if it exists (heatmap was already applied)
+          if (!is.null(values$heatmaps) && i <= length(values$heatmaps)) {
+            values$heatmaps[[i]]$color_scheme <- input[[paste0("heatmap_discrete_palette_", i)]]
+            request_plot_update()
+          }
         }
       }, ignoreInit = TRUE)
       
       # Continuous palette change
+      # S1.62dev: Fixed - also update values$heatmaps and trigger plot regeneration
       observeEvent(input[[paste0("heatmap_cont_palette_", i)]], {
         if (i <= length(values$heatmap_configs)) {
           values$heatmap_configs[[i]]$cont_palette <- input[[paste0("heatmap_cont_palette_", i)]]
+          # S1.62dev: Also update values$heatmaps if it exists (heatmap was already applied)
+          if (!is.null(values$heatmaps) && i <= length(values$heatmaps)) {
+            values$heatmaps[[i]]$cont_palette <- input[[paste0("heatmap_cont_palette_", i)]]
+            request_plot_update()
+          }
         }
       }, ignoreInit = TRUE)
       
@@ -14952,10 +14967,18 @@ server <- function(input, output, session) {
         # S1.5: Fix RGBA colors from colourpicker - extract RGB portion if 8-char hex
         # colourpicker with allowTransparent=TRUE returns #RRGGBBAA format
         # where AA is alpha (00=transparent, FF=opaque). We convert to #RRGGBB for ggplot2.
+        # S1.62dev: Fixed - check if alpha is 00 (fully transparent) and use "transparent" string
         box_bg_raw <- if (!is.null(legend_settings$box_background)) legend_settings$box_background else "transparent"
         if (!is.null(box_bg_raw) && nchar(box_bg_raw) == 9 && substr(box_bg_raw, 1, 1) == "#") {
-          # 8-char hex with # prefix = #RRGGBBAA, extract just #RRGGBB
-          box_bg <- substr(box_bg_raw, 1, 7)
+          # 8-char hex with # prefix = #RRGGBBAA
+          alpha_hex <- substr(box_bg_raw, 8, 9)
+          if (alpha_hex == "00") {
+            # S1.62dev: Fully transparent - use "transparent" string instead of stripping to black
+            box_bg <- "transparent"
+          } else {
+            # Has some opacity - extract just #RRGGBB
+            box_bg <- substr(box_bg_raw, 1, 7)
+          }
         } else {
           box_bg <- box_bg_raw
         }
@@ -15926,8 +15949,14 @@ server <- function(input, output, session) {
   })
 
   # v179: Observer for background color
-  observeEvent(input$background_color, {
-    values$background_color <- input$background_color
+  # S1.62dev: Use debounced version to prevent lag from rapid color picker changes
+  # Also trigger automatic plot regeneration so users don't need to click Apply
+  observeEvent(background_color_d(), {
+    values$background_color <- background_color_d()
+    # S1.62dev: Auto-regenerate plot when background color changes
+    if (isTRUE(values$plot_ready)) {
+      request_plot_update()
+    }
   }, ignoreInit = TRUE)
 
   # v179: Reset background color button
