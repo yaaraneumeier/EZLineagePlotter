@@ -78,9 +78,10 @@ options(shiny.maxRequestSize = 100*1024^2)
 #       - All v180 features included and tested
 
 # ============================================================================
-# VERSION S1.61dev (Development)
+# VERSION S1.62dev (Development)
 # ============================================================================
 # S1.61dev: Added guide line type option for heatmap tip guide lines
+# S1.62dev: YAML import moved to Data Upload tab, settings-only mode (applies visual settings to current data)
 #       - New "Line type" dropdown in Heatmap tab > Tip Guide Lines section
 #       - Options: solid, dashed, dotted, dotdash, longdash, twodash
 # S1.6: Stable release with performance optimizations and bug fixes
@@ -100,7 +101,7 @@ options(shiny.maxRequestSize = 100*1024^2)
 #       - Layer reordering now happens ONCE at the end in generate_plot()
 # S1.2: Fixed undefined x_range_min in func_highlight causing "Problem while
 #       computing aesthetics" error when adding 2+ highlights with a heatmap.
-VERSION <- "S1.61dev"
+VERSION <- "S1.62dev"
 
 # Debug output control - set to TRUE to enable verbose console logging
 # For production/stable use, keep this FALSE for better performance
@@ -7298,11 +7299,7 @@ ui <- dashboardPage(
       menuItem("Extra", tabName = "extra", icon = icon("plus-circle")),  # v130: New tab for title, text, images
       menuItem("Download", tabName = "download", icon = icon("download")),
       menuItem("Configuration", tabName = "config", icon = icon("cogs"))
-    ),
-
-    # Configuration file input
-    fileInput("yaml_config", "Import YAML Configuration", 
-              accept = c(".yaml", ".yml"))
+    )
   ),
   
   dashboardBody(
@@ -7339,12 +7336,13 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #cce5ff; padding: 15px; border-radius: 5px; border: 2px solid #004085;",
-                     tags$h4(style = "color: #004085; margin: 0;", "Version S1.61dev (Development)"),
+                     tags$h4(style = "color: #004085; margin: 0;", "Version S1.62dev (Development)"),
                      tags$p(style = "margin: 10px 0 0 0; color: #004085;",
                             "Development version - new features being tested.",
                             tags$br(), tags$br(),
-                            tags$strong("New in S1.61dev:"),
+                            tags$strong("New in S1.62dev:"),
                             tags$ul(
+                              tags$li("YAML Import: Moved to Data Upload tab, applies settings to current data"),
                               tags$li("Tip Guide Lines: Added line type option (solid, dashed, dotted, etc.)")
                             ),
                             tags$strong("From S1.6 (Stable):"),
@@ -7437,9 +7435,44 @@ ui <- dashboardPage(
             ),
             DTOutput("matching_table")
           )
+        ),
+
+        # S1.62: Optional YAML Settings Import
+        fluidRow(
+          box(
+            title = "Import Saved Settings (Optional)",
+            status = "warning",
+            solidHeader = TRUE,
+            width = 12,
+            collapsible = TRUE,
+            collapsed = TRUE,
+            tags$div(
+              style = "background: #fff3cd; padding: 10px; border-radius: 5px; margin-bottom: 10px;",
+              tags$p(style = "margin: 0; color: #856404;",
+                icon("info-circle"),
+                " Load visual settings from a previously saved YAML configuration.",
+                tags$br(),
+                tags$small("This will apply classification colors, heatmap settings, bootstrap options, etc. to your current tree and CSV data.")
+              )
+            ),
+            conditionalPanel(
+              condition = "output.files_loaded == 'TRUE'",
+              fileInput("yaml_config", "Choose YAML Configuration File",
+                        accept = c(".yaml", ".yml")),
+              verbatimTextOutput("yaml_import_status")
+            ),
+            conditionalPanel(
+              condition = "output.files_loaded != 'TRUE'",
+              tags$div(
+                style = "color: #856404; padding: 10px; text-align: center;",
+                icon("exclamation-triangle"),
+                " Please upload tree and CSV files first before importing settings."
+              )
+            )
+          )
         )
       ),
-      
+
       # Tree Display Tab
       tabItem(
         tabName = "tree_display",
@@ -8400,6 +8433,7 @@ server <- function(input, output, session) {
     progress_visible = FALSE,  # Whether to show progress bar
     plot_generating = FALSE,  # Whether plot is currently being generated
     plot_ready = FALSE,  # Whether plot is ready to display
+    yaml_import_status = NULL,  # S1.62dev: Status message for YAML import
     # v121: Legend settings
     # S1.5: Added all missing defaults for proper legend styling
     legend_settings = list(
@@ -8792,7 +8826,16 @@ server <- function(input, output, session) {
   outputOptions(output, "match_success", suspendWhenHidden = FALSE)
   outputOptions(output, "match_warning", suspendWhenHidden = FALSE)
   outputOptions(output, "match_error", suspendWhenHidden = FALSE)
-  
+
+  # S1.62dev: YAML import status output
+  output$yaml_import_status <- renderText({
+    if (is.null(values$yaml_import_status)) {
+      ""
+    } else {
+      values$yaml_import_status
+    }
+  })
+
   # Bootstrap checkbox observer
   # Bootstrap checkbox observer
   observeEvent(input$show_bootstrap, {
@@ -8839,71 +8882,38 @@ server <- function(input, output, session) {
     request_plot_update()
   }, ignoreInit = TRUE)
 
-  # Process YAML configuration when loaded
+  # S1.62dev: YAML import - Settings Only mode
+  # Applies visual settings from YAML to the currently loaded tree/CSV data
+  # Does NOT try to load files from paths (those paths are session-specific temp files)
   observeEvent(input$yaml_config, {
     req(input$yaml_config)
-    
+
+    # S1.62dev: Require tree and CSV to be loaded first
+    if (is.null(values$tree) || is.null(values$csv_data)) {
+      values$yaml_import_status <- "Error: Please upload tree and CSV files first before importing settings."
+      showNotification("Please upload tree and CSV files first", type = "error")
+      return()
+    }
+
     yaml_data <- parse_yaml_config(input$yaml_config$datapath)
     if ("error" %in% names(yaml_data)) {
+      values$yaml_import_status <- paste("Error parsing YAML:", yaml_data$error)
       showNotification(yaml_data$error, type = "error")
       return()
     }
-    
-    # Load the configuration into the app
-    updateTextInput(session, "individual_name", value = yaml_data$`Individual general definitions`$Individual)
-    
-    # Load tree file if available
-    if (!is.null(yaml_data$`Individual general definitions`$`tree path`) && 
-        file.exists(yaml_data$`Individual general definitions`$`tree path`[[1]])) {
-      # Load tree file
-      tree_file <- yaml_data$`Individual general definitions`$`tree path`[[1]]
-      tree <- read.tree(tree_file)
-      values$tree <- tree
-      # v56b: Suppress harmless fortify warnings
-      values$tree_data <- suppressWarnings(ggtree(tree))$data
 
-      # Update tree summary
-      output$tree_summary <- renderPrint({
-        cat("Tree loaded from YAML configuration\n")
-        cat("Number of tips:", length(tree$tip.label), "\n")
-        cat("Number of internal nodes:", tree$Nnode, "\n")
-      })
-    }
-    
-    # Load CSV file if available
-    if (!is.null(yaml_data$`Individual general definitions`$`mapping csv file`) && 
-        file.exists(yaml_data$`Individual general definitions`$`mapping csv file`)) {
-      csv_file <- yaml_data$`Individual general definitions`$`mapping csv file`
-      csv_data <- read.csv(csv_file)
-      values$csv_data <- csv_data
-      # v107: Trigger heatmap UI regeneration when CSV data changes (new column choices)
-      heatmap_ui_trigger(heatmap_ui_trigger() + 1)
+    # S1.62dev: Track what settings were imported
+    imported_settings <- c()
 
-      # Update ID column
-      id_col <- yaml_data$`Mapping exl renaming titles`$`ID column`
-      if (id_col %in% names(csv_data)) {
-        updateSelectInput(session, "id_column", choices = names(csv_data), selected = id_col)
-      } else {
-        updateSelectInput(session, "id_column", choices = names(csv_data))
-      }
-      
-      # Update Individual column
-      individual_col <- yaml_data$`Individual general definitions`$`individual column`
-      if (!is.null(individual_col) && individual_col %in% names(csv_data)) {
-        updateSelectInput(session, "individual_column", choices = names(csv_data), selected = individual_col)
-      } else {
-        updateSelectInput(session, "individual_column", choices = names(csv_data))
-      }
-      
-      # Update CSV summary
-      output$csv_summary <- renderPrint({
-        cat("CSV loaded from YAML configuration\n")
-        cat("Number of rows:", nrow(csv_data), "\n")
-        cat("Number of columns:", ncol(csv_data), "\n")
-        cat("ID column:", id_col, "\n")
-      })
+    # Load individual name if available
+    if (!is.null(yaml_data$`Individual general definitions`$Individual)) {
+      updateTextInput(session, "individual_name", value = yaml_data$`Individual general definitions`$Individual)
+      imported_settings <- c(imported_settings, "Individual name")
     }
-    
+
+    # S1.62dev: Skip file loading - use existing tree and CSV data
+    # The YAML file paths point to temporary R session directories that no longer exist
+
     # Load display settings
     if (!is.null(yaml_data$`visual definitions`)) {
       
@@ -9163,18 +9173,49 @@ server <- function(input, output, session) {
           }
         }
       }
+      imported_settings <- c(imported_settings, "Output settings")
     }
-    
-    # Force update of UI elements based on loaded data
+
+    # S1.62dev: Track visual definitions imported
+    if (!is.null(yaml_data$`visual definitions`)) {
+      if (!is.null(yaml_data$`visual definitions`$Bootstrap)) {
+        imported_settings <- c(imported_settings, "Bootstrap")
+      }
+      if (!is.null(yaml_data$`visual definitions`$rotation1) || !is.null(yaml_data$`visual definitions`$rotation2)) {
+        imported_settings <- c(imported_settings, "Rotation")
+      }
+      if (!is.null(yaml_data$`visual definitions`$`trim tips`)) {
+        imported_settings <- c(imported_settings, "Trim tips")
+      }
+      if (!is.null(yaml_data$`visual definitions`$edge_width_multiplier)) {
+        imported_settings <- c(imported_settings, "Edge width")
+      }
+      if (!is.null(yaml_data$`visual definitions`$font_size)) {
+        imported_settings <- c(imported_settings, "Font size")
+      }
+      if (!is.null(yaml_data$`visual definitions`$classification)) {
+        imported_settings <- c(imported_settings, "Classification")
+      }
+    }
+
+    # Force update of UI elements based on currently loaded data
     updateSelectInput(session, "classification_column", choices = names(values$csv_data), selected = character(0))
     updateSelectInput(session, "highlight_column", choices = names(values$csv_data), selected = character(0))
-    # v55: heatmap_columns removed - now using individual column selects per heatmap
-    # updateSelectizeInput(session, "heatmap_columns", choices = names(values$csv_data))
-    
-    # Generate initial plot based on loaded configuration
-    generate_plot()
-    
-    showNotification("YAML configuration loaded successfully", type = "message")
+
+    # Generate plot with imported settings
+    request_plot_update()
+
+    # S1.62dev: Set status message
+    if (length(imported_settings) > 0) {
+      values$yaml_import_status <- paste0(
+        "Settings imported successfully!\n",
+        "Applied: ", paste(imported_settings, collapse = ", ")
+      )
+      showNotification("YAML settings imported successfully", type = "message")
+    } else {
+      values$yaml_import_status <- "YAML loaded but no applicable settings found."
+      showNotification("YAML loaded but no applicable settings found", type = "warning")
+    }
   })
   
   # When CSV file is uploaded
