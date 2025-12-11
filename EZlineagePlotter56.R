@@ -9273,7 +9273,7 @@ server <- function(input, output, session) {
       
       if (!is.null(yaml_data$`Individual general definitions`$out_file$`replace name`)) {
         replace_name <- yaml_data$`Individual general definitions`$out_file$`replace name`
-        
+
         if (!is.null(replace_name$flag) && func.check.bin.val.from.conf(replace_name$flag)) {
           updateCheckboxInput(session, "replace_name", value = TRUE)
           if (!is.null(replace_name$name)) {
@@ -9281,6 +9281,38 @@ server <- function(input, output, session) {
           }
         }
       }
+
+      # S1.62dev: Import page orientation and dimensions
+      if (!is.null(yaml_data$`Individual general definitions`$out_file$page_orientation)) {
+        updateSelectInput(session, "page_orientation",
+                          selected = yaml_data$`Individual general definitions`$out_file$page_orientation)
+        cat(file=stderr(), "[YAML-IMPORT] page_orientation:",
+            yaml_data$`Individual general definitions`$out_file$page_orientation, "\n")
+      }
+      if (!is.null(yaml_data$`Individual general definitions`$out_file$output_width)) {
+        updateNumericInput(session, "output_width",
+                           value = as.numeric(yaml_data$`Individual general definitions`$out_file$output_width))
+        cat(file=stderr(), "[YAML-IMPORT] output_width:",
+            yaml_data$`Individual general definitions`$out_file$output_width, "\n")
+      }
+      if (!is.null(yaml_data$`Individual general definitions`$out_file$output_height)) {
+        updateNumericInput(session, "output_height",
+                           value = as.numeric(yaml_data$`Individual general definitions`$out_file$output_height))
+        cat(file=stderr(), "[YAML-IMPORT] output_height:",
+            yaml_data$`Individual general definitions`$out_file$output_height, "\n")
+      }
+      if (!is.null(yaml_data$`Individual general definitions`$out_file$output_units)) {
+        updateSelectInput(session, "output_units",
+                          selected = yaml_data$`Individual general definitions`$out_file$output_units)
+        cat(file=stderr(), "[YAML-IMPORT] output_units:",
+            yaml_data$`Individual general definitions`$out_file$output_units, "\n")
+      }
+      if (!is.null(yaml_data$`Individual general definitions`$out_file$keep_proportions)) {
+        val <- func.check.bin.val.from.conf(yaml_data$`Individual general definitions`$out_file$keep_proportions)
+        updateCheckboxInput(session, "keep_proportions", value = val)
+        cat(file=stderr(), "[YAML-IMPORT] keep_proportions:", val, "\n")
+      }
+
       imported_settings <- c(imported_settings, "Output settings")
     }
 
@@ -9308,10 +9340,14 @@ server <- function(input, output, session) {
           colnames_angle = if (!is.null(h$colnames_angle)) as.numeric(h$colnames_angle) else 45,
           distance = if (!is.null(h$distance)) as.numeric(h$distance) else 0.02,
           height = if (!is.null(h$height)) as.numeric(h$height) else 0.8,
-          show_row_labels = FALSE,
-          row_label_source = "colnames",
-          row_label_font_size = 2.5,
-          custom_row_labels = "",
+          # S1.62dev: Import row label settings from YAML instead of hardcoding
+          show_row_labels = if (!is.null(h$show_row_labels)) func.check.bin.val.from.conf(h$show_row_labels) else FALSE,
+          row_label_source = if (!is.null(h$row_label_source)) h$row_label_source else "colnames",
+          row_label_font_size = if (!is.null(h$row_label_font_size)) as.numeric(h$row_label_font_size) else 2.5,
+          custom_row_labels = if (!is.null(h$custom_row_labels)) h$custom_row_labels else "",
+          row_label_offset = if (!is.null(h$row_label_offset)) as.numeric(h$row_label_offset) else 1.0,
+          row_label_align = if (!is.null(h$row_label_align)) h$row_label_align else "left",
+          label_mapping = if (!is.null(h$label_mapping)) h$label_mapping else list(),
           discrete_palette = if (!is.null(h$discrete_palette)) h$discrete_palette else "Set1",
           custom_discrete = FALSE,
           custom_colors = list(),
@@ -9446,17 +9482,36 @@ server <- function(input, output, session) {
         values$legend_settings$position <- leg$position
         updateSelectInput(session, "legend_position", selected = leg$position)
       }
+      # S1.62dev: Import legend visibility settings and update UI checkboxes
       if (!is.null(leg$show_classification)) {
-        values$legend_settings$show_classification <- func.check.bin.val.from.conf(leg$show_classification)
+        val <- func.check.bin.val.from.conf(leg$show_classification)
+        values$legend_settings$show_classification <- val
+        updateCheckboxInput(session, "legend_show_classification", value = val)
+        cat(file=stderr(), "[YAML-IMPORT] legend_show_classification:", val, "\n")
       }
       if (!is.null(leg$show_highlight)) {
-        values$legend_settings$show_highlight <- func.check.bin.val.from.conf(leg$show_highlight)
+        val <- func.check.bin.val.from.conf(leg$show_highlight)
+        values$legend_settings$show_highlight <- val
+        updateCheckboxInput(session, "legend_show_highlight", value = val)
+        cat(file=stderr(), "[YAML-IMPORT] legend_show_highlight:", val, "\n")
       }
       if (!is.null(leg$show_bootstrap)) {
-        values$legend_settings$show_bootstrap <- func.check.bin.val.from.conf(leg$show_bootstrap)
+        val <- func.check.bin.val.from.conf(leg$show_bootstrap)
+        values$legend_settings$show_bootstrap <- val
+        updateCheckboxInput(session, "legend_show_bootstrap", value = val)
+        cat(file=stderr(), "[YAML-IMPORT] legend_show_bootstrap:", val, "\n")
+      }
+      if (!is.null(leg$show_pvalue)) {
+        val <- func.check.bin.val.from.conf(leg$show_pvalue)
+        values$legend_settings$show_pvalue <- val
+        updateCheckboxInput(session, "legend_show_pvalue", value = val)
+        cat(file=stderr(), "[YAML-IMPORT] legend_show_pvalue:", val, "\n")
       }
       if (!is.null(leg$show_heatmap)) {
-        values$legend_settings$show_heatmap <- func.check.bin.val.from.conf(leg$show_heatmap)
+        val <- func.check.bin.val.from.conf(leg$show_heatmap)
+        values$legend_settings$show_heatmap <- val
+        updateCheckboxInput(session, "legend_show_heatmap", value = val)
+        cat(file=stderr(), "[YAML-IMPORT] legend_show_heatmap:", val, "\n")
       }
       if (!is.null(leg$title_size)) {
         values$legend_settings$title_size <- as.numeric(leg$title_size)
@@ -16286,6 +16341,8 @@ server <- function(input, output, session) {
       show_classification = if (!is.null(values$legend_settings$show_classification) && values$legend_settings$show_classification) "yes" else "no",
       show_highlight = if (!is.null(values$legend_settings$show_highlight) && values$legend_settings$show_highlight) "yes" else "no",
       show_bootstrap = if (!is.null(values$legend_settings$show_bootstrap) && values$legend_settings$show_bootstrap) "yes" else "no",
+      # S1.62dev: Added show_pvalue to export
+      show_pvalue = if (!is.null(values$legend_settings$show_pvalue) && values$legend_settings$show_pvalue) "yes" else "no",
       show_heatmap = if (!is.null(values$legend_settings$show_heatmap) && values$legend_settings$show_heatmap) "yes" else "no",
       title_size = if (!is.null(values$legend_settings$title_size)) values$legend_settings$title_size else 12,
       text_size = if (!is.null(values$legend_settings$text_size)) values$legend_settings$text_size else 10,
@@ -16311,6 +16368,12 @@ server <- function(input, output, session) {
         "out_file" = list(
           "base_path" = input$output_path,
           "file_type" = input$output_format,
+          # S1.62dev: Export page orientation and dimensions
+          "page_orientation" = if (!is.null(input$page_orientation)) input$page_orientation else "landscape",
+          "output_width" = if (!is.null(input$output_width)) input$output_width else 29.7,
+          "output_height" = if (!is.null(input$output_height)) input$output_height else 21,
+          "output_units" = if (!is.null(input$output_units)) input$output_units else "cm",
+          "keep_proportions" = if (!is.null(input$keep_proportions) && input$keep_proportions) "yes" else "no",
           "optional text at beggining" = input$prefix_text,
           "optional text at end" = input$suffix_text,
           "replace name" = list(
