@@ -78,8 +78,11 @@ options(shiny.maxRequestSize = 100*1024^2)
 #       - All v180 features included and tested
 
 # ============================================================================
-# VERSION S1.6 (Stable Release)
+# VERSION S1.61dev (Development)
 # ============================================================================
+# S1.61dev: Added guide line type option for heatmap tip guide lines
+#       - New "Line type" dropdown in Heatmap tab > Tip Guide Lines section
+#       - Options: solid, dashed, dotted, dotdash, longdash, twodash
 # S1.6: Stable release with performance optimizations and bug fixes
 #       - All S1.x improvements consolidated and tested
 # S1.5: Fixed Legend Background not working
@@ -97,7 +100,7 @@ options(shiny.maxRequestSize = 100*1024^2)
 #       - Layer reordering now happens ONCE at the end in generate_plot()
 # S1.2: Fixed undefined x_range_min in func_highlight causing "Problem while
 #       computing aesthetics" error when adding 2+ highlights with a heatmap.
-VERSION <- "S1.6"
+VERSION <- "S1.61dev"
 
 # Debug output control - set to TRUE to enable verbose console logging
 # For production/stable use, keep this FALSE for better performance
@@ -3343,6 +3346,11 @@ func.print.lineage.tree <- function(conf_yaml_path,
               } else {
                 param[['guide_width']] <- 0.5
               }
+              if ('guide_linetype' %in% names(heat_map_i_def)) {
+                param[['guide_linetype']] <- heat_map_i_def[['guide_linetype']]
+              } else {
+                param[['guide_linetype']] <- "solid"
+              }
 
             } else {
               #print("AAAAAAAAAAAA")
@@ -3528,6 +3536,11 @@ func.print.lineage.tree <- function(conf_yaml_path,
                 param[['guide_width']] <- as.numeric(heat_map_i_def[['guide_width']])
               } else {
                 param[['guide_width']] <- 0.5
+              }
+              if ('guide_linetype' %in% names(heat_map_i_def)) {
+                param[['guide_linetype']] <- heat_map_i_def[['guide_linetype']]
+              } else {
+                param[['guide_linetype']] <- "solid"
               }
             }
 
@@ -5844,11 +5857,13 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             guide_color2 <- if (!is.null(heat_param[['guide_color2']])) heat_param[['guide_color2']] else "#EEEEEE"
             guide_alpha <- if (!is.null(heat_param[['guide_alpha']])) as.numeric(heat_param[['guide_alpha']]) else 0.3
             guide_width <- if (!is.null(heat_param[['guide_width']])) as.numeric(heat_param[['guide_width']]) else 0.5
+            guide_linetype <- if (!is.null(heat_param[['guide_linetype']])) heat_param[['guide_linetype']] else "solid"
 
             debug_cat(paste0("  guide_color1: ", guide_color1, "\n"))
             debug_cat(paste0("  guide_color2: ", guide_color2, "\n"))
             debug_cat(paste0("  guide_alpha: ", guide_alpha, "\n"))
             debug_cat(paste0("  guide_width: ", guide_width, "\n"))
+            debug_cat(paste0("  guide_linetype: ", guide_linetype, "\n"))
 
             # v125: Get tip positions from tip_data to start guide lines at actual tip locations
             # Each tip may have a different x position based on branch lengths
@@ -5889,6 +5904,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
                 aes(x = x, xend = xend, y = y, yend = yend),
                 color = guide_color1_alpha,
                 linewidth = guide_width,
+                linetype = guide_linetype,
                 inherit.aes = FALSE
               ) +
               geom_segment(
@@ -5896,6 +5912,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
                 aes(x = x, xend = xend, y = y, yend = yend),
                 color = guide_color2_alpha,
                 linewidth = guide_width,
+                linetype = guide_linetype,
                 inherit.aes = FALSE
               )
 
@@ -7321,21 +7338,20 @@ ui <- dashboardPage(
             solidHeader = TRUE,
             width = 12,
             collapsible = TRUE,
-            tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #155724;",
-                     tags$h4(style = "color: #155724; margin: 0;", "Version S1.6 (Stable)"),
-                     tags$p(style = "margin: 10px 0 0 0; color: #155724;",
-                            "Stable release with performance optimizations and bug fixes.",
+            tags$div(style = "background: #cce5ff; padding: 15px; border-radius: 5px; border: 2px solid #004085;",
+                     tags$h4(style = "color: #004085; margin: 0;", "Version S1.61dev (Development)"),
+                     tags$p(style = "margin: 10px 0 0 0; color: #004085;",
+                            "Development version - new features being tested.",
                             tags$br(), tags$br(),
-                            tags$strong("Performance improvements:"),
+                            tags$strong("New in S1.61dev:"),
                             tags$ul(
-                              tags$li("Optimized layer management - faster rendering"),
-                              tags$li("Plot trigger mechanism batches rapid updates"),
-                              tags$li("Reduced redundant recalculations")
+                              tags$li("Tip Guide Lines: Added line type option (solid, dashed, dotted, etc.)")
                             ),
-                            tags$strong("Bug fixes:"),
+                            tags$strong("From S1.6 (Stable):"),
                             tags$ul(
-                              tags$li("Legend Background color now works correctly"),
-                              tags$li("Fixed 2+ highlights with heatmap issue")
+                              tags$li("Performance optimizations - faster rendering"),
+                              tags$li("Legend Background color fix"),
+                              tags$li("Multiple highlights with heatmap fix")
                             ),
                             tags$strong("Base Features (from S1):"),
                             tags$ul(
@@ -9829,6 +9845,7 @@ server <- function(input, output, session) {
             heatmap_item[[as.character(j)]]$guide_color2 <- if (!is.null(heatmap_entry$guide_color2)) heatmap_entry$guide_color2 else "#EEEEEE"
             heatmap_item[[as.character(j)]]$guide_alpha <- if (!is.null(heatmap_entry$guide_alpha)) heatmap_entry$guide_alpha else 0.3
             heatmap_item[[as.character(j)]]$guide_width <- if (!is.null(heatmap_entry$guide_width)) heatmap_entry$guide_width else 0.5
+            heatmap_item[[as.character(j)]]$guide_linetype <- if (!is.null(heatmap_entry$guide_linetype)) heatmap_entry$guide_linetype else "solid"
 
             # v109: Add colnames_angle
             heatmap_item[[as.character(j)]]$colnames_angle <- if (!is.null(heatmap_entry$colnames_angle)) heatmap_entry$colnames_angle else 45
@@ -10033,6 +10050,7 @@ server <- function(input, output, session) {
           heatmap_item[[as.character(j)]]$guide_color2 <- if (!is.null(heatmap_entry$guide_color2)) heatmap_entry$guide_color2 else "#EEEEEE"
           heatmap_item[[as.character(j)]]$guide_alpha <- if (!is.null(heatmap_entry$guide_alpha)) heatmap_entry$guide_alpha else 0.3
           heatmap_item[[as.character(j)]]$guide_width <- if (!is.null(heatmap_entry$guide_width)) heatmap_entry$guide_width else 0.5
+          heatmap_item[[as.character(j)]]$guide_linetype <- if (!is.null(heatmap_entry$guide_linetype)) heatmap_entry$guide_linetype else "solid"
 
           # v109: Add colnames_angle
           heatmap_item[[as.character(j)]]$colnames_angle <- if (!is.null(heatmap_entry$colnames_angle)) heatmap_entry$colnames_angle else 45
@@ -12099,7 +12117,16 @@ server <- function(input, output, session) {
                                value = if (!is.null(cfg$guide_width)) cfg$guide_width else 0.5,
                                step = 0.1)
             ),
-            column(4)
+            column(4,
+                   selectInput(paste0("heatmap_guide_linetype_", i), "Line type",
+                               choices = c("solid" = "solid",
+                                          "dashed" = "dashed",
+                                          "dotted" = "dotted",
+                                          "dotdash" = "dotdash",
+                                          "longdash" = "longdash",
+                                          "twodash" = "twodash"),
+                               selected = if (!is.null(cfg$guide_linetype)) cfg$guide_linetype else "solid")
+            )
           )
         ),
 
@@ -12382,6 +12409,17 @@ server <- function(input, output, session) {
           current_val <- values$heatmap_configs[[i]]$guide_width
           if (is.null(current_val) || !identical(new_val, current_val)) {
             values$heatmap_configs[[i]]$guide_width <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      # S1.61: Guide line type observer
+      observeEvent(input[[paste0("heatmap_guide_linetype_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_guide_linetype_", i)]]
+          current_val <- values$heatmap_configs[[i]]$guide_linetype
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$guide_linetype <- new_val
           }
         }
       }, ignoreInit = TRUE)
@@ -13403,6 +13441,7 @@ server <- function(input, output, session) {
       guide_color2 <- input[[paste0("heatmap_guide_color2_", i)]]
       guide_alpha <- input[[paste0("heatmap_guide_alpha_", i)]]
       guide_width <- input[[paste0("heatmap_guide_width_", i)]]
+      guide_linetype <- input[[paste0("heatmap_guide_linetype_", i)]]
       show_row_labels <- input[[paste0("heatmap_show_row_labels_", i)]]
       row_label_source <- input[[paste0("heatmap_row_label_source_", i)]]
       row_label_font_size <- input[[paste0("heatmap_row_label_font_size_", i)]]
@@ -13442,6 +13481,7 @@ server <- function(input, output, session) {
         guide_color2 = if (!is.null(guide_color2)) guide_color2 else "#EEEEEE",
         guide_alpha = if (!is.null(guide_alpha)) guide_alpha else 0.3,
         guide_width = if (!is.null(guide_width)) guide_width else 0.5,
+        guide_linetype = if (!is.null(guide_linetype)) guide_linetype else "solid",
         show_row_labels = if (!is.null(show_row_labels)) show_row_labels else FALSE,
         row_label_source = if (!is.null(row_label_source)) row_label_source else "colnames",
         row_label_font_size = if (!is.null(row_label_font_size)) row_label_font_size else 2.5,
