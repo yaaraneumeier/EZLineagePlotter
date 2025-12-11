@@ -15435,18 +15435,18 @@ server <- function(input, output, session) {
         landscape_aspect <- 29.7 / 21  # A4 landscape ratio (~1.414)
 
         # v180: Check if we need proportions adjustment (portrait page with proportions preserved)
-        # S1.62dev: DISABLED portrait proportions to prevent crash
-        # The combination of portrait orientation + cowplot transformation causes R/Shiny to crash
-        # after generate_plot() exits. Until root cause is identified, skip this feature.
         proportion_adj_w <- 1
         proportion_adj_h <- 1
-        # DISABLED: if (isTRUE(keep_proportions) && current_aspect < 1) {
-        #   proportion_adj_w <- 1
-        #   proportion_adj_h <- current_aspect / landscape_aspect
-        #   debug_cat(paste0("\n=== v180: PRESERVING PLOT PROPORTIONS ===\n"))
-        # }
         if (isTRUE(keep_proportions) && current_aspect < 1) {
-          cat(file=stderr(), paste0("[WARN] Portrait proportions preservation is temporarily disabled to prevent crash\n"))
+          # Portrait page - need to scale plot to fit landscape-shaped plot in portrait page
+          # The plot should maintain landscape proportions (wider than tall)
+          # Scale down to fit: width fits fully, height is proportionally smaller
+          proportion_adj_w <- 1  # Plot spans full width
+          proportion_adj_h <- current_aspect / landscape_aspect  # Scale height to maintain aspect ratio
+          debug_cat(paste0("\n=== v180: PRESERVING PLOT PROPORTIONS ===\n"))
+          debug_cat(paste0("  Current aspect: ", round(current_aspect, 3), " (portrait)\n"))
+          debug_cat(paste0("  Landscape aspect: ", round(landscape_aspect, 3), "\n"))
+          debug_cat(paste0("  Proportion adjustment: w=", round(proportion_adj_w, 3), ", h=", round(proportion_adj_h, 3), "\n"))
         }
 
         # Check if we need to apply any transformation
