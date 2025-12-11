@@ -14707,6 +14707,12 @@ server <- function(input, output, session) {
     # Update YAML to point to this temp CSV
     yaml_data_modified <- values$yaml_data
     yaml_data_modified$`Individual general definitions`$`mapping csv file` <- values$temp_csv_path
+
+    # S1.62dev: ALWAYS use PDF for internal file operations
+    # The user's selected format (JPEG/PNG/etc.) is only used for final download.
+    # JPEG/PNG are much slower to render than PDF for complex plots, causing crashes
+    # when combined with portrait orientation and other intensive operations.
+    yaml_data_modified$`Individual general definitions`$out_file$file_type <- "pdf"
     
     # DEBUG: Print classification structure
     if (!is.null(values$yaml_data$`visual definitions`$classification)) {
