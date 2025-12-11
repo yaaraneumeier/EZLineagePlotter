@@ -8918,6 +8918,18 @@ server <- function(input, output, session) {
       imported_settings <- c(imported_settings, "Individual name")
     }
 
+    # S1.62dev: Load individual column if available
+    if (!is.null(yaml_data$`Individual general definitions`$`individual column`)) {
+      updateSelectInput(session, "individual_column", selected = yaml_data$`Individual general definitions`$`individual column`)
+      imported_settings <- c(imported_settings, "Individual column")
+    }
+
+    # S1.62dev: Load ID column if available
+    if (!is.null(yaml_data$`Mapping exl renaming titles`$`ID column`)) {
+      updateSelectInput(session, "id_column", selected = yaml_data$`Mapping exl renaming titles`$`ID column`)
+      imported_settings <- c(imported_settings, "ID column")
+    }
+
     # S1.62dev: Skip file loading - use existing tree and CSV data
     # The YAML file paths point to temporary R session directories that no longer exist
 
@@ -8989,13 +9001,17 @@ server <- function(input, output, session) {
       # Load Font sizes
       if (!is.null(yaml_data$`visual definitions`$font_size)) {
         if (!is.null(yaml_data$`visual definitions`$font_size$tips)) {
-          updateSliderInput(session, "tip_font_size", 
+          updateSliderInput(session, "tip_font_size",
                             value = as.numeric(yaml_data$`visual definitions`$font_size$tips))
         }
-        
-        # Other font sizes could be loaded here
+
+        # S1.62dev: Load heatmap font size
+        if (!is.null(yaml_data$`visual definitions`$font_size$heat_map_legend)) {
+          updateSliderInput(session, "heatmap_font_size",
+                            value = as.numeric(yaml_data$`visual definitions`$font_size$heat_map_legend))
+        }
       }
-      
+
       # Load Classification settings
       if (!is.null(yaml_data$`visual definitions`$classification)) {
         values$classifications <- list()
@@ -9229,6 +9245,52 @@ server <- function(input, output, session) {
       }
       # Trigger heatmap UI regeneration
       heatmap_ui_trigger(heatmap_ui_trigger() + 1)
+
+      # S1.62dev: Also populate values$heatmaps for immediate plot rendering
+      # This converts heatmap_configs to the format expected by the plot function
+      heatmaps_for_plot <- lapply(values$heatmap_configs, function(cfg) {
+        if (is.null(cfg$columns) || length(cfg$columns) == 0) {
+          return(NULL)
+        }
+        list(
+          title = if (!is.null(cfg$title)) cfg$title else "Heatmap",
+          columns = cfg$columns,
+          is_discrete = if (!is.null(cfg$type) && cfg$type == "discrete") TRUE else FALSE,
+          colnames_angle = if (!is.null(cfg$colnames_angle)) cfg$colnames_angle else 45,
+          discrete_palette = if (!is.null(cfg$discrete_palette)) cfg$discrete_palette else "Set1",
+          cont_palette = if (!is.null(cfg$cont_palette)) cfg$cont_palette else "Blues",
+          custom_discrete = if (!is.null(cfg$custom_discrete)) cfg$custom_discrete else FALSE,
+          custom_colors = if (!is.null(cfg$custom_colors)) cfg$custom_colors else list(),
+          low_color = if (!is.null(cfg$low_color)) cfg$low_color else "#FFFFCC",
+          high_color = if (!is.null(cfg$high_color)) cfg$high_color else "#006837",
+          use_midpoint = if (!is.null(cfg$use_midpoint)) cfg$use_midpoint else FALSE,
+          mid_color = if (!is.null(cfg$mid_color)) cfg$mid_color else "#FFFF99",
+          midpoint = if (!is.null(cfg$midpoint)) cfg$midpoint else 0,
+          distance = if (!is.null(cfg$distance)) cfg$distance else 0.02,
+          height = if (!is.null(cfg$height)) cfg$height else 0.8,
+          row_height = if (!is.null(cfg$row_height)) cfg$row_height else 1,
+          show_grid = if (!is.null(cfg$show_grid)) cfg$show_grid else FALSE,
+          grid_color = if (!is.null(cfg$grid_color)) cfg$grid_color else "white",
+          grid_size = if (!is.null(cfg$grid_size)) cfg$grid_size else 0.5,
+          show_guides = if (!is.null(cfg$show_guides)) cfg$show_guides else FALSE,
+          guide_color1 = if (!is.null(cfg$guide_color1)) cfg$guide_color1 else "#CCCCCC",
+          guide_color2 = if (!is.null(cfg$guide_color2)) cfg$guide_color2 else "#EEEEEE",
+          guide_alpha = if (!is.null(cfg$guide_alpha)) cfg$guide_alpha else 0.3,
+          guide_width = if (!is.null(cfg$guide_width)) cfg$guide_width else 0.5,
+          guide_linetype = if (!is.null(cfg$guide_linetype)) cfg$guide_linetype else "solid",
+          show_row_labels = if (!is.null(cfg$show_row_labels)) cfg$show_row_labels else FALSE,
+          row_label_source = if (!is.null(cfg$row_label_source)) cfg$row_label_source else "colnames",
+          row_label_font_size = if (!is.null(cfg$row_label_font_size)) cfg$row_label_font_size else 2.5,
+          custom_row_labels = if (!is.null(cfg$custom_row_labels)) cfg$custom_row_labels else ""
+        )
+      })
+      # Remove NULL entries (configs without columns)
+      heatmaps_for_plot <- heatmaps_for_plot[!sapply(heatmaps_for_plot, is.null)]
+      if (length(heatmaps_for_plot) > 0) {
+        values$heatmaps <- heatmaps_for_plot
+        cat(file=stderr(), "[YAML-IMPORT] Also populated values$heatmaps with", length(heatmaps_for_plot), "heatmaps for plot\n")
+      }
+
       imported_settings <- c(imported_settings, "Heatmaps")
       cat(file=stderr(), "[YAML-IMPORT] Imported", length(values$heatmap_configs), "heatmap configs\n")
     }
@@ -15874,7 +15936,10 @@ server <- function(input, output, session) {
     }
 
     # S1.62dev: Build highlights list from values$highlights
+    # Also include temp_highlight_preview if it exists (unsaved preview)
     highlights_list <- list()
+
+    # First add saved highlights
     if (!is.null(values$highlights) && length(values$highlights) > 0) {
       for (i in seq_along(values$highlights)) {
         hi <- values$highlights[[i]]
@@ -15905,6 +15970,39 @@ server <- function(input, output, session) {
           items = items_list
         )
       }
+    }
+
+    # S1.62dev: Also include temp_highlight_preview if it exists (unsaved preview work)
+    if (!is.null(values$temp_highlight_preview) &&
+        !is.null(values$temp_highlight_preview$items) &&
+        length(values$temp_highlight_preview$items) > 0) {
+      hi <- values$temp_highlight_preview
+
+      # Build items list for preview
+      items_list <- list()
+      for (j in seq_along(hi$items)) {
+        item <- hi$items[[j]]
+        items_list[[j]] <- list(
+          column = if (!is.null(item$column)) item$column else "",
+          value = if (!is.null(item$value)) item$value else "",
+          display_name = if (!is.null(item$display_name)) item$display_name else "",
+          color = if (!is.null(item$color)) item$color else "#FF0000",
+          transparency = if (!is.null(item$transparency)) item$transparency else 0.5
+        )
+      }
+
+      # Add preview as a highlight (marked with title suffix if not already saved)
+      preview_entry <- list(
+        enabled = "yes",
+        title = if (!is.null(hi$title)) hi$title else "Highlight (Unsaved)",
+        column = if (!is.null(hi$column)) hi$column else "",
+        offset = if (!is.null(hi$offset)) hi$offset else 0,
+        vertical_offset = if (!is.null(hi$vertical_offset)) hi$vertical_offset else 0,
+        adjust_height = if (!is.null(hi$adjust_height)) hi$adjust_height else 1,
+        adjust_width = if (!is.null(hi$adjust_width)) hi$adjust_width else 1,
+        items = items_list
+      )
+      highlights_list <- c(highlights_list, list(preview_entry))
     }
 
     # S1.62dev: Build legend settings from values$legend_settings
