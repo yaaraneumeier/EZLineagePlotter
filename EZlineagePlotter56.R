@@ -9188,6 +9188,9 @@ server <- function(input, output, session) {
         length(yaml_data$`visual definitions`$heatmaps) > 0) {
       cat(file=stderr(), "[YAML-IMPORT] Found heatmaps section with", length(yaml_data$`visual definitions`$heatmaps), "heatmaps\n")
 
+      # Enable heatmap display checkbox
+      updateCheckboxInput(session, "enable_heatmap", value = TRUE)
+
       values$heatmap_configs <- list()
       for (i in seq_along(yaml_data$`visual definitions`$heatmaps)) {
         h <- yaml_data$`visual definitions`$heatmaps[[i]]
@@ -9228,6 +9231,53 @@ server <- function(input, output, session) {
       heatmap_ui_trigger(heatmap_ui_trigger() + 1)
       imported_settings <- c(imported_settings, "Heatmaps")
       cat(file=stderr(), "[YAML-IMPORT] Imported", length(values$heatmap_configs), "heatmap configs\n")
+    }
+
+    # S1.62dev: Import highlights from new format
+    if (!is.null(yaml_data$`visual definitions`$highlights) &&
+        length(yaml_data$`visual definitions`$highlights) > 0) {
+      cat(file=stderr(), "[YAML-IMPORT] Found highlights section with", length(yaml_data$`visual definitions`$highlights), "highlights\n")
+
+      # Enable highlight checkbox
+      updateCheckboxInput(session, "enable_highlight", value = TRUE)
+
+      values$highlights <- list()
+      for (i in seq_along(yaml_data$`visual definitions`$highlights)) {
+        h <- yaml_data$`visual definitions`$highlights[[i]]
+
+        # Build items list
+        items_list <- list()
+        if (!is.null(h$items) && length(h$items) > 0) {
+          for (j in seq_along(h$items)) {
+            item <- h$items[[j]]
+            items_list[[j]] <- list(
+              column = if (!is.null(item$column)) item$column else "",
+              value = if (!is.null(item$value)) item$value else "",
+              display_name = if (!is.null(item$display_name)) item$display_name else "",
+              color = if (!is.null(item$color)) item$color else "#FF0000",
+              transparency = if (!is.null(item$transparency)) as.numeric(item$transparency) else 0.5
+            )
+          }
+        }
+
+        new_highlight <- list(
+          enabled = if (!is.null(h$enabled)) func.check.bin.val.from.conf(h$enabled) else TRUE,
+          title = if (!is.null(h$title)) h$title else "Highlight",
+          column = if (!is.null(h$column)) h$column else "",
+          offset = if (!is.null(h$offset)) as.numeric(h$offset) else 0,
+          vertical_offset = if (!is.null(h$vertical_offset)) as.numeric(h$vertical_offset) else 0,
+          adjust_height = if (!is.null(h$adjust_height)) as.numeric(h$adjust_height) else 1,
+          adjust_width = if (!is.null(h$adjust_width)) as.numeric(h$adjust_width) else 1,
+          items = items_list
+        )
+        values$highlights <- c(values$highlights, list(new_highlight))
+      }
+
+      # Set active highlight index
+      values$active_highlight_index <- length(values$highlights)
+
+      imported_settings <- c(imported_settings, "Highlights")
+      cat(file=stderr(), "[YAML-IMPORT] Imported", length(values$highlights), "highlights\n")
     }
 
     # S1.62dev: Import legend settings from new format
@@ -15823,6 +15873,40 @@ server <- function(input, output, session) {
       }
     }
 
+    # S1.62dev: Build highlights list from values$highlights
+    highlights_list <- list()
+    if (!is.null(values$highlights) && length(values$highlights) > 0) {
+      for (i in seq_along(values$highlights)) {
+        hi <- values$highlights[[i]]
+
+        # Build items list
+        items_list <- list()
+        if (!is.null(hi$items) && length(hi$items) > 0) {
+          for (j in seq_along(hi$items)) {
+            item <- hi$items[[j]]
+            items_list[[j]] <- list(
+              column = if (!is.null(item$column)) item$column else "",
+              value = if (!is.null(item$value)) item$value else "",
+              display_name = if (!is.null(item$display_name)) item$display_name else "",
+              color = if (!is.null(item$color)) item$color else "#FF0000",
+              transparency = if (!is.null(item$transparency)) item$transparency else 0.5
+            )
+          }
+        }
+
+        highlights_list[[i]] <- list(
+          enabled = if (!is.null(hi$enabled) && hi$enabled) "yes" else "no",
+          title = if (!is.null(hi$title)) hi$title else "Highlight",
+          column = if (!is.null(hi$column)) hi$column else "",
+          offset = if (!is.null(hi$offset)) hi$offset else 0,
+          vertical_offset = if (!is.null(hi$vertical_offset)) hi$vertical_offset else 0,
+          adjust_height = if (!is.null(hi$adjust_height)) hi$adjust_height else 1,
+          adjust_width = if (!is.null(hi$adjust_width)) hi$adjust_width else 1,
+          items = items_list
+        )
+      }
+    }
+
     # S1.62dev: Build legend settings from values$legend_settings
     legend_settings_yaml <- list(
       position = if (!is.null(values$legend_settings$position)) values$legend_settings$position else "right",
@@ -15868,6 +15952,7 @@ server <- function(input, output, session) {
       "visual definitions" = list(
         "classification" = classification_list,
         "heatmaps" = heatmap_list,
+        "highlights" = highlights_list,
         "legend" = legend_settings_yaml,
         "Bootstrap" = list(
           display = if (input$show_bootstrap) "yes" else "no",
