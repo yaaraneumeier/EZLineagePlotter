@@ -15682,10 +15682,18 @@ server <- function(input, output, session) {
 
     # S1.62dev: Force garbage collection to prevent memory accumulation
     # This helps when many plot regenerations occur in sequence
-    gc(verbose = FALSE)
+    gc_result <- gc(verbose = FALSE)
+
+    # S1.62dev: Log memory usage for crash diagnosis
+    mem_used_mb <- sum(gc_result[, 2])  # Used memory in MB
+    cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] Memory after gc: ", round(mem_used_mb, 1), " MB\n"))
 
     cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] EXIT generate_plot() at ", format(Sys.time(), "%H:%M:%OS3"), "\n"))
     cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] ========================================\n\n"))
+
+    # S1.62dev: Flush stderr to ensure log messages are written before potential crash
+    flush(stderr())
+
     # v53: cat(file=stderr(), "Finished generate_plot()\n")
   }  # End of generate_plot function
   
