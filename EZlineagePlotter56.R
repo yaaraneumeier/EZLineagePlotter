@@ -8886,21 +8886,28 @@ server <- function(input, output, session) {
   # Applies visual settings from YAML to the currently loaded tree/CSV data
   # Does NOT try to load files from paths (those paths are session-specific temp files)
   observeEvent(input$yaml_config, {
+    cat(file=stderr(), "[YAML-IMPORT] Observer triggered\n")
     req(input$yaml_config)
+    cat(file=stderr(), "[YAML-IMPORT] File received:", input$yaml_config$datapath, "\n")
 
     # S1.62dev: Require tree and CSV to be loaded first
     if (is.null(values$tree) || is.null(values$csv_data)) {
+      cat(file=stderr(), "[YAML-IMPORT] ERROR: tree or csv_data is NULL\n")
       values$yaml_import_status <- "Error: Please upload tree and CSV files first before importing settings."
       showNotification("Please upload tree and CSV files first", type = "error")
       return()
     }
+    cat(file=stderr(), "[YAML-IMPORT] Tree and CSV are loaded, proceeding with YAML parse\n")
 
     yaml_data <- parse_yaml_config(input$yaml_config$datapath)
     if ("error" %in% names(yaml_data)) {
+      cat(file=stderr(), "[YAML-IMPORT] ERROR parsing YAML:", yaml_data$error, "\n")
       values$yaml_import_status <- paste("Error parsing YAML:", yaml_data$error)
       showNotification(yaml_data$error, type = "error")
       return()
     }
+    cat(file=stderr(), "[YAML-IMPORT] YAML parsed successfully\n")
+    cat(file=stderr(), "[YAML-IMPORT] YAML keys:", paste(names(yaml_data), collapse=", "), "\n")
 
     # S1.62dev: Track what settings were imported
     imported_settings <- c()
@@ -9202,6 +9209,8 @@ server <- function(input, output, session) {
     updateSelectInput(session, "classification_column", choices = names(values$csv_data), selected = character(0))
     updateSelectInput(session, "highlight_column", choices = names(values$csv_data), selected = character(0))
 
+    cat(file=stderr(), "[YAML-IMPORT] imported_settings:", paste(imported_settings, collapse=", "), "\n")
+
     # Generate plot with imported settings
     request_plot_update()
 
@@ -9211,9 +9220,11 @@ server <- function(input, output, session) {
         "Settings imported successfully!\n",
         "Applied: ", paste(imported_settings, collapse = ", ")
       )
+      cat(file=stderr(), "[YAML-IMPORT] SUCCESS - Settings imported:", paste(imported_settings, collapse=", "), "\n")
       showNotification("YAML settings imported successfully", type = "message")
     } else {
       values$yaml_import_status <- "YAML loaded but no applicable settings found."
+      cat(file=stderr(), "[YAML-IMPORT] WARNING - No applicable settings found in YAML\n")
       showNotification("YAML loaded but no applicable settings found", type = "warning")
     }
   })
