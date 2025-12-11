@@ -8890,29 +8890,26 @@ server <- function(input, output, session) {
     req(input$yaml_config)
     cat(file=stderr(), "[YAML-IMPORT] File received:", input$yaml_config$datapath, "\n")
 
-    # S1.62dev: Show processing indicator
-    values$progress_message <- "Importing YAML settings..."
-    values$progress_visible <- TRUE
-
     # S1.62dev: Require tree and CSV to be loaded first
     if (is.null(values$tree) || is.null(values$csv_data)) {
       cat(file=stderr(), "[YAML-IMPORT] ERROR: tree or csv_data is NULL\n")
       values$yaml_import_status <- "Error: Please upload tree and CSV files first before importing settings."
-      values$progress_visible <- FALSE
       showNotification("Please upload tree and CSV files first", type = "error")
       return()
     }
     cat(file=stderr(), "[YAML-IMPORT] Tree and CSV are loaded, proceeding with YAML parse\n")
 
-    yaml_data <- parse_yaml_config(input$yaml_config$datapath)
-    if ("error" %in% names(yaml_data)) {
-      cat(file=stderr(), "[YAML-IMPORT] ERROR parsing YAML:", yaml_data$error, "\n")
-      values$yaml_import_status <- paste("Error parsing YAML:", yaml_data$error)
-      values$progress_visible <- FALSE
-      showNotification(yaml_data$error, type = "error")
-      return()
-    }
-    cat(file=stderr(), "[YAML-IMPORT] YAML parsed successfully\n")
+    # S1.62dev: Use withProgress for visible feedback during import
+    withProgress(message = 'Importing YAML settings...', value = 0.1, {
+      yaml_data <- parse_yaml_config(input$yaml_config$datapath)
+      if ("error" %in% names(yaml_data)) {
+        cat(file=stderr(), "[YAML-IMPORT] ERROR parsing YAML:", yaml_data$error, "\n")
+        values$yaml_import_status <- paste("Error parsing YAML:", yaml_data$error)
+        showNotification(yaml_data$error, type = "error")
+        return()
+      }
+      cat(file=stderr(), "[YAML-IMPORT] YAML parsed successfully\n")
+      incProgress(0.2, detail = "Parsing complete")
     cat(file=stderr(), "[YAML-IMPORT] YAML keys:", paste(names(yaml_data), collapse=", "), "\n")
 
     # S1.62dev: Track what settings were imported
@@ -8942,6 +8939,8 @@ server <- function(input, output, session) {
     # Load display settings
     if (!is.null(yaml_data$`visual definitions`)) {
       
+      incProgress(0.3, detail = "Loading display settings...")
+
       # Load Bootstrap settings
       if (!is.null(yaml_data$`visual definitions`$Bootstrap)) {
         bootstrap_display <- yaml_data$`visual definitions`$Bootstrap$display
@@ -8952,8 +8951,15 @@ server <- function(input, output, session) {
                                selected = yaml_data$`visual definitions`$Bootstrap$format)
           }
           if (!is.null(yaml_data$`visual definitions`$Bootstrap$param)) {
-            updateSliderInput(session, "bootstrap_param", 
+            updateSliderInput(session, "bootstrap_param",
                               value = as.numeric(yaml_data$`visual definitions`$Bootstrap$param))
+          }
+          # S1.62dev: Import bootstrap label size
+          if (!is.null(yaml_data$`visual definitions`$Bootstrap$label_size)) {
+            updateSliderInput(session, "bootstrap_label_size",
+                              value = as.numeric(yaml_data$`visual definitions`$Bootstrap$label_size))
+            cat(file=stderr(), "[YAML-IMPORT] Imported bootstrap_label_size:",
+                yaml_data$`visual definitions`$Bootstrap$label_size, "\n")
           }
         } else {
           updateCheckboxInput(session, "show_bootstrap", value = FALSE)
@@ -9050,6 +9056,25 @@ server <- function(input, output, session) {
                             value = as.numeric(yaml_data$`visual definitions`$font_size$heat_map_legend))
         }
       }
+
+      # S1.62dev: Load node numbers settings
+      if (!is.null(yaml_data$`visual definitions`$node_numbers)) {
+        node_numbers_display <- yaml_data$`visual definitions`$node_numbers$display
+        if (func.check.bin.val.from.conf(node_numbers_display)) {
+          updateCheckboxInput(session, "display_node_numbers", value = TRUE)
+          if (!is.null(yaml_data$`visual definitions`$node_numbers$font_size)) {
+            updateSliderInput(session, "node_number_font_size",
+                              value = as.numeric(yaml_data$`visual definitions`$node_numbers$font_size))
+          }
+          cat(file=stderr(), "[YAML-IMPORT] Imported node_numbers display=yes, font_size=",
+              yaml_data$`visual definitions`$node_numbers$font_size, "\n")
+        } else {
+          updateCheckboxInput(session, "display_node_numbers", value = FALSE)
+          cat(file=stderr(), "[YAML-IMPORT] Imported node_numbers display=no\n")
+        }
+      }
+
+      incProgress(0.5, detail = "Loading classifications...")
 
       # Load Classification settings
       if (!is.null(yaml_data$`visual definitions`$classification)) {
@@ -9238,6 +9263,8 @@ server <- function(input, output, session) {
       imported_settings <- c(imported_settings, "Output settings")
     }
 
+    incProgress(0.6, detail = "Loading heatmaps...")
+
     # S1.62dev: Import heatmaps from new format
     if (!is.null(yaml_data$`visual definitions`$heatmaps) &&
         length(yaml_data$`visual definitions`$heatmaps) > 0) {
@@ -9336,6 +9363,8 @@ server <- function(input, output, session) {
       imported_settings <- c(imported_settings, "Heatmaps")
       cat(file=stderr(), "[YAML-IMPORT] Imported", length(values$heatmap_configs), "heatmap configs\n")
     }
+
+    incProgress(0.75, detail = "Loading highlights...")
 
     # S1.62dev: Import highlights from new format
     if (!is.null(yaml_data$`visual definitions`$highlights) &&
@@ -9456,7 +9485,8 @@ server <- function(input, output, session) {
     request_plot_update()
 
     # S1.62dev: Set status message and hide progress indicator
-    values$progress_visible <- FALSE
+    incProgress(0.9, detail = "Finalizing...")
+
     if (length(imported_settings) > 0) {
       values$yaml_import_status <- paste0(
         "Settings imported successfully!\n",
@@ -9469,6 +9499,7 @@ server <- function(input, output, session) {
       cat(file=stderr(), "[YAML-IMPORT] WARNING - No applicable settings found in YAML\n")
       showNotification("YAML loaded but no applicable settings found", type = "warning")
     }
+    }) # End withProgress
   })
   
   # When CSV file is uploaded
@@ -12333,7 +12364,9 @@ server <- function(input, output, session) {
           ),
           column(4,
                  sliderInput(paste0("heatmap_colnames_angle_", i), "Column name angle",
-                             min = 0, max = 90, value = 45, step = 15)
+                             min = 0, max = 90,
+                             value = if (!is.null(cfg$colnames_angle)) cfg$colnames_angle else 45,
+                             step = 15)
           )
         ),
 
@@ -13787,8 +13820,15 @@ server <- function(input, output, session) {
       
       if (actual_type == "discrete") {
         # v69: Get palette from current input (not stale cfg)
+        # S1.62dev: Fall back to cfg$discrete_palette if input not available (e.g., after YAML import)
         current_palette <- input[[paste0("heatmap_discrete_palette_", i)]]
-        heatmap_entry$color_scheme <- if (!is.null(current_palette)) current_palette else "Set1"
+        heatmap_entry$color_scheme <- if (!is.null(current_palette)) {
+          current_palette
+        } else if (!is.null(cfg$discrete_palette)) {
+          cfg$discrete_palette
+        } else {
+          "Set1"
+        }
 
         # v69: Collect custom colors if they've been set
         if (!is.null(values$csv_data) && first_col %in% names(values$csv_data)) {
@@ -16098,7 +16138,12 @@ server <- function(input, output, session) {
         "Bootstrap" = list(
           display = if (input$show_bootstrap) "yes" else "no",
           format = input$bootstrap_format,
-          param = as.character(input$bootstrap_param)
+          param = as.character(input$bootstrap_param),
+          label_size = if (!is.null(input$bootstrap_label_size)) input$bootstrap_label_size else 1.5
+        ),
+        "node_numbers" = list(
+          display = if (!is.null(input$display_node_numbers) && input$display_node_numbers) "yes" else "no",
+          font_size = if (!is.null(input$node_number_font_size)) input$node_number_font_size else 3.5
         ),
         "rotation1" = list(
           display = if (input$enable_rotation &&
