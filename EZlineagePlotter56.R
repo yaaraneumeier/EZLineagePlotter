@@ -16053,109 +16053,12 @@ server <- function(input, output, session) {
     }
   )
   
-  # Convert Shiny app settings to YAML format
-  # Convert Shiny app settings to YAML format
+  # S1.62dev: Convert settings to YAML - simply converts the input structure to YAML text
+  # The actual YAML structure is built in yaml_content() reactive
   settings_to_yaml <- function(settings) {
-    # Create basic structure with required fields
-    yaml_structure <- list(
-      "Individual general definitions" = list(
-        Individual = input$individual_name,
-        "tree path" = if (!is.null(input$tree_file)) {
-          list(input$tree_file$datapath)
-        } else {
-          list(NA)
-        },  # Added missing comma
-        "mapping csv file" = if (!is.null(input$csv_file)) {
-          input$csv_file$datapath
-        } else {
-          NA
-        },  # Added missing comma
-        "out_file" = list(
-          "base_path" = input$output_path,
-          "file_type" = input$output_format,
-          "optional text at beggining" = input$prefix_text,
-          "optional text at end" = input$suffix_text,
-          "replace name" = list(
-            flag = if (input$replace_name) {
-              "yes"
-            } else {
-              "no"
-            },
-            name = input$custom_name
-          )
-        )
-      ),
-      "Mapping exl renaming titles" = list(
-        "ID column" = input$id_column
-      ),
-      "visual definitions" = list(
-        "font_size" = list(
-          tips = 3,
-          legend_title = 30,
-          legend_text = 20,
-          legend_box = 15,
-          heat_map_title = 25,
-          heat_map_legend = 3.8
-        ),
-        "compare_two_trees" = "no"
-      )
-    )
-    
-    # Add visual definitions
-    yaml_structure$`visual definitions` <- list(
-      "classification" = list(),
-      "Bootstrap" = list(
-        display = if (input$show_bootstrap) {
-          "yes"
-        } else {
-          "no"
-        },
-        format = input$bootstrap_format,
-        param = as.character(input$bootstrap_param)
-      ),
-      "rotation1" = list(
-        display = if (input$enable_rotation && 
-                      (input$rotation_type == "primary" || input$rotation_type == "manual")) {
-          "yes"
-        } else {
-          "no"
-        },
-        according = list()
-      ),
-      "rotation2" = list(
-        display = if (input$enable_rotation && input$rotation_type == "secondary") {
-          "yes"
-        } else {
-          "no"
-        },
-        according = list()
-      ),
-      "trim tips" = list(
-        display = if (input$trim_tips) {
-          "yes"
-        } else {
-          "no"
-        },
-        length = input$tip_length
-      ),
-      "edge_width_multiplier" = list(
-        size = input$edge_width
-      ),
-      "font_size" = list(
-        tips = input$tip_font_size,
-        legend_title = 30,
-        legend_text = 20,
-        legend_box = 15,
-        heat_map_title = 25,
-        heat_map_legend = input$heatmap_font_size
-      )
-    )
-    
-    # Create YAML text from the structure
-    yaml_text <- yaml::as.yaml(yaml_structure, indent.mapping.sequence = TRUE)
-    return(yaml_text)
+    yaml::as.yaml(settings, indent.mapping.sequence = TRUE)
   }
-  
+
 } # End of server function
 
 # Run the application
