@@ -15680,6 +15680,10 @@ server <- function(input, output, session) {
     values$plot_generating <- FALSE
     values$progress_visible <- FALSE
 
+    # S1.62dev: Force garbage collection to prevent memory accumulation
+    # This helps when many plot regenerations occur in sequence
+    gc(verbose = FALSE)
+
     cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] EXIT generate_plot() at ", format(Sys.time(), "%H:%M:%OS3"), "\n"))
     cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] ========================================\n\n"))
     # v53: cat(file=stderr(), "Finished generate_plot()\n")
@@ -15693,15 +15697,25 @@ server <- function(input, output, session) {
   
   # Output renderers (outside of generate_plot function)
   output$tree_preview <- renderImage({
-    # v53: cat(file=stderr(), "\n=== renderImage called for tree_preview ===\n")
-    
+    # S1.62dev: Added logging for crash diagnosis
+    cat(file=stderr(), paste0("[RENDER] tree_preview renderImage called at ", format(Sys.time(), "%H:%M:%OS3"), "\n"))
+
     # Force reactive update by depending on plot_counter
     req(values$temp_plot_file, values$plot_counter)
+
+    cat(file=stderr(), paste0("[RENDER] tree_preview: file=", values$temp_plot_file, ", counter=", values$plot_counter, "\n"))
     
     # v53: cat(file=stderr(), "Temp file:", values$temp_plot_file, "\n")
     # v53: cat(file=stderr(), "File exists:", file.exists(values$temp_plot_file), "\n")
     # v53: cat(file=stderr(), "Plot counter:", values$plot_counter, "\n")
-    
+
+    # S1.62dev: Added file existence check for crash diagnosis
+    if (!file.exists(values$temp_plot_file)) {
+      cat(file=stderr(), paste0("[RENDER] ERROR: temp_plot_file does not exist!\n"))
+      return(NULL)
+    }
+
+    cat(file=stderr(), paste0("[RENDER] tree_preview returning image list\n"))
     list(
       src = values$temp_plot_file,
       contentType = "image/png",
