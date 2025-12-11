@@ -8890,10 +8890,15 @@ server <- function(input, output, session) {
     req(input$yaml_config)
     cat(file=stderr(), "[YAML-IMPORT] File received:", input$yaml_config$datapath, "\n")
 
+    # S1.62dev: Show processing indicator
+    values$progress_message <- "Importing YAML settings..."
+    values$progress_visible <- TRUE
+
     # S1.62dev: Require tree and CSV to be loaded first
     if (is.null(values$tree) || is.null(values$csv_data)) {
       cat(file=stderr(), "[YAML-IMPORT] ERROR: tree or csv_data is NULL\n")
       values$yaml_import_status <- "Error: Please upload tree and CSV files first before importing settings."
+      values$progress_visible <- FALSE
       showNotification("Please upload tree and CSV files first", type = "error")
       return()
     }
@@ -8903,6 +8908,7 @@ server <- function(input, output, session) {
     if ("error" %in% names(yaml_data)) {
       cat(file=stderr(), "[YAML-IMPORT] ERROR parsing YAML:", yaml_data$error, "\n")
       values$yaml_import_status <- paste("Error parsing YAML:", yaml_data$error)
+      values$progress_visible <- FALSE
       showNotification(yaml_data$error, type = "error")
       return()
     }
@@ -8955,24 +8961,57 @@ server <- function(input, output, session) {
       }
       
       # Load Rotation settings
+      # S1.62dev: Fixed - populate rotation1_config/rotation2_config instead of rotation_settings
       if (!is.null(yaml_data$`visual definitions`$rotation1)) {
         rotation1_display <- yaml_data$`visual definitions`$rotation1$display
         if (func.check.bin.val.from.conf(rotation1_display)) {
           updateCheckboxInput(session, "enable_rotation", value = TRUE)
           updateRadioButtons(session, "rotation_type", selected = "primary")
-          
-          # Load rotation classes
-          if (!is.null(yaml_data$`visual definitions`$rotation1$according)) {
-            values$rotation_settings$primary <- yaml_data$`visual definitions`$rotation1$according
+
+          # Load rotation classes into rotation1_config
+          if (!is.null(yaml_data$`visual definitions`$rotation1$according) &&
+              length(yaml_data$`visual definitions`$rotation1$according) > 0) {
+            config <- list()
+            for (i in seq_along(yaml_data$`visual definitions`$rotation1$according)) {
+              r <- yaml_data$`visual definitions`$rotation1$according[[i]]
+              if (!is.null(r$col) && !is.null(r$val)) {
+                config[[i]] <- list(col = r$col, val = r$val)
+              }
+            }
+            values$rotation1_config <- config
+
+            # Update UI to show the rotation groups
+            if (length(config) > 0) {
+              updateNumericInput(session, "rotation1_num_groups", value = length(config))
+            }
+            cat(file=stderr(), "[YAML-IMPORT] Imported rotation1 with", length(config), "groups\n")
           }
         }
       }
-      
+
       if (!is.null(yaml_data$`visual definitions`$rotation2)) {
         rotation2_display <- yaml_data$`visual definitions`$rotation2$display
         if (func.check.bin.val.from.conf(rotation2_display)) {
-          # If both rotations are enabled, default to primary first
-          values$rotation_settings$secondary <- yaml_data$`visual definitions`$rotation2$according
+          updateRadioButtons(session, "rotation_type", selected = "secondary")
+
+          # Load rotation classes into rotation2_config
+          if (!is.null(yaml_data$`visual definitions`$rotation2$according) &&
+              length(yaml_data$`visual definitions`$rotation2$according) > 0) {
+            config <- list()
+            for (i in seq_along(yaml_data$`visual definitions`$rotation2$according)) {
+              r <- yaml_data$`visual definitions`$rotation2$according[[i]]
+              if (!is.null(r$col) && !is.null(r$val)) {
+                config[[i]] <- list(col = r$col, val = r$val)
+              }
+            }
+            values$rotation2_config <- config
+
+            # Update UI to show the rotation groups
+            if (length(config) > 0) {
+              updateNumericInput(session, "rotation2_num_groups", value = length(config))
+            }
+            cat(file=stderr(), "[YAML-IMPORT] Imported rotation2 with", length(config), "groups\n")
+          }
         }
       }
       
@@ -9258,8 +9297,11 @@ server <- function(input, output, session) {
           is_discrete = if (!is.null(cfg$type) && cfg$type == "discrete") TRUE else FALSE,
           colnames_angle = if (!is.null(cfg$colnames_angle)) cfg$colnames_angle else 45,
           discrete_palette = if (!is.null(cfg$discrete_palette)) cfg$discrete_palette else "Set1",
+          # S1.62dev: color_scheme is what the plot function actually reads for discrete heatmaps
+          color_scheme = if (!is.null(cfg$discrete_palette)) cfg$discrete_palette else "Set1",
           cont_palette = if (!is.null(cfg$cont_palette)) cfg$cont_palette else "Blues",
           custom_discrete = if (!is.null(cfg$custom_discrete)) cfg$custom_discrete else FALSE,
+          man_define_colors = if (!is.null(cfg$custom_discrete)) cfg$custom_discrete else FALSE,
           custom_colors = if (!is.null(cfg$custom_colors)) cfg$custom_colors else list(),
           low_color = if (!is.null(cfg$low_color)) cfg$low_color else "#FFFFCC",
           high_color = if (!is.null(cfg$high_color)) cfg$high_color else "#006837",
@@ -9413,7 +9455,8 @@ server <- function(input, output, session) {
     # Generate plot with imported settings
     request_plot_update()
 
-    # S1.62dev: Set status message
+    # S1.62dev: Set status message and hide progress indicator
+    values$progress_visible <- FALSE
     if (length(imported_settings) > 0) {
       values$yaml_import_status <- paste0(
         "Settings imported successfully!\n",
@@ -16060,11 +16103,17 @@ server <- function(input, output, session) {
         "rotation1" = list(
           display = if (input$enable_rotation &&
                         (input$rotation_type == "primary" || input$rotation_type == "manual")) "yes" else "no",
-          according = if (!is.null(values$rotation_settings$primary)) values$rotation_settings$primary else list()
+          # S1.62dev: Fixed - read from rotation1_config instead of rotation_settings$primary
+          according = if (!is.null(values$rotation1_config) && length(values$rotation1_config) > 0) {
+            lapply(values$rotation1_config, function(r) list(col = r$col, val = r$val))
+          } else list()
         ),
         "rotation2" = list(
           display = if (input$enable_rotation && input$rotation_type == "secondary") "yes" else "no",
-          according = if (!is.null(values$rotation_settings$secondary)) values$rotation_settings$secondary else list()
+          # S1.62dev: Fixed - read from rotation2_config instead of rotation_settings$secondary
+          according = if (!is.null(values$rotation2_config) && length(values$rotation2_config) > 0) {
+            lapply(values$rotation2_config, function(r) list(col = r$col, val = r$val))
+          } else list()
         ),
         "trim tips" = list(
           display = if (input$trim_tips) "yes" else "no",
