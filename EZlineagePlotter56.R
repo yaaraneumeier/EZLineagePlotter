@@ -8909,10 +8909,16 @@ server <- function(input, output, session) {
     req(input$yaml_config)
     cat(file=stderr(), "[YAML-IMPORT] File received:", input$yaml_config$datapath, "\n")
 
+    # S1.62dev: Show progress indicator immediately
+    values$progress_message <- "📋 Importing YAML settings..."
+    values$progress_visible <- TRUE
+    values$yaml_import_status <- "Processing YAML configuration..."
+
     # S1.62dev: Require tree and CSV to be loaded first
     if (is.null(values$tree) || is.null(values$csv_data)) {
       cat(file=stderr(), "[YAML-IMPORT] ERROR: tree or csv_data is NULL\n")
       values$yaml_import_status <- "Error: Please upload tree and CSV files first before importing settings."
+      values$progress_visible <- FALSE
       showNotification("Please upload tree and CSV files first", type = "error")
       return()
     }
@@ -8926,6 +8932,7 @@ server <- function(input, output, session) {
       if ("error" %in% names(yaml_data)) {
         cat(file=stderr(), "[YAML-IMPORT] ERROR parsing YAML:", yaml_data$error, "\n")
         values$yaml_import_status <- paste("Error parsing YAML:", yaml_data$error)
+        values$progress_visible <- FALSE
         showNotification(yaml_data$error, type = "error")
         return()
       }
@@ -9568,16 +9575,21 @@ server <- function(input, output, session) {
 
     if (length(imported_settings) > 0) {
       values$yaml_import_status <- paste0(
-        "Settings imported successfully!\n",
+        "✅ Settings imported successfully!\n",
         "Applied: ", paste(imported_settings, collapse = ", ")
       )
       cat(file=stderr(), "[YAML-IMPORT] SUCCESS - Settings imported:", paste(imported_settings, collapse=", "), "\n")
       showNotification("YAML settings imported successfully", type = "message")
     } else {
-      values$yaml_import_status <- "YAML loaded but no applicable settings found."
+      values$yaml_import_status <- "⚠️ YAML loaded but no applicable settings found."
       cat(file=stderr(), "[YAML-IMPORT] WARNING - No applicable settings found in YAML\n")
       showNotification("YAML loaded but no applicable settings found", type = "warning")
     }
+
+    # S1.62dev: Hide progress indicator when done
+    values$progress_visible <- FALSE
+    values$progress_message <- ""
+
     }) # End withProgress
   })
   
@@ -16260,7 +16272,15 @@ server <- function(input, output, session) {
           guide_color2 = if (!is.null(cfg$guide_color2)) cfg$guide_color2 else "#EEEEEE",
           guide_alpha = if (!is.null(cfg$guide_alpha)) cfg$guide_alpha else 0.3,
           guide_width = if (!is.null(cfg$guide_width)) cfg$guide_width else 0.5,
-          guide_linetype = if (!is.null(cfg$guide_linetype)) cfg$guide_linetype else "solid"
+          guide_linetype = if (!is.null(cfg$guide_linetype)) cfg$guide_linetype else "solid",
+          # S1.62dev: Row label settings (were missing from export)
+          show_row_labels = if (!is.null(cfg$show_row_labels) && cfg$show_row_labels) "yes" else "no",
+          row_label_source = if (!is.null(cfg$row_label_source)) cfg$row_label_source else "colnames",
+          row_label_font_size = if (!is.null(cfg$row_label_font_size)) cfg$row_label_font_size else 2.5,
+          row_label_offset = if (!is.null(cfg$row_label_offset)) cfg$row_label_offset else 1.0,
+          row_label_align = if (!is.null(cfg$row_label_align)) cfg$row_label_align else "left",
+          custom_row_labels = if (!is.null(cfg$custom_row_labels)) cfg$custom_row_labels else "",
+          label_mapping = if (!is.null(cfg$label_mapping)) cfg$label_mapping else list()
         )
       }
     }
