@@ -9422,6 +9422,9 @@ server <- function(input, output, session) {
           show_row_labels = if (!is.null(cfg$show_row_labels)) cfg$show_row_labels else FALSE,
           row_label_source = if (!is.null(cfg$row_label_source)) cfg$row_label_source else "colnames",
           row_label_font_size = if (!is.null(cfg$row_label_font_size)) cfg$row_label_font_size else 2.5,
+          # S1.62dev: Added missing row_label_offset and row_label_align
+          row_label_offset = if (!is.null(cfg$row_label_offset)) cfg$row_label_offset else 1.0,
+          row_label_align = if (!is.null(cfg$row_label_align)) cfg$row_label_align else "left",
           custom_row_labels = if (!is.null(cfg$custom_row_labels)) cfg$custom_row_labels else ""
         )
       })
