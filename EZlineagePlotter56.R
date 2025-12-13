@@ -9356,8 +9356,9 @@ server <- function(input, output, session) {
           row_label_align = if (!is.null(h$row_label_align)) h$row_label_align else "left",
           label_mapping = if (!is.null(h$label_mapping)) h$label_mapping else list(),
           discrete_palette = if (!is.null(h$discrete_palette)) h$discrete_palette else "Set1",
-          custom_discrete = FALSE,
-          custom_colors = list(),
+          # S1.62dev: Import custom discrete colors from YAML instead of hardcoding
+          custom_discrete = if (!is.null(h$custom_discrete)) func.check.bin.val.from.conf(h$custom_discrete) else FALSE,
+          custom_colors = if (!is.null(h$custom_colors) && length(h$custom_colors) > 0) h$custom_colors else list(),
           cont_palette = if (!is.null(h$cont_palette)) h$cont_palette else "Blues",
           low_color = if (!is.null(h$low_color)) h$low_color else "#FFFFCC",
           high_color = if (!is.null(h$high_color)) h$high_color else "#006837",
@@ -9370,7 +9371,11 @@ server <- function(input, output, session) {
           guide_color2 = if (!is.null(h$guide_color2)) h$guide_color2 else "#EEEEEE",
           guide_alpha = if (!is.null(h$guide_alpha)) as.numeric(h$guide_alpha) else 0.3,
           guide_width = if (!is.null(h$guide_width)) as.numeric(h$guide_width) else 0.5,
-          guide_linetype = if (!is.null(h$guide_linetype)) h$guide_linetype else "solid"
+          guide_linetype = if (!is.null(h$guide_linetype)) h$guide_linetype else "solid",
+          # S1.62dev: Import grid settings from YAML
+          show_grid = if (!is.null(h$show_grid)) func.check.bin.val.from.conf(h$show_grid) else FALSE,
+          grid_color = if (!is.null(h$grid_color)) h$grid_color else "#000000",
+          grid_size = if (!is.null(h$grid_size)) as.numeric(h$grid_size) else 0.5
         )
         values$heatmap_configs <- c(values$heatmap_configs, list(new_config))
       }
@@ -9536,6 +9541,40 @@ server <- function(input, output, session) {
         updateSliderInput(session, "legend_margin", value = as.numeric(leg$margin))
       }
       imported_settings <- c(imported_settings, "Legend")
+    }
+
+    # S1.62dev: Import extra settings (plot position, scale, stretch, background)
+    if (!is.null(yaml_data$`visual definitions`$extra_settings)) {
+      cat(file=stderr(), "[YAML-IMPORT] Found extra_settings section\n")
+      extra <- yaml_data$`visual definitions`$extra_settings
+
+      if (!is.null(extra$plot_offset_x)) {
+        values$plot_offset_x <- as.numeric(extra$plot_offset_x)
+        updateSliderInput(session, "plot_offset_x", value = as.numeric(extra$plot_offset_x))
+        cat(file=stderr(), "[YAML-IMPORT] plot_offset_x:", extra$plot_offset_x, "\n")
+      }
+      if (!is.null(extra$plot_offset_y)) {
+        values$plot_offset_y <- as.numeric(extra$plot_offset_y)
+        updateSliderInput(session, "plot_offset_y", value = as.numeric(extra$plot_offset_y))
+        cat(file=stderr(), "[YAML-IMPORT] plot_offset_y:", extra$plot_offset_y, "\n")
+      }
+      if (!is.null(extra$plot_scale)) {
+        updateSliderInput(session, "plot_scale", value = as.numeric(extra$plot_scale))
+        cat(file=stderr(), "[YAML-IMPORT] plot_scale:", extra$plot_scale, "\n")
+      }
+      if (!is.null(extra$tree_stretch_x)) {
+        updateSliderInput(session, "tree_stretch_x", value = as.numeric(extra$tree_stretch_x))
+        cat(file=stderr(), "[YAML-IMPORT] tree_stretch_x:", extra$tree_stretch_x, "\n")
+      }
+      if (!is.null(extra$tree_stretch_y)) {
+        updateSliderInput(session, "tree_stretch_y", value = as.numeric(extra$tree_stretch_y))
+        cat(file=stderr(), "[YAML-IMPORT] tree_stretch_y:", extra$tree_stretch_y, "\n")
+      }
+      if (!is.null(extra$background_color)) {
+        colourpicker::updateColourInput(session, "background_color", value = extra$background_color)
+        cat(file=stderr(), "[YAML-IMPORT] background_color:", extra$background_color, "\n")
+      }
+      imported_settings <- c(imported_settings, "Extra settings")
     }
 
     # S1.62dev: Track visual definitions imported
@@ -16280,7 +16319,14 @@ server <- function(input, output, session) {
           row_label_offset = if (!is.null(cfg$row_label_offset)) cfg$row_label_offset else 1.0,
           row_label_align = if (!is.null(cfg$row_label_align)) cfg$row_label_align else "left",
           custom_row_labels = if (!is.null(cfg$custom_row_labels)) cfg$custom_row_labels else "",
-          label_mapping = if (!is.null(cfg$label_mapping)) cfg$label_mapping else list()
+          label_mapping = if (!is.null(cfg$label_mapping)) cfg$label_mapping else list(),
+          # S1.62dev: Grid settings (were missing from export)
+          show_grid = if (!is.null(cfg$show_grid) && cfg$show_grid) "yes" else "no",
+          grid_color = if (!is.null(cfg$grid_color)) cfg$grid_color else "#000000",
+          grid_size = if (!is.null(cfg$grid_size)) cfg$grid_size else 0.5,
+          # S1.62dev: Discrete custom color settings (were missing from export)
+          custom_discrete = if (!is.null(cfg$custom_discrete) && cfg$custom_discrete) "yes" else "no",
+          custom_colors = if (!is.null(cfg$custom_colors) && length(cfg$custom_colors) > 0) cfg$custom_colors else list()
         )
       }
     }
@@ -16447,6 +16493,15 @@ server <- function(input, output, session) {
           legend_title = if (!is.null(values$legend_settings$title_size)) values$legend_settings$title_size else 13,
           legend_text = if (!is.null(values$legend_settings$text_size)) values$legend_settings$text_size else 10,
           heat_map_legend = input$heatmap_font_size
+        ),
+        # S1.62dev: Extra tab settings (plot position, scale, stretch)
+        "extra_settings" = list(
+          plot_offset_x = if (!is.null(values$plot_offset_x)) values$plot_offset_x else 0,
+          plot_offset_y = if (!is.null(values$plot_offset_y)) values$plot_offset_y else 0,
+          plot_scale = if (!is.null(input$plot_scale)) input$plot_scale else 100,
+          tree_stretch_x = if (!is.null(input$tree_stretch_x)) input$tree_stretch_x else 1,
+          tree_stretch_y = if (!is.null(input$tree_stretch_y)) input$tree_stretch_y else 1,
+          background_color = if (!is.null(input$background_color)) input$background_color else "white"
         )
       )
     )
