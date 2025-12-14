@@ -580,11 +580,16 @@ func.extract.cnv.from.rdata <- function(rdata_path, downsample_factor = 10) {
                                 nrow(cnv_matrix), " rows\n"))
     }
 
+    # S1.62dev: Transpose matrix so rows = samples and columns = genomic positions
+    # gheatmap() expects row names to match tree tip labels
+    cnv_matrix <- t(cnv_matrix)
+    cat(file=stderr(), paste0("[RDATA-CNV] After transpose: ", nrow(cnv_matrix), " samples x ", ncol(cnv_matrix), " positions\n"))
+
     return(list(
       matrix = as.matrix(cnv_matrix),
-      sample_names = colnames(cnv_matrix),
-      n_positions = nrow(cnv_matrix),
-      n_samples = ncol(cnv_matrix),
+      sample_names = rownames(cnv_matrix),  # Now samples are rows
+      n_positions = ncol(cnv_matrix),       # Positions are now columns
+      n_samples = nrow(cnv_matrix),
       error = NULL
     ))
 
