@@ -3747,9 +3747,13 @@ func.print.lineage.tree <- function(conf_yaml_path,
                 debug_cat(paste0("  Tree tips (first 5): ", paste(head(tree_tips, 5), collapse=", "), "\n"))
 
                 # Match CNV sample names to tree tips
-                # Try direct match first, then try with prefix removal
                 cnv_samples <- rownames(cnv_data)
                 cat(file=stderr(), paste0("[HEATMAP-RENDER] CNV samples (first 5): ", paste(head(cnv_samples, 5), collapse=", "), "\n"))
+
+                # S1.62dev: Improved matching - try multiple strategies
+                # Strategy 1: Direct match (tree tip == CNV sample name)
+                # Strategy 2: Use CSV data to create a mapping (tree tip ID -> sample name column)
+                # Strategy 3: Partial matching (CNV sample contains tree tip or vice versa)
 
                 # Create mapping: find which CNV samples match which tree tips
                 matched_cnv <- data.frame(matrix(NA, nrow = length(tree_tips), ncol = ncol(cnv_data)))
@@ -3757,26 +3761,71 @@ func.print.lineage.tree <- function(conf_yaml_path,
                 colnames(matched_cnv) <- colnames(cnv_data)
 
                 matches_found <- 0
-                for (tip in tree_tips) {
-                  # Try exact match
-                  if (tip %in% cnv_samples) {
-                    matched_cnv[tip, ] <- as.numeric(cnv_data[tip, ])
-                    matches_found <- matches_found + 1
-                  } else {
-                    # Try matching without prefix (e.g., "T_sample1" matches "sample1")
-                    # Remove common prefixes like "T_", "S_", etc.
-                    tip_cleaned <- sub("^[A-Z]_", "", tip)
-                    if (tip_cleaned %in% cnv_samples) {
-                      matched_cnv[tip, ] <- as.numeric(cnv_data[tip_cleaned, ])
-                      matches_found <- matches_found + 1
-                    } else {
-                      # Also try if CNV sample has prefix
-                      for (cnv_s in cnv_samples) {
-                        cnv_s_cleaned <- sub("^[A-Z]_", "", cnv_s)
-                        if (tip == cnv_s_cleaned || tip_cleaned == cnv_s_cleaned) {
-                          matched_cnv[tip, ] <- as.numeric(cnv_data[cnv_s, ])
+
+                # First, try to find a mapping column in the CSV data
+                csv_mapping <- NULL
+                if (exists("readfile440") && !is.null(readfile440) && nrow(readfile440) > 0) {
+                  cat(file=stderr(), "[HEATMAP-RENDER] Searching CSV for mapping column...\n")
+                  cat(file=stderr(), paste0("[HEATMAP-RENDER] CSV columns: ", paste(head(names(readfile440), 10), collapse=", "), "...\n"))
+
+                  # Look for a column that contains values matching CNV sample names
+                  for (col_name in names(readfile440)) {
+                    col_vals <- as.character(readfile440[[col_name]])
+                    # Check if any CNV sample names appear in this column
+                    matches_in_col <- sum(cnv_samples %in% col_vals)
+                    if (matches_in_col > 0) {
+                      cat(file=stderr(), paste0("[HEATMAP-RENDER] Found potential mapping column '", col_name, "' with ", matches_in_col, " matches\n"))
+                      if (is.null(csv_mapping) || matches_in_col > csv_mapping$count) {
+                        csv_mapping <- list(column = col_name, count = matches_in_col)
+                      }
+                    }
+                  }
+
+                  # Use the best mapping column if found
+                  if (!is.null(csv_mapping) && csv_mapping$count > 0) {
+                    cat(file=stderr(), paste0("[HEATMAP-RENDER] Using CSV column '", csv_mapping$column, "' for mapping\n"))
+
+                    # Create a mapping from tree tip (ID column) to sample name
+                    id_col_vals <- as.character(readfile440[[title.id]])
+                    sample_col_vals <- as.character(readfile440[[csv_mapping$column]])
+
+                    cat(file=stderr(), paste0("[HEATMAP-RENDER] ID column '", title.id, "' values (first 5): ", paste(head(id_col_vals, 5), collapse=", "), "\n"))
+                    cat(file=stderr(), paste0("[HEATMAP-RENDER] Sample column '", csv_mapping$column, "' values (first 5): ", paste(head(sample_col_vals, 5), collapse=", "), "\n"))
+
+                    for (i in seq_along(tree_tips)) {
+                      tip <- tree_tips[i]
+                      # Find this tree tip in the CSV ID column
+                      csv_row <- which(id_col_vals == tip)
+                      if (length(csv_row) > 0) {
+                        # Get the corresponding sample name from the mapping column
+                        sample_name <- sample_col_vals[csv_row[1]]
+                        # Look up this sample name in the CNV data
+                        if (sample_name %in% cnv_samples) {
+                          matched_cnv[tip, ] <- as.numeric(cnv_data[sample_name, ])
                           matches_found <- matches_found + 1
-                          break
+                        }
+                      }
+                    }
+                    cat(file=stderr(), paste0("[HEATMAP-RENDER] After CSV mapping: ", matches_found, " matches\n"))
+                  }
+                }
+
+                # If CSV mapping didn't find everything, try direct matching
+                if (matches_found < length(tree_tips)) {
+                  for (tip in tree_tips) {
+                    if (all(is.na(matched_cnv[tip, ]))) {  # Only if not already matched
+                      # Try exact match
+                      if (tip %in% cnv_samples) {
+                        matched_cnv[tip, ] <- as.numeric(cnv_data[tip, ])
+                        matches_found <- matches_found + 1
+                      } else {
+                        # Try partial matching - CNV sample contains tree tip
+                        for (cnv_s in cnv_samples) {
+                          if (grepl(tip, cnv_s, fixed = TRUE) || grepl(cnv_s, tip, fixed = TRUE)) {
+                            matched_cnv[tip, ] <- as.numeric(cnv_data[cnv_s, ])
+                            matches_found <- matches_found + 1
+                            break
+                          }
                         }
                       }
                     }
