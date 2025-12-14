@@ -15381,6 +15381,9 @@ server <- function(input, output, session) {
             debug_cat(paste0("    Heatmap ", hi, " (key=", hm_key, "):\n"))
             debug_cat(paste0("      Title: ", hm[[hm_key]]$title, "\n"))
             debug_cat(paste0("      Display: ", hm[[hm_key]]$display, "\n"))
+            # S1.62dev: Add data_source debug
+            debug_cat(paste0("      S1.62dev data_source: ", if (!is.null(hm[[hm_key]]$data_source)) hm[[hm_key]]$data_source else "NULL", "\n"))
+            debug_cat(paste0("      S1.62dev all fields: ", paste(names(hm[[hm_key]]), collapse=", "), "\n"))
             debug_cat(paste0("      According length: ", length(hm[[hm_key]]$according), "\n"))
             if (length(hm[[hm_key]]$according) > 0) {
               for (ai in seq_along(hm[[hm_key]]$according)) {
