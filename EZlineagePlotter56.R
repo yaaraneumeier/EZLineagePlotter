@@ -3481,6 +3481,39 @@ func.print.lineage.tree <- function(conf_yaml_path,
                 param[['col_line_size']] <- 0.5
               }
 
+              # S1.62dev: Get chromosome separator settings for discrete heatmaps
+              if ('chr_lines' %in% names(heat_map_i_def)) {
+                param[['chr_lines']] <- func.check.bin.val.from.conf(heat_map_i_def[['chr_lines']])
+              } else {
+                param[['chr_lines']] <- FALSE
+              }
+              if ('chr_line_color' %in% names(heat_map_i_def)) {
+                param[['chr_line_color']] <- heat_map_i_def[['chr_line_color']]
+              } else {
+                param[['chr_line_color']] <- "#000000"
+              }
+              if ('chr_line_width' %in% names(heat_map_i_def)) {
+                param[['chr_line_width']] <- as.numeric(heat_map_i_def[['chr_line_width']])
+              } else {
+                param[['chr_line_width']] <- 0.5
+              }
+              # S1.62dev: Get chromosome label settings for discrete heatmaps
+              if ('chr_labels' %in% names(heat_map_i_def)) {
+                param[['chr_labels']] <- func.check.bin.val.from.conf(heat_map_i_def[['chr_labels']])
+              } else {
+                param[['chr_labels']] <- FALSE
+              }
+              if ('chr_label_size' %in% names(heat_map_i_def)) {
+                param[['chr_label_size']] <- as.numeric(heat_map_i_def[['chr_label_size']])
+              } else {
+                param[['chr_label_size']] <- 3
+              }
+              if ('chr_label_color' %in% names(heat_map_i_def)) {
+                param[['chr_label_color']] <- heat_map_i_def[['chr_label_color']]
+              } else {
+                param[['chr_label_color']] <- "#000000"
+              }
+
               # S1.62dev: Get vertical text labels settings
               if ('show_vertical_text' %in% names(heat_map_i_def)) {
                 param[['show_vertical_text']] <- func.check.bin.val.from.conf(heat_map_i_def[['show_vertical_text']])
@@ -3744,6 +3777,39 @@ func.print.lineage.tree <- function(conf_yaml_path,
                 param[['col_line_size']] <- as.numeric(heat_map_i_def[['col_line_size']])
               } else {
                 param[['col_line_size']] <- 0.5
+              }
+
+              # S1.62dev: Get chromosome separator settings for continuous heatmaps
+              if ('chr_lines' %in% names(heat_map_i_def)) {
+                param[['chr_lines']] <- func.check.bin.val.from.conf(heat_map_i_def[['chr_lines']])
+              } else {
+                param[['chr_lines']] <- FALSE
+              }
+              if ('chr_line_color' %in% names(heat_map_i_def)) {
+                param[['chr_line_color']] <- heat_map_i_def[['chr_line_color']]
+              } else {
+                param[['chr_line_color']] <- "#000000"
+              }
+              if ('chr_line_width' %in% names(heat_map_i_def)) {
+                param[['chr_line_width']] <- as.numeric(heat_map_i_def[['chr_line_width']])
+              } else {
+                param[['chr_line_width']] <- 0.5
+              }
+              # S1.62dev: Get chromosome label settings for continuous heatmaps
+              if ('chr_labels' %in% names(heat_map_i_def)) {
+                param[['chr_labels']] <- func.check.bin.val.from.conf(heat_map_i_def[['chr_labels']])
+              } else {
+                param[['chr_labels']] <- FALSE
+              }
+              if ('chr_label_size' %in% names(heat_map_i_def)) {
+                param[['chr_label_size']] <- as.numeric(heat_map_i_def[['chr_label_size']])
+              } else {
+                param[['chr_label_size']] <- 3
+              }
+              if ('chr_label_color' %in% names(heat_map_i_def)) {
+                param[['chr_label_color']] <- heat_map_i_def[['chr_label_color']]
+              } else {
+                param[['chr_label_color']] <- "#000000"
               }
 
               # S1.62dev: Get vertical text labels settings for continuous heatmaps too
@@ -6168,8 +6234,10 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
           }
 
           # S1.62dev: Add vertical text labels below heatmap
+          cat(file=stderr(), paste0("[RENDER-DEBUG] Checking vertical text: show_vertical_text=", heat_param[['show_vertical_text']], "\n"))
           show_vertical_text_bool <- !is.null(heat_param[['show_vertical_text']]) &&
                                       isTRUE(heat_param[['show_vertical_text']])
+          cat(file=stderr(), paste0("[RENDER-DEBUG] show_vertical_text_bool=", show_vertical_text_bool, "\n"))
           if (show_vertical_text_bool) {
             vertical_text_column <- if (!is.null(heat_param[['vertical_text_column']])) heat_param[['vertical_text_column']] else ""
             vertical_text_size <- if (!is.null(heat_param[['vertical_text_size']])) as.numeric(heat_param[['vertical_text_size']]) else 3
@@ -6238,12 +6306,18 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
           }
 
           # S1.62dev: Add chromosome separator lines and labels (for RData CNV heatmaps)
+          cat(file=stderr(), paste0("[RENDER-DEBUG] Checking chr features: chr_lines=", heat_param[['chr_lines']],
+                                    ", chr_labels=", heat_param[['chr_labels']],
+                                    ", rdata_chr_info is null: ", is.null(rdata_chr_info), "\n"))
           show_chr_lines_bool <- !is.null(heat_param[['chr_lines']]) &&
                                   isTRUE(heat_param[['chr_lines']])
           show_chr_labels_bool <- !is.null(heat_param[['chr_labels']]) &&
                                    isTRUE(heat_param[['chr_labels']])
+          cat(file=stderr(), paste0("[RENDER-DEBUG] show_chr_lines_bool=", show_chr_lines_bool,
+                                    ", show_chr_labels_bool=", show_chr_labels_bool, "\n"))
 
           if ((show_chr_lines_bool || show_chr_labels_bool) && !is.null(rdata_chr_info)) {
+            cat(file=stderr(), "[RENDER-DEBUG] Entering chromosome rendering block\n")
             chr_line_color <- if (!is.null(heat_param[['chr_line_color']])) heat_param[['chr_line_color']] else "#000000"
             chr_line_width <- if (!is.null(heat_param[['chr_line_width']])) as.numeric(heat_param[['chr_line_width']]) else 0.5
             chr_label_size <- if (!is.null(heat_param[['chr_label_size']])) as.numeric(heat_param[['chr_label_size']]) else 3
@@ -11193,6 +11267,14 @@ server <- function(input, output, session) {
             heatmap_item[[as.character(j)]]$col_line_color <- if (!is.null(heatmap_entry$col_line_color)) heatmap_entry$col_line_color else "#000000"
             heatmap_item[[as.character(j)]]$col_line_size <- if (!is.null(heatmap_entry$col_line_size)) heatmap_entry$col_line_size else 0.5
 
+            # S1.62dev: Add chromosome separator settings
+            heatmap_item[[as.character(j)]]$chr_lines <- if (!is.null(heatmap_entry$chr_lines) && heatmap_entry$chr_lines) "yes" else "no"
+            heatmap_item[[as.character(j)]]$chr_line_color <- if (!is.null(heatmap_entry$chr_line_color)) heatmap_entry$chr_line_color else "#000000"
+            heatmap_item[[as.character(j)]]$chr_line_width <- if (!is.null(heatmap_entry$chr_line_width)) heatmap_entry$chr_line_width else 0.5
+            heatmap_item[[as.character(j)]]$chr_labels <- if (!is.null(heatmap_entry$chr_labels) && heatmap_entry$chr_labels) "yes" else "no"
+            heatmap_item[[as.character(j)]]$chr_label_size <- if (!is.null(heatmap_entry$chr_label_size)) heatmap_entry$chr_label_size else 3
+            heatmap_item[[as.character(j)]]$chr_label_color <- if (!is.null(heatmap_entry$chr_label_color)) heatmap_entry$chr_label_color else "#000000"
+
             # S1.62dev: Add vertical text labels settings
             heatmap_item[[as.character(j)]]$show_vertical_text <- if (!is.null(heatmap_entry$show_vertical_text) && heatmap_entry$show_vertical_text) "yes" else "no"
             heatmap_item[[as.character(j)]]$vertical_text_column <- if (!is.null(heatmap_entry$vertical_text_column)) heatmap_entry$vertical_text_column else ""
@@ -11420,6 +11502,14 @@ server <- function(input, output, session) {
           heatmap_item[[as.character(j)]]$show_col_lines <- if (!is.null(heatmap_entry$show_col_lines) && heatmap_entry$show_col_lines) "yes" else "no"
           heatmap_item[[as.character(j)]]$col_line_color <- if (!is.null(heatmap_entry$col_line_color)) heatmap_entry$col_line_color else "#000000"
           heatmap_item[[as.character(j)]]$col_line_size <- if (!is.null(heatmap_entry$col_line_size)) heatmap_entry$col_line_size else 0.5
+
+          # S1.62dev: Add chromosome separator settings
+          heatmap_item[[as.character(j)]]$chr_lines <- if (!is.null(heatmap_entry$chr_lines) && heatmap_entry$chr_lines) "yes" else "no"
+          heatmap_item[[as.character(j)]]$chr_line_color <- if (!is.null(heatmap_entry$chr_line_color)) heatmap_entry$chr_line_color else "#000000"
+          heatmap_item[[as.character(j)]]$chr_line_width <- if (!is.null(heatmap_entry$chr_line_width)) heatmap_entry$chr_line_width else 0.5
+          heatmap_item[[as.character(j)]]$chr_labels <- if (!is.null(heatmap_entry$chr_labels) && heatmap_entry$chr_labels) "yes" else "no"
+          heatmap_item[[as.character(j)]]$chr_label_size <- if (!is.null(heatmap_entry$chr_label_size)) heatmap_entry$chr_label_size else 3
+          heatmap_item[[as.character(j)]]$chr_label_color <- if (!is.null(heatmap_entry$chr_label_color)) heatmap_entry$chr_label_color else "#000000"
 
           # S1.62dev: Add vertical text labels settings
           heatmap_item[[as.character(j)]]$show_vertical_text <- if (!is.null(heatmap_entry$show_vertical_text) && heatmap_entry$show_vertical_text) "yes" else "no"
@@ -15292,10 +15382,11 @@ server <- function(input, output, session) {
           row_label_offset = if (!is.null(input[[paste0("heatmap_row_label_offset_", i)]])) input[[paste0("heatmap_row_label_offset_", i)]] else 1.0,
           row_label_align = if (!is.null(input[[paste0("heatmap_row_label_align_", i)]])) input[[paste0("heatmap_row_label_align_", i)]] else "left",
           # S1.62dev: Color settings - red-white-blue for CNV (red=loss, blue=gain)
-          low_color = if (!is.null(cfg$low_color)) cfg$low_color else "#FF0000",   # Red for deletion/loss
-          mid_color = if (!is.null(cfg$mid_color)) cfg$mid_color else "#FFFFFF",   # White for neutral
-          high_color = if (!is.null(cfg$high_color)) cfg$high_color else "#0000FF", # Blue for amplification/gain
-          midpoint = if (!is.null(cfg$midpoint)) cfg$midpoint else 0,  # Center at 0
+          # Note: Keys must be 'low', 'mid', 'high' to match what rendering code expects
+          low = if (!is.null(cfg$low_color)) cfg$low_color else "#FF0000",   # Red for deletion/loss
+          mid = if (!is.null(cfg$mid_color)) cfg$mid_color else "#FFFFFF",   # White for neutral
+          high = if (!is.null(cfg$high_color)) cfg$high_color else "#0000FF", # Blue for amplification/gain
+          midpoint = if (!is.null(cfg$midpoint)) cfg$midpoint else 2,  # Center at diploid (2)
           use_midpoint = TRUE,  # Always use midpoint for CNV
           na_color = "grey90"
         )
