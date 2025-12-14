@@ -493,6 +493,106 @@ parse_yaml_config <- function(file_path) {
   })
 }
 
+# S1.62dev: Extract CNV data from RData file
+# The RData file should contain 'results_CNV_tool_final' with nested structure:
+# results_CNV_tool_final[[sample_name]][[1]]$copy contains the CNV values
+# Returns a list with:
+#   - matrix: rows = genomic positions, columns = samples
+#   - sample_names: vector of sample names
+#   - error: error message if failed (NULL if success)
+func.extract.cnv.from.rdata <- function(rdata_path, downsample_factor = 10) {
+  tryCatch({
+    # Load RData into a new environment to avoid polluting global namespace
+    env <- new.env()
+    load(rdata_path, envir = env)
+
+    # Check if results_CNV_tool_final exists
+    if (!"results_CNV_tool_final" %in% names(env)) {
+      return(list(error = "RData file does not contain 'results_CNV_tool_final'"))
+    }
+
+    results <- env$results_CNV_tool_final
+    sample_names <- names(results)
+
+    if (length(sample_names) == 0) {
+      return(list(error = "No samples found in results_CNV_tool_final"))
+    }
+
+    cat(file=stderr(), paste0("[RDATA-CNV] Found ", length(sample_names), " samples\n"))
+
+    # Extract CNV data from each sample
+    cnv_matrix <- NULL
+    first <- TRUE
+
+    for (sample_name in sample_names) {
+      # Navigate to the copy data: results_CNV_tool_final[[sample]][[1]]$copy
+      sample_data <- results[[sample_name]]
+
+      if (is.null(sample_data) || length(sample_data) == 0) {
+        cat(file=stderr(), paste0("[RDATA-CNV] Warning: No data for sample ", sample_name, "\n"))
+        next
+      }
+
+      # Get the copy values (first element's $copy)
+      copy_data <- NULL
+      if (is.list(sample_data) && length(sample_data) >= 1) {
+        if (!is.null(sample_data[[1]]$copy)) {
+          copy_data <- as.data.frame(sample_data[[1]]$copy)
+        }
+      }
+
+      if (is.null(copy_data)) {
+        cat(file=stderr(), paste0("[RDATA-CNV] Warning: No copy data for sample ", sample_name, "\n"))
+        next
+      }
+
+      colnames(copy_data) <- sample_name
+
+      if (first) {
+        cnv_matrix <- copy_data
+        first <- FALSE
+      } else {
+        # Ensure same number of rows before binding
+        if (nrow(copy_data) == nrow(cnv_matrix)) {
+          cnv_matrix <- cbind(cnv_matrix, copy_data)
+        } else {
+          cat(file=stderr(), paste0("[RDATA-CNV] Warning: Row mismatch for sample ", sample_name,
+                                    " (", nrow(copy_data), " vs ", nrow(cnv_matrix), ")\n"))
+        }
+      }
+    }
+
+    if (is.null(cnv_matrix) || ncol(cnv_matrix) == 0) {
+      return(list(error = "No valid CNV data could be extracted"))
+    }
+
+    cat(file=stderr(), paste0("[RDATA-CNV] Extracted matrix: ", nrow(cnv_matrix), " rows x ", ncol(cnv_matrix), " columns\n"))
+
+    # Replace dots with dashes in column names (sample names)
+    colnames(cnv_matrix) <- gsub("\\.", "-", colnames(cnv_matrix))
+
+    # Downsample rows if requested
+    if (downsample_factor > 1) {
+      row_indices <- unique((1:nrow(cnv_matrix) %/% downsample_factor) * downsample_factor)
+      row_indices <- row_indices[row_indices > 0 & row_indices <= nrow(cnv_matrix)]
+      cnv_matrix <- cnv_matrix[row_indices, , drop = FALSE]
+      cat(file=stderr(), paste0("[RDATA-CNV] After downsampling (factor ", downsample_factor, "): ",
+                                nrow(cnv_matrix), " rows\n"))
+    }
+
+    return(list(
+      matrix = as.matrix(cnv_matrix),
+      sample_names = colnames(cnv_matrix),
+      n_positions = nrow(cnv_matrix),
+      n_samples = ncol(cnv_matrix),
+      error = NULL
+    ))
+
+  }, error = function(e) {
+    return(list(error = paste("Failed to extract CNV data:", e$message)))
+  })
+}
+
 
 # Convert to YAML
 #yaml_text <- as.yaml(yaml_structure, indent.mapping.sequence = TRUE)
@@ -3420,6 +3520,12 @@ func.print.lineage.tree <- function(conf_yaml_path,
               if ('midpoint' %in% names(heat_map_i_def)) {
                 param['midpoint'] <-as.numeric(heat_map_i_def$midpoint)
               }
+              # S1.62dev: Get use_midpoint flag for continuous heatmaps
+              if ('use_midpoint' %in% names(heat_map_i_def)) {
+                param[['use_midpoint']] <- func.check.bin.val.from.conf(heat_map_i_def[['use_midpoint']])
+              } else {
+                param[['use_midpoint']] <- FALSE
+              }
 
               # v112: Get NA color for continuous heatmaps (default grey90)
               if ('na_color' %in% names(heat_map_i_def)) {
@@ -3568,22 +3674,100 @@ func.print.lineage.tree <- function(conf_yaml_path,
             
             heat_display_vec <- c(heat_display_vec, TRUE)
             heat_flag <- TRUE
-            acc_heat_list <- heat_map_i_def$according
             heat_map_title <- heat_map_i_def$title
-            # v53: print("heat_map_title is")
-            # v53: print(heat_map_title)
             heat_map_title_list <- c(heat_map_title_list,heat_map_title)
-            l_titles_for_heat <- c()
-            according_from_script <- FALSE
-            
-            # print("B13")
-            
-            if ('according_from_script' %in% names(heat_map_i_def)) {
-              
-              according_from_script<- heat_map_i_def$according_from_script
-            }
-            
-            if ('according_column_range' %in% names(heat_map_i_def)){
+
+            # S1.62dev: Check if this is an RData CNV heatmap
+            if ('data_source' %in% names(heat_map_i_def) && heat_map_i_def$data_source == "rdata") {
+              debug_cat(paste0("\n=== S1.62dev: Processing RData CNV heatmap ===\n"))
+
+              # Get the CNV matrix directly from the config
+              if ('cnv_matrix' %in% names(heat_map_i_def) && !is.null(heat_map_i_def$cnv_matrix)) {
+                cnv_data <- heat_map_i_def$cnv_matrix
+
+                debug_cat(paste0("  CNV matrix: ", nrow(cnv_data), " samples x ", ncol(cnv_data), " positions\n"))
+                debug_cat(paste0("  Sample names (first 5): ", paste(head(rownames(cnv_data), 5), collapse=", "), "\n"))
+
+                # The CNV matrix rownames should be sample IDs
+                # We need to match them to tree tips
+                # Get tree tip labels
+                g_check <- suppressWarnings(ggtree(tree440))$data
+                g_check_tip <- subset(g_check, isTip == TRUE)
+                tree_tips <- g_check_tip$label
+
+                # Handle NA labels in ggtree
+                if (any(is.na(tree_tips))) {
+                  tip_node_ids <- g_check_tip$node
+                  ntips <- length(tree440$tip.label)
+                  if (all(tip_node_ids >= 1 & tip_node_ids <= ntips)) {
+                    tree_tips <- tree440$tip.label[tip_node_ids]
+                  }
+                }
+
+                debug_cat(paste0("  Tree tips (first 5): ", paste(head(tree_tips, 5), collapse=", "), "\n"))
+
+                # Match CNV sample names to tree tips
+                # Try direct match first, then try with prefix removal
+                cnv_samples <- rownames(cnv_data)
+
+                # Create mapping: find which CNV samples match which tree tips
+                matched_cnv <- data.frame(matrix(NA, nrow = length(tree_tips), ncol = ncol(cnv_data)))
+                rownames(matched_cnv) <- tree_tips
+                colnames(matched_cnv) <- colnames(cnv_data)
+
+                matches_found <- 0
+                for (tip in tree_tips) {
+                  # Try exact match
+                  if (tip %in% cnv_samples) {
+                    matched_cnv[tip, ] <- as.numeric(cnv_data[tip, ])
+                    matches_found <- matches_found + 1
+                  } else {
+                    # Try matching without prefix (e.g., "T_sample1" matches "sample1")
+                    # Remove common prefixes like "T_", "S_", etc.
+                    tip_cleaned <- sub("^[A-Z]_", "", tip)
+                    if (tip_cleaned %in% cnv_samples) {
+                      matched_cnv[tip, ] <- as.numeric(cnv_data[tip_cleaned, ])
+                      matches_found <- matches_found + 1
+                    } else {
+                      # Also try if CNV sample has prefix
+                      for (cnv_s in cnv_samples) {
+                        cnv_s_cleaned <- sub("^[A-Z]_", "", cnv_s)
+                        if (tip == cnv_s_cleaned || tip_cleaned == cnv_s_cleaned) {
+                          matched_cnv[tip, ] <- as.numeric(cnv_data[cnv_s, ])
+                          matches_found <- matches_found + 1
+                          break
+                        }
+                      }
+                    }
+                  }
+                }
+
+                debug_cat(paste0("  Matched ", matches_found, " out of ", length(tree_tips), " tree tips to CNV data\n"))
+
+                # Use the matched CNV data as the heatmap dataframe
+                df_heat_temp <- matched_cnv
+                dxdf440_for_heat[[indx_for_sav]] <- df_heat_temp
+
+                debug_cat(paste0("  Created CNV heatmap data: ", nrow(df_heat_temp), " x ", ncol(df_heat_temp), "\n"))
+              } else {
+                debug_cat("  ERROR: No cnv_matrix found in RData heatmap config\n")
+                heat_display_vec <- c(heat_display_vec, FALSE)
+                next
+              }
+            } else {
+              # Standard CSV-based heatmap - extract columns from readfile440
+              acc_heat_list <- heat_map_i_def$according
+              l_titles_for_heat <- c()
+              according_from_script <- FALSE
+
+              # print("B13")
+
+              if ('according_from_script' %in% names(heat_map_i_def)) {
+
+                according_from_script<- heat_map_i_def$according_from_script
+              }
+
+              if ('according_column_range' %in% names(heat_map_i_def)){
               start1 <- heat_map_i_def$according_column_range[1]
               end1 <- heat_map_i_def$according_column_range[2]
               l_titles_for_heat<- names(readfile440)[start1:end1]
@@ -3849,12 +4033,13 @@ func.print.lineage.tree <- function(conf_yaml_path,
               df_heat_temp <- df_heat_temp[ -c(2) ]
               
             }
-            
-            
-            dxdf440_for_heat[[indx_for_sav]] <- df_heat_temp  
-            
+
+
+            dxdf440_for_heat[[indx_for_sav]] <- df_heat_temp
+
+            } # End of else block (CSV path) - S1.62dev
           } else {
-            
+
             heat_display_vec <- c(heat_display_vec, FALSE)
           }
           temp <- dxdf440_for_heat[[indx_for_sav]]
@@ -7486,6 +7671,41 @@ ui <- dashboardPage(
               )
             )
           )
+        ),
+
+        # S1.62dev: Optional RData CNV File Import
+        fluidRow(
+          box(
+            title = "Import CNV Data from RData (Optional)",
+            status = "info",
+            solidHeader = TRUE,
+            width = 12,
+            collapsible = TRUE,
+            collapsed = TRUE,
+            tags$div(
+              style = "background: #d1ecf1; padding: 10px; border-radius: 5px; margin-bottom: 10px;",
+              tags$p(style = "margin: 0; color: #0c5460;",
+                icon("dna"),
+                " Load CNV (Copy Number Variation) data from an RData file.",
+                tags$br(),
+                tags$small("The RData file should contain 'results_CNV_tool_final' with CNV copy number data. This can be displayed as a heatmap aligned with the tree.")
+              )
+            ),
+            conditionalPanel(
+              condition = "output.files_loaded == 'TRUE'",
+              fileInput("rdata_file", "Choose RData CNV File",
+                        accept = c(".RData", ".rdata", ".Rdata")),
+              verbatimTextOutput("rdata_import_status")
+            ),
+            conditionalPanel(
+              condition = "output.files_loaded != 'TRUE'",
+              tags$div(
+                style = "color: #0c5460; padding: 10px; text-align: center;",
+                icon("exclamation-triangle"),
+                " Please upload tree and CSV files first before importing CNV data."
+              )
+            )
+          )
         )
       ),
 
@@ -8450,6 +8670,11 @@ server <- function(input, output, session) {
     plot_generating = FALSE,  # Whether plot is currently being generated
     plot_ready = FALSE,  # Whether plot is ready to display
     yaml_import_status = NULL,  # S1.62dev: Status message for YAML import
+    # S1.62dev: RData CNV data storage
+    rdata_cnv_env = NULL,       # Raw environment from loaded RData
+    rdata_cnv_matrix = NULL,    # Processed CNV matrix (rows=positions, cols=samples)
+    rdata_import_status = NULL, # Status message for RData import
+    rdata_sample_names = NULL,  # Sample names from RData (column names)
     # v121: Legend settings
     # S1.5: Added all missing defaults for proper legend styling
     legend_settings = list(
@@ -8853,6 +9078,65 @@ server <- function(input, output, session) {
     } else {
       values$yaml_import_status
     }
+  })
+
+  # S1.62dev: RData CNV import status output
+  output$rdata_import_status <- renderText({
+    if (is.null(values$rdata_import_status)) {
+      ""
+    } else {
+      values$rdata_import_status
+    }
+  })
+
+  # S1.62dev: RData CNV file upload observer
+  observeEvent(input$rdata_file, {
+    cat(file=stderr(), "[RDATA-IMPORT] Observer triggered\n")
+    req(input$rdata_file)
+    cat(file=stderr(), "[RDATA-IMPORT] File received:", input$rdata_file$datapath, "\n")
+
+    # Show progress indicator
+    values$progress_message <- "🧬 Loading CNV data from RData..."
+    values$progress_visible <- TRUE
+    values$rdata_import_status <- "Processing RData file..."
+
+    # Require tree and CSV to be loaded first
+    if (is.null(values$tree) || is.null(values$csv_data)) {
+      cat(file=stderr(), "[RDATA-IMPORT] ERROR: tree or csv_data is NULL\n")
+      values$rdata_import_status <- "Error: Please upload tree and CSV files first."
+      values$progress_visible <- FALSE
+      showNotification("Please upload tree and CSV files first", type = "error")
+      return()
+    }
+
+    # Extract CNV data from RData file
+    result <- func.extract.cnv.from.rdata(input$rdata_file$datapath, downsample_factor = 10)
+
+    if (!is.null(result$error)) {
+      cat(file=stderr(), "[RDATA-IMPORT] ERROR:", result$error, "\n")
+      values$rdata_import_status <- paste("❌ Error:", result$error)
+      values$progress_visible <- FALSE
+      showNotification(result$error, type = "error")
+      return()
+    }
+
+    # Store the extracted data
+    values$rdata_cnv_matrix <- result$matrix
+    values$rdata_sample_names <- result$sample_names
+
+    cat(file=stderr(), "[RDATA-IMPORT] Successfully loaded CNV data\n")
+    cat(file=stderr(), "[RDATA-IMPORT] Matrix dimensions:", nrow(result$matrix), "x", ncol(result$matrix), "\n")
+    cat(file=stderr(), "[RDATA-IMPORT] Sample names:", paste(head(result$sample_names, 5), collapse=", "),
+        if(length(result$sample_names) > 5) "..." else "", "\n")
+
+    values$rdata_import_status <- paste0(
+      "✅ CNV data loaded successfully!\n",
+      "Samples: ", result$n_samples, "\n",
+      "Genomic positions: ", result$n_positions
+    )
+    values$progress_visible <- FALSE
+    showNotification(paste("CNV data loaded:", result$n_samples, "samples,", result$n_positions, "positions"),
+                     type = "message")
   })
 
   # Bootstrap checkbox observer
@@ -10532,12 +10816,22 @@ server <- function(input, output, session) {
             heatmap_item[[as.character(j)]]$label_mapping <- heatmap_entry$label_mapping
           }
 
-          # Add columns - format must match expected YAML structure
-          if (!is.null(heatmap_entry$columns)) {
-            for (k in seq_along(heatmap_entry$columns)) {
-              column_entry <- list()
-              column_entry[[as.character(k)]] <- heatmap_entry$columns[k]
-              heatmap_item[[as.character(j)]]$according[[k]] <- column_entry
+          # S1.62dev: Add data source and CNV matrix for RData heatmaps
+          if (!is.null(heatmap_entry$data_source) && heatmap_entry$data_source == "rdata") {
+            heatmap_item[[as.character(j)]]$data_source <- "rdata"
+            heatmap_item[[as.character(j)]]$cnv_matrix <- heatmap_entry$cnv_matrix
+            heatmap_item[[as.character(j)]]$use_midpoint <- "yes"  # Always use midpoint for CNV
+            debug_cat(paste0("    S1.62dev: RData heatmap with CNV matrix: ",
+                            nrow(heatmap_entry$cnv_matrix), " x ", ncol(heatmap_entry$cnv_matrix), "\n"))
+          } else {
+            heatmap_item[[as.character(j)]]$data_source <- "csv"
+            # Add columns - format must match expected YAML structure
+            if (!is.null(heatmap_entry$columns)) {
+              for (k in seq_along(heatmap_entry$columns)) {
+                column_entry <- list()
+                column_entry[[as.character(k)]] <- heatmap_entry$columns[k]
+                heatmap_item[[as.character(j)]]$according[[k]] <- column_entry
+              }
             }
           }
 
@@ -12429,62 +12723,112 @@ server <- function(input, output, session) {
         ),
         
         hr(style = "margin: 10px 0;"),
-        
-        # Main configuration
+
+        # S1.62dev: Data source selector (CSV or RData CNV)
         fluidRow(
-          column(8,
-                 # v56: Changed to selectizeInput with multiple=TRUE for multiple columns
-                 selectizeInput(paste0("heatmap_columns_", i), "Data Columns (select one or more)",
-                                choices = col_choices,
-                                selected = if (!is.null(cfg$columns)) cfg$columns else NULL,
-                                multiple = TRUE,
-                                options = list(placeholder = "Select columns..."))
-          ),
-          column(4,
-                 textInput(paste0("heatmap_title_", i), "Legend Title",
-                           value = if (!is.null(cfg$title)) cfg$title else paste0("Heatmap ", i))
+          column(12,
+                 radioButtons(paste0("heatmap_data_source_", i), "Data Source:",
+                              choices = c("CSV Columns" = "csv", "RData CNV" = "rdata"),
+                              selected = if (!is.null(cfg$data_source)) cfg$data_source else "csv",
+                              inline = TRUE)
           )
         ),
 
-        # v121: Column range selector - allows quick selection of contiguous columns
-        fluidRow(
-          column(6,
-                 tags$div(
-                   style = "display: flex; align-items: flex-end; gap: 10px;",
+        # S1.62dev: Conditional panel for CSV columns (default)
+        conditionalPanel(
+          condition = paste0("input.heatmap_data_source_", i, " == 'csv'"),
+          # Main configuration
+          fluidRow(
+            column(8,
+                   # v56: Changed to selectizeInput with multiple=TRUE for multiple columns
+                   selectizeInput(paste0("heatmap_columns_", i), "Data Columns (select one or more)",
+                                  choices = col_choices,
+                                  selected = if (!is.null(cfg$columns)) cfg$columns else NULL,
+                                  multiple = TRUE,
+                                  options = list(placeholder = "Select columns..."))
+            ),
+            column(4,
+                   textInput(paste0("heatmap_title_", i), "Legend Title",
+                             value = if (!is.null(cfg$title)) cfg$title else paste0("Heatmap ", i))
+            )
+          )
+        ),
+
+        # S1.62dev: Conditional panel for RData CNV
+        conditionalPanel(
+          condition = paste0("input.heatmap_data_source_", i, " == 'rdata'"),
+          fluidRow(
+            column(4,
+                   textInput(paste0("heatmap_title_rdata_", i), "Legend Title",
+                             value = if (!is.null(cfg$title)) cfg$title else "CNV")
+            ),
+            column(4,
+                   sliderInput(paste0("heatmap_cnv_downsample_", i), "Downsample Factor",
+                               min = 1, max = 50, value = if (!is.null(cfg$cnv_downsample)) cfg$cnv_downsample else 10,
+                               step = 1)
+            ),
+            column(4,
+                   checkboxInput(paste0("heatmap_cnv_wgd_norm_", i), "WGD Normalization",
+                                 value = if (!is.null(cfg$cnv_wgd_norm)) cfg$cnv_wgd_norm else FALSE)
+            )
+          ),
+          fluidRow(
+            column(12,
                    tags$div(
-                     style = "flex: 1;",
-                     textInput(paste0("heatmap_col_range_", i), "Column Range (e.g., 2-10)",
-                               value = "",
-                               placeholder = "2-10 or 3-15")
-                   ),
-                   tags$div(
-                     style = "padding-bottom: 15px;",
-                     actionButton(paste0("heatmap_add_range_", i), "Add Range",
-                                  class = "btn-sm btn-info",
-                                  icon = icon("plus"))
+                     style = "background: #d1ecf1; padding: 10px; border-radius: 5px; margin-top: 5px;",
+                     tags$small(
+                       icon("info-circle"),
+                       " CNV data will be displayed from the loaded RData file. ",
+                       "Default color scale: Blue (loss) - White (neutral) - Red (gain)."
+                     )
                    )
-                 )
-          ),
-          column(6,
-                 tags$div(
-                   style = "padding-top: 25px;",
-                   tags$small(class = "text-muted",
-                              icon("info-circle"),
-                              " Enter column numbers (e.g., '2-10') to add columns by position")
-                 )
+            )
           )
         ),
 
-        # v127: Dynamic detected type display - updates when columns change
-        fluidRow(
-          column(4,
-                 tags$label("Detected Type"),
-                 uiOutput(paste0("heatmap_detected_type_display_", i))
+        # S1.62dev: CSV-only options (column range and detected type)
+        conditionalPanel(
+          condition = paste0("input.heatmap_data_source_", i, " == 'csv'"),
+          # v121: Column range selector - allows quick selection of contiguous columns
+          fluidRow(
+            column(6,
+                   tags$div(
+                     style = "display: flex; align-items: flex-end; gap: 10px;",
+                     tags$div(
+                       style = "flex: 1;",
+                       textInput(paste0("heatmap_col_range_", i), "Column Range (e.g., 2-10)",
+                                 value = "",
+                                 placeholder = "2-10 or 3-15")
+                     ),
+                     tags$div(
+                       style = "padding-bottom: 15px;",
+                       actionButton(paste0("heatmap_add_range_", i), "Add Range",
+                                    class = "btn-sm btn-info",
+                                    icon = icon("plus"))
+                     )
+                   )
+            ),
+            column(6,
+                   tags$div(
+                     style = "padding-top: 25px;",
+                     tags$small(class = "text-muted",
+                                icon("info-circle"),
+                                " Enter column numbers (e.g., '2-10') to add columns by position")
+                   )
+            )
           ),
-          # v111: Removed "Data Columns Count" - not useful to the user
+
+          # v127: Dynamic detected type display - updates when columns change
+          fluidRow(
+            column(4,
+                   tags$label("Detected Type"),
+                   uiOutput(paste0("heatmap_detected_type_display_", i))
+            ),
+            # v111: Removed "Data Columns Count" - not useful to the user
           column(4),
           column(4)
-        ),
+          )
+        ),  # End CSV conditionalPanel
 
         # Type override and settings
         fluidRow(
@@ -12658,6 +13002,8 @@ server <- function(input, output, session) {
     # v56: Add new empty config with columns (plural) for multiple column support
     # v107: Added distance and height initialization to prevent reactive loops
     new_config <- list(
+      # S1.62dev: Data source selector (csv or rdata)
+      data_source = "csv",
       columns = character(0),  # v56: Changed from column to columns
       title = paste0("Heatmap ", length(values$heatmap_configs) + 1),
       auto_type = TRUE,
@@ -12678,7 +13024,10 @@ server <- function(input, output, session) {
       high_color = "#006837",
       use_midpoint = FALSE,
       mid_color = "#FFFF99",
-      midpoint = 0
+      midpoint = 0,
+      # S1.62dev: CNV-specific settings
+      cnv_downsample = 10,
+      cnv_wgd_norm = FALSE
     )
     
     values$heatmap_configs <- c(values$heatmap_configs, list(new_config))
@@ -12751,7 +13100,46 @@ server <- function(input, output, session) {
           values$heatmap_configs[[i]]$title <- input[[paste0("heatmap_title_", i)]]
         }
       }, ignoreInit = TRUE)
-      
+
+      # S1.62dev: Data source change (csv or rdata)
+      observeEvent(input[[paste0("heatmap_data_source_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          values$heatmap_configs[[i]]$data_source <- input[[paste0("heatmap_data_source_", i)]]
+          # If switching to RData, set type to continuous and appropriate colors
+          if (input[[paste0("heatmap_data_source_", i)]] == "rdata") {
+            values$heatmap_configs[[i]]$type <- "continuous"
+            values$heatmap_configs[[i]]$auto_type <- FALSE
+            # Set blue-white-red color scheme for CNV
+            values$heatmap_configs[[i]]$low_color <- "#0000FF"
+            values$heatmap_configs[[i]]$mid_color <- "#FFFFFF"
+            values$heatmap_configs[[i]]$high_color <- "#FF0000"
+            values$heatmap_configs[[i]]$use_midpoint <- TRUE
+            values$heatmap_configs[[i]]$midpoint <- 2  # Diploid baseline
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      # S1.62dev: RData title change
+      observeEvent(input[[paste0("heatmap_title_rdata_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          values$heatmap_configs[[i]]$title <- input[[paste0("heatmap_title_rdata_", i)]]
+        }
+      }, ignoreInit = TRUE)
+
+      # S1.62dev: CNV downsample factor change
+      observeEvent(input[[paste0("heatmap_cnv_downsample_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          values$heatmap_configs[[i]]$cnv_downsample <- input[[paste0("heatmap_cnv_downsample_", i)]]
+        }
+      }, ignoreInit = TRUE)
+
+      # S1.62dev: CNV WGD normalization change
+      observeEvent(input[[paste0("heatmap_cnv_wgd_norm_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          values$heatmap_configs[[i]]$cnv_wgd_norm <- input[[paste0("heatmap_cnv_wgd_norm_", i)]]
+        }
+      }, ignoreInit = TRUE)
+
       # Column names angle change
       observeEvent(input[[paste0("heatmap_colnames_angle_", i)]], {
         if (i <= length(values$heatmap_configs)) {
@@ -13817,6 +14205,80 @@ server <- function(input, output, session) {
     heatmaps_list <- lapply(seq_along(values$heatmap_configs), function(i) {
       cfg <- values$heatmap_configs[[i]]
 
+      # S1.62dev: Check data source - CSV columns or RData CNV
+      current_data_source <- input[[paste0("heatmap_data_source_", i)]]
+      if (is.null(current_data_source)) current_data_source <- "csv"
+
+      # S1.62dev: Handle RData CNV source
+      if (current_data_source == "rdata") {
+        # Check if RData CNV matrix is available
+        if (is.null(values$rdata_cnv_matrix)) {
+          showNotification(paste("Heatmap", i, ": No RData CNV file loaded. Please upload an RData file first."), type = "error")
+          return(NULL)
+        }
+
+        # Get CNV settings
+        cnv_downsample <- input[[paste0("heatmap_cnv_downsample_", i)]]
+        if (is.null(cnv_downsample)) cnv_downsample <- 10
+        cnv_wgd_norm <- input[[paste0("heatmap_cnv_wgd_norm_", i)]]
+        if (is.null(cnv_wgd_norm)) cnv_wgd_norm <- FALSE
+
+        # Apply downsampling if needed
+        cnv_matrix <- values$rdata_cnv_matrix
+        if (cnv_downsample > 1 && ncol(cnv_matrix) > cnv_downsample) {
+          # Select every nth column
+          keep_cols <- seq(1, ncol(cnv_matrix), by = cnv_downsample)
+          cnv_matrix <- cnv_matrix[, keep_cols, drop = FALSE]
+          debug_cat(paste0("  S1.62dev: Downsampled CNV from ", ncol(values$rdata_cnv_matrix),
+                          " to ", ncol(cnv_matrix), " columns (factor=", cnv_downsample, ")\n"))
+        }
+
+        # Apply WGD normalization if enabled (divide by 2 to center at 1)
+        if (cnv_wgd_norm) {
+          cnv_matrix <- cnv_matrix / 2
+          debug_cat("  S1.62dev: Applied WGD normalization (values / 2)\n")
+        }
+
+        debug_cat(paste0("  S1.62dev: RData CNV heatmap ", i, ": ", nrow(cnv_matrix), " samples x ", ncol(cnv_matrix), " positions\n"))
+
+        # Build heatmap entry for RData CNV
+        heatmap_entry <- list(
+          title = cfg$title,
+          is_discrete = FALSE,  # CNV data is always continuous
+          data_source = "rdata",
+          cnv_matrix = cnv_matrix,  # Include the actual CNV matrix
+          columns = colnames(cnv_matrix),  # Column names for labeling
+          show_colnames = if (!is.null(cfg$show_colnames)) cfg$show_colnames else FALSE,  # Usually too many columns
+          colnames_angle = if (!is.null(cfg$colnames_angle)) cfg$colnames_angle else 90,
+          font_size = input$heatmap_global_font,
+          # Distance and height settings
+          distance = if (!is.null(input[[paste0("heatmap_distance_", i)]])) input[[paste0("heatmap_distance_", i)]] else 0.02,
+          height = if (!is.null(input[[paste0("heatmap_height_", i)]])) input[[paste0("heatmap_height_", i)]] else 0.8,
+          row_height = if (!is.null(input[[paste0("heatmap_row_height_", i)]])) input[[paste0("heatmap_row_height_", i)]] else 1.0,
+          # Grid settings
+          show_grid = if (!is.null(input[[paste0("heatmap_show_grid_", i)]])) input[[paste0("heatmap_show_grid_", i)]] else FALSE,
+          grid_color = if (!is.null(input[[paste0("heatmap_grid_color_", i)]])) input[[paste0("heatmap_grid_color_", i)]] else "#000000",
+          grid_size = if (!is.null(input[[paste0("heatmap_grid_size_", i)]])) input[[paste0("heatmap_grid_size_", i)]] else 0.5,
+          # Guide lines (usually not useful for CNV with many columns)
+          show_guides = FALSE,
+          # Row labels
+          show_row_labels = if (!is.null(input[[paste0("heatmap_show_row_labels_", i)]])) input[[paste0("heatmap_show_row_labels_", i)]] else FALSE,
+          row_label_source = "colnames",
+          row_label_font_size = if (!is.null(input[[paste0("heatmap_row_label_font_size_", i)]])) input[[paste0("heatmap_row_label_font_size_", i)]] else 2.5,
+          row_label_offset = if (!is.null(input[[paste0("heatmap_row_label_offset_", i)]])) input[[paste0("heatmap_row_label_offset_", i)]] else 1.0,
+          row_label_align = if (!is.null(input[[paste0("heatmap_row_label_align_", i)]])) input[[paste0("heatmap_row_label_align_", i)]] else "left",
+          # Color settings - blue-white-red for CNV (default centered at 2 for diploid)
+          low_color = if (!is.null(cfg$low_color)) cfg$low_color else "#0000FF",  # Blue for deletion
+          mid_color = if (!is.null(cfg$mid_color)) cfg$mid_color else "#FFFFFF",  # White for diploid
+          high_color = if (!is.null(cfg$high_color)) cfg$high_color else "#FF0000",  # Red for amplification
+          midpoint = if (!is.null(cfg$midpoint)) cfg$midpoint else (if (cnv_wgd_norm) 1 else 2),  # Center at diploid
+          use_midpoint = TRUE,  # Always use midpoint for CNV
+          na_color = "grey90"
+        )
+
+        return(heatmap_entry)
+      }
+
       # v56a: Read columns directly from input (fixes issue where ignoreInit=TRUE misses initial selection)
       current_columns <- input[[paste0("heatmap_columns_", i)]]
       if (is.null(current_columns) || length(current_columns) == 0) {
@@ -13825,6 +14287,7 @@ server <- function(input, output, session) {
 
       # Update config with current columns
       cfg$columns <- current_columns
+      cfg$data_source <- "csv"  # Explicitly mark as CSV source
 
       # v122: Read auto_type from current input (not from stale cfg)
       current_auto_type <- input[[paste0("heatmap_auto_type_", i)]]
