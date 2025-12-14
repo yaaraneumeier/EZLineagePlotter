@@ -6304,57 +6304,79 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
               chr_y_min <- min(tile_df$y) - tile_height / 2
               chr_y_max <- max(tile_df$y) + tile_height / 2
 
+              # Build data frame for all separator lines
+              chr_sep_lines <- data.frame(
+                x = numeric(0), xend = numeric(0),
+                y = numeric(0), yend = numeric(0)
+              )
+
               for (boundary_idx in chr_boundaries) {
                 if (boundary_idx <= length(col_x_positions)) {
                   # x position is left edge of the boundary column
                   boundary_x <- col_x_positions[boundary_idx] - tile_width / 2
-
-                  p_with_tiles <- p_with_tiles +
-                    geom_segment(
-                      aes(x = boundary_x, xend = boundary_x, y = chr_y_min, yend = chr_y_max),
-                      color = chr_line_color,
-                      linewidth = chr_line_width,
-                      inherit.aes = FALSE
-                    )
+                  chr_sep_lines <- rbind(chr_sep_lines, data.frame(
+                    x = boundary_x, xend = boundary_x,
+                    y = chr_y_min, yend = chr_y_max
+                  ))
                 }
               }
-              debug_cat(paste0("  S1.62dev: Added ", length(chr_boundaries), " chromosome separator lines\n"))
+
+              if (nrow(chr_sep_lines) > 0) {
+                p_with_tiles <- p_with_tiles +
+                  geom_segment(
+                    data = chr_sep_lines,
+                    aes(x = x, xend = xend, y = y, yend = yend),
+                    color = chr_line_color,
+                    linewidth = chr_line_width,
+                    inherit.aes = FALSE
+                  )
+                debug_cat(paste0("  S1.62dev: Added ", nrow(chr_sep_lines), " chromosome separator lines\n"))
+              }
             }
 
-            # Add chromosome labels on the right side
+            # Add chromosome labels above the heatmap
             if (show_chr_labels_bool && length(chr_names) > 0) {
-              # Y positions for labels - at the middle of each chromosome region (in the heatmap's y space)
-              # For now, place all labels at the right edge of the heatmap
-              y_mid <- (min(tile_df$y) + max(tile_df$y)) / 2  # Middle of heatmap vertically
-              label_x <- x_right + tile_width  # Just outside the heatmap
-
-              # For RData CNV, labels go horizontally on the right
-              # Each chromosome gets a label at its midpoint position (mapped to y or stacked)
-              # Since this is a heatmap with rows=samples and columns=positions,
-              # chromosome labels should appear along the columns (x-axis)
-              # We'll place them at the top of the heatmap
-
+              # Since this is a heatmap with rows=samples and columns=genomic positions,
+              # chromosome labels should appear above the heatmap at the center of each chromosome region
               y_label_pos <- max(tile_df$y) + tile_height / 2 + 0.5  # Above the heatmap
 
-              for (idx in seq_along(chr_names)) {
-                if (idx <= length(chr_midpoints) && chr_midpoints[idx] <= length(col_x_positions)) {
-                  midpoint_col_idx <- round(chr_midpoints[idx])
-                  if (midpoint_col_idx > 0 && midpoint_col_idx <= length(col_x_positions)) {
-                    label_x_pos <- col_x_positions[midpoint_col_idx]
+              # Build data frame for chromosome labels
+              chr_labels_df <- data.frame(
+                x = numeric(0), y = numeric(0), label = character(0),
+                stringsAsFactors = FALSE
+              )
 
-                    p_with_tiles <- p_with_tiles +
-                      annotate("text",
-                               x = label_x_pos,
-                               y = y_label_pos,
-                               label = chr_names[idx],
-                               size = chr_label_size,
-                               color = chr_label_color,
-                               vjust = 0,
-                               hjust = 0.5)
-                  }
+              for (idx in seq_along(chr_names)) {
+                if (idx <= length(chr_midpoints)) {
+                  midpoint_col_idx <- round(chr_midpoints[idx])
+                  # Ensure the index is within bounds
+                  midpoint_col_idx <- max(1, min(midpoint_col_idx, length(col_x_positions)))
+                  label_x_pos <- col_x_positions[midpoint_col_idx]
+
+                  chr_labels_df <- rbind(chr_labels_df, data.frame(
+                    x = label_x_pos,
+                    y = y_label_pos,
+                    label = chr_names[idx],
+                    stringsAsFactors = FALSE
+                  ))
                 }
               }
-              debug_cat(paste0("  S1.62dev: Added ", length(chr_names), " chromosome labels\n"))
+
+              if (nrow(chr_labels_df) > 0) {
+                p_with_tiles <- p_with_tiles +
+                  geom_text(
+                    data = chr_labels_df,
+                    aes(x = x, y = y, label = label),
+                    size = chr_label_size,
+                    color = chr_label_color,
+                    vjust = 0,
+                    hjust = 0.5,
+                    inherit.aes = FALSE
+                  ) +
+                  expand_limits(y = y_label_pos + 1)  # Ensure plot includes label area
+
+                debug_cat(paste0("  S1.62dev: Added ", nrow(chr_labels_df), " chromosome labels above heatmap\n"))
+              }
             }
           } else if ((show_chr_lines_bool || show_chr_labels_bool) && is.null(rdata_chr_info)) {
             debug_cat(paste0("  S1.62dev: Chromosome features requested but no chr_info available\n"))
@@ -13859,10 +13881,10 @@ server <- function(input, output, session) {
           if (input[[paste0("heatmap_data_source_", i)]] == "rdata") {
             values$heatmap_configs[[i]]$type <- "continuous"
             values$heatmap_configs[[i]]$auto_type <- FALSE
-            # Set blue-white-red color scheme for CNV
-            values$heatmap_configs[[i]]$low_color <- "#0000FF"
-            values$heatmap_configs[[i]]$mid_color <- "#FFFFFF"
-            values$heatmap_configs[[i]]$high_color <- "#FF0000"
+            # S1.62dev: Set red-white-blue color scheme for CNV (red=loss, blue=gain)
+            values$heatmap_configs[[i]]$low_color <- "#FF0000"   # Red for deletion/loss
+            values$heatmap_configs[[i]]$mid_color <- "#FFFFFF"   # White for neutral
+            values$heatmap_configs[[i]]$high_color <- "#0000FF"  # Blue for amplification/gain
             values$heatmap_configs[[i]]$use_midpoint <- TRUE
             values$heatmap_configs[[i]]$midpoint <- 2  # Diploid baseline
           }
@@ -15255,6 +15277,12 @@ server <- function(input, output, session) {
           chr_labels = if (!is.null(input[[paste0("heatmap_chr_labels_", i)]])) input[[paste0("heatmap_chr_labels_", i)]] else FALSE,
           chr_label_size = if (!is.null(input[[paste0("heatmap_chr_label_size_", i)]])) input[[paste0("heatmap_chr_label_size_", i)]] else 3,
           chr_label_color = if (!is.null(input[[paste0("heatmap_chr_label_color_", i)]])) input[[paste0("heatmap_chr_label_color_", i)]] else "#000000",
+          # S1.62dev: Vertical text labels below heatmap
+          show_vertical_text = if (!is.null(input[[paste0("heatmap_show_vertical_text_", i)]])) input[[paste0("heatmap_show_vertical_text_", i)]] else FALSE,
+          vertical_text_column = if (!is.null(input[[paste0("heatmap_vertical_text_column_", i)]])) input[[paste0("heatmap_vertical_text_column_", i)]] else "",
+          vertical_text_size = if (!is.null(input[[paste0("heatmap_vertical_text_size_", i)]])) input[[paste0("heatmap_vertical_text_size_", i)]] else 3,
+          vertical_text_offset = if (!is.null(input[[paste0("heatmap_vertical_text_offset_", i)]])) input[[paste0("heatmap_vertical_text_offset_", i)]] else 0.5,
+          vertical_text_color = if (!is.null(input[[paste0("heatmap_vertical_text_color_", i)]])) input[[paste0("heatmap_vertical_text_color_", i)]] else "#000000",
           # Guide lines (usually not useful for CNV with many columns)
           show_guides = FALSE,
           # Row labels
@@ -15263,10 +15291,10 @@ server <- function(input, output, session) {
           row_label_font_size = if (!is.null(input[[paste0("heatmap_row_label_font_size_", i)]])) input[[paste0("heatmap_row_label_font_size_", i)]] else 2.5,
           row_label_offset = if (!is.null(input[[paste0("heatmap_row_label_offset_", i)]])) input[[paste0("heatmap_row_label_offset_", i)]] else 1.0,
           row_label_align = if (!is.null(input[[paste0("heatmap_row_label_align_", i)]])) input[[paste0("heatmap_row_label_align_", i)]] else "left",
-          # Color settings - blue-white-red for CNV (default centered at 0)
-          low_color = if (!is.null(cfg$low_color)) cfg$low_color else "#0000FF",  # Blue for deletion
-          mid_color = if (!is.null(cfg$mid_color)) cfg$mid_color else "#FFFFFF",  # White for zero
-          high_color = if (!is.null(cfg$high_color)) cfg$high_color else "#FF0000",  # Red for amplification
+          # S1.62dev: Color settings - red-white-blue for CNV (red=loss, blue=gain)
+          low_color = if (!is.null(cfg$low_color)) cfg$low_color else "#FF0000",   # Red for deletion/loss
+          mid_color = if (!is.null(cfg$mid_color)) cfg$mid_color else "#FFFFFF",   # White for neutral
+          high_color = if (!is.null(cfg$high_color)) cfg$high_color else "#0000FF", # Blue for amplification/gain
           midpoint = if (!is.null(cfg$midpoint)) cfg$midpoint else 0,  # Center at 0
           use_midpoint = TRUE,  # Always use midpoint for CNV
           na_color = "grey90"
