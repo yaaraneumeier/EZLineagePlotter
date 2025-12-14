@@ -2849,7 +2849,8 @@ func.print.lineage.tree <- function(conf_yaml_path,
                                     heatmap_tree_distance= 0.02,
                                     heatmap_global_gap = 0.05,  # v125: Gap between multiple heatmaps
                                     legend_settings = NULL,  # v135: Legend settings for highlight/bootstrap legends
-                                    rdata_cnv_matrix = NULL) {  # S1.62dev: CNV matrix from RData file
+                                    rdata_cnv_matrix = NULL,  # S1.62dev: CNV matrix from RData file
+                                    rdata_chr_info = NULL) {  # S1.62dev: Chromosome info for CNV heatmaps
 
   # === DEBUG CHECKPOINT 2: FUNCTION ENTRY ===
   # v53: cat(file=stderr(), "\nÃ°Å¸â€Â DEBUG CHECKPOINT 2: func.print.lineage.tree ENTRY\n")
@@ -3463,6 +3464,23 @@ func.print.lineage.tree <- function(conf_yaml_path,
                 param[['row_line_size']] <- 0.5
               }
 
+              # S1.62dev: Get column line settings (vertical lines only)
+              if ('show_col_lines' %in% names(heat_map_i_def)) {
+                param[['show_col_lines']] <- func.check.bin.val.from.conf(heat_map_i_def[['show_col_lines']])
+              } else {
+                param[['show_col_lines']] <- FALSE
+              }
+              if ('col_line_color' %in% names(heat_map_i_def)) {
+                param[['col_line_color']] <- heat_map_i_def[['col_line_color']]
+              } else {
+                param[['col_line_color']] <- "#000000"
+              }
+              if ('col_line_size' %in% names(heat_map_i_def)) {
+                param[['col_line_size']] <- as.numeric(heat_map_i_def[['col_line_size']])
+              } else {
+                param[['col_line_size']] <- 0.5
+              }
+
               # S1.62dev: Get vertical text labels settings
               if ('show_vertical_text' %in% names(heat_map_i_def)) {
                 param[['show_vertical_text']] <- func.check.bin.val.from.conf(heat_map_i_def[['show_vertical_text']])
@@ -3709,6 +3727,23 @@ func.print.lineage.tree <- function(conf_yaml_path,
                 param[['row_line_size']] <- as.numeric(heat_map_i_def[['row_line_size']])
               } else {
                 param[['row_line_size']] <- 0.5
+              }
+
+              # S1.62dev: Get column line settings for continuous heatmaps too
+              if ('show_col_lines' %in% names(heat_map_i_def)) {
+                param[['show_col_lines']] <- func.check.bin.val.from.conf(heat_map_i_def[['show_col_lines']])
+              } else {
+                param[['show_col_lines']] <- FALSE
+              }
+              if ('col_line_color' %in% names(heat_map_i_def)) {
+                param[['col_line_color']] <- heat_map_i_def[['col_line_color']]
+              } else {
+                param[['col_line_color']] <- "#000000"
+              }
+              if ('col_line_size' %in% names(heat_map_i_def)) {
+                param[['col_line_size']] <- as.numeric(heat_map_i_def[['col_line_size']])
+              } else {
+                param[['col_line_size']] <- 0.5
               }
 
               # S1.62dev: Get vertical text labels settings for continuous heatmaps too
@@ -6093,6 +6128,45 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             debug_cat(paste0("  S1.62dev: Added ", nrow(row_lines_df), " horizontal row lines\n"))
           }
 
+          # S1.62dev: Add vertical column lines (separate from grid - only vertical lines)
+          show_col_lines_bool <- !is.null(heat_param[['show_col_lines']]) &&
+                                  isTRUE(heat_param[['show_col_lines']])
+          if (show_col_lines_bool) {
+            col_line_color <- if (!is.null(heat_param[['col_line_color']])) heat_param[['col_line_color']] else "#000000"
+            col_line_size <- if (!is.null(heat_param[['col_line_size']])) as.numeric(heat_param[['col_line_size']]) else 0.5
+
+            debug_cat(paste0("  S1.62dev: Adding vertical column lines (color: ", col_line_color, ", size: ", col_line_size, ")\n"))
+
+            # Build vertical column lines (left and right edge of each column)
+            col_x_values <- sort(unique(tile_df$x))
+            col_lines_x <- c()
+            for (i in seq_along(col_x_values)) {
+              # Left and right edge of each column
+              col_lines_x <- c(col_lines_x, col_x_values[i] - tile_width / 2)
+              col_lines_x <- c(col_lines_x, col_x_values[i] + tile_width / 2)
+            }
+            col_lines_x <- unique(col_lines_x)
+
+            # Calculate y-range for vertical lines
+            col_y_min <- min(tile_df$y) - tile_height / 2
+            col_y_max <- max(tile_df$y) + tile_height / 2
+
+            # Create vertical line data (NO horizontal lines)
+            col_lines_df <- data.frame(
+              x = rep(col_lines_x, each = 1),
+              xend = rep(col_lines_x, each = 1),
+              y = col_y_min,
+              yend = col_y_max
+            )
+
+            # Add column lines as geom_segment layer
+            p_with_tiles <- p_with_tiles +
+              geom_segment(data = col_lines_df, aes(x = x, xend = xend, y = y, yend = yend),
+                           color = col_line_color, linewidth = col_line_size, inherit.aes = FALSE)
+
+            debug_cat(paste0("  S1.62dev: Added ", nrow(col_lines_df), " vertical column lines\n"))
+          }
+
           # S1.62dev: Add vertical text labels below heatmap
           show_vertical_text_bool <- !is.null(heat_param[['show_vertical_text']]) &&
                                       isTRUE(heat_param[['show_vertical_text']])
@@ -6145,17 +6219,145 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
               )
 
               # Add vertical text labels using geom_text with 90-degree rotation
+              # S1.62dev: With angle=90 (counterclockwise), text goes bottom-to-top
+              # hjust=1 anchors the TOP of rotated text at the y position (text extends down/away from heatmap)
+              # hjust=0 anchors the BOTTOM of rotated text at the y position (text extends up/into heatmap)
+              # We want text below heatmap extending upward, so use hjust=0 and position y at bottom minus offset
               p_with_tiles <- p_with_tiles +
                 geom_text(data = text_df, aes(x = x, y = y, label = label),
-                          angle = 90, hjust = 1, vjust = 0.5,
+                          angle = 90, hjust = 0, vjust = 0.5,
                           size = vertical_text_size, color = vertical_text_color,
-                          inherit.aes = FALSE)
+                          inherit.aes = FALSE) +
+                expand_limits(y = y_bottom)  # Ensure plot includes the text anchor position
 
-              debug_cat(paste0("  S1.62dev: Added ", nrow(text_df), " vertical text labels\n"))
+              debug_cat(paste0("  S1.62dev: Added ", nrow(text_df), " vertical text labels at y=", y_bottom, "\n"))
             } else {
               debug_cat(paste0("  S1.62dev: Warning - column count mismatch: ", length(col_x_positions),
                                " positions vs ", length(vertical_labels), " labels\n"))
             }
+          }
+
+          # S1.62dev: Add chromosome separator lines and labels (for RData CNV heatmaps)
+          show_chr_lines_bool <- !is.null(heat_param[['chr_lines']]) &&
+                                  isTRUE(heat_param[['chr_lines']])
+          show_chr_labels_bool <- !is.null(heat_param[['chr_labels']]) &&
+                                   isTRUE(heat_param[['chr_labels']])
+
+          if ((show_chr_lines_bool || show_chr_labels_bool) && !is.null(rdata_chr_info)) {
+            chr_line_color <- if (!is.null(heat_param[['chr_line_color']])) heat_param[['chr_line_color']] else "#000000"
+            chr_line_width <- if (!is.null(heat_param[['chr_line_width']])) as.numeric(heat_param[['chr_line_width']]) else 0.5
+            chr_label_size <- if (!is.null(heat_param[['chr_label_size']])) as.numeric(heat_param[['chr_label_size']]) else 3
+            chr_label_color <- if (!is.null(heat_param[['chr_label_color']])) heat_param[['chr_label_color']] else "#000000"
+
+            debug_cat(paste0("  S1.62dev: Processing chromosome separators/labels\n"))
+
+            # Find chromosome boundaries in the CNV data
+            # rdata_chr_info has chromosome names for each position in the original matrix
+            # But the heatmap columns correspond to the (possibly downsampled) matrix columns
+            chr_info_full <- rdata_chr_info
+            n_cols_heatmap <- ncol(heat_data)
+            n_cols_chr <- length(chr_info_full)
+
+            debug_cat(paste0("  S1.62dev: Heatmap has ", n_cols_heatmap, " columns, chr_info has ", n_cols_chr, " entries\n"))
+
+            # Sample chr_info to match heatmap column count (in case of downsampling)
+            if (n_cols_heatmap < n_cols_chr) {
+              sample_indices <- round(seq(1, n_cols_chr, length.out = n_cols_heatmap))
+              chr_info_sampled <- chr_info_full[sample_indices]
+              debug_cat(paste0("  S1.62dev: Sampled chr_info to ", length(chr_info_sampled), " entries\n"))
+            } else {
+              chr_info_sampled <- chr_info_full
+            }
+
+            # Find boundaries where chromosome changes
+            chr_boundaries <- c()
+            chr_midpoints <- c()
+            chr_names <- c()
+            current_chr <- chr_info_sampled[1]
+            chr_start_idx <- 1
+
+            for (idx in 2:length(chr_info_sampled)) {
+              if (chr_info_sampled[idx] != current_chr) {
+                # Found boundary
+                chr_boundaries <- c(chr_boundaries, idx)
+                # Calculate midpoint of previous chromosome
+                chr_midpoints <- c(chr_midpoints, (chr_start_idx + idx - 1) / 2)
+                chr_names <- c(chr_names, current_chr)
+                current_chr <- chr_info_sampled[idx]
+                chr_start_idx <- idx
+              }
+            }
+            # Add last chromosome
+            chr_midpoints <- c(chr_midpoints, (chr_start_idx + length(chr_info_sampled)) / 2)
+            chr_names <- c(chr_names, current_chr)
+
+            debug_cat(paste0("  S1.62dev: Found ", length(chr_boundaries), " chromosome boundaries\n"))
+            debug_cat(paste0("  S1.62dev: Chromosomes: ", paste(chr_names, collapse=", "), "\n"))
+
+            # Get x positions for heatmap columns
+            col_x_positions <- sort(unique(tile_df$x))
+            x_right <- max(col_x_positions) + tile_width / 2  # Right edge of heatmap
+
+            # Draw separator lines at chromosome boundaries
+            if (show_chr_lines_bool && length(chr_boundaries) > 0) {
+              # Y range for separator lines
+              chr_y_min <- min(tile_df$y) - tile_height / 2
+              chr_y_max <- max(tile_df$y) + tile_height / 2
+
+              for (boundary_idx in chr_boundaries) {
+                if (boundary_idx <= length(col_x_positions)) {
+                  # x position is left edge of the boundary column
+                  boundary_x <- col_x_positions[boundary_idx] - tile_width / 2
+
+                  p_with_tiles <- p_with_tiles +
+                    geom_segment(
+                      aes(x = boundary_x, xend = boundary_x, y = chr_y_min, yend = chr_y_max),
+                      color = chr_line_color,
+                      linewidth = chr_line_width,
+                      inherit.aes = FALSE
+                    )
+                }
+              }
+              debug_cat(paste0("  S1.62dev: Added ", length(chr_boundaries), " chromosome separator lines\n"))
+            }
+
+            # Add chromosome labels on the right side
+            if (show_chr_labels_bool && length(chr_names) > 0) {
+              # Y positions for labels - at the middle of each chromosome region (in the heatmap's y space)
+              # For now, place all labels at the right edge of the heatmap
+              y_mid <- (min(tile_df$y) + max(tile_df$y)) / 2  # Middle of heatmap vertically
+              label_x <- x_right + tile_width  # Just outside the heatmap
+
+              # For RData CNV, labels go horizontally on the right
+              # Each chromosome gets a label at its midpoint position (mapped to y or stacked)
+              # Since this is a heatmap with rows=samples and columns=positions,
+              # chromosome labels should appear along the columns (x-axis)
+              # We'll place them at the top of the heatmap
+
+              y_label_pos <- max(tile_df$y) + tile_height / 2 + 0.5  # Above the heatmap
+
+              for (idx in seq_along(chr_names)) {
+                if (idx <= length(chr_midpoints) && chr_midpoints[idx] <= length(col_x_positions)) {
+                  midpoint_col_idx <- round(chr_midpoints[idx])
+                  if (midpoint_col_idx > 0 && midpoint_col_idx <= length(col_x_positions)) {
+                    label_x_pos <- col_x_positions[midpoint_col_idx]
+
+                    p_with_tiles <- p_with_tiles +
+                      annotate("text",
+                               x = label_x_pos,
+                               y = y_label_pos,
+                               label = chr_names[idx],
+                               size = chr_label_size,
+                               color = chr_label_color,
+                               vjust = 0,
+                               hjust = 0.5)
+                  }
+                }
+              }
+              debug_cat(paste0("  S1.62dev: Added ", length(chr_names), " chromosome labels\n"))
+            }
+          } else if ((show_chr_lines_bool || show_chr_labels_bool) && is.null(rdata_chr_info)) {
+            debug_cat(paste0("  S1.62dev: Chromosome features requested but no chr_info available\n"))
           }
 
           debug_cat(paste0("  geom_tile added successfully\n"))
@@ -10064,6 +10266,17 @@ server <- function(input, output, session) {
           show_row_lines = if (!is.null(cfg$show_row_lines)) cfg$show_row_lines else FALSE,
           row_line_color = if (!is.null(cfg$row_line_color)) cfg$row_line_color else "#000000",
           row_line_size = if (!is.null(cfg$row_line_size)) cfg$row_line_size else 0.5,
+          # S1.62dev: Column line settings
+          show_col_lines = if (!is.null(cfg$show_col_lines)) cfg$show_col_lines else FALSE,
+          col_line_color = if (!is.null(cfg$col_line_color)) cfg$col_line_color else "#000000",
+          col_line_size = if (!is.null(cfg$col_line_size)) cfg$col_line_size else 0.5,
+          # S1.62dev: Chromosome separator settings
+          chr_lines = if (!is.null(cfg$chr_lines)) cfg$chr_lines else FALSE,
+          chr_line_color = if (!is.null(cfg$chr_line_color)) cfg$chr_line_color else "#000000",
+          chr_line_width = if (!is.null(cfg$chr_line_width)) cfg$chr_line_width else 0.5,
+          chr_labels = if (!is.null(cfg$chr_labels)) cfg$chr_labels else FALSE,
+          chr_label_size = if (!is.null(cfg$chr_label_size)) cfg$chr_label_size else 3,
+          chr_label_color = if (!is.null(cfg$chr_label_color)) cfg$chr_label_color else "#000000",
           show_guides = if (!is.null(cfg$show_guides)) cfg$show_guides else FALSE,
           guide_color1 = if (!is.null(cfg$guide_color1)) cfg$guide_color1 else "#CCCCCC",
           guide_color2 = if (!is.null(cfg$guide_color2)) cfg$guide_color2 else "#EEEEEE",
@@ -10953,6 +11166,11 @@ server <- function(input, output, session) {
             heatmap_item[[as.character(j)]]$row_line_color <- if (!is.null(heatmap_entry$row_line_color)) heatmap_entry$row_line_color else "#000000"
             heatmap_item[[as.character(j)]]$row_line_size <- if (!is.null(heatmap_entry$row_line_size)) heatmap_entry$row_line_size else 0.5
 
+            # S1.62dev: Add column line settings (vertical lines only)
+            heatmap_item[[as.character(j)]]$show_col_lines <- if (!is.null(heatmap_entry$show_col_lines) && heatmap_entry$show_col_lines) "yes" else "no"
+            heatmap_item[[as.character(j)]]$col_line_color <- if (!is.null(heatmap_entry$col_line_color)) heatmap_entry$col_line_color else "#000000"
+            heatmap_item[[as.character(j)]]$col_line_size <- if (!is.null(heatmap_entry$col_line_size)) heatmap_entry$col_line_size else 0.5
+
             # S1.62dev: Add vertical text labels settings
             heatmap_item[[as.character(j)]]$show_vertical_text <- if (!is.null(heatmap_entry$show_vertical_text) && heatmap_entry$show_vertical_text) "yes" else "no"
             heatmap_item[[as.character(j)]]$vertical_text_column <- if (!is.null(heatmap_entry$vertical_text_column)) heatmap_entry$vertical_text_column else ""
@@ -11175,6 +11393,11 @@ server <- function(input, output, session) {
           heatmap_item[[as.character(j)]]$show_row_lines <- if (!is.null(heatmap_entry$show_row_lines) && heatmap_entry$show_row_lines) "yes" else "no"
           heatmap_item[[as.character(j)]]$row_line_color <- if (!is.null(heatmap_entry$row_line_color)) heatmap_entry$row_line_color else "#000000"
           heatmap_item[[as.character(j)]]$row_line_size <- if (!is.null(heatmap_entry$row_line_size)) heatmap_entry$row_line_size else 0.5
+
+          # S1.62dev: Add column line settings (vertical lines only)
+          heatmap_item[[as.character(j)]]$show_col_lines <- if (!is.null(heatmap_entry$show_col_lines) && heatmap_entry$show_col_lines) "yes" else "no"
+          heatmap_item[[as.character(j)]]$col_line_color <- if (!is.null(heatmap_entry$col_line_color)) heatmap_entry$col_line_color else "#000000"
+          heatmap_item[[as.character(j)]]$col_line_size <- if (!is.null(heatmap_entry$col_line_size)) heatmap_entry$col_line_size else 0.5
 
           # S1.62dev: Add vertical text labels settings
           heatmap_item[[as.character(j)]]$show_vertical_text <- if (!is.null(heatmap_entry$show_vertical_text) && heatmap_entry$show_vertical_text) "yes" else "no"
@@ -13184,6 +13407,48 @@ server <- function(input, output, session) {
                                  value = if (!is.null(cfg$cnv_wgd_norm)) cfg$cnv_wgd_norm else FALSE)
             )
           ),
+          # S1.62dev: Chromosome separator line options
+          tags$div(
+            style = "background-color: #f0f8f0; padding: 10px; border-radius: 5px; margin-top: 10px;",
+            tags$h5(icon("dna"), " Chromosome Options"),
+            fluidRow(
+              column(4,
+                     checkboxInput(paste0("heatmap_chr_lines_", i), "Show chromosome separators",
+                                   value = if (!is.null(cfg$chr_lines)) cfg$chr_lines else FALSE)
+              ),
+              column(4,
+                     colourInput(paste0("heatmap_chr_line_color_", i), "Separator color",
+                                 value = if (!is.null(cfg$chr_line_color)) cfg$chr_line_color else "#000000",
+                                 showColour = "background")
+              ),
+              column(4,
+                     sliderInput(paste0("heatmap_chr_line_width_", i), "Separator width",
+                                 min = 0.1, max = 3.0,
+                                 value = if (!is.null(cfg$chr_line_width)) cfg$chr_line_width else 0.5,
+                                 step = 0.1)
+              )
+            ),
+            fluidRow(
+              column(4,
+                     checkboxInput(paste0("heatmap_chr_labels_", i), "Show chromosome labels",
+                                   value = if (!is.null(cfg$chr_labels)) cfg$chr_labels else FALSE)
+              ),
+              column(4,
+                     sliderInput(paste0("heatmap_chr_label_size_", i), "Label size",
+                                 min = 1, max = 10,
+                                 value = if (!is.null(cfg$chr_label_size)) cfg$chr_label_size else 3,
+                                 step = 0.5)
+              ),
+              column(4,
+                     colourInput(paste0("heatmap_chr_label_color_", i), "Label color",
+                                 value = if (!is.null(cfg$chr_label_color)) cfg$chr_label_color else "#000000",
+                                 showColour = "background")
+              )
+            ),
+            tags$small(class = "text-muted",
+                       icon("info-circle"),
+                       " Chromosome info extracted from RData file (if available)")
+          ),
           fluidRow(
             column(12,
                    tags$div(
@@ -13191,7 +13456,7 @@ server <- function(input, output, session) {
                      tags$small(
                        icon("info-circle"),
                        " CNV data will be displayed from the loaded RData file. ",
-                       "Default color scale: Blue (loss) - White (neutral) - Red (gain)."
+                       "Default color scale: Red (loss) - White (neutral) - Blue (gain)."
                      )
                    )
             )
@@ -13320,6 +13585,24 @@ server <- function(input, output, session) {
                  sliderInput(paste0("heatmap_row_line_size_", i), "Row line width",
                              min = 0.1, max = 2.0,
                              value = if (!is.null(cfg$row_line_size)) cfg$row_line_size else 0.5,
+                             step = 0.1)
+          )
+        ),
+        # S1.62dev: Vertical column lines option
+        fluidRow(
+          column(4,
+                 checkboxInput(paste0("heatmap_show_col_lines_", i), "Show vertical column lines",
+                               value = if (!is.null(cfg$show_col_lines)) cfg$show_col_lines else FALSE)
+          ),
+          column(4,
+                 colourInput(paste0("heatmap_col_line_color_", i), "Column line color",
+                             value = if (!is.null(cfg$col_line_color)) cfg$col_line_color else "#000000",
+                             showColour = "background")
+          ),
+          column(4,
+                 sliderInput(paste0("heatmap_col_line_size_", i), "Column line width",
+                             min = 0.1, max = 2.0,
+                             value = if (!is.null(cfg$col_line_size)) cfg$col_line_size else 0.5,
                              step = 0.1)
           )
         ),
@@ -13714,6 +13997,37 @@ server <- function(input, output, session) {
         }
       }, ignoreInit = TRUE)
 
+      # S1.62dev: Column line settings observers
+      observeEvent(input[[paste0("heatmap_show_col_lines_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_show_col_lines_", i)]]
+          current_val <- values$heatmap_configs[[i]]$show_col_lines
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$show_col_lines <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      observeEvent(input[[paste0("heatmap_col_line_color_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_col_line_color_", i)]]
+          current_val <- values$heatmap_configs[[i]]$col_line_color
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$col_line_color <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      observeEvent(input[[paste0("heatmap_col_line_size_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_col_line_size_", i)]]
+          current_val <- values$heatmap_configs[[i]]$col_line_size
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$col_line_size <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
       # S1.62dev: Vertical text labels observers
       observeEvent(input[[paste0("heatmap_show_vertical_text_", i)]], {
         if (i <= length(values$heatmap_configs)) {
@@ -13761,6 +14075,68 @@ server <- function(input, output, session) {
           current_val <- values$heatmap_configs[[i]]$vertical_text_color
           if (is.null(current_val) || !identical(new_val, current_val)) {
             values$heatmap_configs[[i]]$vertical_text_color <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      # S1.62dev: Chromosome separator line observers
+      observeEvent(input[[paste0("heatmap_chr_lines_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_chr_lines_", i)]]
+          current_val <- values$heatmap_configs[[i]]$chr_lines
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$chr_lines <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      observeEvent(input[[paste0("heatmap_chr_line_color_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_chr_line_color_", i)]]
+          current_val <- values$heatmap_configs[[i]]$chr_line_color
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$chr_line_color <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      observeEvent(input[[paste0("heatmap_chr_line_width_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_chr_line_width_", i)]]
+          current_val <- values$heatmap_configs[[i]]$chr_line_width
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$chr_line_width <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      # S1.62dev: Chromosome label observers
+      observeEvent(input[[paste0("heatmap_chr_labels_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_chr_labels_", i)]]
+          current_val <- values$heatmap_configs[[i]]$chr_labels
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$chr_labels <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      observeEvent(input[[paste0("heatmap_chr_label_size_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_chr_label_size_", i)]]
+          current_val <- values$heatmap_configs[[i]]$chr_label_size
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$chr_label_size <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      observeEvent(input[[paste0("heatmap_chr_label_color_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_chr_label_color_", i)]]
+          current_val <- values$heatmap_configs[[i]]$chr_label_color
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$chr_label_color <- new_val
           }
         }
       }, ignoreInit = TRUE)
@@ -14303,11 +14679,11 @@ server <- function(input, output, session) {
               ),
               column(4,
                      colourInput(paste0("heatmap_low_color_", i), "Low (Deletion)",
-                                 value = if (!is.null(cfg$low_color)) cfg$low_color else "#0000FF")
+                                 value = if (!is.null(cfg$low_color)) cfg$low_color else "#FF0000")
               ),
               column(4,
                      colourInput(paste0("heatmap_high_color_", i), "High (Amplification)",
-                                 value = if (!is.null(cfg$high_color)) cfg$high_color else "#FF0000")
+                                 value = if (!is.null(cfg$high_color)) cfg$high_color else "#0000FF")
               )
             ),
             fluidRow(
@@ -14339,7 +14715,7 @@ server <- function(input, output, session) {
               ),
               column(8,
                      tags$p(class = "text-muted", style = "margin-top: 25px;",
-                            icon("info-circle"), " Blue-White-Red scale centered at 0")
+                            icon("info-circle"), " Red-White-Blue scale centered at 0")
               )
             )
           ))
@@ -14868,6 +15244,17 @@ server <- function(input, output, session) {
           show_row_lines = if (!is.null(input[[paste0("heatmap_show_row_lines_", i)]])) input[[paste0("heatmap_show_row_lines_", i)]] else FALSE,
           row_line_color = if (!is.null(input[[paste0("heatmap_row_line_color_", i)]])) input[[paste0("heatmap_row_line_color_", i)]] else "#000000",
           row_line_size = if (!is.null(input[[paste0("heatmap_row_line_size_", i)]])) input[[paste0("heatmap_row_line_size_", i)]] else 0.5,
+          # S1.62dev: Column line settings (vertical lines only)
+          show_col_lines = if (!is.null(input[[paste0("heatmap_show_col_lines_", i)]])) input[[paste0("heatmap_show_col_lines_", i)]] else FALSE,
+          col_line_color = if (!is.null(input[[paste0("heatmap_col_line_color_", i)]])) input[[paste0("heatmap_col_line_color_", i)]] else "#000000",
+          col_line_size = if (!is.null(input[[paste0("heatmap_col_line_size_", i)]])) input[[paste0("heatmap_col_line_size_", i)]] else 0.5,
+          # S1.62dev: Chromosome separator settings
+          chr_lines = if (!is.null(input[[paste0("heatmap_chr_lines_", i)]])) input[[paste0("heatmap_chr_lines_", i)]] else FALSE,
+          chr_line_color = if (!is.null(input[[paste0("heatmap_chr_line_color_", i)]])) input[[paste0("heatmap_chr_line_color_", i)]] else "#000000",
+          chr_line_width = if (!is.null(input[[paste0("heatmap_chr_line_width_", i)]])) input[[paste0("heatmap_chr_line_width_", i)]] else 0.5,
+          chr_labels = if (!is.null(input[[paste0("heatmap_chr_labels_", i)]])) input[[paste0("heatmap_chr_labels_", i)]] else FALSE,
+          chr_label_size = if (!is.null(input[[paste0("heatmap_chr_label_size_", i)]])) input[[paste0("heatmap_chr_label_size_", i)]] else 3,
+          chr_label_color = if (!is.null(input[[paste0("heatmap_chr_label_color_", i)]])) input[[paste0("heatmap_chr_label_color_", i)]] else "#000000",
           # Guide lines (usually not useful for CNV with many columns)
           show_guides = FALSE,
           # Row labels
@@ -16076,7 +16463,9 @@ server <- function(input, output, session) {
         # v135: Pass legend settings for highlight/bootstrap legends
         legend_settings = values$legend_settings,
         # S1.62dev: Pass RData CNV matrix for heatmaps with data_source="rdata"
-        rdata_cnv_matrix = values$rdata_cnv_matrix
+        rdata_cnv_matrix = values$rdata_cnv_matrix,
+        # S1.62dev: Pass chromosome info for RData CNV heatmaps
+        rdata_chr_info = values$rdata_chr_info
       ))
       cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] RETURNED from func.print.lineage.tree at ", format(Sys.time(), "%H:%M:%OS3"), "\n"))
 
