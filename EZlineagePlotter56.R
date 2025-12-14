@@ -13848,6 +13848,67 @@ server <- function(input, output, session) {
         auto_type <- input[[paste0("heatmap_auto_type_", i)]]
         forced_type <- input[[paste0("heatmap_type_", i)]]
 
+        # S1.62dev: Check if this is an RData heatmap - show continuous settings directly
+        data_source <- input[[paste0("heatmap_data_source_", i)]]
+        if (!is.null(data_source) && data_source == "rdata") {
+          # RData CNV heatmaps are always continuous - show continuous color settings
+          cfg <- isolate(values$heatmap_configs[[i]])
+          continuous_palettes <- c("Blues", "Greens", "Reds", "Purples", "Oranges",
+                                   "Viridis", "Plasma", "Inferno", "Magma",
+                                   "RdBu", "RdYlGn", "PiYG", "BrBG")
+          return(tags$div(
+            style = "background-color: #e6f3ff; padding: 10px; border-radius: 5px; margin-top: 10px;",
+            tags$h5(icon("dna"), " CNV Color Settings"),
+            fluidRow(
+              column(4,
+                     selectInput(paste0("heatmap_cont_palette_", i), "Color Palette",
+                                 choices = continuous_palettes,
+                                 selected = if (!is.null(cfg$cont_palette)) cfg$cont_palette else "RdBu")
+              ),
+              column(4,
+                     colourInput(paste0("heatmap_low_color_", i), "Low (Deletion)",
+                                 value = if (!is.null(cfg$low_color)) cfg$low_color else "#0000FF")
+              ),
+              column(4,
+                     colourInput(paste0("heatmap_high_color_", i), "High (Amplification)",
+                                 value = if (!is.null(cfg$high_color)) cfg$high_color else "#FF0000")
+              )
+            ),
+            fluidRow(
+              column(4,
+                     checkboxInput(paste0("heatmap_use_midpoint_", i), "Use midpoint color",
+                                   value = if (!is.null(cfg$use_midpoint)) cfg$use_midpoint else TRUE)
+              ),
+              column(4,
+                     conditionalPanel(
+                       condition = paste0("input.heatmap_use_midpoint_", i),
+                       colourInput(paste0("heatmap_mid_color_", i), "Mid (Diploid)",
+                                   value = if (!is.null(cfg$mid_color)) cfg$mid_color else "#FFFFFF")
+                     )
+              ),
+              column(4,
+                     conditionalPanel(
+                       condition = paste0("input.heatmap_use_midpoint_", i),
+                       numericInput(paste0("heatmap_midpoint_", i), "Midpoint (diploid=2)",
+                                    value = if (!is.null(cfg$midpoint)) cfg$midpoint else 2,
+                                    step = 0.5)
+                     )
+              )
+            ),
+            fluidRow(
+              column(4,
+                     colourInput(paste0("heatmap_", i, "_cont_na_color"), "NA Color",
+                                 value = if (!is.null(cfg$na_color)) cfg$na_color else "#BEBEBE",
+                                 showColour = "background")
+              ),
+              column(8,
+                     tags$p(class = "text-muted", style = "margin-top: 25px;",
+                            icon("info-circle"), " Blue-White-Red scale centered at diploid (2)")
+              )
+            )
+          ))
+        }
+
         # If no columns selected, show nothing
         if (is.null(cols_selected) || length(cols_selected) == 0 || is.null(values$csv_data)) {
           return(tags$p(class = "text-muted", style = "margin-top: 10px;",
