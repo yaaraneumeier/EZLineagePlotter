@@ -3263,6 +3263,13 @@ func.print.lineage.tree <- function(conf_yaml_path,
           
           ind <- as.character(inx)
           heat_map_i_def <- heat_definitions[[inx]][[ind]]
+          # S1.62dev: Debug output to trace heatmap definition structure
+          debug_cat(paste0("\n=== S1.62dev DEBUG: Heatmap ", inx, " definition ===\n"))
+          debug_cat(paste0("  Available fields: ", paste(names(heat_map_i_def), collapse=", "), "\n"))
+          debug_cat(paste0("  data_source field exists: ", 'data_source' %in% names(heat_map_i_def), "\n"))
+          if ('data_source' %in% names(heat_map_i_def)) {
+            debug_cat(paste0("  data_source value: '", heat_map_i_def$data_source, "'\n"))
+          }
           #print("B9")
           
           
@@ -10768,6 +10775,9 @@ server <- function(input, output, session) {
           # v56c: DEBUG
           debug_cat(paste0("  Processing heatmap ", j, ": ", heatmap_entry$title, "\n"))
           debug_cat(paste0("    Columns: ", paste(heatmap_entry$columns, collapse=", "), "\n"))
+          # S1.62dev: Debug data_source
+          debug_cat(paste0("    S1.62dev data_source: ", if (!is.null(heatmap_entry$data_source)) heatmap_entry$data_source else "NULL", "\n"))
+          debug_cat(paste0("    S1.62dev all fields: ", paste(names(heatmap_entry), collapse=", "), "\n"))
 
           heatmap_item <- list()
           heatmap_item[[as.character(j)]] <- list(
@@ -10864,6 +10874,11 @@ server <- function(input, output, session) {
           }
 
           default_classification[["1"]]$heatmap_display[[j]] <- heatmap_item
+          # S1.62dev: Debug final heatmap_item structure
+          debug_cat(paste0("    S1.62dev final heatmap_item[[", as.character(j), "]] fields: ",
+                          paste(names(heatmap_item[[as.character(j)]]), collapse=", "), "\n"))
+          debug_cat(paste0("    S1.62dev final data_source in heatmap_item: ",
+                          if (!is.null(heatmap_item[[as.character(j)]]$data_source)) heatmap_item[[as.character(j)]]$data_source else "NULL", "\n"))
         }
       }
 
@@ -10927,9 +10942,20 @@ server <- function(input, output, session) {
         default_classification[["1"]]$highlight <- list(display = "no")
       }
 
+      # S1.62dev: Debug final classification structure before storing
+      if (!is.null(default_classification[["1"]]$heatmap_display)) {
+        debug_cat(paste0("\n=== S1.62dev: Final heatmap_display in default_classification ===\n"))
+        for (h_idx in seq_along(default_classification[["1"]]$heatmap_display)) {
+          hm_item <- default_classification[["1"]]$heatmap_display[[h_idx]]
+          hm_inner <- hm_item[[as.character(h_idx)]]
+          debug_cat(paste0("  Heatmap ", h_idx, " in YAML structure:\n"))
+          debug_cat(paste0("    fields: ", paste(names(hm_inner), collapse=", "), "\n"))
+          debug_cat(paste0("    data_source: ", if (!is.null(hm_inner$data_source)) hm_inner$data_source else "NULL", "\n"))
+        }
+      }
       values$yaml_data$`visual definitions`$classification <- list(default_classification)
     }
-    
+
     # Update font sizes
     # v128: Use Legend tab font size settings for legend_title and legend_text
     # This ensures bootstrap legend matches other legends' font sizes
@@ -14570,6 +14596,9 @@ server <- function(input, output, session) {
       debug_cat(paste0("    Title: ", hm$title, "\n"))
       debug_cat(paste0("    Columns: ", paste(hm$columns, collapse=", "), "\n"))
       debug_cat(paste0("    Is discrete: ", hm$is_discrete, "\n"))
+      # S1.62dev: Add data_source debug
+      debug_cat(paste0("    S1.62dev data_source: ", if (!is.null(hm$data_source)) hm$data_source else "NULL", "\n"))
+      debug_cat(paste0("    S1.62dev all fields: ", paste(names(hm), collapse=", "), "\n"))
     }
     debug_cat("================================\n\n")
 
