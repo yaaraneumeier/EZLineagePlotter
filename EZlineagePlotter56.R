@@ -2778,7 +2778,8 @@ func.print.lineage.tree <- function(conf_yaml_path,
                                     bootstrap_label_size= 1.5,  # v129: Reduced from 3.5 for smaller default legend
                                     heatmap_tree_distance= 0.02,
                                     heatmap_global_gap = 0.05,  # v125: Gap between multiple heatmaps
-                                    legend_settings = NULL) {  # v135: Legend settings for highlight/bootstrap legends
+                                    legend_settings = NULL,  # v135: Legend settings for highlight/bootstrap legends
+                                    rdata_cnv_matrix = NULL) {  # S1.62dev: CNV matrix from RData file
 
   # === DEBUG CHECKPOINT 2: FUNCTION ENTRY ===
   # v53: cat(file=stderr(), "\nÃ°Å¸â€Â DEBUG CHECKPOINT 2: func.print.lineage.tree ENTRY\n")
@@ -3681,9 +3682,34 @@ func.print.lineage.tree <- function(conf_yaml_path,
             if ('data_source' %in% names(heat_map_i_def) && heat_map_i_def$data_source == "rdata") {
               debug_cat(paste0("\n=== S1.62dev: Processing RData CNV heatmap ===\n"))
 
-              # Get the CNV matrix directly from the config
-              if ('cnv_matrix' %in% names(heat_map_i_def) && !is.null(heat_map_i_def$cnv_matrix)) {
-                cnv_data <- heat_map_i_def$cnv_matrix
+              # Get the CNV matrix from the function parameter (passed from Shiny app)
+              # Note: cnv_matrix doesn't serialize properly to YAML, so we pass it as a parameter
+              if (!is.null(rdata_cnv_matrix)) {
+                # Apply downsampling if specified in heatmap config
+                cnv_downsample <- if ('cnv_downsample' %in% names(heat_map_i_def)) {
+                  as.numeric(heat_map_i_def$cnv_downsample)
+                } else {
+                  10
+                }
+
+                # Apply downsampling
+                cnv_data <- rdata_cnv_matrix
+                if (cnv_downsample > 1 && ncol(cnv_data) > cnv_downsample) {
+                  keep_cols <- seq(1, ncol(cnv_data), by = cnv_downsample)
+                  cnv_data <- cnv_data[, keep_cols, drop = FALSE]
+                  debug_cat(paste0("  Applied downsampling (factor ", cnv_downsample, "): ", ncol(cnv_data), " columns\n"))
+                }
+
+                # Apply WGD normalization if specified
+                cnv_wgd_norm <- if ('cnv_wgd_norm' %in% names(heat_map_i_def)) {
+                  func.check.bin.val.from.conf(heat_map_i_def$cnv_wgd_norm)
+                } else {
+                  FALSE
+                }
+                if (cnv_wgd_norm) {
+                  cnv_data <- cnv_data / 2
+                  debug_cat("  Applied WGD normalization (values / 2)\n")
+                }
 
                 debug_cat(paste0("  CNV matrix: ", nrow(cnv_data), " samples x ", ncol(cnv_data), " positions\n"))
                 debug_cat(paste0("  Sample names (first 5): ", paste(head(rownames(cnv_data), 5), collapse=", "), "\n"))
@@ -3750,7 +3776,7 @@ func.print.lineage.tree <- function(conf_yaml_path,
 
                 debug_cat(paste0("  Created CNV heatmap data: ", nrow(df_heat_temp), " x ", ncol(df_heat_temp), "\n"))
               } else {
-                debug_cat("  ERROR: No cnv_matrix found in RData heatmap config\n")
+                debug_cat("  ERROR: rdata_cnv_matrix parameter is NULL - no RData CNV file loaded\n")
                 heat_display_vec <- c(heat_display_vec, FALSE)
                 next
               }
@@ -10816,13 +10842,15 @@ server <- function(input, output, session) {
             heatmap_item[[as.character(j)]]$label_mapping <- heatmap_entry$label_mapping
           }
 
-          # S1.62dev: Add data source and CNV matrix for RData heatmaps
+          # S1.62dev: Add data source for RData heatmaps
+          # Note: cnv_matrix is NOT serialized to YAML - it's passed as a parameter to func.print.lineage.tree
           if (!is.null(heatmap_entry$data_source) && heatmap_entry$data_source == "rdata") {
             heatmap_item[[as.character(j)]]$data_source <- "rdata"
-            heatmap_item[[as.character(j)]]$cnv_matrix <- heatmap_entry$cnv_matrix
             heatmap_item[[as.character(j)]]$use_midpoint <- "yes"  # Always use midpoint for CNV
-            debug_cat(paste0("    S1.62dev: RData heatmap with CNV matrix: ",
-                            nrow(heatmap_entry$cnv_matrix), " x ", ncol(heatmap_entry$cnv_matrix), "\n"))
+            # Store CNV settings (but NOT the matrix itself - that's passed separately)
+            heatmap_item[[as.character(j)]]$cnv_downsample <- if (!is.null(heatmap_entry$cnv_downsample)) heatmap_entry$cnv_downsample else 10
+            heatmap_item[[as.character(j)]]$cnv_wgd_norm <- if (!is.null(heatmap_entry$cnv_wgd_norm) && heatmap_entry$cnv_wgd_norm) "yes" else "no"
+            debug_cat(paste0("    S1.62dev: RData heatmap (CNV matrix passed via parameter)\n"))
           } else {
             heatmap_item[[as.character(j)]]$data_source <- "csv"
             # Add columns - format must match expected YAML structure
@@ -14217,37 +14245,26 @@ server <- function(input, output, session) {
           return(NULL)
         }
 
-        # Get CNV settings
+        # Get CNV settings - these will be stored and applied later in func.print.lineage.tree
         cnv_downsample <- input[[paste0("heatmap_cnv_downsample_", i)]]
         if (is.null(cnv_downsample)) cnv_downsample <- 10
         cnv_wgd_norm <- input[[paste0("heatmap_cnv_wgd_norm_", i)]]
         if (is.null(cnv_wgd_norm)) cnv_wgd_norm <- FALSE
 
-        # Apply downsampling if needed
-        cnv_matrix <- values$rdata_cnv_matrix
-        if (cnv_downsample > 1 && ncol(cnv_matrix) > cnv_downsample) {
-          # Select every nth column
-          keep_cols <- seq(1, ncol(cnv_matrix), by = cnv_downsample)
-          cnv_matrix <- cnv_matrix[, keep_cols, drop = FALSE]
-          debug_cat(paste0("  S1.62dev: Downsampled CNV from ", ncol(values$rdata_cnv_matrix),
-                          " to ", ncol(cnv_matrix), " columns (factor=", cnv_downsample, ")\n"))
-        }
-
-        # Apply WGD normalization if enabled (divide by 2 to center at 1)
-        if (cnv_wgd_norm) {
-          cnv_matrix <- cnv_matrix / 2
-          debug_cat("  S1.62dev: Applied WGD normalization (values / 2)\n")
-        }
-
-        debug_cat(paste0("  S1.62dev: RData CNV heatmap ", i, ": ", nrow(cnv_matrix), " samples x ", ncol(cnv_matrix), " positions\n"))
+        debug_cat(paste0("  S1.62dev: RData CNV heatmap ", i, ": downsample=", cnv_downsample, ", wgd_norm=", cnv_wgd_norm, "\n"))
+        debug_cat(paste0("  S1.62dev: Raw CNV matrix: ", nrow(values$rdata_cnv_matrix), " samples x ", ncol(values$rdata_cnv_matrix), " positions\n"))
 
         # Build heatmap entry for RData CNV
+        # Note: cnv_matrix is NOT stored here - it's passed as a parameter to func.print.lineage.tree
+        # because large matrices don't serialize properly to YAML
         heatmap_entry <- list(
           title = cfg$title,
           is_discrete = FALSE,  # CNV data is always continuous
           data_source = "rdata",
-          cnv_matrix = cnv_matrix,  # Include the actual CNV matrix
-          columns = colnames(cnv_matrix),  # Column names for labeling
+          # Store CNV settings (processing happens in func.print.lineage.tree)
+          cnv_downsample = cnv_downsample,
+          cnv_wgd_norm = cnv_wgd_norm,
+          columns = character(0),  # No columns for RData - data comes from parameter
           show_colnames = if (!is.null(cfg$show_colnames)) cfg$show_colnames else FALSE,  # Usually too many columns
           colnames_angle = if (!is.null(cfg$colnames_angle)) cfg$colnames_angle else 90,
           font_size = input$heatmap_global_font,
@@ -15455,7 +15472,9 @@ server <- function(input, output, session) {
           0.05
         },
         # v135: Pass legend settings for highlight/bootstrap legends
-        legend_settings = values$legend_settings
+        legend_settings = values$legend_settings,
+        # S1.62dev: Pass RData CNV matrix for heatmaps with data_source="rdata"
+        rdata_cnv_matrix = values$rdata_cnv_matrix
       ))
       cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] RETURNED from func.print.lineage.tree at ", format(Sys.time(), "%H:%M:%OS3"), "\n"))
 
