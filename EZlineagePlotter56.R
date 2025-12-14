@@ -3692,6 +3692,7 @@ func.print.lineage.tree <- function(conf_yaml_path,
 
             # S1.62dev: Check if this is an RData CNV heatmap
             if ('data_source' %in% names(heat_map_i_def) && heat_map_i_def$data_source == "rdata") {
+              cat(file=stderr(), "\n[HEATMAP-RENDER] Processing RData CNV heatmap\n")
               debug_cat(paste0("\n=== S1.62dev: Processing RData CNV heatmap ===\n"))
 
               # Get the CNV matrix from the function parameter (passed from Shiny app)
@@ -3742,11 +3743,13 @@ func.print.lineage.tree <- function(conf_yaml_path,
                   }
                 }
 
+                cat(file=stderr(), paste0("[HEATMAP-RENDER] Tree tips (first 5): ", paste(head(tree_tips, 5), collapse=", "), "\n"))
                 debug_cat(paste0("  Tree tips (first 5): ", paste(head(tree_tips, 5), collapse=", "), "\n"))
 
                 # Match CNV sample names to tree tips
                 # Try direct match first, then try with prefix removal
                 cnv_samples <- rownames(cnv_data)
+                cat(file=stderr(), paste0("[HEATMAP-RENDER] CNV samples (first 5): ", paste(head(cnv_samples, 5), collapse=", "), "\n"))
 
                 # Create mapping: find which CNV samples match which tree tips
                 matched_cnv <- data.frame(matrix(NA, nrow = length(tree_tips), ncol = ncol(cnv_data)))
@@ -3780,12 +3783,14 @@ func.print.lineage.tree <- function(conf_yaml_path,
                   }
                 }
 
+                cat(file=stderr(), paste0("[HEATMAP-RENDER] Matched ", matches_found, " out of ", length(tree_tips), " tree tips to CNV data\n"))
                 debug_cat(paste0("  Matched ", matches_found, " out of ", length(tree_tips), " tree tips to CNV data\n"))
 
                 # Use the matched CNV data as the heatmap dataframe
                 df_heat_temp <- matched_cnv
                 dxdf440_for_heat[[indx_for_sav]] <- df_heat_temp
 
+                cat(file=stderr(), paste0("[HEATMAP-RENDER] CNV heatmap data: ", nrow(df_heat_temp), " x ", ncol(df_heat_temp), "\n"))
                 debug_cat(paste0("  Created CNV heatmap data: ", nrow(df_heat_temp), " x ", ncol(df_heat_temp), "\n"))
               } else {
                 debug_cat("  ERROR: rdata_cnv_matrix parameter is NULL - no RData CNV file loaded\n")
@@ -14253,11 +14258,15 @@ server <- function(input, output, session) {
   
   # Apply heatmaps button
   observeEvent(input$apply_heatmaps, {
+    cat(file=stderr(), "\n[HEATMAP-APPLY] Apply Heatmaps button clicked!\n")
+
     # Convert heatmap_configs to the format expected by the plotting function
     if (length(values$heatmap_configs) == 0) {
       showNotification("No heatmaps configured", type = "warning")
       return()
     }
+
+    cat(file=stderr(), paste0("[HEATMAP-APPLY] Processing ", length(values$heatmap_configs), " heatmap config(s)\n"))
 
     # v56a: Build heatmaps list from configs with multiple column support
     # Read directly from inputs to ensure we get current values (fixes ignoreInit issue)
@@ -14267,9 +14276,11 @@ server <- function(input, output, session) {
       # S1.62dev: Check data source - CSV columns or RData CNV
       current_data_source <- input[[paste0("heatmap_data_source_", i)]]
       if (is.null(current_data_source)) current_data_source <- "csv"
+      cat(file=stderr(), paste0("[HEATMAP-APPLY] Heatmap ", i, " data_source: '", current_data_source, "'\n"))
 
       # S1.62dev: Handle RData CNV source
       if (current_data_source == "rdata") {
+        cat(file=stderr(), "[HEATMAP-APPLY] Entering RData CNV path\n")
         # Check if RData CNV matrix is available
         if (is.null(values$rdata_cnv_matrix)) {
           showNotification(paste("Heatmap", i, ": No RData CNV file loaded. Please upload an RData file first."), type = "error")
