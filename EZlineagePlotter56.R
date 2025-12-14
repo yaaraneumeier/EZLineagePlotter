@@ -496,9 +496,13 @@ parse_yaml_config <- function(file_path) {
 # S1.62dev: Extract CNV data from RData file
 # The RData file should contain 'results_CNV_tool_final' with nested structure:
 # results_CNV_tool_final[[sample_name]][[1]]$copy contains the CNV values
+# results_CNV_tool_final[[sample_name]][[1]]$chr may contain chromosome info
+# results_CNV_tool_final[[sample_name]][[1]]$start/end may contain positions
 # Returns a list with:
 #   - matrix: rows = genomic positions, columns = samples
 #   - sample_names: vector of sample names
+#   - chr_info: chromosome information for each position (if available)
+#   - position_info: start/end positions (if available)
 #   - error: error message if failed (NULL if success)
 func.extract.cnv.from.rdata <- function(rdata_path, downsample_factor = 10) {
   tryCatch({
@@ -522,6 +526,9 @@ func.extract.cnv.from.rdata <- function(rdata_path, downsample_factor = 10) {
 
     # Extract CNV data from each sample
     cnv_matrix <- NULL
+    chr_info <- NULL
+    start_info <- NULL
+    end_info <- NULL
     first <- TRUE
 
     for (sample_name in sample_names) {
@@ -538,6 +545,34 @@ func.extract.cnv.from.rdata <- function(rdata_path, downsample_factor = 10) {
       if (is.list(sample_data) && length(sample_data) >= 1) {
         if (!is.null(sample_data[[1]]$copy)) {
           copy_data <- as.data.frame(sample_data[[1]]$copy)
+        }
+
+        # S1.62dev: Extract chromosome and position information (only on first valid sample)
+        if (first && !is.null(sample_data[[1]])) {
+          # Check available fields in the data structure
+          available_fields <- names(sample_data[[1]])
+          cat(file=stderr(), paste0("[RDATA-CNV] Available fields in sample data: ", paste(available_fields, collapse=", "), "\n"))
+
+          # Extract chromosome info if available
+          if (!is.null(sample_data[[1]]$chr)) {
+            chr_info <- sample_data[[1]]$chr
+            cat(file=stderr(), paste0("[RDATA-CNV] Found chromosome info: ", length(chr_info), " entries\n"))
+            cat(file=stderr(), paste0("[RDATA-CNV] Unique chromosomes: ", paste(unique(chr_info), collapse=", "), "\n"))
+          } else if ("chr" %in% available_fields) {
+            cat(file=stderr(), "[RDATA-CNV] chr field exists but is NULL\n")
+          }
+
+          # Extract start positions if available
+          if (!is.null(sample_data[[1]]$start)) {
+            start_info <- sample_data[[1]]$start
+            cat(file=stderr(), paste0("[RDATA-CNV] Found start positions: ", length(start_info), " entries\n"))
+          }
+
+          # Extract end positions if available
+          if (!is.null(sample_data[[1]]$end)) {
+            end_info <- sample_data[[1]]$end
+            cat(file=stderr(), paste0("[RDATA-CNV] Found end positions: ", length(end_info), " entries\n"))
+          }
         }
       }
 
@@ -571,11 +606,23 @@ func.extract.cnv.from.rdata <- function(rdata_path, downsample_factor = 10) {
     # Replace dots with dashes in column names (sample names)
     colnames(cnv_matrix) <- gsub("\\.", "-", colnames(cnv_matrix))
 
-    # Downsample rows if requested
+    # Downsample rows if requested - also downsample chr/position info
     if (downsample_factor > 1) {
       row_indices <- unique((1:nrow(cnv_matrix) %/% downsample_factor) * downsample_factor)
       row_indices <- row_indices[row_indices > 0 & row_indices <= nrow(cnv_matrix)]
       cnv_matrix <- cnv_matrix[row_indices, , drop = FALSE]
+
+      # Also downsample chr and position info if available
+      if (!is.null(chr_info) && length(chr_info) >= max(row_indices)) {
+        chr_info <- chr_info[row_indices]
+      }
+      if (!is.null(start_info) && length(start_info) >= max(row_indices)) {
+        start_info <- start_info[row_indices]
+      }
+      if (!is.null(end_info) && length(end_info) >= max(row_indices)) {
+        end_info <- end_info[row_indices]
+      }
+
       cat(file=stderr(), paste0("[RDATA-CNV] After downsampling (factor ", downsample_factor, "): ",
                                 nrow(cnv_matrix), " rows\n"))
     }
@@ -585,11 +632,29 @@ func.extract.cnv.from.rdata <- function(rdata_path, downsample_factor = 10) {
     cnv_matrix <- t(cnv_matrix)
     cat(file=stderr(), paste0("[RDATA-CNV] After transpose: ", nrow(cnv_matrix), " samples x ", ncol(cnv_matrix), " positions\n"))
 
+    # S1.62dev: Build chromosome summary if available
+    chr_summary <- NULL
+    if (!is.null(chr_info)) {
+      chr_summary <- paste0(
+        "Chromosomes found: ", paste(unique(chr_info), collapse=", "), "\n",
+        "Positions per chromosome:\n"
+      )
+      chr_counts <- table(chr_info)
+      for (chr_name in names(chr_counts)) {
+        chr_summary <- paste0(chr_summary, "  ", chr_name, ": ", chr_counts[[chr_name]], " positions\n")
+      }
+      cat(file=stderr(), paste0("[RDATA-CNV] ", chr_summary))
+    }
+
     return(list(
       matrix = as.matrix(cnv_matrix),
       sample_names = rownames(cnv_matrix),  # Now samples are rows
       n_positions = ncol(cnv_matrix),       # Positions are now columns
       n_samples = nrow(cnv_matrix),
+      chr_info = chr_info,                  # S1.62dev: Chromosome info (position-wise)
+      start_info = start_info,              # S1.62dev: Start positions
+      end_info = end_info,                  # S1.62dev: End positions
+      chr_summary = chr_summary,            # S1.62dev: Summary string
       error = NULL
     ))
 
@@ -3381,6 +3446,50 @@ func.print.lineage.tree <- function(conf_yaml_path,
                 param[['grid_size']] <- 0.5
               }
 
+              # S1.62dev: Get row line settings (horizontal lines only)
+              if ('show_row_lines' %in% names(heat_map_i_def)) {
+                param[['show_row_lines']] <- func.check.bin.val.from.conf(heat_map_i_def[['show_row_lines']])
+              } else {
+                param[['show_row_lines']] <- FALSE
+              }
+              if ('row_line_color' %in% names(heat_map_i_def)) {
+                param[['row_line_color']] <- heat_map_i_def[['row_line_color']]
+              } else {
+                param[['row_line_color']] <- "#000000"
+              }
+              if ('row_line_size' %in% names(heat_map_i_def)) {
+                param[['row_line_size']] <- as.numeric(heat_map_i_def[['row_line_size']])
+              } else {
+                param[['row_line_size']] <- 0.5
+              }
+
+              # S1.62dev: Get vertical text labels settings
+              if ('show_vertical_text' %in% names(heat_map_i_def)) {
+                param[['show_vertical_text']] <- func.check.bin.val.from.conf(heat_map_i_def[['show_vertical_text']])
+              } else {
+                param[['show_vertical_text']] <- FALSE
+              }
+              if ('vertical_text_column' %in% names(heat_map_i_def)) {
+                param[['vertical_text_column']] <- heat_map_i_def[['vertical_text_column']]
+              } else {
+                param[['vertical_text_column']] <- ""
+              }
+              if ('vertical_text_size' %in% names(heat_map_i_def)) {
+                param[['vertical_text_size']] <- as.numeric(heat_map_i_def[['vertical_text_size']])
+              } else {
+                param[['vertical_text_size']] <- 3
+              }
+              if ('vertical_text_offset' %in% names(heat_map_i_def)) {
+                param[['vertical_text_offset']] <- as.numeric(heat_map_i_def[['vertical_text_offset']])
+              } else {
+                param[['vertical_text_offset']] <- 0.5
+              }
+              if ('vertical_text_color' %in% names(heat_map_i_def)) {
+                param[['vertical_text_color']] <- heat_map_i_def[['vertical_text_color']]
+              } else {
+                param[['vertical_text_color']] <- "#000000"
+              }
+
               # v109: Get colnames_angle (default 45)
               if ('colnames_angle' %in% names(heat_map_i_def)) {
                 param[['colnames_angle']] <- as.numeric(heat_map_i_def[['colnames_angle']])
@@ -3583,6 +3692,50 @@ func.print.lineage.tree <- function(conf_yaml_path,
                 param[['grid_size']] <- as.numeric(heat_map_i_def[['grid_size']])
               } else {
                 param[['grid_size']] <- 0.5
+              }
+
+              # S1.62dev: Get row line settings for continuous heatmaps too
+              if ('show_row_lines' %in% names(heat_map_i_def)) {
+                param[['show_row_lines']] <- func.check.bin.val.from.conf(heat_map_i_def[['show_row_lines']])
+              } else {
+                param[['show_row_lines']] <- FALSE
+              }
+              if ('row_line_color' %in% names(heat_map_i_def)) {
+                param[['row_line_color']] <- heat_map_i_def[['row_line_color']]
+              } else {
+                param[['row_line_color']] <- "#000000"
+              }
+              if ('row_line_size' %in% names(heat_map_i_def)) {
+                param[['row_line_size']] <- as.numeric(heat_map_i_def[['row_line_size']])
+              } else {
+                param[['row_line_size']] <- 0.5
+              }
+
+              # S1.62dev: Get vertical text labels settings for continuous heatmaps too
+              if ('show_vertical_text' %in% names(heat_map_i_def)) {
+                param[['show_vertical_text']] <- func.check.bin.val.from.conf(heat_map_i_def[['show_vertical_text']])
+              } else {
+                param[['show_vertical_text']] <- FALSE
+              }
+              if ('vertical_text_column' %in% names(heat_map_i_def)) {
+                param[['vertical_text_column']] <- heat_map_i_def[['vertical_text_column']]
+              } else {
+                param[['vertical_text_column']] <- ""
+              }
+              if ('vertical_text_size' %in% names(heat_map_i_def)) {
+                param[['vertical_text_size']] <- as.numeric(heat_map_i_def[['vertical_text_size']])
+              } else {
+                param[['vertical_text_size']] <- 3
+              }
+              if ('vertical_text_offset' %in% names(heat_map_i_def)) {
+                param[['vertical_text_offset']] <- as.numeric(heat_map_i_def[['vertical_text_offset']])
+              } else {
+                param[['vertical_text_offset']] <- 0.5
+              }
+              if ('vertical_text_color' %in% names(heat_map_i_def)) {
+                param[['vertical_text_color']] <- heat_map_i_def[['vertical_text_color']]
+              } else {
+                param[['vertical_text_color']] <- "#000000"
               }
 
               # v109: Get colnames_angle (default 45) for continuous heatmaps too
@@ -5899,6 +6052,110 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
               height = tile_height,   # v112: Row height (slider-controlled)
               inherit.aes = FALSE
             )
+          }
+
+          # S1.62dev: Add horizontal row lines (separate from grid - only horizontal lines)
+          show_row_lines_bool <- !is.null(heat_param[['show_row_lines']]) &&
+                                  isTRUE(heat_param[['show_row_lines']])
+          if (show_row_lines_bool) {
+            row_line_color <- if (!is.null(heat_param[['row_line_color']])) heat_param[['row_line_color']] else "#000000"
+            row_line_size <- if (!is.null(heat_param[['row_line_size']])) as.numeric(heat_param[['row_line_size']]) else 0.5
+
+            debug_cat(paste0("  S1.62dev: Adding horizontal row lines (color: ", row_line_color, ", size: ", row_line_size, ")\n"))
+
+            # Build horizontal row lines (above and below each row)
+            tip_y_values <- sort(unique(tile_df$y))
+            row_lines_y <- c()
+            for (i in seq_along(tip_y_values)) {
+              # Top and bottom edge of each row
+              row_lines_y <- c(row_lines_y, tip_y_values[i] - tile_height / 2)
+              row_lines_y <- c(row_lines_y, tip_y_values[i] + tile_height / 2)
+            }
+            row_lines_y <- unique(row_lines_y)
+
+            # Calculate x-range for horizontal lines
+            row_x_min <- min(tile_df$x) - tile_width / 2
+            row_x_max <- max(tile_df$x) + tile_width / 2
+
+            # Create horizontal line data (NO vertical lines)
+            row_lines_df <- data.frame(
+              x = row_x_min,
+              xend = row_x_max,
+              y = rep(row_lines_y, each = 1),
+              yend = rep(row_lines_y, each = 1)
+            )
+
+            # Add row lines as geom_segment layer
+            p_with_tiles <- p_with_tiles +
+              geom_segment(data = row_lines_df, aes(x = x, xend = xend, y = y, yend = yend),
+                           color = row_line_color, linewidth = row_line_size, inherit.aes = FALSE)
+
+            debug_cat(paste0("  S1.62dev: Added ", nrow(row_lines_df), " horizontal row lines\n"))
+          }
+
+          # S1.62dev: Add vertical text labels below heatmap
+          show_vertical_text_bool <- !is.null(heat_param[['show_vertical_text']]) &&
+                                      isTRUE(heat_param[['show_vertical_text']])
+          if (show_vertical_text_bool) {
+            vertical_text_column <- if (!is.null(heat_param[['vertical_text_column']])) heat_param[['vertical_text_column']] else ""
+            vertical_text_size <- if (!is.null(heat_param[['vertical_text_size']])) as.numeric(heat_param[['vertical_text_size']]) else 3
+            vertical_text_offset <- if (!is.null(heat_param[['vertical_text_offset']])) as.numeric(heat_param[['vertical_text_offset']]) else 0.5
+            vertical_text_color <- if (!is.null(heat_param[['vertical_text_color']])) heat_param[['vertical_text_color']] else "#000000"
+
+            debug_cat(paste0("  S1.62dev: Adding vertical text labels (column: '", vertical_text_column,
+                             "', size: ", vertical_text_size, ", offset: ", vertical_text_offset, ")\n"))
+
+            # Get column x positions and names
+            col_x_positions <- sort(unique(tile_df$x))
+            col_names <- colnames(heat_data)
+
+            # Y position below the heatmap
+            y_bottom <- min(tile_df$y) - tile_height / 2 - vertical_text_offset
+
+            # Get labels - either from CSV column or use heatmap column names
+            vertical_labels <- col_names
+            if (!is.null(vertical_text_column) && vertical_text_column != "" && exists("data_table") && !is.null(data_table)) {
+              # Try to get labels from CSV column
+              # The vertical_text_column contains labels, and we need to map heatmap column names to those labels
+              # If CSV has a column with the same values as heatmap column names, use corresponding vertical_text_column values
+              if (vertical_text_column %in% names(data_table)) {
+                debug_cat(paste0("  S1.62dev: Found column '", vertical_text_column, "' in CSV\n"))
+                # For RData CNV heatmaps, column names might be genomic positions
+                # Try to find a mapping in the CSV (column names as row values)
+                csv_col_values <- data_table[[vertical_text_column]]
+                debug_cat(paste0("  S1.62dev: CSV column has ", length(csv_col_values), " values\n"))
+
+                # If the number of CSV rows matches the number of heatmap columns, use them directly
+                if (length(csv_col_values) >= length(col_names)) {
+                  vertical_labels <- as.character(csv_col_values[1:length(col_names)])
+                  debug_cat(paste0("  S1.62dev: Using first ", length(col_names), " values from CSV column as labels\n"))
+                }
+              } else {
+                debug_cat(paste0("  S1.62dev: Column '", vertical_text_column, "' not found in CSV, using column names\n"))
+              }
+            }
+
+            # Create text label data frame
+            if (length(col_x_positions) == length(vertical_labels)) {
+              text_df <- data.frame(
+                x = col_x_positions,
+                y = y_bottom,
+                label = vertical_labels,
+                stringsAsFactors = FALSE
+              )
+
+              # Add vertical text labels using geom_text with 90-degree rotation
+              p_with_tiles <- p_with_tiles +
+                geom_text(data = text_df, aes(x = x, y = y, label = label),
+                          angle = 90, hjust = 1, vjust = 0.5,
+                          size = vertical_text_size, color = vertical_text_color,
+                          inherit.aes = FALSE)
+
+              debug_cat(paste0("  S1.62dev: Added ", nrow(text_df), " vertical text labels\n"))
+            } else {
+              debug_cat(paste0("  S1.62dev: Warning - column count mismatch: ", length(col_x_positions),
+                               " positions vs ", length(vertical_labels), " labels\n"))
+            }
           }
 
           debug_cat(paste0("  geom_tile added successfully\n"))
@@ -9216,16 +9473,30 @@ server <- function(input, output, session) {
     values$rdata_cnv_matrix <- result$matrix
     values$rdata_sample_names <- result$sample_names
 
+    # S1.62dev: Store chromosome information if available
+    values$rdata_chr_info <- result$chr_info
+    values$rdata_start_info <- result$start_info
+    values$rdata_end_info <- result$end_info
+
     cat(file=stderr(), "[RDATA-IMPORT] Successfully loaded CNV data\n")
     cat(file=stderr(), "[RDATA-IMPORT] Matrix dimensions:", nrow(result$matrix), "x", ncol(result$matrix), "\n")
     cat(file=stderr(), "[RDATA-IMPORT] Sample names:", paste(head(result$sample_names, 5), collapse=", "),
         if(length(result$sample_names) > 5) "..." else "", "\n")
 
-    values$rdata_import_status <- paste0(
+    # S1.62dev: Build status message including chromosome info
+    status_msg <- paste0(
       "✅ CNV data loaded successfully!\n",
       "Samples: ", result$n_samples, "\n",
       "Genomic positions: ", result$n_positions
     )
+    if (!is.null(result$chr_info)) {
+      unique_chrs <- unique(result$chr_info)
+      status_msg <- paste0(status_msg, "\nChromosomes: ", paste(unique_chrs, collapse=", "))
+    } else {
+      status_msg <- paste0(status_msg, "\nChromosome info: Not available in this RData file")
+    }
+    values$rdata_import_status <- status_msg
+
     values$progress_visible <- FALSE
     showNotification(paste("CNV data loaded:", result$n_samples, "samples,", result$n_positions, "positions"),
                      type = "message")
@@ -9789,6 +10060,10 @@ server <- function(input, output, session) {
           show_grid = if (!is.null(cfg$show_grid)) cfg$show_grid else FALSE,
           grid_color = if (!is.null(cfg$grid_color)) cfg$grid_color else "white",
           grid_size = if (!is.null(cfg$grid_size)) cfg$grid_size else 0.5,
+          # S1.62dev: Row line settings
+          show_row_lines = if (!is.null(cfg$show_row_lines)) cfg$show_row_lines else FALSE,
+          row_line_color = if (!is.null(cfg$row_line_color)) cfg$row_line_color else "#000000",
+          row_line_size = if (!is.null(cfg$row_line_size)) cfg$row_line_size else 0.5,
           show_guides = if (!is.null(cfg$show_guides)) cfg$show_guides else FALSE,
           guide_color1 = if (!is.null(cfg$guide_color1)) cfg$guide_color1 else "#CCCCCC",
           guide_color2 = if (!is.null(cfg$guide_color2)) cfg$guide_color2 else "#EEEEEE",
@@ -10673,6 +10948,18 @@ server <- function(input, output, session) {
             heatmap_item[[as.character(j)]]$grid_color <- if (!is.null(heatmap_entry$grid_color)) heatmap_entry$grid_color else "#000000"
             heatmap_item[[as.character(j)]]$grid_size <- if (!is.null(heatmap_entry$grid_size)) heatmap_entry$grid_size else 0.5
 
+            # S1.62dev: Add row line settings (horizontal lines only)
+            heatmap_item[[as.character(j)]]$show_row_lines <- if (!is.null(heatmap_entry$show_row_lines) && heatmap_entry$show_row_lines) "yes" else "no"
+            heatmap_item[[as.character(j)]]$row_line_color <- if (!is.null(heatmap_entry$row_line_color)) heatmap_entry$row_line_color else "#000000"
+            heatmap_item[[as.character(j)]]$row_line_size <- if (!is.null(heatmap_entry$row_line_size)) heatmap_entry$row_line_size else 0.5
+
+            # S1.62dev: Add vertical text labels settings
+            heatmap_item[[as.character(j)]]$show_vertical_text <- if (!is.null(heatmap_entry$show_vertical_text) && heatmap_entry$show_vertical_text) "yes" else "no"
+            heatmap_item[[as.character(j)]]$vertical_text_column <- if (!is.null(heatmap_entry$vertical_text_column)) heatmap_entry$vertical_text_column else ""
+            heatmap_item[[as.character(j)]]$vertical_text_size <- if (!is.null(heatmap_entry$vertical_text_size)) heatmap_entry$vertical_text_size else 3
+            heatmap_item[[as.character(j)]]$vertical_text_offset <- if (!is.null(heatmap_entry$vertical_text_offset)) heatmap_entry$vertical_text_offset else 0.5
+            heatmap_item[[as.character(j)]]$vertical_text_color <- if (!is.null(heatmap_entry$vertical_text_color)) heatmap_entry$vertical_text_color else "#000000"
+
             # v118: Add guide line settings (was missing - this caused tip guide lines not to work!)
             heatmap_item[[as.character(j)]]$show_guides <- if (!is.null(heatmap_entry$show_guides) && heatmap_entry$show_guides) "yes" else "no"
             heatmap_item[[as.character(j)]]$guide_color1 <- if (!is.null(heatmap_entry$guide_color1)) heatmap_entry$guide_color1 else "#CCCCCC"
@@ -10883,6 +11170,18 @@ server <- function(input, output, session) {
           heatmap_item[[as.character(j)]]$show_grid <- if (!is.null(heatmap_entry$show_grid) && heatmap_entry$show_grid) "yes" else "no"
           heatmap_item[[as.character(j)]]$grid_color <- if (!is.null(heatmap_entry$grid_color)) heatmap_entry$grid_color else "#000000"
           heatmap_item[[as.character(j)]]$grid_size <- if (!is.null(heatmap_entry$grid_size)) heatmap_entry$grid_size else 0.5
+
+          # S1.62dev: Add row line settings (horizontal lines only)
+          heatmap_item[[as.character(j)]]$show_row_lines <- if (!is.null(heatmap_entry$show_row_lines) && heatmap_entry$show_row_lines) "yes" else "no"
+          heatmap_item[[as.character(j)]]$row_line_color <- if (!is.null(heatmap_entry$row_line_color)) heatmap_entry$row_line_color else "#000000"
+          heatmap_item[[as.character(j)]]$row_line_size <- if (!is.null(heatmap_entry$row_line_size)) heatmap_entry$row_line_size else 0.5
+
+          # S1.62dev: Add vertical text labels settings
+          heatmap_item[[as.character(j)]]$show_vertical_text <- if (!is.null(heatmap_entry$show_vertical_text) && heatmap_entry$show_vertical_text) "yes" else "no"
+          heatmap_item[[as.character(j)]]$vertical_text_column <- if (!is.null(heatmap_entry$vertical_text_column)) heatmap_entry$vertical_text_column else ""
+          heatmap_item[[as.character(j)]]$vertical_text_size <- if (!is.null(heatmap_entry$vertical_text_size)) heatmap_entry$vertical_text_size else 3
+          heatmap_item[[as.character(j)]]$vertical_text_offset <- if (!is.null(heatmap_entry$vertical_text_offset)) heatmap_entry$vertical_text_offset else 0.5
+          heatmap_item[[as.character(j)]]$vertical_text_color <- if (!is.null(heatmap_entry$vertical_text_color)) heatmap_entry$vertical_text_color else "#000000"
 
           # v120: Add guide line settings (were missing in default classification path - caused tip guide lines not to work!)
           heatmap_item[[as.character(j)]]$show_guides <- if (!is.null(heatmap_entry$show_guides) && heatmap_entry$show_guides) "yes" else "no"
@@ -13006,6 +13305,61 @@ server <- function(input, output, session) {
                              step = 0.1)
           )
         ),
+        # S1.62dev: Horizontal row lines option
+        fluidRow(
+          column(4,
+                 checkboxInput(paste0("heatmap_show_row_lines_", i), "Show horizontal row lines",
+                               value = if (!is.null(cfg$show_row_lines)) cfg$show_row_lines else FALSE)
+          ),
+          column(4,
+                 colourInput(paste0("heatmap_row_line_color_", i), "Row line color",
+                             value = if (!is.null(cfg$row_line_color)) cfg$row_line_color else "#000000",
+                             showColour = "background")
+          ),
+          column(4,
+                 sliderInput(paste0("heatmap_row_line_size_", i), "Row line width",
+                             min = 0.1, max = 2.0,
+                             value = if (!is.null(cfg$row_line_size)) cfg$row_line_size else 0.5,
+                             step = 0.1)
+          )
+        ),
+
+        # S1.62dev: Vertical text labels below heatmap
+        tags$div(
+          style = "background-color: #f5f0e8; padding: 10px; border-radius: 5px; margin-top: 10px; margin-bottom: 10px;",
+          tags$h5(icon("font"), " Vertical Text Labels (below heatmap)"),
+          fluidRow(
+            column(4,
+                   checkboxInput(paste0("heatmap_show_vertical_text_", i), "Show vertical text labels",
+                                 value = if (!is.null(cfg$show_vertical_text)) cfg$show_vertical_text else FALSE)
+            ),
+            column(4,
+                   selectizeInput(paste0("heatmap_vertical_text_column_", i), "Text from CSV column:",
+                                  choices = col_choices,
+                                  selected = if (!is.null(cfg$vertical_text_column)) cfg$vertical_text_column else NULL,
+                                  options = list(placeholder = "Select column"))
+            ),
+            column(4,
+                   sliderInput(paste0("heatmap_vertical_text_size_", i), "Text size",
+                               min = 1, max = 10,
+                               value = if (!is.null(cfg$vertical_text_size)) cfg$vertical_text_size else 3,
+                               step = 0.5)
+            )
+          ),
+          fluidRow(
+            column(4,
+                   numericInput(paste0("heatmap_vertical_text_offset_", i), "Vertical offset",
+                                value = if (!is.null(cfg$vertical_text_offset)) cfg$vertical_text_offset else 0.5,
+                                min = -5, max = 10, step = 0.1)
+            ),
+            column(4,
+                   colourInput(paste0("heatmap_vertical_text_color_", i), "Text color",
+                               value = if (!is.null(cfg$vertical_text_color)) cfg$vertical_text_color else "#000000",
+                               showColour = "background")
+            ),
+            column(4)
+          )
+        ),
 
         # v116: Tip Guide Lines - vertical lines from tips through heatmap
         tags$div(
@@ -13325,6 +13679,88 @@ server <- function(input, output, session) {
           current_val <- values$heatmap_configs[[i]]$grid_size
           if (is.null(current_val) || !identical(new_val, current_val)) {
             values$heatmap_configs[[i]]$grid_size <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      # S1.62dev: Row line settings observers
+      observeEvent(input[[paste0("heatmap_show_row_lines_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_show_row_lines_", i)]]
+          current_val <- values$heatmap_configs[[i]]$show_row_lines
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$show_row_lines <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      observeEvent(input[[paste0("heatmap_row_line_color_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_row_line_color_", i)]]
+          current_val <- values$heatmap_configs[[i]]$row_line_color
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$row_line_color <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      observeEvent(input[[paste0("heatmap_row_line_size_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_row_line_size_", i)]]
+          current_val <- values$heatmap_configs[[i]]$row_line_size
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$row_line_size <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      # S1.62dev: Vertical text labels observers
+      observeEvent(input[[paste0("heatmap_show_vertical_text_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_show_vertical_text_", i)]]
+          current_val <- values$heatmap_configs[[i]]$show_vertical_text
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$show_vertical_text <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      observeEvent(input[[paste0("heatmap_vertical_text_column_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_vertical_text_column_", i)]]
+          current_val <- values$heatmap_configs[[i]]$vertical_text_column
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$vertical_text_column <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      observeEvent(input[[paste0("heatmap_vertical_text_size_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_vertical_text_size_", i)]]
+          current_val <- values$heatmap_configs[[i]]$vertical_text_size
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$vertical_text_size <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      observeEvent(input[[paste0("heatmap_vertical_text_offset_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_vertical_text_offset_", i)]]
+          current_val <- values$heatmap_configs[[i]]$vertical_text_offset
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$vertical_text_offset <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      observeEvent(input[[paste0("heatmap_vertical_text_color_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_vertical_text_color_", i)]]
+          current_val <- values$heatmap_configs[[i]]$vertical_text_color
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$vertical_text_color <- new_val
           }
         }
       }, ignoreInit = TRUE)
@@ -13889,8 +14325,8 @@ server <- function(input, output, session) {
               column(4,
                      conditionalPanel(
                        condition = paste0("input.heatmap_use_midpoint_", i),
-                       numericInput(paste0("heatmap_midpoint_", i), "Midpoint (diploid=2)",
-                                    value = if (!is.null(cfg$midpoint)) cfg$midpoint else 2,
+                       numericInput(paste0("heatmap_midpoint_", i), "Midpoint Value",
+                                    value = if (!is.null(cfg$midpoint)) cfg$midpoint else 0,
                                     step = 0.5)
                      )
               )
@@ -13903,7 +14339,7 @@ server <- function(input, output, session) {
               ),
               column(8,
                      tags$p(class = "text-muted", style = "margin-top: 25px;",
-                            icon("info-circle"), " Blue-White-Red scale centered at diploid (2)")
+                            icon("info-circle"), " Blue-White-Red scale centered at 0")
               )
             )
           ))
@@ -14428,6 +14864,10 @@ server <- function(input, output, session) {
           show_grid = if (!is.null(input[[paste0("heatmap_show_grid_", i)]])) input[[paste0("heatmap_show_grid_", i)]] else FALSE,
           grid_color = if (!is.null(input[[paste0("heatmap_grid_color_", i)]])) input[[paste0("heatmap_grid_color_", i)]] else "#000000",
           grid_size = if (!is.null(input[[paste0("heatmap_grid_size_", i)]])) input[[paste0("heatmap_grid_size_", i)]] else 0.5,
+          # S1.62dev: Row line settings (horizontal lines only)
+          show_row_lines = if (!is.null(input[[paste0("heatmap_show_row_lines_", i)]])) input[[paste0("heatmap_show_row_lines_", i)]] else FALSE,
+          row_line_color = if (!is.null(input[[paste0("heatmap_row_line_color_", i)]])) input[[paste0("heatmap_row_line_color_", i)]] else "#000000",
+          row_line_size = if (!is.null(input[[paste0("heatmap_row_line_size_", i)]])) input[[paste0("heatmap_row_line_size_", i)]] else 0.5,
           # Guide lines (usually not useful for CNV with many columns)
           show_guides = FALSE,
           # Row labels
@@ -14436,11 +14876,11 @@ server <- function(input, output, session) {
           row_label_font_size = if (!is.null(input[[paste0("heatmap_row_label_font_size_", i)]])) input[[paste0("heatmap_row_label_font_size_", i)]] else 2.5,
           row_label_offset = if (!is.null(input[[paste0("heatmap_row_label_offset_", i)]])) input[[paste0("heatmap_row_label_offset_", i)]] else 1.0,
           row_label_align = if (!is.null(input[[paste0("heatmap_row_label_align_", i)]])) input[[paste0("heatmap_row_label_align_", i)]] else "left",
-          # Color settings - blue-white-red for CNV (default centered at 2 for diploid)
+          # Color settings - blue-white-red for CNV (default centered at 0)
           low_color = if (!is.null(cfg$low_color)) cfg$low_color else "#0000FF",  # Blue for deletion
-          mid_color = if (!is.null(cfg$mid_color)) cfg$mid_color else "#FFFFFF",  # White for diploid
+          mid_color = if (!is.null(cfg$mid_color)) cfg$mid_color else "#FFFFFF",  # White for zero
           high_color = if (!is.null(cfg$high_color)) cfg$high_color else "#FF0000",  # Red for amplification
-          midpoint = if (!is.null(cfg$midpoint)) cfg$midpoint else (if (cnv_wgd_norm) 1 else 2),  # Center at diploid
+          midpoint = if (!is.null(cfg$midpoint)) cfg$midpoint else 0,  # Center at 0
           use_midpoint = TRUE,  # Always use midpoint for CNV
           na_color = "grey90"
         )
@@ -14632,6 +15072,10 @@ server <- function(input, output, session) {
         show_grid = if (!is.null(show_grid)) show_grid else FALSE,  # v111: Grid around tiles
         grid_color = if (!is.null(grid_color)) grid_color else "#000000",  # v111
         grid_size = if (!is.null(grid_size)) grid_size else 0.5,  # v111
+        # S1.62dev: Row line settings (horizontal lines only)
+        show_row_lines = if (!is.null(input[[paste0("heatmap_show_row_lines_", i)]])) input[[paste0("heatmap_show_row_lines_", i)]] else FALSE,
+        row_line_color = if (!is.null(input[[paste0("heatmap_row_line_color_", i)]])) input[[paste0("heatmap_row_line_color_", i)]] else "#000000",
+        row_line_size = if (!is.null(input[[paste0("heatmap_row_line_size_", i)]])) input[[paste0("heatmap_row_line_size_", i)]] else 0.5,
         # v116: Guide lines
         show_guides = if (!is.null(show_guides)) show_guides else FALSE,
         guide_color1 = if (!is.null(guide_color1)) guide_color1 else "#CCCCCC",
