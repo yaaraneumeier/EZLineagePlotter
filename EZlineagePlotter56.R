@@ -6239,71 +6239,64 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
                                       isTRUE(heat_param[['show_vertical_text']])
           cat(file=stderr(), paste0("[RENDER-DEBUG] show_vertical_text_bool=", show_vertical_text_bool, "\n"))
           if (show_vertical_text_bool) {
-            vertical_text_column <- if (!is.null(heat_param[['vertical_text_column']])) heat_param[['vertical_text_column']] else ""
-            vertical_text_size <- if (!is.null(heat_param[['vertical_text_size']])) as.numeric(heat_param[['vertical_text_size']]) else 3
-            vertical_text_offset <- if (!is.null(heat_param[['vertical_text_offset']])) as.numeric(heat_param[['vertical_text_offset']]) else 0.5
-            vertical_text_color <- if (!is.null(heat_param[['vertical_text_color']])) heat_param[['vertical_text_color']] else "#000000"
+            cat(file=stderr(), "[RENDER-DEBUG] ENTERED vertical text block\n")
+            tryCatch({
+              vertical_text_column <- if (!is.null(heat_param[['vertical_text_column']])) heat_param[['vertical_text_column']] else ""
+              vertical_text_size <- if (!is.null(heat_param[['vertical_text_size']])) as.numeric(heat_param[['vertical_text_size']]) else 3
+              vertical_text_offset <- if (!is.null(heat_param[['vertical_text_offset']])) as.numeric(heat_param[['vertical_text_offset']]) else 0.5
+              vertical_text_color <- if (!is.null(heat_param[['vertical_text_color']])) heat_param[['vertical_text_color']] else "#000000"
 
-            debug_cat(paste0("  S1.62dev: Adding vertical text labels (column: '", vertical_text_column,
-                             "', size: ", vertical_text_size, ", offset: ", vertical_text_offset, ")\n"))
+              cat(file=stderr(), paste0("[RENDER-DEBUG] vertical_text params: col='", vertical_text_column, "', size=", vertical_text_size, "\n"))
 
-            # Get column x positions and names
-            col_x_positions <- sort(unique(tile_df$x))
-            col_names <- colnames(heat_data)
+              # Get column x positions and names
+              col_x_positions <- sort(unique(tile_df$x))
+              col_names <- colnames(heat_data)
 
-            # Y position below the heatmap
-            y_bottom <- min(tile_df$y) - tile_height / 2 - vertical_text_offset
+              cat(file=stderr(), paste0("[RENDER-DEBUG] col_x_positions length: ", length(col_x_positions), ", col_names length: ", length(col_names), "\n"))
 
-            # Get labels - either from CSV column or use heatmap column names
-            vertical_labels <- col_names
-            if (!is.null(vertical_text_column) && vertical_text_column != "" && exists("data_table") && !is.null(data_table)) {
-              # Try to get labels from CSV column
-              # The vertical_text_column contains labels, and we need to map heatmap column names to those labels
-              # If CSV has a column with the same values as heatmap column names, use corresponding vertical_text_column values
-              if (vertical_text_column %in% names(data_table)) {
-                debug_cat(paste0("  S1.62dev: Found column '", vertical_text_column, "' in CSV\n"))
-                # For RData CNV heatmaps, column names might be genomic positions
-                # Try to find a mapping in the CSV (column names as row values)
-                csv_col_values <- data_table[[vertical_text_column]]
-                debug_cat(paste0("  S1.62dev: CSV column has ", length(csv_col_values), " values\n"))
+              # Y position below the heatmap
+              y_bottom <- min(tile_df$y) - tile_height / 2 - vertical_text_offset
 
-                # If the number of CSV rows matches the number of heatmap columns, use them directly
-                if (length(csv_col_values) >= length(col_names)) {
-                  vertical_labels <- as.character(csv_col_values[1:length(col_names)])
-                  debug_cat(paste0("  S1.62dev: Using first ", length(col_names), " values from CSV column as labels\n"))
+              # Get labels - either from CSV column or use heatmap column names
+              vertical_labels <- col_names
+              if (!is.null(vertical_text_column) && vertical_text_column != "" && exists("data_table") && !is.null(data_table)) {
+                # Try to get labels from CSV column
+                if (vertical_text_column %in% names(data_table)) {
+                  csv_col_values <- data_table[[vertical_text_column]]
+                  if (length(csv_col_values) >= length(col_names)) {
+                    vertical_labels <- as.character(csv_col_values[1:length(col_names)])
+                  }
                 }
-              } else {
-                debug_cat(paste0("  S1.62dev: Column '", vertical_text_column, "' not found in CSV, using column names\n"))
               }
-            }
 
-            # Create text label data frame
-            if (length(col_x_positions) == length(vertical_labels)) {
-              text_df <- data.frame(
-                x = col_x_positions,
-                y = y_bottom,
-                label = vertical_labels,
-                stringsAsFactors = FALSE
-              )
+              cat(file=stderr(), paste0("[RENDER-DEBUG] vertical_labels length: ", length(vertical_labels), "\n"))
 
-              # Add vertical text labels using geom_text with 90-degree rotation
-              # S1.62dev: With angle=90 (counterclockwise), text goes bottom-to-top
-              # hjust=1 anchors the TOP of rotated text at the y position (text extends down/away from heatmap)
-              # hjust=0 anchors the BOTTOM of rotated text at the y position (text extends up/into heatmap)
-              # We want text below heatmap extending upward, so use hjust=0 and position y at bottom minus offset
-              p_with_tiles <- p_with_tiles +
-                geom_text(data = text_df, aes(x = x, y = y, label = label),
-                          angle = 90, hjust = 0, vjust = 0.5,
-                          size = vertical_text_size, color = vertical_text_color,
-                          inherit.aes = FALSE) +
-                expand_limits(y = y_bottom)  # Ensure plot includes the text anchor position
+              # Create text label data frame
+              if (length(col_x_positions) == length(vertical_labels)) {
+                text_df <- data.frame(
+                  x = col_x_positions,
+                  y = y_bottom,
+                  label = vertical_labels,
+                  stringsAsFactors = FALSE
+                )
 
-              debug_cat(paste0("  S1.62dev: Added ", nrow(text_df), " vertical text labels at y=", y_bottom, "\n"))
-            } else {
-              debug_cat(paste0("  S1.62dev: Warning - column count mismatch: ", length(col_x_positions),
-                               " positions vs ", length(vertical_labels), " labels\n"))
-            }
+                p_with_tiles <- p_with_tiles +
+                  geom_text(data = text_df, aes(x = x, y = y, label = label),
+                            angle = 90, hjust = 0, vjust = 0.5,
+                            size = vertical_text_size, color = vertical_text_color,
+                            inherit.aes = FALSE) +
+                  expand_limits(y = y_bottom)
+
+                cat(file=stderr(), paste0("[RENDER-DEBUG] Added ", nrow(text_df), " vertical text labels\n"))
+              } else {
+                cat(file=stderr(), paste0("[RENDER-DEBUG] Count mismatch - col_x: ", length(col_x_positions), " vs labels: ", length(vertical_labels), "\n"))
+              }
+            }, error = function(e) {
+              cat(file=stderr(), paste0("[RENDER-DEBUG] ERROR in vertical text: ", e$message, "\n"))
+            })
+            cat(file=stderr(), "[RENDER-DEBUG] EXITED vertical text block\n")
           }
+          cat(file=stderr(), "[RENDER-DEBUG] After vertical text block\n")
 
           # S1.62dev: Add chromosome separator lines and labels (for RData CNV heatmaps)
           cat(file=stderr(), paste0("[RENDER-DEBUG] Checking chr features: chr_lines=", heat_param[['chr_lines']],
