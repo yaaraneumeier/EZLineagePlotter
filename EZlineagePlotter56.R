@@ -6544,10 +6544,12 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             debug_cat(paste0("  Adding continuous color scale\n"))
 
             # v100: Get continuous scale colors from parameters
-            low_color <- if (!is.null(heat_param['low']) && !is.na(heat_param['low'])) heat_param['low'] else "beige"
-            mid_color <- if (!is.null(heat_param['mid']) && !is.na(heat_param['mid'])) heat_param['mid'] else "seashell2"
-            high_color <- if (!is.null(heat_param['high']) && !is.na(heat_param['high'])) heat_param['high'] else "firebrick4"
-            midpoint <- if (!is.null(heat_param['midpoint']) && !is.na(heat_param['midpoint'])) as.numeric(heat_param['midpoint']) else 0.02
+            # S1.62dev FIX: Use double brackets [['key']] to get the VALUE, not a sublist
+            # Single brackets ['key'] return a list, which breaks scale_fill_gradient2
+            low_color <- if (!is.null(heat_param[['low']]) && length(heat_param[['low']]) > 0) heat_param[['low']] else "beige"
+            mid_color <- if (!is.null(heat_param[['mid']]) && length(heat_param[['mid']]) > 0) heat_param[['mid']] else "seashell2"
+            high_color <- if (!is.null(heat_param[['high']]) && length(heat_param[['high']]) > 0) heat_param[['high']] else "firebrick4"
+            midpoint <- if (!is.null(heat_param[['midpoint']]) && length(heat_param[['midpoint']]) > 0) as.numeric(heat_param[['midpoint']]) else 0.02
             limits <- heat_param[['limits']]
 
             # v113: Debug output for continuous scale colors including NA color
@@ -10345,6 +10347,10 @@ server <- function(input, output, session) {
           use_midpoint = if (!is.null(cfg$use_midpoint)) cfg$use_midpoint else FALSE,
           mid_color = if (!is.null(cfg$mid_color)) cfg$mid_color else "#FFFF99",
           midpoint = if (!is.null(cfg$midpoint)) cfg$midpoint else 0,
+          # S1.62dev FIX: Add 'low', 'mid', 'high' keys that rendering code expects
+          low = if (!is.null(cfg$low_color)) cfg$low_color else "#FFFFCC",
+          mid = if (!is.null(cfg$mid_color)) cfg$mid_color else "#FFFF99",
+          high = if (!is.null(cfg$high_color)) cfg$high_color else "#006837",
           distance = if (!is.null(cfg$distance)) cfg$distance else 0.02,
           height = if (!is.null(cfg$height)) cfg$height else 0.8,
           row_height = if (!is.null(cfg$row_height)) cfg$row_height else 1,
@@ -15631,9 +15637,16 @@ server <- function(input, output, session) {
       } else {
         heatmap_entry$low_color <- cfg$low_color
         heatmap_entry$high_color <- cfg$high_color
+        # S1.62dev FIX: Add 'low', 'mid', 'high' keys that rendering code expects
+        heatmap_entry$low <- cfg$low_color
+        heatmap_entry$high <- cfg$high_color
         if (cfg$use_midpoint) {
           heatmap_entry$mid_color <- cfg$mid_color
           heatmap_entry$midpoint <- cfg$midpoint
+          heatmap_entry$mid <- cfg$mid_color
+        } else {
+          # Default mid color even if midpoint not used
+          heatmap_entry$mid <- if (!is.null(cfg$mid_color)) cfg$mid_color else "#FFFF99"
         }
         # v112: Get NA color for continuous heatmaps from input (default to grey90)
         cont_na_color_input <- input[[paste0("heatmap_", i, "_cont_na_color")]]
