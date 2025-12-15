@@ -13576,10 +13576,10 @@ server <- function(input, output, session) {
           if (input[[paste0("heatmap_data_source_", i)]] == "rdata") {
             values$heatmap_configs[[i]]$type <- "continuous"
             values$heatmap_configs[[i]]$auto_type <- FALSE
-            # Set blue-white-red color scheme for CNV
-            values$heatmap_configs[[i]]$low_color <- "#0000FF"
-            values$heatmap_configs[[i]]$mid_color <- "#FFFFFF"
-            values$heatmap_configs[[i]]$high_color <- "#FF0000"
+            # S1.62dev: Set red-white-blue color scheme for CNV (red=loss, blue=gain)
+            values$heatmap_configs[[i]]$low_color <- "#FF0000"   # Red for deletion/loss
+            values$heatmap_configs[[i]]$mid_color <- "#FFFFFF"   # White for neutral
+            values$heatmap_configs[[i]]$high_color <- "#0000FF"  # Blue for amplification/gain
             values$heatmap_configs[[i]]$use_midpoint <- TRUE
             values$heatmap_configs[[i]]$midpoint <- 2  # Diploid baseline
           }
@@ -14302,12 +14302,14 @@ server <- function(input, output, session) {
                                  selected = if (!is.null(cfg$cont_palette)) cfg$cont_palette else "RdBu")
               ),
               column(4,
+                     # S1.62dev: Default red for deletion/loss
                      colourInput(paste0("heatmap_low_color_", i), "Low (Deletion)",
-                                 value = if (!is.null(cfg$low_color)) cfg$low_color else "#0000FF")
+                                 value = if (!is.null(cfg$low_color)) cfg$low_color else "#FF0000")
               ),
               column(4,
+                     # S1.62dev: Default blue for amplification/gain
                      colourInput(paste0("heatmap_high_color_", i), "High (Amplification)",
-                                 value = if (!is.null(cfg$high_color)) cfg$high_color else "#FF0000")
+                                 value = if (!is.null(cfg$high_color)) cfg$high_color else "#0000FF")
               )
             ),
             fluidRow(
@@ -14876,11 +14878,11 @@ server <- function(input, output, session) {
           row_label_font_size = if (!is.null(input[[paste0("heatmap_row_label_font_size_", i)]])) input[[paste0("heatmap_row_label_font_size_", i)]] else 2.5,
           row_label_offset = if (!is.null(input[[paste0("heatmap_row_label_offset_", i)]])) input[[paste0("heatmap_row_label_offset_", i)]] else 1.0,
           row_label_align = if (!is.null(input[[paste0("heatmap_row_label_align_", i)]])) input[[paste0("heatmap_row_label_align_", i)]] else "left",
-          # Color settings - blue-white-red for CNV (default centered at 0)
-          low_color = if (!is.null(cfg$low_color)) cfg$low_color else "#0000FF",  # Blue for deletion
-          mid_color = if (!is.null(cfg$mid_color)) cfg$mid_color else "#FFFFFF",  # White for zero
-          high_color = if (!is.null(cfg$high_color)) cfg$high_color else "#FF0000",  # Red for amplification
-          midpoint = if (!is.null(cfg$midpoint)) cfg$midpoint else 0,  # Center at 0
+          # S1.62dev: Color settings - red-white-blue for CNV (red=loss, blue=gain)
+          low_color = if (!is.null(cfg$low_color)) cfg$low_color else "#FF0000",   # Red for deletion/loss
+          mid_color = if (!is.null(cfg$mid_color)) cfg$mid_color else "#FFFFFF",   # White for neutral
+          high_color = if (!is.null(cfg$high_color)) cfg$high_color else "#0000FF", # Blue for amplification/gain
+          midpoint = if (!is.null(cfg$midpoint)) cfg$midpoint else 2,  # Center at diploid (2)
           use_midpoint = TRUE,  # Always use midpoint for CNV
           na_color = "grey90"
         )
