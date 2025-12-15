@@ -4167,9 +4167,12 @@ func.print.lineage.tree <- function(conf_yaml_path,
             # v53: print(tip_list)
             # v53: print("df_heat_temp[[title.id]]) is")
             # v53: print(df_heat_temp[[title.id]])
-            
-            
-            # v58: DEBUG - Show matching details
+
+            # S1.62dev: Check if this is an RData heatmap - skip CSV-specific matching code
+            is_rdata_heatmap <- 'data_source' %in% names(heat_map_i_def) && heat_map_i_def$data_source == "rdata"
+
+            if (!is_rdata_heatmap) {
+            # v58: DEBUG - Show matching details (CSV only)
             debug_cat(paste0("\n=== v58: Matching heatmap data to tree tips ===\n"))
             debug_cat(paste0("  tip_list length: ", length(tip_list), "\n"))
             debug_cat(paste0("  tip_list sample: ", paste(head(tip_list, 5), collapse=", "), "\n"))
@@ -4281,6 +4284,7 @@ func.print.lineage.tree <- function(conf_yaml_path,
 
 
             dxdf440_for_heat[[indx_for_sav]] <- df_heat_temp
+            } # S1.62dev: End of if (!is_rdata_heatmap) block - CSV-specific matching code
 
             } # End of else block (CSV path) - S1.62dev
           } else {
