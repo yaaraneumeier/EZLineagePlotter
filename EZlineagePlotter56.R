@@ -6039,6 +6039,10 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
       if (length(tile_data_list) > 0) {
         tile_df <- do.call(rbind, tile_data_list)
+        cat(file=stderr(), paste0("[RENDER-DEBUG] Created tile_df: ", nrow(tile_df), " tiles\n"))
+        cat(file=stderr(), paste0("[RENDER-DEBUG] tile_df x range: [", min(tile_df$x), ", ", max(tile_df$x), "]\n"))
+        cat(file=stderr(), paste0("[RENDER-DEBUG] tile_df y range: [", min(tile_df$y), ", ", max(tile_df$y), "]\n"))
+        cat(file=stderr(), paste0("[RENDER-DEBUG] tile_width=", tile_width, ", tile_height=", tile_height, "\n"))
         debug_cat(paste0("  Created tile_df with ", nrow(tile_df), " tiles\n"))
         debug_cat(paste0("  x range: [", min(tile_df$x), ", ", max(tile_df$x), "]\n"))
         debug_cat(paste0("  y range: [", min(tile_df$y), ", ", max(tile_df$y), "]\n"))
@@ -6146,6 +6150,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
             debug_cat(paste0("  v15: Added explicit grid lines: ", nrow(v_lines_df), " vertical, ", nrow(h_lines_df), " horizontal\n"))
           } else {
+            cat(file=stderr(), "[RENDER-DEBUG] Adding geom_tile without grid\n")
             p_with_tiles <- p + geom_tile(
               data = tile_df,
               aes(x = x, y = y, fill = value),
@@ -6153,6 +6158,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
               height = tile_height,   # v112: Row height (slider-controlled)
               inherit.aes = FALSE
             )
+            cat(file=stderr(), paste0("[RENDER-DEBUG] geom_tile added, p_with_tiles has ", length(p_with_tiles$layers), " layers\n"))
           }
 
           # S1.62dev: Add horizontal row lines (separate from grid - only horizontal lines)
@@ -6541,6 +6547,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
               )
             }
           } else {
+            cat(file=stderr(), "[RENDER-DEBUG] Adding continuous color scale\n")
             debug_cat(paste0("  Adding continuous color scale\n"))
 
             # v100: Get continuous scale colors from parameters
@@ -6551,6 +6558,9 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             high_color <- if (!is.null(heat_param[['high']]) && length(heat_param[['high']]) > 0) heat_param[['high']] else "firebrick4"
             midpoint <- if (!is.null(heat_param[['midpoint']]) && length(heat_param[['midpoint']]) > 0) as.numeric(heat_param[['midpoint']]) else 0.02
             limits <- heat_param[['limits']]
+
+            cat(file=stderr(), paste0("[RENDER-DEBUG] Color scale: low='", low_color, "', mid='", mid_color, "', high='", high_color, "', midpoint=", midpoint, "\n"))
+            cat(file=stderr(), paste0("[RENDER-DEBUG] heat_param keys: ", paste(names(heat_param), collapse=", "), "\n"))
 
             # v113: Debug output for continuous scale colors including NA color
             debug_cat(paste0("  Colors: low=", low_color, ", mid=", mid_color, ", high=", high_color, "\n"))
