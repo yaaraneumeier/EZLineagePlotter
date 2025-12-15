@@ -25,12 +25,97 @@ library(tidyverse)
 library(ggnewscale)
 library(stats)
 library(gridExtra)
+library(cowplot)  # v144: For proper plot positioning using draw_plot
+library(jpeg)     # v144: For JPEG image overlay support
 library(combinat)
 library(infotheo)
 library(aricode)
 
 
 options(shiny.reactlog = TRUE)
+# v146: Increase max upload size for Shiny server deployments (100MB)
+options(shiny.maxRequestSize = 100*1024^2)
+
+# v147: Fixed ellipse x0 positioning in heatmap mode (was using incorrect -15.4 multiplier)
+#       Added debug output for PLOT ellipse alpha to compare with legend ellipse alpha
+#       Improved legend coordinate output with coordinate system explanations
+# v148: Fixed ellipse x0 using SAME data source (p$data) for both tree_max and node positions
+#       Fixed legend ellipse size to match plot ellipse (removed man_multiply_elipse and +0.3)
+#       Changed y_off_base to position highlight/bootstrap legends on RIGHT side of plot
+# v149: Fixed legend ellipse transparency using scales::alpha() to embed alpha in fill color
+#       Repositioned legends to TOP-RIGHT using -(y_off_base-5) for x-position
+#       Reduced bootstrap title size (0.15 multiplier, capped at 3, min 2)
+# v167: OPTION C TRIAL - Native ggplot legends approach
+# v168: Fixed legend bleeding with show.legend = c(shape = TRUE) and guides() override
+# v169: Added SIZE and ALPHA scale overrides to guides() - still only fixed LAST heatmap
+# v170: CRITICAL FIX - Custom key_glyph to prevent ALL legend bleeding
+# v171: Implement actual HIGHLIGHT and BOOTSTRAP legends using native ggplot
+#       BUG: scale_fill_manual and scale_size_manual REPLACED existing heatmap/P value scales
+# v172: Tried ggnewscale::new_scale_fill() and new_scale("size") - still broke P value legend
+# v173: SHAPE-ONLY approach - use ONLY shape aesthetic for both legends
+#       This avoids ALL scale conflicts: fill (heatmaps), size (P value), colour (classification)
+# v174: Fixed Highlight ellipse colors/transparency using force() to capture closure
+#       Fixed Bootstrap triangle sizes to vary visibly (both width and height)
+# v175: CRITICAL FIX - Use data$.label instead of data$shape in key_glyph
+#       data$shape returns numeric shape code (15, 17, 19), NOT the text label
+# v176: Fix NULL/empty .label handling - check length() before is.na()
+#       as.character(NULL) returns character(0), causing "missing value" error
+# v177: Use unique shape values per legend item to identify items in key_glyph
+#       Problem: all items mapped to shape=15 made them indistinguishable
+# v178: Fix legend bleeding - return nullGrob if shape value not in our set
+#       Prevents ellipses/triangles from appearing on other legends
+# v179: Enhanced Legend, Extra, and Download tabs with new controls
+#       Added tree stretch, background color, symbol & spacing settings
+# v180: Multiple enhancements:
+#       - Fixed tip labels being hidden by highlight ellipses (layer reordering)
+#       - Added legend controls: key width/height, box background, margin
+#       - Removed byrow, kept reverse order for legend item control
+#       - Fixed download preview to show full page with plot proportions preserved
+#       - Fixed Extra tab spinner animation
+#       - Bootstrap legend only for triangles format (no legend for percentage/raw)
+# S1: First stable release
+#       - Performance: Disabled verbose debug output
+#       - All v180 features included and tested
+
+# ============================================================================
+# VERSION S2.0 (Stable)
+# ============================================================================
+# S2.0: Major stable release with RData CNV heatmap support
+#       - RData CNV file import for heatmaps (from QDNAseq/scIMPACT pipelines)
+#       - Automatic sample matching via CSV lookup columns
+#       - Red-white-blue default color scheme for CNV data
+#       - Vertical column lines option for heatmaps
+#       - Horizontal row lines option for heatmaps
+#       - Fixed multiple heatmap support (CSV + RData together)
+# S1.6: Stable release with performance optimizations and bug fixes
+#       - All S1.x improvements consolidated and tested
+# S1.5: Fixed Legend Background not working
+#       - Added legend.background theme element for individual legend panel backgrounds
+#       - Fixed RGBA color handling from colourpicker (convert to RGB)
+# S1.4: Performance optimization - Reduce redundant recalculations
+#       - Added plot_trigger mechanism to batch rapid updates (100ms debounce)
+#       - Converted observers to use request_plot_update() instead of direct generate_plot()
+#       - Removed duplicate guards in generate_plot() function
+#       - Reduced debug logging overhead
+# S1.3: Performance optimization - Layer management
+#       - Reduced func.move.tiplabels.to.front() calls from 3+ per render to 1
+#       - Removed redundant intermediate calls in func_highlight and func.print.lineage.tree
+#       - Optimized function: uses vapply instead of sapply, removed debug I/O overhead
+#       - Layer reordering now happens ONCE at the end in generate_plot()
+# S1.2: Fixed undefined x_range_min in func_highlight causing "Problem while
+#       computing aesthetics" error when adding 2+ highlights with a heatmap.
+VERSION <- "S2.0"
+
+# Debug output control - set to TRUE to enable verbose console logging
+# For production/stable use, keep this FALSE for better performance
+DEBUG_VERBOSE <- FALSE
+
+# Helper function for debug output - only prints when DEBUG_VERBOSE is TRUE
+debug_cat <- function(...) {
+  if (DEBUG_VERBOSE) {
+    cat(file = stderr(), ...)
+  }
+}
 
 ###### part 1 a:
 # ============================================================================
@@ -78,10 +163,12 @@ get_filename <- function(filepath) {
 
 # Function to check for string/integer mismatches and common prefixes/suffixes
 match_tree_ids_with_csv <- function(tree_labels, csv_ids) {
+  # S1-PERF: Optimized with vectorized operations instead of nested loops
+
   # Ensure tree_labels and csv_ids are character vectors
   tree_labels <- as.character(tree_labels)
   csv_ids <- as.character(csv_ids)
-  
+
   # Initialize matching results
   matched <- list(
     exact_matches = character(0),
@@ -89,120 +176,121 @@ match_tree_ids_with_csv <- function(tree_labels, csv_ids) {
     numeric_matches = list(),
     unmatched = character(0)
   )
-  
+
   # Create a copy of original tree labels
   tree_labels_original <- tree_labels
-  
-  # Try exact matches first
+
+  # Try exact matches first (already vectorized - good)
   exact_matches <- intersect(tree_labels, csv_ids)
   matched$exact_matches <- exact_matches
-  
+
   # Remove exact matches from consideration
   remaining_tree_labels <- setdiff(tree_labels, exact_matches)
-  
+
   if (length(remaining_tree_labels) > 0) {
-    # Try numeric conversion match
+    # S1-PERF: Vectorized numeric conversion
     numeric_tree <- suppressWarnings(as.numeric(remaining_tree_labels))
     numeric_csv <- suppressWarnings(as.numeric(csv_ids))
-    
+
     valid_numeric_tree <- !is.na(numeric_tree)
     valid_numeric_csv <- !is.na(numeric_csv)
-    
+
+    # S1-PERF: Use match() for numeric matching instead of loop
     if (any(valid_numeric_tree) && any(valid_numeric_csv)) {
-      for (i in which(valid_numeric_tree)) {
-        matches <- which(numeric_csv == numeric_tree[i])
-        if (length(matches) > 0) {
-          matched$numeric_matches[[remaining_tree_labels[i]]] <- csv_ids[matches]
+      numeric_tree_valid <- numeric_tree[valid_numeric_tree]
+      numeric_csv_valid <- numeric_csv[valid_numeric_csv]
+      csv_ids_valid <- csv_ids[valid_numeric_csv]
+
+      # Use match to find all numeric matches at once
+      match_indices <- match(numeric_tree_valid, numeric_csv_valid)
+      matched_mask <- !is.na(match_indices)
+
+      if (any(matched_mask)) {
+        matched_tree_labels <- remaining_tree_labels[valid_numeric_tree][matched_mask]
+        matched_csv_ids <- csv_ids_valid[match_indices[matched_mask]]
+        for (i in seq_along(matched_tree_labels)) {
+          matched$numeric_matches[[matched_tree_labels[i]]] <- matched_csv_ids[i]
         }
       }
     }
-    
-    # Try prefix/suffix matching
-    for (tree_label in remaining_tree_labels) {
-      if (tree_label %in% names(matched$numeric_matches)) next
-      
-      # Check if tree label is prefix or suffix of any csv id
-      prefix_matches <- character(0)
-      suffix_matches <- character(0)
-      csv_as_prefix <- character(0)  # Initialize here
-      csv_as_suffix <- character(0)  # Initialize here
-      
-      # Safely check for prefix/suffix matches
-      for (csv_id in csv_ids) {
-        # Skip NA values
-        if (is.na(tree_label) || is.na(csv_id)) next
-        
-        # Check for prefix match
-        if (grepl(paste0("^", tree_label), csv_id, fixed = FALSE)) {
-          prefix_matches <- c(prefix_matches, csv_id)
+
+    # S1-PERF: Vectorized prefix/suffix matching
+    # Only process labels not already matched
+    labels_to_check <- setdiff(remaining_tree_labels, names(matched$numeric_matches))
+
+    if (length(labels_to_check) > 0 && length(csv_ids) > 0) {
+      # Pre-filter: remove NA values
+      valid_csv <- csv_ids[!is.na(csv_ids)]
+
+      for (tree_label in labels_to_check) {
+        if (is.na(tree_label)) {
+          matched$unmatched <- c(matched$unmatched, tree_label)
+          next
         }
-        
-        # Check for suffix match
-        if (grepl(paste0(tree_label, "$"), csv_id, fixed = FALSE)) {
-          suffix_matches <- c(suffix_matches, csv_id)
+
+        # S1-PERF: Use startsWith/endsWith which are much faster than grepl
+        # Check if tree_label is prefix of any csv_id
+        prefix_matches <- valid_csv[startsWith(valid_csv, tree_label)]
+
+        # Check if tree_label is suffix of any csv_id
+        suffix_matches <- valid_csv[endsWith(valid_csv, tree_label)]
+
+        # Check if any csv_id is prefix of tree_label
+        csv_as_prefix <- valid_csv[vapply(valid_csv, function(x) startsWith(tree_label, x), logical(1))]
+
+        # Check if any csv_id is suffix of tree_label
+        csv_as_suffix <- valid_csv[vapply(valid_csv, function(x) endsWith(tree_label, x), logical(1))]
+
+        all_matches <- unique(c(prefix_matches, suffix_matches, csv_as_prefix, csv_as_suffix))
+
+        if (length(all_matches) > 0) {
+          matched$prefix_suffix_matches[[tree_label]] <- all_matches
+        } else {
+          matched$unmatched <- c(matched$unmatched, tree_label)
         }
-        
-        # Check if csv id is prefix of tree label
-        if (grepl(paste0("^", csv_id), tree_label, fixed = FALSE)) {
-          csv_as_prefix <- c(csv_as_prefix, csv_id)
-        }
-        
-        # Check if csv id is suffix of tree label
-        if (grepl(paste0(csv_id, "$"), tree_label, fixed = FALSE)) {
-          csv_as_suffix <- c(csv_as_suffix, csv_id)
-        }
-      }
-      
-      all_matches <- c(prefix_matches, suffix_matches, csv_as_prefix, csv_as_suffix)
-      
-      if (length(all_matches) > 0) {
-        matched$prefix_suffix_matches[[tree_label]] <- unique(all_matches)
-      } else {
-        matched$unmatched <- c(matched$unmatched, tree_label)
       }
     }
   }
-  
-  # Generate a mapping between tree labels and csv ids
+
+  # S1-PERF: Vectorized mapping construction
   final_mapping <- list()
-  
-  # Add exact matches
-  for (label in matched$exact_matches) {
-    final_mapping[[label]] <- label
+
+  # Add exact matches (vectorized)
+  if (length(matched$exact_matches) > 0) {
+    for (label in matched$exact_matches) {
+      final_mapping[[label]] <- label
+    }
   }
-  
+
   # Add numeric matches (pick first if multiple)
   for (tree_label in names(matched$numeric_matches)) {
     final_mapping[[tree_label]] <- matched$numeric_matches[[tree_label]][1]
   }
-  
+
   # Add prefix/suffix matches (pick first if multiple)
   for (tree_label in names(matched$prefix_suffix_matches)) {
     final_mapping[[tree_label]] <- matched$prefix_suffix_matches[[tree_label]][1]
   }
-  
-  # v53: print("final_mapping is")
-  # v53: print(final_mapping)
-  
+
   # Infer trimming parameters from the matching results
   id_tip_trim_flag <- FALSE
   id_tip_trim_start <- 1
   id_tip_trim_end <- NA
   id_tip_prefix <- ""
-  
+
   # Check if we need trimming based on the matches
   if (length(matched$exact_matches) == length(tree_labels_original)) {
     # Perfect exact matches - no trimming needed
     id_tip_trim_flag <- FALSE
   } else if (length(matched$prefix_suffix_matches) > 0) {
     # Analyze prefix/suffix patterns to determine trimming
-    
+
     # Sample a few matches to determine pattern
     sample_matches <- head(matched$prefix_suffix_matches, 5)
-    
+
     for (tree_label in names(sample_matches)) {
       csv_match <- matched$prefix_suffix_matches[[tree_label]][1]
-      
+
       # Check if tree label has a prefix that csv doesn't have
       if (nchar(tree_label) > nchar(csv_match)) {
         # Tree label is longer - likely has a prefix
@@ -234,7 +322,7 @@ match_tree_ids_with_csv <- function(tree_labels, csv_ids) {
     # Numeric matches - might need trimming
     id_tip_trim_flag <- TRUE
   }
-  
+
   # Add trimming parameters to the return
   return(list(
     mapping = final_mapping,
@@ -253,8 +341,8 @@ match_tree_ids_with_csv <- function(tree_labels, csv_ids) {
       id_tip_prefix = id_tip_prefix
     )
   ))
-  
-  
+
+
 }
 
 # Function to check if a value is TRUE/YES in various formats
@@ -269,6 +357,134 @@ func.check.bin.val.from.conf <- function(val) {
   return(out)
 }
 
+# v82: Enhanced function to repair corrupted ggtree/ggplot mapping attribute
+# This fixes the error: "@mapping must be <ggplot2::mapping>, not S3<data.frame>"
+# which occurs in newer versions of ggplot2 (3.4+) when gheatmap or other operations
+# accidentally corrupt the mapping slot
+# CRITICAL v82 FIX: Do NOT reset layer mappings - only fix top-level mapping
+# Resetting layer mappings (like fill = value for GeomTile) breaks the heatmap
+func.repair.ggtree.mapping <- function(p, verbose = FALSE) {
+  repaired <- FALSE
+
+  # Check if top-level mapping is valid (should be class "uneval" from aes())
+  if (!inherits(p$mapping, "uneval")) {
+    if (verbose) {
+      debug_cat(paste0("\n=== v82: Repairing corrupted plot mapping ===\n"))
+      debug_cat(paste0("  Original mapping class: ", paste(class(p$mapping), collapse=", "), "\n"))
+    }
+
+    tryCatch({
+      p$mapping <- aes()
+      repaired <- TRUE
+      if (verbose) {
+        debug_cat(paste0("  Fixed mapping class: ", paste(class(p$mapping), collapse=", "), "\n"))
+      }
+    }, error = function(e) {
+      debug_cat(paste0("  v2: Could not repair mapping: ", e$message, "\n"))
+    })
+  }
+
+  # v82: REMOVED layer mapping repairs - these were breaking the heatmap fill mapping
+  # The layer mappings are set correctly by gheatmap and should not be modified.
+  # Only the top-level plot mapping sometimes gets corrupted to a data.frame.
+
+  if (repaired && verbose) {
+    debug_cat(paste0("================================\n"))
+  }
+
+  return(p)
+}
+
+# v180: Function to move tip label layers to the end of the layer stack
+# This ensures tip labels render ON TOP of other elements (highlight ellipses, heatmaps, etc.)
+# Called ONCE after all layers are added and before final rendering (in generate_plot)
+# S1.3-PERF: Optimized - removed redundant debug logging, uses vectorized operations
+func.move.tiplabels.to.front <- function(p, verbose = FALSE) {
+  # S1.3-PERF: Removed per-call debug logging to reduce I/O overhead
+  # Only log when verbose=TRUE (disabled by default now)
+
+  # Early exit: no layers to process
+  if (is.null(p$layers) || length(p$layers) == 0) {
+    return(p)
+  }
+
+  # S1.3-PERF: Use vapply for type-safe vectorized operation (faster than sapply)
+  layer_types <- vapply(p$layers, function(l) class(l$geom)[1], character(1))
+
+  # Find text-type layers (tip labels: GeomText, GeomLabel, or GeomTiplab)
+  tiplab_indices <- which(layer_types %in% c("GeomText", "GeomLabel", "GeomTiplab"))
+
+  # Early exit: no text layers to move
+  if (length(tiplab_indices) == 0) {
+    return(p)
+  }
+
+  # S1.3-PERF: Single-operation layer reordering (vectorized)
+  other_indices <- setdiff(seq_along(p$layers), tiplab_indices)
+  p$layers <- c(p$layers[other_indices], p$layers[tiplab_indices])
+
+  if (verbose) {
+    debug_cat(paste0("[PERF] func.move.tiplabels.to.front: moved ", length(tiplab_indices),
+                     " text layer(s) to front\n"))
+  }
+
+  return(p)
+}
+
+# v71: Function to diagnose which layer is causing ggplot_build to fail
+func.diagnose.layer.issues <- function(p, verbose = TRUE) {
+  if (verbose) {
+    debug_cat(paste0("\n=== v71: DIAGNOSING LAYER ISSUES ===\n"))
+  }
+
+  problematic_layers <- c()
+
+  if (!is.null(p$layers) && length(p$layers) > 0) {
+    for (i in seq_along(p$layers)) {
+      layer <- p$layers[[i]]
+      geom_class <- class(layer$geom)[1]
+
+      # Try to set up this layer's data
+      layer_ok <- tryCatch({
+        # Get plot data
+        plot_data <- if (!is.null(p$data)) p$data else data.frame()
+
+        # Try basic setup
+        if (!is.null(layer$data)) {
+          if (is.function(layer$data)) {
+            test_data <- layer$data(plot_data)
+          } else {
+            test_data <- layer$data
+          }
+        }
+        TRUE
+      }, error = function(e) {
+        if (verbose) {
+          debug_cat(paste0("  Layer ", i, " (", geom_class, "): FAILED - ", e$message, "\n"))
+        }
+        FALSE
+      })
+
+      if (!layer_ok) {
+        problematic_layers <- c(problematic_layers, i)
+      } else if (verbose) {
+        debug_cat(paste0("  Layer ", i, " (", geom_class, "): OK\n"))
+      }
+    }
+  }
+
+  if (verbose) {
+    if (length(problematic_layers) == 0) {
+      debug_cat(paste0("  No obvious layer issues detected\n"))
+    } else {
+      debug_cat(paste0("  Problematic layers: ", paste(problematic_layers, collapse=", "), "\n"))
+    }
+    debug_cat(paste0("================================\n"))
+  }
+
+  return(problematic_layers)
+}
+
 
 # Parse YAML configuration file
 parse_yaml_config <- function(file_path) {
@@ -277,6 +493,176 @@ parse_yaml_config <- function(file_path) {
     return(config)
   }, error = function(e) {
     return(list(error = paste("Failed to parse YAML file:", e$message)))
+  })
+}
+
+# S1.62dev: Extract CNV data from RData file
+# The RData file should contain 'results_CNV_tool_final' with nested structure:
+# results_CNV_tool_final[[sample_name]][[1]]$copy contains the CNV values
+# results_CNV_tool_final[[sample_name]][[1]]$chr may contain chromosome info
+# results_CNV_tool_final[[sample_name]][[1]]$start/end may contain positions
+# Returns a list with:
+#   - matrix: rows = genomic positions, columns = samples
+#   - sample_names: vector of sample names
+#   - chr_info: chromosome information for each position (if available)
+#   - position_info: start/end positions (if available)
+#   - error: error message if failed (NULL if success)
+func.extract.cnv.from.rdata <- function(rdata_path, downsample_factor = 10) {
+  tryCatch({
+    # Load RData into a new environment to avoid polluting global namespace
+    env <- new.env()
+    load(rdata_path, envir = env)
+
+    # Check if results_CNV_tool_final exists
+    if (!"results_CNV_tool_final" %in% names(env)) {
+      return(list(error = "RData file does not contain 'results_CNV_tool_final'"))
+    }
+
+    results <- env$results_CNV_tool_final
+    sample_names <- names(results)
+
+    if (length(sample_names) == 0) {
+      return(list(error = "No samples found in results_CNV_tool_final"))
+    }
+
+    cat(file=stderr(), paste0("[RDATA-CNV] Found ", length(sample_names), " samples\n"))
+
+    # Extract CNV data from each sample
+    cnv_matrix <- NULL
+    chr_info <- NULL
+    start_info <- NULL
+    end_info <- NULL
+    first <- TRUE
+
+    for (sample_name in sample_names) {
+      # Navigate to the copy data: results_CNV_tool_final[[sample]][[1]]$copy
+      sample_data <- results[[sample_name]]
+
+      if (is.null(sample_data) || length(sample_data) == 0) {
+        cat(file=stderr(), paste0("[RDATA-CNV] Warning: No data for sample ", sample_name, "\n"))
+        next
+      }
+
+      # Get the copy values (first element's $copy)
+      copy_data <- NULL
+      if (is.list(sample_data) && length(sample_data) >= 1) {
+        if (!is.null(sample_data[[1]]$copy)) {
+          copy_data <- as.data.frame(sample_data[[1]]$copy)
+        }
+
+        # S1.62dev: Extract chromosome and position information (only on first valid sample)
+        if (first && !is.null(sample_data[[1]])) {
+          # Check available fields in the data structure
+          available_fields <- names(sample_data[[1]])
+          cat(file=stderr(), paste0("[RDATA-CNV] Available fields in sample data: ", paste(available_fields, collapse=", "), "\n"))
+
+          # Extract chromosome info if available
+          if (!is.null(sample_data[[1]]$chr)) {
+            chr_info <- sample_data[[1]]$chr
+            cat(file=stderr(), paste0("[RDATA-CNV] Found chromosome info: ", length(chr_info), " entries\n"))
+            cat(file=stderr(), paste0("[RDATA-CNV] Unique chromosomes: ", paste(unique(chr_info), collapse=", "), "\n"))
+          } else if ("chr" %in% available_fields) {
+            cat(file=stderr(), "[RDATA-CNV] chr field exists but is NULL\n")
+          }
+
+          # Extract start positions if available
+          if (!is.null(sample_data[[1]]$start)) {
+            start_info <- sample_data[[1]]$start
+            cat(file=stderr(), paste0("[RDATA-CNV] Found start positions: ", length(start_info), " entries\n"))
+          }
+
+          # Extract end positions if available
+          if (!is.null(sample_data[[1]]$end)) {
+            end_info <- sample_data[[1]]$end
+            cat(file=stderr(), paste0("[RDATA-CNV] Found end positions: ", length(end_info), " entries\n"))
+          }
+        }
+      }
+
+      if (is.null(copy_data)) {
+        cat(file=stderr(), paste0("[RDATA-CNV] Warning: No copy data for sample ", sample_name, "\n"))
+        next
+      }
+
+      colnames(copy_data) <- sample_name
+
+      if (first) {
+        cnv_matrix <- copy_data
+        first <- FALSE
+      } else {
+        # Ensure same number of rows before binding
+        if (nrow(copy_data) == nrow(cnv_matrix)) {
+          cnv_matrix <- cbind(cnv_matrix, copy_data)
+        } else {
+          cat(file=stderr(), paste0("[RDATA-CNV] Warning: Row mismatch for sample ", sample_name,
+                                    " (", nrow(copy_data), " vs ", nrow(cnv_matrix), ")\n"))
+        }
+      }
+    }
+
+    if (is.null(cnv_matrix) || ncol(cnv_matrix) == 0) {
+      return(list(error = "No valid CNV data could be extracted"))
+    }
+
+    cat(file=stderr(), paste0("[RDATA-CNV] Extracted matrix: ", nrow(cnv_matrix), " rows x ", ncol(cnv_matrix), " columns\n"))
+
+    # Replace dots with dashes in column names (sample names)
+    colnames(cnv_matrix) <- gsub("\\.", "-", colnames(cnv_matrix))
+
+    # Downsample rows if requested - also downsample chr/position info
+    if (downsample_factor > 1) {
+      row_indices <- unique((1:nrow(cnv_matrix) %/% downsample_factor) * downsample_factor)
+      row_indices <- row_indices[row_indices > 0 & row_indices <= nrow(cnv_matrix)]
+      cnv_matrix <- cnv_matrix[row_indices, , drop = FALSE]
+
+      # Also downsample chr and position info if available
+      if (!is.null(chr_info) && length(chr_info) >= max(row_indices)) {
+        chr_info <- chr_info[row_indices]
+      }
+      if (!is.null(start_info) && length(start_info) >= max(row_indices)) {
+        start_info <- start_info[row_indices]
+      }
+      if (!is.null(end_info) && length(end_info) >= max(row_indices)) {
+        end_info <- end_info[row_indices]
+      }
+
+      cat(file=stderr(), paste0("[RDATA-CNV] After downsampling (factor ", downsample_factor, "): ",
+                                nrow(cnv_matrix), " rows\n"))
+    }
+
+    # S1.62dev: Transpose matrix so rows = samples and columns = genomic positions
+    # gheatmap() expects row names to match tree tip labels
+    cnv_matrix <- t(cnv_matrix)
+    cat(file=stderr(), paste0("[RDATA-CNV] After transpose: ", nrow(cnv_matrix), " samples x ", ncol(cnv_matrix), " positions\n"))
+
+    # S1.62dev: Build chromosome summary if available
+    chr_summary <- NULL
+    if (!is.null(chr_info)) {
+      chr_summary <- paste0(
+        "Chromosomes found: ", paste(unique(chr_info), collapse=", "), "\n",
+        "Positions per chromosome:\n"
+      )
+      chr_counts <- table(chr_info)
+      for (chr_name in names(chr_counts)) {
+        chr_summary <- paste0(chr_summary, "  ", chr_name, ": ", chr_counts[[chr_name]], " positions\n")
+      }
+      cat(file=stderr(), paste0("[RDATA-CNV] ", chr_summary))
+    }
+
+    return(list(
+      matrix = as.matrix(cnv_matrix),
+      sample_names = rownames(cnv_matrix),  # Now samples are rows
+      n_positions = ncol(cnv_matrix),       # Positions are now columns
+      n_samples = nrow(cnv_matrix),
+      chr_info = chr_info,                  # S1.62dev: Chromosome info (position-wise)
+      start_info = start_info,              # S1.62dev: Start positions
+      end_info = end_info,                  # S1.62dev: End positions
+      chr_summary = chr_summary,            # S1.62dev: Summary string
+      error = NULL
+    ))
+
+  }, error = function(e) {
+    return(list(error = paste("Failed to extract CNV data:", e$message)))
   })
 }
 
@@ -530,7 +916,8 @@ func.get.subtree.wrapper.return.list.tips <- function(tree, nod) {
     sub <- subset(su, isTip == TRUE)
     out <- sub$node
   } else {
-    subb <- subset(ggtree(tree)$data, node %in% c(su))
+    # v56b: Suppress harmless fortify warnings
+    subb <- subset(suppressWarnings(ggtree(tree))$data, node %in% c(su))
     out <- subset(subb, isTip == TRUE)
     out <- out$node
   }
@@ -543,8 +930,9 @@ fix.readfile440.with.missing.leaves <- function(readfile440, title.id, tree440, 
                                                 id_tip_trim_flag, id_tip_trim_start, id_tip_trim_end, id_tip_prefix, debug_mode = FALSE) {
   readfile440n <- readfile440
   #print("in fix.readfile440.with.missing.leaves")
-  
-  tree_data <- ggtree(tree440)$data
+
+  # v56b: Suppress harmless fortify warnings
+  tree_data <- suppressWarnings(ggtree(tree440))$data
   leaves_id_from_tree1 <- tree_data[tree_data$isTip == TRUE, 'label']
   leaves_id_from_tree <- as.list(leaves_id_from_tree1['label'])$label
   #print(leaves_id_from_tree)
@@ -1000,7 +1388,8 @@ func.make.rot.params <- function(rot_index, yaml_file, title.id, ids_list, tree4
                                            id_tip_trim_flag, id_tip_prefix)
   
   TREE_OTU_dx.rx <- groupOTU(tree440, list_id_by_rot)
-  iis <- subset(ggtree(TREE_OTU_dx.rx)$data, group == 0)
+  # v56b: Suppress harmless fortify warnings
+  iis <- subset(suppressWarnings(ggtree(TREE_OTU_dx.rx))$data, group == 0)
   types_list_dx.rx <- names(list_id_by_rot)
   list_weight_dx.rx <- func.set.list_weight(types_list_dx.rx)
   
@@ -1160,7 +1549,8 @@ func.set.list_weight <- function(types_list) {
 # Create weight list for tree
 func.create.weight_list <- function(tree_TRY, weights_list, TREE_OTU_class, tree_size) {
   # Define weights to tips for rotation
-  g <- ggtree(TREE_OTU_class)
+  # v56b: Suppress harmless fortify warnings
+  g <- suppressWarnings(ggtree(TREE_OTU_class))
   weight_list <- rep(0, tree_size)
   
   for (nod in g$data$node) {
@@ -1299,11 +1689,23 @@ func.make.leaves_id_ordered_for_df440 <- function(leaves_id_from_tree1, dxdf440_
 
 
 # Function to handle highlighting
+# v139: Added high_alpha_list parameter for transparency control
 func_highlight <- function(p, how_many_hi, heat_flag, high_color_list, a, b, man_adjust_elipse, pr440_short_tips_TRY,
-                           boudariestt, debug_mode = FALSE, high_offset = 0, high_vertical_offset = 0) {
+                           boudariestt, debug_mode = FALSE, high_offset = 0, high_vertical_offset = 0,
+                           high_alpha_list = NULL) {
+  # DEBUG-2ND-HIGHLIGHT: Track entry with details
+  cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] ENTER func_highlight at ", format(Sys.time(), "%H:%M:%OS3"), "\n"))
+  cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT]   how_many_hi=", how_many_hi, ", heat_flag=", heat_flag, "\n"))
+  cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT]   p$layers count=", length(p$layers), "\n"))
+
   up_offset <- -1 # -3
   y_off_base <- -8
-  
+
+  # v139: Default alpha list if not provided
+  if (is.null(high_alpha_list)) {
+    high_alpha_list <- rep(0.5, how_many_hi)
+  }
+
   # Debug output for Bug #11
   # v53: cat(file=stderr(), "🔵 func_highlight ENTRY:\n")
   # v53: cat(file=stderr(), paste0("🔵   how_many_hi: ", how_many_hi, "\n"))
@@ -1324,8 +1726,20 @@ func_highlight <- function(p, how_many_hi, heat_flag, high_color_list, a, b, man
         # v53: cat(file=stderr(), paste0("🔴 Available columns: ", paste(names(pr440_short_tips_TRY$data), collapse=", "), "\n"))
         next
       }
-      
-      high_nodes_table1 <- pr440_short_tips_TRY$data[pr440_short_tips_TRY$data$high1 == TRUE,]
+
+      # v146: When heat_flag is TRUE, get node positions from p$data (after heatmap transform)
+      # to ensure ellipses align with the transformed tree coordinates
+      if (heat_flag == TRUE && "high1" %in% names(p$data)) {
+        high_nodes_table1 <- p$data[p$data$high1 == TRUE,]
+        debug_cat(paste0("  v46: Using p$data for ellipse positioning (heat_flag=TRUE)\n"))
+        debug_cat(paste0("  v46: high_nodes_table1 rows: ", nrow(high_nodes_table1), "\n"))
+        if (nrow(high_nodes_table1) > 0) {
+          debug_cat(paste0("  v46: y-range: ", round(min(high_nodes_table1$y, na.rm=TRUE), 2),
+                                    " to ", round(max(high_nodes_table1$y, na.rm=TRUE), 2), "\n"))
+        }
+      } else {
+        high_nodes_table1 <- pr440_short_tips_TRY$data[pr440_short_tips_TRY$data$high1 == TRUE,]
+      }
       # v53: cat(file=stderr(), paste0("🔵   high_nodes_table1 rows: ", nrow(high_nodes_table1), "\n"))
       
       if (debug_mode == TRUE) {
@@ -1350,77 +1764,294 @@ func_highlight <- function(p, how_many_hi, heat_flag, high_color_list, a, b, man
       # v53: cat(file=stderr(), paste0("🔵 Ellipse positioning: man_adjust_elipse=", man_adjust_elipse, 
       #                            " (inverted), max_x=", max(pr440_short_tips_TRY$data[,'x']), "\n"))
       
+      # v139: Use high_alpha_list for transparency instead of hardcoded 0.5
+      alpha_val <- if (length(high_alpha_list) >= 1 && !is.null(high_alpha_list[[1]])) high_alpha_list[[1]] else 0.5
+
+      # v148: Debug output for PLOT ellipse alpha and dimensions
+      debug_cat(paste0("\n=== v148: PLOT ELLIPSE (high1) ===\n"))
+      debug_cat(paste0("  Alpha: ", alpha_val, "\n"))
+      debug_cat(paste0("  Dimensions: a=", round(a, 4), ", b=", round(b, 4), "\n"))
+      debug_cat(paste0("==================================\n"))
+
       if (heat_flag == FALSE) {
         p <- p +
           geom_ellipse(data = high_nodes_table1,
                        aes(x0 = ((max(pr440_short_tips_TRY$data[,'x']) - x) * (-1) - man_adjust_elipse),
                            y0 = y + high_vertical_offset, a = a, b = b, angle = 0),
-                       fill = high_color_list[[1]], alpha = 0.5, linetype = "blank", show.legend = FALSE)
+                       fill = high_color_list[[1]], alpha = alpha_val, linetype = "blank", show.legend = FALSE)
       } else {
+        # v148: Fixed ellipse x0 positioning for heatmap mode
+        # CRITICAL: Must use the SAME data source for both tree_max_x and node x-values
+        # When heat_flag=TRUE, we get nodes from p$data, so we must also get tree_max from p$data
+        # Using different data sources causes coordinate mismatch and wrong positioning
+
+        # Get tree_max_x from the SAME source as node positions (p$data)
+        tree_max_x_from_p <- max(p$data[p$data$isTip == TRUE, 'x'], na.rm = TRUE)
+
+        # Also get the original tree_max for comparison
+        tree_max_x_original <- max(pr440_short_tips_TRY$data[,'x'], na.rm = TRUE)
+
+        debug_cat(paste0("\n=== v148: ELLIPSE X0 POSITIONING (heat mode) ===\n"))
+        debug_cat(paste0("  tree_max_x (from p$data tips): ", round(tree_max_x_from_p, 4), "\n"))
+        debug_cat(paste0("  tree_max_x (from pr440 - for reference): ", round(tree_max_x_original, 4), "\n"))
+        debug_cat(paste0("  man_adjust_elipse: ", man_adjust_elipse, "\n"))
+        debug_cat(paste0("  Sample node x values: ", paste(round(head(high_nodes_table1$x, 3), 4), collapse=", "), "\n"))
+        debug_cat(paste0("  Sample calculated x0: ", paste(round((tree_max_x_from_p - head(high_nodes_table1$x, 3)) * (-1) - man_adjust_elipse, 4), collapse=", "), "\n"))
+        debug_cat(paste0("=============================================\n"))
+
         p <- p +
           geom_ellipse(data = high_nodes_table1,
-                       aes(x0 = ((max(p$data[,'x']) - x) * (-15.4) - man_adjust_elipse - boudariestt$xmax - boudariestt$xmin),
+                       aes(x0 = ((tree_max_x_from_p - x) * (-1) - man_adjust_elipse),
                            y0 = y + high_vertical_offset, a = a, b = b, angle = 0),
-                       fill = high_color_list[[1]], alpha = 0.5, linetype = "blank", show.legend = FALSE)
+                       fill = high_color_list[[1]], alpha = alpha_val, linetype = "blank", show.legend = FALSE)
       }
     } else if (index_high == 2) {
       high_nodes_table2 <- p$data[p$data$high2 == TRUE,]
-      
+      # v139: Use high_alpha_list for transparency
+      alpha_val2 <- if (length(high_alpha_list) >= 2 && !is.null(high_alpha_list[[2]])) high_alpha_list[[2]] else 0.5
+
+      # S1.2: Fixed - use same positioning logic as highlight 1 (was using undefined x_range_min)
+      # Get tree_max_x from p$data for consistent positioning
+      tree_max_x <- max(p$data[p$data$isTip == TRUE, 'x'], na.rm = TRUE)
+
       p <- p +
         geom_ellipse(data = high_nodes_table2,
-                     aes(x0 = ((max(p$data[,'x']) - x) * (x_range_min)), 
-                         y0 = y, a = a, b = b, angle = 0),
-                     fill = high_color_list[[2]], alpha = 0.5, linetype = "blank", show.legend = FALSE)
+                     aes(x0 = ((tree_max_x - x) * (-1) - man_adjust_elipse),
+                         y0 = y + high_vertical_offset, a = a, b = b, angle = 0),
+                     fill = high_color_list[[2]], alpha = alpha_val2, linetype = "blank", show.legend = FALSE)
     } else if (index_high == 3) {
-      high_nodes_table3 <- p$data[tree_TRY$data$high3 == TRUE,]
-      
+      high_nodes_table3 <- p$data[p$data$high3 == TRUE,]
+      # v139: Use high_alpha_list for transparency
+      alpha_val3 <- if (length(high_alpha_list) >= 3 && !is.null(high_alpha_list[[3]])) high_alpha_list[[3]] else 0.5
+
+      # S1.2: Fixed - use same positioning logic as highlight 1 (was using undefined x_range_min)
+      # Get tree_max_x from p$data for consistent positioning
+      tree_max_x <- max(p$data[p$data$isTip == TRUE, 'x'], na.rm = TRUE)
+
       p <- p +
         geom_ellipse(data = high_nodes_table3,
-                     aes(x0 = ((max(pr440_short_tips_TRY$data[,'x']) - x) * (x_range_min)), 
-                         y0 = y, a = a, b = b, angle = 0),
-                     fill = high_color_list[[3]], alpha = 0.5, linetype = "blank", show.legend = FALSE)
+                     aes(x0 = ((tree_max_x - x) * (-1) - man_adjust_elipse),
+                         y0 = y + high_vertical_offset, a = a, b = b, angle = 0),
+                     fill = high_color_list[[3]], alpha = alpha_val3, linetype = "blank", show.legend = FALSE)
     }
   }
-  
-  # Reorder layers for proper display - BUT ONLY IF ENOUGH LAYERS EXIST
-  # Bug #11 fix: Check layer count before reordering to prevent crashes
-  num_layers <- length(p$layers)
-  # v53: cat(file=stderr(), paste0("🔵 func_highlight: Plot has ", num_layers, " layers\n"))
-  
-  if (num_layers >= 8) {
-    # Only do layer reordering if we have enough layers
-    p1 <- p$layers[1]
-    p2 <- p$layers[2]
-    p7 <- p$layers[7]
-    p$layers[2] <- p7 
-    p$layers[7] <- p2
-    
-    p3 <- p$layers[3]
-    p4 <- p$layers[4]
-    p5 <- p$layers[5] 
-    p6 <- p$layers[6]
-    p7 <- p$layers[7]
-    p8 <- p$layers[8]
-    
-    p$layers[3] <- p6
-    p$layers[4] <- p7
-    p$layers[5] <- p8
-    p$layers[6] <- p3
-    p$layers[7] <- p4  
-    p$layers[8] <- p3
-    
-    # v53: cat(file=stderr(), "🔵 func_highlight: Layer reordering applied (8+ layers)\n")
-  } else {
-    # v53: cat(file=stderr(), paste0("🔵 func_highlight: Skipping layer reordering (only ", num_layers, " layers, need 8)\n"))
-  }
-  
+
+  # v180: REMOVED legacy layer reordering code that was causing heatmap corruption
+  # The old code (Bug #11 fix) assumed a specific layer order and would scramble layers
+  # when there were 8+ layers. With multiple heatmaps (3+), this caused the first heatmap
+  # to disappear. Layer ordering is now handled by func.move.tiplabels.to.front() at the
+  # END of func.print.lineage.tree (line ~7065), not here after each ellipse addition.
+
+  # S1.3-PERF: Removed intermediate call to func.move.tiplabels.to.front() here
+  # Layer reordering is now done ONCE at the end in generate_plot()
+  # The "second highlight stuck" bug was caused by undefined x_range_min (fixed in S1.2),
+  # not by missing layer reordering calls. This saves ~2-3 redundant function calls per render.
+
+  cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] EXIT func_highlight at ", format(Sys.time(), "%H:%M:%OS3"), ", layers=", length(p$layers), "\n"))
   return(p)
+}
+# v160: Helper function to add custom legends to gtable's legend area
+# NOTE: This function is NOT CURRENTLY USED (v161 reverted to annotation-based approach)
+# Kept for potential future use if gtable approach is revisited
+# This places highlight and bootstrap legends alongside ggplot legends (Classification, Heatmap)
+func.add.custom.legends.to.gtable <- function(gt, legend_info) {
+  if (is.null(legend_info)) {
+    return(gt)
+  }
+
+  debug_cat(paste0("\n=== v160: ADDING CUSTOM LEGENDS TO GTABLE ===\n"))
+
+  # Find the guide-box that has actual content
+  guide_box_names <- c("guide-box-right", "guide-box-bottom", "guide-box-left", "guide-box-top", "guide-box")
+  guide_box_idx <- NULL
+  guide_box_name <- NULL
+
+  for (gb_name in guide_box_names) {
+    idx <- which(gt$layout$name == gb_name)
+    if (length(idx) > 0) {
+      gb_row <- gt$layout$t[idx]
+      gb_col <- gt$layout$l[idx]
+      cell_width <- gt$widths[gb_col]
+      width_cm <- tryCatch(grid::convertWidth(cell_width, "cm", valueOnly = TRUE), error = function(e) 0)
+
+      debug_cat(paste0("  Checking ", gb_name, " at row ", gb_row, ", col ", gb_col,
+                                 " (width=", round(width_cm, 2), "cm)\n"))
+
+      if (width_cm > 0.1) {
+        guide_box_idx <- idx
+        guide_box_name <- gb_name
+        break
+      }
+    }
+  }
+
+  if (is.null(guide_box_idx)) {
+    guide_box_idx <- which(gt$layout$name == "guide-box-right")[1]
+    if (length(guide_box_idx) == 0) {
+      debug_cat(paste0("  ERROR: No guide-box found, skipping custom legends\n"))
+      return(gt)
+    }
+    guide_box_name <- "guide-box-right"
+  }
+
+  guide_row <- gt$layout$t[guide_box_idx]
+  guide_col <- gt$layout$l[guide_box_idx]
+  debug_cat(paste0("  Using ", guide_box_name, " at row ", guide_row, ", col ", guide_col, "\n"))
+
+  # Calculate legend content
+  n_highlight <- 0
+  n_bootstrap <- 0
+  if (!is.null(legend_info$highlight) && legend_info$show_highlight) {
+    n_highlight <- length(legend_info$highlight$labels)
+  }
+  if (!is.null(legend_info$bootstrap) && legend_info$show_bootstrap) {
+    n_bootstrap <- 3
+  }
+
+  if (n_highlight == 0 && n_bootstrap == 0) {
+    debug_cat(paste0("  No custom legends to add\n"))
+    return(gt)
+  }
+
+  debug_cat(paste0("  Highlight: ", n_highlight, " items, Bootstrap: ", n_bootstrap, " items\n"))
+
+  # v160: Build legend as a proper nested gtable with rows for each item
+  title_fontsize <- 12
+  text_fontsize <- 10
+  row_height <- grid::unit(0.5, "cm")
+  key_width <- grid::unit(0.8, "cm")
+  label_width <- grid::unit(2.2, "cm")
+
+  # Calculate rows needed
+  n_rows <- 0
+  if (n_highlight > 0) n_rows <- n_rows + 1 + n_highlight  # title + items
+  if (n_bootstrap > 0) n_rows <- n_rows + 1 + 3  # title + 3 bootstrap levels
+  if (n_highlight > 0 && n_bootstrap > 0) n_rows <- n_rows + 1  # gap
+
+  # Create heights using unit.c to properly combine units
+  heights_list <- lapply(1:n_rows, function(i) row_height)
+  heights <- do.call(grid::unit.c, heights_list)
+  widths <- grid::unit.c(key_width, label_width)
+
+  # Create the legend gtable
+  legend_gt <- gtable::gtable(widths = widths, heights = heights)
+
+  current_row <- 1
+
+  # Add highlight legend
+  if (!is.null(legend_info$highlight) && legend_info$show_highlight) {
+    hi <- legend_info$highlight
+
+    # Title (spans both columns)
+    legend_gt <- gtable::gtable_add_grob(
+      legend_gt,
+      grobs = grid::textGrob(hi$title, x = 0, hjust = 0,
+                             gp = grid::gpar(fontsize = title_fontsize, fontface = "bold")),
+      t = current_row, l = 1, r = 2
+    )
+    current_row <- current_row + 1
+
+    # Each highlight item
+    for (i in seq_along(hi$labels)) {
+      # Key (ellipse)
+      theta <- seq(0, 2*pi, length.out = 30)
+      legend_gt <- gtable::gtable_add_grob(
+        legend_gt,
+        grobs = grid::polygonGrob(
+          x = grid::unit(0.5, "npc") + grid::unit(6 * cos(theta), "pt"),
+          y = grid::unit(0.5, "npc") + grid::unit(4 * sin(theta), "pt"),
+          gp = grid::gpar(fill = hi$colors[[i]], alpha = hi$alphas[[i]], col = NA)
+        ),
+        t = current_row, l = 1
+      )
+
+      # Label
+      legend_gt <- gtable::gtable_add_grob(
+        legend_gt,
+        grobs = grid::textGrob(hi$labels[[i]], x = 0, hjust = 0,
+                               gp = grid::gpar(fontsize = text_fontsize)),
+        t = current_row, l = 2
+      )
+      current_row <- current_row + 1
+    }
+
+    # Gap before bootstrap
+    if (n_bootstrap > 0) {
+      current_row <- current_row + 1
+    }
+  }
+
+  # Add bootstrap legend
+  if (!is.null(legend_info$bootstrap) && legend_info$show_bootstrap) {
+    # Title
+    legend_gt <- gtable::gtable_add_grob(
+      legend_gt,
+      grobs = grid::textGrob("Bootstrap", x = 0, hjust = 0,
+                             gp = grid::gpar(fontsize = title_fontsize, fontface = "bold")),
+      t = current_row, l = 1, r = 2
+    )
+    current_row <- current_row + 1
+
+    tri_labels <- c(">90%", ">80%", ">70%")
+    tri_sizes <- c(5, 4, 3)
+
+    for (i in 1:3) {
+      sz <- tri_sizes[i]
+      # Triangle key
+      legend_gt <- gtable::gtable_add_grob(
+        legend_gt,
+        grobs = grid::polygonGrob(
+          x = grid::unit(0.5, "npc") + grid::unit(c(-sz, sz, 0), "pt"),
+          y = grid::unit(0.5, "npc") + grid::unit(c(-sz*0.6, -sz*0.6, sz*0.8), "pt"),
+          gp = grid::gpar(fill = "grey36", col = "grey20", alpha = 0.5)
+        ),
+        t = current_row, l = 1
+      )
+
+      # Label
+      legend_gt <- gtable::gtable_add_grob(
+        legend_gt,
+        grobs = grid::textGrob(tri_labels[i], x = 0, hjust = 0,
+                               gp = grid::gpar(fontsize = text_fontsize)),
+        t = current_row, l = 2
+      )
+      current_row <- current_row + 1
+    }
+  }
+
+  # Calculate total height
+  total_height <- grid::unit(n_rows * 0.5, "cm")
+  debug_cat(paste0("  Legend has ", n_rows, " rows, height=", n_rows * 0.5, "cm\n"))
+
+  # v160: NEW APPROACH - Add legend row to MAIN gtable directly above guide-box
+  # This ensures visibility since it's at the top-level gtable, not nested inside
+
+  # Add a new row to the main gtable ABOVE the guide-box row
+  gt <- gtable::gtable_add_rows(gt, heights = total_height, pos = guide_row - 1)
+
+  # All grobs below the insertion point shift down by 1 row, so update guide_row
+  # The new row is now at position guide_row, and old content is at guide_row + 1
+
+  # Add our legend to the new row, in the same column as the guide-box
+  gt <- gtable::gtable_add_grob(
+    gt,
+    grobs = legend_gt,
+    t = guide_row,
+    l = guide_col,
+    name = "custom-legend"
+  )
+
+  debug_cat(paste0("  v60: Added legend as new row at position ", guide_row, " in main gtable\n"))
+  debug_cat(paste0("  v60: Legend placed in column ", guide_col, " (same as guide-box)\n"))
+  debug_cat(paste0("===============================================\n"))
+
+  return(gt)
 }
 
 
-
-
 # Function to create the second legend
+# v145: Added high_alpha_list parameter for transparency control
+# v167: OPTION C - Using native ggplot legends instead of gtable manipulation
 func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag, how_many_boxes,
                                     how_mant_rows, boudariestt, y_off_base, high_title_list,
                                     size_font_legend_title, high_label_list, size_font_legend_text,
@@ -1429,151 +2060,268 @@ func.make.second.legend <- function(p, FLAG_BULK_DISPLAY, how_many_hi, heat_flag
                                     man_multiply_second_legend, man_multiply_second_legend_text,
                                     man_multiply_elipse, man_space_second_legend,
                                     man_space_second_legend_multiplier, man_offset_for_highlight_legend_x,
-                                    debug_mode = FALSE, boot_values = NA, man_offset_second_legend = 0, width) {
-  if (debug_mode == TRUE) {
-    # v53: print("boudariestt is")
-    # v53: print(boudariestt)
+                                    debug_mode = FALSE, boot_values = NA, man_offset_second_legend = 0, width,
+                                    bootstrap_label_size = 1.5,
+                                    highlight_x_offset = 0, highlight_y_offset = 0,
+                                    highlight_title_size = NULL, highlight_text_size = NULL,
+                                    highlight_title_gap = 1, highlight_label_gap = 0.5,
+                                    bootstrap_x_offset = 0, bootstrap_y_offset = 0,
+                                    bootstrap_title_x_offset = 2,
+                                    bootstrap_title_size_mult = NULL, bootstrap_text_size_mult = NULL,
+                                    bootstrap_title_gap = 2, bootstrap_label_gap = 2,
+                                    show_highlight_legend = TRUE, show_bootstrap_legend = TRUE,
+                                    high_alpha_list = NULL) {
+
+  # v178: OPTION C - NATIVE GGPLOT LEGENDS (SHAPE-ONLY approach)
+  # Use ONLY shape aesthetic to avoid conflicts with existing scales:
+  # - fill: used by heatmaps
+  # - size: used by P value legend
+  # - colour: used by classification
+  # By using only shape (not used elsewhere), we avoid ALL scale conflicts
+  # v178: Return nullGrob if shape value not in our set - prevents legend bleeding
+  #       This stops ellipses/triangles from appearing on other legends
+
+  debug_cat(paste0("\n=== v178: NATIVE GGPLOT LEGENDS - SHAPE-ONLY APPROACH ===\n"))
+  debug_cat(paste0("  Using ONLY shape aesthetic to avoid scale conflicts\n"))
+  debug_cat(paste0("  v78: key_glyph returns nullGrob for shapes not in valid set\n"))
+
+  # Initialize high_alpha_list if NULL
+  if (is.null(high_alpha_list) || length(high_alpha_list) == 0) {
+    high_alpha_list <- rep(0.5, how_many_hi)
   }
-  
-  if (heat_flag == FALSE) {
-    new_base_for_second_legend_non <- 0.5 + 0.5 * (how_mant_rows) * 0.05 + 0.5 * how_many_boxes * 0.1
-    new_base_for_second_legend_normalized <- new_base_for_second_legend_non * x_range_min
-    new_step <- 0.02 * x_range_min * man_space_second_legend_multiplier + man_offset_for_highlight_legend_x
-    new_big_step <- 0.15 * x_range_min
-    extra <- man_space_second_legend
-    move <- 0
-  } else {
-    new_base_for_second_legend_normalized <- boudariestt$xmax * 94 / 100 * (-1)
-    new_step <- boudariestt$xmax * 1 / 10 * (-1)
-    new_big_step <- boudariestt$xmax * 15 / 100 * (-1)
-    extra <- man_space_second_legend + 0.3
-  }
-  
-  if (debug_mode == TRUE) {
-    # v53: print("new_base_for_second_legend_normalized is")
-    # v53: print(new_base_for_second_legend_normalized)
-  }
-  
-  yet_another_multiplier <- 0   
-  if (FLAG_BULK_DISPLAY == TRUE) {
-    yet_another_multiplier <- 1.5
-  }
-  
-  stair <- 0.05
-  multiple_high_up_offset <- stair * (how_many_hi - 1) * (-1)
-  
-  if (debug_mode == TRUE) {
-    # v53: print("multiple_high_up_offset is")
-    # v53: print(multiple_high_up_offset)
-    # v53: print("new_big_step is")
-    # v53: print(new_big_step)
-    # v53: print("new_step is")
-    # v53: print(new_step)
-    # v53: print("how_many_hi is")
-    # v53: print(how_many_hi)
-  }
-  
-  norm <- 0.8
-  size_title <- size_font_legend_title * man_multiply_second_legend_text
-  size_text <- size_font_legend_text * man_multiply_second_legend * norm
-  
-  x11 <- new_base_for_second_legend_normalized
-  x22 <- new_base_for_second_legend_normalized - new_step
-  
-  if (FLAG_BULK_DISPLAY == TRUE) {        
-    for (index_high in 1:how_many_hi) {
-      multiple_high_down_offset <- (index_high - 1) * stair
-      
-      if (index_high == 1) {
-        x11 <- new_base_for_second_legend_normalized
-        x22 <- new_base_for_second_legend_normalized - index_high * (new_step)
-        
-        if (debug_mode == TRUE) {
-          # v53: print("man_multiply_second_legend_text is")
-          # v53: print(man_multiply_second_legend_text)
-          # v53: print("size_font_legend_title is")
-          # v53: print(size_font_legend_title)
-          # v53: print("y_off_base is")
-          # v53: print(y_off_base)
+
+  # Title fontsize should match ggplot legend titles
+  title_fontsize <- if (!is.null(highlight_title_size)) highlight_title_size else size_font_legend_title
+  text_fontsize <- if (!is.null(highlight_text_size)) highlight_text_size else size_font_legend_text
+  boot_title_fontsize <- if (!is.null(bootstrap_title_size_mult)) bootstrap_title_size_mult else size_font_legend_title
+  boot_text_fontsize <- if (!is.null(bootstrap_text_size_mult)) bootstrap_text_size_mult else size_font_legend_text
+
+  debug_cat(paste0("  v78: Highlight title fontsize: ", title_fontsize, "\n"))
+  debug_cat(paste0("  v78: Bootstrap title fontsize: ", boot_title_fontsize, "\n"))
+
+  # ============================================
+  # v178: HIGHLIGHT LEGEND using shape aesthetic
+  # Custom key_glyph draws ellipses with correct colors/transparency
+  # v178: Returns nullGrob for shapes not in valid set (prevents bleeding)
+  # ============================================
+  if (FLAG_BULK_DISPLAY == TRUE && show_highlight_legend == TRUE && how_many_hi > 0 &&
+      !is.null(high_label_list) && length(high_label_list) > 0) {
+
+    # Get highlight title
+    highlight_title <- if (!is.null(high_title_list) && length(high_title_list) > 0) {
+      high_title_list[[1]]
+    } else {
+      "Highlight"
+    }
+
+    debug_cat(paste0("\n  v178: Creating HIGHLIGHT legend (shape-only)\n"))
+    debug_cat(paste0("    Title: '", highlight_title, "'\n"))
+    debug_cat(paste0("    Items: ", length(high_label_list), "\n"))
+
+    # v177: Create unique shape values for each item (1, 2, 3, ...)
+    n_highlights <- length(high_label_list)
+    highlight_shape_values <- seq_len(n_highlights)
+    highlight_labels <- unlist(high_label_list)
+
+    # Create data frame for highlight legend
+    highlight_legend_data <- data.frame(
+      x = rep(NA_real_, n_highlights),
+      y = rep(NA_real_, n_highlights),
+      highlight_shape = factor(highlight_labels, levels = highlight_labels),
+      stringsAsFactors = FALSE
+    )
+
+    # v177: Create mappings from shape value to label, color, alpha
+    # shape_to_label: 1 -> "tumor", 2 -> "normal", etc.
+    shape_to_label <- setNames(highlight_labels, as.character(highlight_shape_values))
+    shape_to_color <- setNames(unlist(high_color_list), as.character(highlight_shape_values))
+    shape_to_alpha <- setNames(unlist(high_alpha_list), as.character(highlight_shape_values))
+
+    for (i in seq_along(high_label_list)) {
+      debug_cat(paste0("    Item ", i, ": shape=", i, " label='", high_label_list[[i]],
+                                 "' color=", high_color_list[[i]],
+                                 " alpha=", high_alpha_list[[i]], "\n"))
+    }
+
+    # v178: Custom key_glyph for ELLIPSE - draws ellipse with stored color/alpha
+    # Uses shape value (1, 2, 3...) to look up the correct color and alpha
+    # v178: Returns nullGrob if shape value not in our set (prevents legend bleeding)
+    draw_key_highlight_ellipse <- local({
+      shape_to_color_local <- shape_to_color
+      shape_to_alpha_local <- shape_to_alpha
+      valid_shapes <- names(shape_to_color)  # v178: Track valid shape values
+      function(data, params, size) {
+        # v178: Get the shape value and use it to look up color/alpha
+        shape_val <- data$shape
+        debug_cat(paste0("    v178: draw_key_highlight_ellipse called, shape=", shape_val, "\n"))
+
+        if (is.null(shape_val) || length(shape_val) == 0) {
+          debug_cat(paste0("    v178: shape is NULL/empty, returning nullGrob\n"))
+          return(grid::nullGrob())
         }
-        
-        p <- p + annotate(
-          geom = "text", 
-          label = high_title_list[[index_high]], size = size_title, 
-          x = x11,
-          y = y_off_base + 0.7 + (width / 400) + man_adjust_image_of_second_legend, 
-          hjust = 0, vjust = 0,
-          fontface = "bold"
+
+        shape_key <- as.character(shape_val)
+
+        # v178: CRITICAL - Return nullGrob if this shape is not one of ours
+        # This prevents ellipses from appearing on other legends (classification, heatmap, etc.)
+        if (!(shape_key %in% valid_shapes)) {
+          debug_cat(paste0("    v178: shape ", shape_key, " not in valid set (", paste(valid_shapes, collapse=","), "), returning nullGrob\n"))
+          return(grid::nullGrob())
+        }
+
+        fill_color <- shape_to_color_local[shape_key]
+        fill_alpha <- shape_to_alpha_local[shape_key]
+
+        debug_cat(paste0("    v178: Looked up color='", fill_color, "', alpha='", fill_alpha, "'\n"))
+
+        # v178: Extra safety - if lookup still returns NA, don't draw
+        if (is.na(fill_color) || is.na(fill_alpha)) {
+          return(grid::nullGrob())
+        }
+
+        # Draw an ellipse matching old legend style (6pt x 4pt radius)
+        theta <- seq(0, 2*pi, length.out = 30)
+        grid::polygonGrob(
+          x = grid::unit(0.5, "npc") + grid::unit(6 * cos(theta), "pt"),
+          y = grid::unit(0.5, "npc") + grid::unit(4 * sin(theta), "pt"),
+          gp = grid::gpar(fill = fill_color, col = NA, alpha = fill_alpha)
         )
-        
-        if (how_many_hi > 1) {
-          p <- p + geom_ellipse(
-            aes(x0 = x22, y0 = y_off_base + 0.7 + (width / 400) + man_adjust_image_of_second_legend, 
-                a = a, b = b, angle = 0),
-            fill = high_color_list[[index_high]], alpha = 0.5, linetype = "blank", show.legend = FALSE
+      }
+    })
+
+    # Add highlight legend using SHAPE aesthetic only
+    # v177: Use unique shape values (1, 2, 3...) for each label
+    p <- p +
+      geom_point(
+        data = highlight_legend_data,
+        aes(x = x, y = y, shape = highlight_shape),
+        size = 5,
+        na.rm = TRUE,
+        inherit.aes = FALSE,
+        show.legend = TRUE,
+        key_glyph = draw_key_highlight_ellipse
+      ) +
+      scale_shape_manual(
+        name = highlight_title,
+        values = setNames(highlight_shape_values, highlight_labels),
+        guide = guide_legend(order = 97)
+      )
+
+    debug_cat(paste0("  v78: Highlight legend added (shape values 1-", n_highlights, ")\n"))
+  }
+
+  # ============================================
+  # v178: BOOTSTRAP LEGEND using shape aesthetic
+  # Custom key_glyph draws triangles with varying sizes
+  # v178: Returns nullGrob for shapes not in valid set (prevents bleeding)
+  # v178: Match tree's alpha=0.5, fill="grey36", col="grey20"
+  # ============================================
+  if (show_boot_flag == TRUE && show_bootstrap_legend == TRUE) {
+    # Check if bootstrap is in triangles format
+    boot_format <- if (!is.null(boot_values) && is.list(boot_values) && !is.null(boot_values$'format')) {
+      boot_values$'format'
+    } else {
+      "triangles"  # default
+    }
+
+    debug_cat(paste0("\n  v178: Bootstrap format: '", boot_format, "'\n"))
+
+    if (boot_format == "triangles") {
+      debug_cat(paste0("  v78: Creating BOOTSTRAP legend (shape-only)\n"))
+
+      # Bootstrap legend items - match old legend sizes (5, 4, 3 pt)
+      bootstrap_labels <- c(">90%", ">80%", ">70%")
+      bootstrap_shape_values <- c(1, 2, 3)  # v178: Unique shape values
+      bootstrap_pt_sizes <- c(5, 4, 3)  # Match old legend: tri_sizes <- c(5, 4, 3)
+
+      bootstrap_legend_data <- data.frame(
+        x = rep(NA_real_, 3),
+        y = rep(NA_real_, 3),
+        bootstrap_shape = factor(bootstrap_labels, levels = bootstrap_labels),
+        stringsAsFactors = FALSE
+      )
+
+      # v177: Create mapping from shape value to size (in pt)
+      shape_to_size <- setNames(bootstrap_pt_sizes, as.character(bootstrap_shape_values))
+
+      debug_cat(paste0("  v78: Bootstrap shape values: 1=5pt, 2=4pt, 3=3pt\n"))
+
+      # v178: Custom key_glyph for TRIANGLE - draws triangle with varying size
+      # Uses shape value (1, 2, 3) to look up the correct size
+      # v178: Returns nullGrob if shape value not in our set (prevents legend bleeding)
+      draw_key_bootstrap_triangle <- local({
+        shape_to_size_local <- shape_to_size
+        valid_shapes <- names(shape_to_size)  # v178: Track valid shape values ("1", "2", "3")
+        function(data, params, size) {
+          # v178: Get the shape value and use it to look up size
+          shape_val <- data$shape
+          debug_cat(paste0("    v178: draw_key_bootstrap_triangle called, shape=", shape_val, "\n"))
+
+          if (is.null(shape_val) || length(shape_val) == 0) {
+            debug_cat(paste0("    v178: shape is NULL/empty, returning nullGrob\n"))
+            return(grid::nullGrob())
+          }
+
+          shape_key <- as.character(shape_val)
+
+          # v178: CRITICAL - Return nullGrob if this shape is not one of ours
+          # This prevents triangles from appearing on other legends (classification, heatmap, highlight, etc.)
+          if (!(shape_key %in% valid_shapes)) {
+            debug_cat(paste0("    v178: shape ", shape_key, " not in valid set (", paste(valid_shapes, collapse=","), "), returning nullGrob\n"))
+            return(grid::nullGrob())
+          }
+
+          sz <- shape_to_size_local[shape_key]
+
+          debug_cat(paste0("    v178: Triangle size='", sz, "pt'\n"))
+
+          # v178: Extra safety - if lookup returns NA, don't draw
+          if (is.na(sz)) {
+            return(grid::nullGrob())
+          }
+
+          # Draw triangle matching old legend style
+          # Old code: x = c(-sz, sz, 0), y = c(-sz*0.6, -sz*0.6, sz*0.8)
+          grid::polygonGrob(
+            x = grid::unit(0.5, "npc") + grid::unit(c(-sz, sz, 0), "pt"),
+            y = grid::unit(0.5, "npc") + grid::unit(c(-sz*0.6, -sz*0.6, sz*0.8), "pt"),
+            gp = grid::gpar(fill = "grey36", col = "grey20", alpha = 0.5)
           )
         }
-      }
-      
-      p <- p + annotate(
-        geom = "text", 
-        label = high_label_list[[index_high]], size = size_text, 
-        x = x22 + extra,
-        y = y_off_base - 3.2
-      ) + geom_ellipse(
-        aes(x0 = x22 + extra,
-            y0 = y_off_base + 1 + man_adjust_image_of_second_legend, 
-            a = a * man_multiply_elipse, b = b + 0.3, angle = 0),
-        fill = high_color_list[[index_high]], alpha = 0.5, linetype = "blank", show.legend = FALSE
-      )
+      })
+
+      # Add bootstrap legend using SHAPE aesthetic only
+      # Use new_scale("shape") to create a separate shape scale for bootstrap
+      p <- p + ggnewscale::new_scale("shape")
+
+      p <- p +
+        geom_point(
+          data = bootstrap_legend_data,
+          aes(x = x, y = y, shape = bootstrap_shape),
+          size = 5,
+          color = "grey36",
+          na.rm = TRUE,
+          inherit.aes = FALSE,
+          show.legend = TRUE,
+          key_glyph = draw_key_bootstrap_triangle
+        ) +
+        scale_shape_manual(
+          name = "Bootstrap",
+          values = setNames(bootstrap_shape_values, bootstrap_labels),  # v177: unique values 1, 2, 3
+          guide = guide_legend(order = 98)
+        )
+
+      debug_cat(paste0("  v78: Bootstrap legend added (shape values 1-3)\n"))
+    } else {
+      # v180: For non-triangle formats (percentage, raw, color-coded), show no legend
+      debug_cat(paste0("  v80: Bootstrap format '", boot_format, "' - no legend (only triangles have legend)\n"))
     }
-  } 
-  
-  if (show_boot_flag == TRUE) {
-    if (boot_values$'format' == 'triangles') {  
-      p <- p + annotate(
-        geom = "text", 
-        label = "Bootstrap", size = size_title, 
-        x = x22 - new_big_step + 2 * extra, 
-        y = y_off_base + 3, hjust = 0, vjust = 0,
-        fontface = "bold"
-      ) + annotate(
-        geom = "text", 
-        label = ">70%", size = size_text, 
-        x = x22 - new_big_step - new_step + 3 * extra, 
-        y = y_off_base - 2  
-      ) + annotate(
-        geom = "text", 
-        label = ">80%", size = size_text, 
-        x = x22 - new_big_step - 2 * new_step + 3 * extra, 
-        y = y_off_base - 2  
-      ) + annotate(
-        geom = "text", 
-        label = ">90%", size = size_text, 
-        x = x22 - new_big_step - 3 * new_step + 3 * extra, 
-        y = y_off_base - 2  
-      ) + annotate(
-        geom = "point", 
-        shape = 24, size = size_90+bootstrap_label_size, 
-        x = x22 - new_big_step - 3 * new_step + 3 * extra, 
-        y = y_off_base + 1 + man_adjust_image_of_second_legend,  
-        fill = "grey36", colour = "grey20", alpha = 1/2
-      ) + annotate(
-        geom = "point", 
-        shape = 24, size = size_80+bootstrap_label_size, 
-        x = x22 - new_big_step - 2 * new_step + 3 * extra,
-        y = y_off_base + 1 + man_adjust_image_of_second_legend,  
-        fill = "grey36", colour = "grey20", alpha = 1/2
-      ) + annotate(
-        geom = "point", 
-        shape = 24, size = size_70, 
-        x = x22 - new_big_step - new_step + 3 * extra,
-        y = y_off_base + 1 + man_adjust_image_of_second_legend,  
-        fill = "grey36", colour = "grey20", alpha = 1/2
-      ) 
-    }        
   }
-  
+
+  debug_cat(paste0("\n  v180: Highlight and Bootstrap legends complete\n"))
+  debug_cat(paste0("  v78: Existing scales preserved: fill (heatmaps), size (P value), colour (classification)\n"))
+  debug_cat(paste0("=================================================\n"))
+
   return(p)
 }
 
@@ -1610,7 +2358,7 @@ func.make.highlight.params.NEW <- function(yaml_file, title.id, ids_list, tree44
   
   # === COMPREHENSIVE DEBUG OUTPUT ===
   # v53: cat(file=stderr(), "\nÃ°Å¸â€ÂÃ°Å¸â€ÂÃ°Å¸â€Â ENTERING func.make.highlight.params.NEW Ã°Å¸â€ÂÃ°Å¸â€ÂÃ°Å¸â€Â\n")
-  # v53: cat(file=stderr(), "==========================================\n")
+  # v53: debug_cat("==========================================\n")
   # v53: cat(file=stderr(), "hi_def structure:\n")
   # v54: str(hi_def)
   # v53: cat(file=stderr(), "\n")
@@ -1625,7 +2373,7 @@ func.make.highlight.params.NEW <- function(yaml_file, title.id, ids_list, tree44
   # v53: cat(file=stderr(), "\nFirst 3 rows of readfile440:\n")
   # v53: print(head(readfile440, 3))
   # v53: cat(file=stderr(), "\n")
-  # v53: cat(file=stderr(), "==========================================\n\n")
+  # v53: debug_cat("==========================================\n\n")
   # === END DEBUG ===
   
   len_hi <- length(hi_def$according)
@@ -1653,7 +2401,23 @@ func.make.highlight.params.NEW <- function(yaml_file, title.id, ids_list, tree44
   for (in_hi in indexes_hi) {
     high_color_list[[in_hi]] <- hi_def$according[[in_hi]][[as.character(in_hi)]]$color
   }
-  
+
+  # v139: Extract transparency (alpha) for each highlight
+  # v146: Added debug output to trace transparency values
+  debug_cat(paste0("\n=== v146: EXTRACTING HIGHLIGHT TRANSPARENCY ===\n"))
+  high_alpha_list <- c()
+  for (in_hi in indexes_hi) {
+    alpha_val <- hi_def$according[[in_hi]][[as.character(in_hi)]]$transparency
+    debug_cat(paste0("  Highlight ", in_hi, ":\n"))
+    debug_cat(paste0("    hi_def$according[[", in_hi, "]][[\"", in_hi, "\"]]$transparency = ",
+                              if(is.null(alpha_val)) "NULL" else alpha_val, "\n"))
+    # Default to 0.5 if transparency not specified
+    high_alpha_list[[in_hi]] <- if (!is.null(alpha_val)) alpha_val else 0.5
+    debug_cat(paste0("    high_alpha_list[[", in_hi, "]] = ", high_alpha_list[[in_hi]], "\n"))
+  }
+  debug_cat(paste0("  Final high_alpha_list: ", paste(high_alpha_list, collapse=", "), "\n"))
+  debug_cat(paste0("==============================================\n"))
+
   high_title_list <- c()
   for (in_hi in indexes_hi) {
     high_title_list[[in_hi]] <- hi_def$according[[in_hi]][[as.character(in_hi)]]$display_title
@@ -1681,7 +2445,8 @@ func.make.highlight.params.NEW <- function(yaml_file, title.id, ids_list, tree44
     adjust_width_eclipse <- hi_def$adjust_width
   }
   
-  tab <- ggtree(tree440)$data
+  # v56d: Suppress harmless fortify warnings
+  tab <- suppressWarnings(ggtree(tree440))$data
   
   lists_list_hi <- c()
   for (in_hi in indexes_hi) {
@@ -1789,13 +2554,14 @@ func.make.highlight.params.NEW <- function(yaml_file, title.id, ids_list, tree44
   highlight.params.NEW$how_many_hi <- how_many_hi
   highlight.params.NEW$high_label_list <- high_label_list
   highlight.params.NEW$high_color_list <- high_color_list
+  highlight.params.NEW$high_alpha_list <- high_alpha_list  # v139: Add alpha list
   highlight.params.NEW$high_title_list <- high_title_list
   highlight.params.NEW$lists_list_hi <- lists_list_hi
   highlight.params.NEW$offset_hi <- offset_hi
   highlight.params.NEW$vertical_offset_hi <- vertical_offset_hi
   highlight.params.NEW$adjust_height_ecliplse <- adjust_height_ecliplse
   highlight.params.NEW$adjust_width_eclipse <- adjust_width_eclipse
-  
+
   return(highlight.params.NEW)
 }
 
@@ -2082,15 +2848,19 @@ func.print.lineage.tree <- function(conf_yaml_path,
                                     rowname_param="",
                                     heat_legend_replace=NA,
                                     tip_name_display_flag=TRUE,
-                                    bootstrap_label_size= 3.5) {
-  
+                                    bootstrap_label_size= 1.5,  # v129: Reduced from 3.5 for smaller default legend
+                                    heatmap_tree_distance= 0.02,
+                                    heatmap_global_gap = 0.05,  # v125: Gap between multiple heatmaps
+                                    legend_settings = NULL,  # v135: Legend settings for highlight/bootstrap legends
+                                    rdata_cnv_matrix = NULL) {  # S1.62dev: CNV matrix from RData file
+
   # === DEBUG CHECKPOINT 2: FUNCTION ENTRY ===
   # v53: cat(file=stderr(), "\nÃ°Å¸â€Â DEBUG CHECKPOINT 2: func.print.lineage.tree ENTRY\n")
   # v53: cat(file=stderr(), "Ã°Å¸â€Â node_number_font_size received:", node_number_font_size, "\n")
   # v53: cat(file=stderr(), "Ã°Å¸â€Â flag_display_nod_number_on_tree:", flag_display_nod_number_on_tree, "\n")
   # v53: cat(file=stderr(), "Ã°Å¸â€Â highlight_manual_nodes received:", highlight_manual_nodes, "\n")
   # v53: cat(file=stderr(), "Ã°Å¸â€Â manual_nodes_to_highlight received:", paste(manual_nodes_to_highlight, collapse=", "), "\n")
-  # v53: cat(file=stderr(), "================================================\n\n")
+  # v53: debug_cat("================================================\n\n")
   
   yaml_file<- func.read_yaml(conf_yaml_path)
   
@@ -2535,14 +3305,22 @@ func.print.lineage.tree <- function(conf_yaml_path,
       
       heat_display_vec=c()
       heat_display_params_list <- c()
-      #print("B6")
-      
+
+      # v56c: DEBUG - show what attributes are in the classification
+      debug_cat(paste0("\n=== v57: Classification attributes (att1): ", paste(att1, collapse=", "), " ===\n"))
+
       if ('heatmap_display' %in% att1) {
-        
-        #print("B7")
-        
+
+        # v56c: DEBUG
+        debug_cat("\n=== v57: FOUND heatmap_display in classification ===\n")
+
         heat_definitions <- yaml_file[['visual definitions']]$'classification'[[disp_index]][[disp_indx_ch]]$heatmap_display
         heat_list_len <- length(heat_definitions)
+        debug_cat(paste0("  Number of heatmaps found: ", heat_list_len, "\n"))
+        debug_cat(paste0("  heat_definitions structure: ", class(heat_definitions), "\n"))
+        if (heat_list_len > 0) {
+          debug_cat(paste0("  First heatmap names: ", paste(names(heat_definitions[[1]]), collapse=", "), "\n"))
+        }
         #print("heat_list_len is")
         #print(heat_list_len)
         dxdf440_for_heat <- c()
@@ -2558,6 +3336,13 @@ func.print.lineage.tree <- function(conf_yaml_path,
           
           ind <- as.character(inx)
           heat_map_i_def <- heat_definitions[[inx]][[ind]]
+          # S1.62dev: Debug output to trace heatmap definition structure
+          debug_cat(paste0("\n=== S1.62dev DEBUG: Heatmap ", inx, " definition ===\n"))
+          debug_cat(paste0("  Available fields: ", paste(names(heat_map_i_def), collapse=", "), "\n"))
+          debug_cat(paste0("  data_source field exists: ", 'data_source' %in% names(heat_map_i_def), "\n"))
+          if ('data_source' %in% names(heat_map_i_def)) {
+            debug_cat(paste0("  data_source value: '", heat_map_i_def$data_source, "'\n"))
+          }
           #print("B9")
           
           
@@ -2597,10 +3382,12 @@ func.print.lineage.tree <- function(conf_yaml_path,
               
               
               if ('color_scale_option' %in% names(heat_map_i_def)) {
-                param['color_scale_option'] <- 'A'
-                param[['color_scale_option']] <- heat_map_i_def['color_scale_option']
+                # v67: FIX - use double brackets to get the value directly, not wrapped in a list
+                # Single brackets heat_map_i_def['color_scale_option'] returns list(color_scale_option = "Set1")
+                # Double brackets heat_map_i_def[['color_scale_option']] returns just "Set1"
+                param[['color_scale_option']] <- heat_map_i_def[['color_scale_option']]
               } else {
-                param['color_scale_option'] <- 'B'
+                param[['color_scale_option']] <- NULL
               }
               
               
@@ -2611,13 +3398,209 @@ func.print.lineage.tree <- function(conf_yaml_path,
               } else {
                 param['man'] <- FALSE
               }
-              if ('color_scale_range_end' %in% names(heat_map_i_def)) { 
+              if ('color_scale_range_end' %in% names(heat_map_i_def)) {
                 param['color_scale_range_end'] <- as.numeric(heat_map_i_def$color_scale_range_end)
               } else {
                 param['color_scale_range_end'] <- 300
               }
-              
-              
+
+              # v70: Get NA color (default white)
+              if ('na_color' %in% names(heat_map_i_def)) {
+                param[['na_color']] <- heat_map_i_def[['na_color']]
+              } else {
+                param[['na_color']] <- "white"
+              }
+
+              # v104: Get per-heatmap distance (default 0.02)
+              if ('distance' %in% names(heat_map_i_def)) {
+                param[['distance']] <- as.numeric(heat_map_i_def[['distance']])
+              } else {
+                param[['distance']] <- 0.02
+              }
+
+              # v105: Get per-heatmap height (default 0.8)
+              if ('height' %in% names(heat_map_i_def)) {
+                param[['height']] <- as.numeric(heat_map_i_def[['height']])
+              } else {
+                param[['height']] <- 0.8
+              }
+
+              # v111: Get per-heatmap row_height (default 1.0)
+              if ('row_height' %in% names(heat_map_i_def)) {
+                param[['row_height']] <- as.numeric(heat_map_i_def[['row_height']])
+              } else {
+                param[['row_height']] <- 1.0
+              }
+
+              # v111: Get grid settings
+              if ('show_grid' %in% names(heat_map_i_def)) {
+                param[['show_grid']] <- func.check.bin.val.from.conf(heat_map_i_def[['show_grid']])
+              } else {
+                param[['show_grid']] <- FALSE
+              }
+              if ('grid_color' %in% names(heat_map_i_def)) {
+                param[['grid_color']] <- heat_map_i_def[['grid_color']]
+              } else {
+                param[['grid_color']] <- "#000000"
+              }
+              if ('grid_size' %in% names(heat_map_i_def)) {
+                param[['grid_size']] <- as.numeric(heat_map_i_def[['grid_size']])
+              } else {
+                param[['grid_size']] <- 0.5
+              }
+
+              # S1.62dev: Get row line settings (horizontal lines only)
+              if ('show_row_lines' %in% names(heat_map_i_def)) {
+                param[['show_row_lines']] <- func.check.bin.val.from.conf(heat_map_i_def[['show_row_lines']])
+              } else {
+                param[['show_row_lines']] <- FALSE
+              }
+              if ('row_line_color' %in% names(heat_map_i_def)) {
+                param[['row_line_color']] <- heat_map_i_def[['row_line_color']]
+              } else {
+                param[['row_line_color']] <- "#000000"
+              }
+              if ('row_line_size' %in% names(heat_map_i_def)) {
+                param[['row_line_size']] <- as.numeric(heat_map_i_def[['row_line_size']])
+              } else {
+                param[['row_line_size']] <- 0.5
+              }
+              # S1.62dev: Get column line settings (vertical lines)
+              if ('show_col_lines' %in% names(heat_map_i_def)) {
+                param[['show_col_lines']] <- func.check.bin.val.from.conf(heat_map_i_def[['show_col_lines']])
+              } else {
+                param[['show_col_lines']] <- FALSE
+              }
+              if ('col_line_color' %in% names(heat_map_i_def)) {
+                param[['col_line_color']] <- heat_map_i_def[['col_line_color']]
+              } else {
+                param[['col_line_color']] <- "#000000"
+              }
+              if ('col_line_size' %in% names(heat_map_i_def)) {
+                param[['col_line_size']] <- as.numeric(heat_map_i_def[['col_line_size']])
+              } else {
+                param[['col_line_size']] <- 0.5
+              }
+
+              # S1.62dev: Get vertical text labels settings
+              if ('show_vertical_text' %in% names(heat_map_i_def)) {
+                param[['show_vertical_text']] <- func.check.bin.val.from.conf(heat_map_i_def[['show_vertical_text']])
+              } else {
+                param[['show_vertical_text']] <- FALSE
+              }
+              if ('vertical_text_column' %in% names(heat_map_i_def)) {
+                param[['vertical_text_column']] <- heat_map_i_def[['vertical_text_column']]
+              } else {
+                param[['vertical_text_column']] <- ""
+              }
+              if ('vertical_text_size' %in% names(heat_map_i_def)) {
+                param[['vertical_text_size']] <- as.numeric(heat_map_i_def[['vertical_text_size']])
+              } else {
+                param[['vertical_text_size']] <- 3
+              }
+              if ('vertical_text_offset' %in% names(heat_map_i_def)) {
+                param[['vertical_text_offset']] <- as.numeric(heat_map_i_def[['vertical_text_offset']])
+              } else {
+                param[['vertical_text_offset']] <- 0.5
+              }
+              if ('vertical_text_color' %in% names(heat_map_i_def)) {
+                param[['vertical_text_color']] <- heat_map_i_def[['vertical_text_color']]
+              } else {
+                param[['vertical_text_color']] <- "#000000"
+              }
+
+              # v109: Get colnames_angle (default 45)
+              if ('colnames_angle' %in% names(heat_map_i_def)) {
+                param[['colnames_angle']] <- as.numeric(heat_map_i_def[['colnames_angle']])
+              } else {
+                param[['colnames_angle']] <- 45
+              }
+
+              # S1.62dev: Get show_colnames flag (default TRUE)
+              if ('show_colnames' %in% names(heat_map_i_def)) {
+                param[['show_colnames']] <- func.check.bin.val.from.conf(heat_map_i_def[['show_colnames']])
+              } else {
+                param[['show_colnames']] <- TRUE
+              }
+
+              # v105: Get row labels settings
+              if ('show_row_labels' %in% names(heat_map_i_def)) {
+                param[['show_row_labels']] <- func.check.bin.val.from.conf(heat_map_i_def[['show_row_labels']])
+              } else {
+                param[['show_row_labels']] <- FALSE
+              }
+              if ('row_label_source' %in% names(heat_map_i_def)) {
+                param[['row_label_source']] <- heat_map_i_def[['row_label_source']]
+              } else {
+                param[['row_label_source']] <- "colnames"
+              }
+              if ('row_label_font_size' %in% names(heat_map_i_def)) {
+                param[['row_label_font_size']] <- as.numeric(heat_map_i_def[['row_label_font_size']])
+              } else {
+                param[['row_label_font_size']] <- 2.5
+              }
+              if ('custom_row_labels' %in% names(heat_map_i_def)) {
+                param[['custom_row_labels']] <- heat_map_i_def[['custom_row_labels']]
+              } else {
+                param[['custom_row_labels']] <- ""
+              }
+              # v111: Get row label offset and alignment
+              if ('row_label_offset' %in% names(heat_map_i_def)) {
+                param[['row_label_offset']] <- as.numeric(heat_map_i_def[['row_label_offset']])
+              } else {
+                param[['row_label_offset']] <- 1.0
+              }
+              if ('row_label_align' %in% names(heat_map_i_def)) {
+                param[['row_label_align']] <- heat_map_i_def[['row_label_align']]
+              } else {
+                param[['row_label_align']] <- "left"
+              }
+              # v108: Get label mapping
+              if ('label_mapping' %in% names(heat_map_i_def)) {
+                param[['label_mapping']] <- heat_map_i_def[['label_mapping']]
+              } else {
+                param[['label_mapping']] <- list()
+              }
+
+              # v117/v121: Get tip guide line settings (for discrete heatmaps)
+              # v121: Added comprehensive debug logging
+              debug_cat(paste0("\n=== v121: TIP GUIDE SETTINGS DEBUG (discrete) ===\n"))
+              debug_cat(paste0("  heat_map_i_def names: ", paste(names(heat_map_i_def), collapse=", "), "\n"))
+              if ('show_guides' %in% names(heat_map_i_def)) {
+                raw_val <- heat_map_i_def[['show_guides']]
+                debug_cat(paste0("  show_guides raw value: ", raw_val, " (class: ", class(raw_val), ")\n"))
+                param[['show_guides']] <- func.check.bin.val.from.conf(heat_map_i_def[['show_guides']])
+                debug_cat(paste0("  show_guides after conversion: ", param[['show_guides']], "\n"))
+              } else {
+                debug_cat(paste0("  show_guides NOT FOUND in heat_map_i_def\n"))
+                param[['show_guides']] <- FALSE
+              }
+              if ('guide_color1' %in% names(heat_map_i_def)) {
+                param[['guide_color1']] <- heat_map_i_def[['guide_color1']]
+              } else {
+                param[['guide_color1']] <- "#CCCCCC"
+              }
+              if ('guide_color2' %in% names(heat_map_i_def)) {
+                param[['guide_color2']] <- heat_map_i_def[['guide_color2']]
+              } else {
+                param[['guide_color2']] <- "#EEEEEE"
+              }
+              if ('guide_alpha' %in% names(heat_map_i_def)) {
+                param[['guide_alpha']] <- as.numeric(heat_map_i_def[['guide_alpha']])
+              } else {
+                param[['guide_alpha']] <- 0.3
+              }
+              if ('guide_width' %in% names(heat_map_i_def)) {
+                param[['guide_width']] <- as.numeric(heat_map_i_def[['guide_width']])
+              } else {
+                param[['guide_width']] <- 0.5
+              }
+              if ('guide_linetype' %in% names(heat_map_i_def)) {
+                param[['guide_linetype']] <- heat_map_i_def[['guide_linetype']]
+              } else {
+                param[['guide_linetype']] <- "solid"
+              }
+
             } else {
               #print("AAAAAAAAAAAA")
               # print("is discrete false")
@@ -2666,6 +3649,12 @@ func.print.lineage.tree <- function(conf_yaml_path,
               
               #print("param is")
               #print(param)
+              # S1.62dev: Debug - show heat_map_i_def color values
+              cat(file=stderr(), paste0("[DEBUG-COLOR-PARAM] heat_map_i_def names: ", paste(names(heat_map_i_def), collapse=", "), "\n"))
+              cat(file=stderr(), paste0("[DEBUG-COLOR-PARAM] heat_map_i_def$low = ", ifelse('low' %in% names(heat_map_i_def), heat_map_i_def$low, "NOT FOUND"), "\n"))
+              cat(file=stderr(), paste0("[DEBUG-COLOR-PARAM] heat_map_i_def$mid = ", ifelse('mid' %in% names(heat_map_i_def), heat_map_i_def$mid, "NOT FOUND"), "\n"))
+              cat(file=stderr(), paste0("[DEBUG-COLOR-PARAM] heat_map_i_def$high = ", ifelse('high' %in% names(heat_map_i_def), heat_map_i_def$high, "NOT FOUND"), "\n"))
+              cat(file=stderr(), paste0("[DEBUG-COLOR-PARAM] heat_map_i_def$show_col_lines = ", ifelse('show_col_lines' %in% names(heat_map_i_def), heat_map_i_def$show_col_lines, "NOT FOUND"), "\n"))
               if ('low' %in% names(heat_map_i_def)) {
                 param['low'] <-heat_map_i_def$low
               }
@@ -2678,13 +3667,213 @@ func.print.lineage.tree <- function(conf_yaml_path,
               if ('midpoint' %in% names(heat_map_i_def)) {
                 param['midpoint'] <-as.numeric(heat_map_i_def$midpoint)
               }
-              
-              
-              
-            } 
-            
-            
-            
+              # S1.62dev: Get use_midpoint flag for continuous heatmaps
+              if ('use_midpoint' %in% names(heat_map_i_def)) {
+                param[['use_midpoint']] <- func.check.bin.val.from.conf(heat_map_i_def[['use_midpoint']])
+              } else {
+                param[['use_midpoint']] <- FALSE
+              }
+
+              # v112: Get NA color for continuous heatmaps (default grey90)
+              if ('na_color' %in% names(heat_map_i_def)) {
+                param[['na_color']] <- heat_map_i_def[['na_color']]
+              } else {
+                param[['na_color']] <- "grey90"
+              }
+
+              # v104: Get per-heatmap distance for continuous heatmaps too
+              if ('distance' %in% names(heat_map_i_def)) {
+                param[['distance']] <- as.numeric(heat_map_i_def[['distance']])
+              } else {
+                param[['distance']] <- 0.02
+              }
+
+              # v105: Get per-heatmap height (default 0.8) for continuous heatmaps too
+              if ('height' %in% names(heat_map_i_def)) {
+                param[['height']] <- as.numeric(heat_map_i_def[['height']])
+              } else {
+                param[['height']] <- 0.8
+              }
+
+              # v111: Get per-heatmap row_height (default 1.0) for continuous heatmaps too
+              if ('row_height' %in% names(heat_map_i_def)) {
+                param[['row_height']] <- as.numeric(heat_map_i_def[['row_height']])
+              } else {
+                param[['row_height']] <- 1.0
+              }
+
+              # v111: Get grid settings for continuous heatmaps too
+              if ('show_grid' %in% names(heat_map_i_def)) {
+                param[['show_grid']] <- func.check.bin.val.from.conf(heat_map_i_def[['show_grid']])
+              } else {
+                param[['show_grid']] <- FALSE
+              }
+              if ('grid_color' %in% names(heat_map_i_def)) {
+                param[['grid_color']] <- heat_map_i_def[['grid_color']]
+              } else {
+                param[['grid_color']] <- "#000000"
+              }
+              if ('grid_size' %in% names(heat_map_i_def)) {
+                param[['grid_size']] <- as.numeric(heat_map_i_def[['grid_size']])
+              } else {
+                param[['grid_size']] <- 0.5
+              }
+
+              # S1.62dev: Get row line settings for continuous heatmaps too
+              if ('show_row_lines' %in% names(heat_map_i_def)) {
+                param[['show_row_lines']] <- func.check.bin.val.from.conf(heat_map_i_def[['show_row_lines']])
+              } else {
+                param[['show_row_lines']] <- FALSE
+              }
+              if ('row_line_color' %in% names(heat_map_i_def)) {
+                param[['row_line_color']] <- heat_map_i_def[['row_line_color']]
+              } else {
+                param[['row_line_color']] <- "#000000"
+              }
+              if ('row_line_size' %in% names(heat_map_i_def)) {
+                param[['row_line_size']] <- as.numeric(heat_map_i_def[['row_line_size']])
+              } else {
+                param[['row_line_size']] <- 0.5
+              }
+              # S1.62dev: Get column line settings for continuous heatmaps too
+              if ('show_col_lines' %in% names(heat_map_i_def)) {
+                param[['show_col_lines']] <- func.check.bin.val.from.conf(heat_map_i_def[['show_col_lines']])
+              } else {
+                param[['show_col_lines']] <- FALSE
+              }
+              if ('col_line_color' %in% names(heat_map_i_def)) {
+                param[['col_line_color']] <- heat_map_i_def[['col_line_color']]
+              } else {
+                param[['col_line_color']] <- "#000000"
+              }
+              if ('col_line_size' %in% names(heat_map_i_def)) {
+                param[['col_line_size']] <- as.numeric(heat_map_i_def[['col_line_size']])
+              } else {
+                param[['col_line_size']] <- 0.5
+              }
+
+              # S1.62dev: Get vertical text labels settings for continuous heatmaps too
+              if ('show_vertical_text' %in% names(heat_map_i_def)) {
+                param[['show_vertical_text']] <- func.check.bin.val.from.conf(heat_map_i_def[['show_vertical_text']])
+              } else {
+                param[['show_vertical_text']] <- FALSE
+              }
+              if ('vertical_text_column' %in% names(heat_map_i_def)) {
+                param[['vertical_text_column']] <- heat_map_i_def[['vertical_text_column']]
+              } else {
+                param[['vertical_text_column']] <- ""
+              }
+              if ('vertical_text_size' %in% names(heat_map_i_def)) {
+                param[['vertical_text_size']] <- as.numeric(heat_map_i_def[['vertical_text_size']])
+              } else {
+                param[['vertical_text_size']] <- 3
+              }
+              if ('vertical_text_offset' %in% names(heat_map_i_def)) {
+                param[['vertical_text_offset']] <- as.numeric(heat_map_i_def[['vertical_text_offset']])
+              } else {
+                param[['vertical_text_offset']] <- 0.5
+              }
+              if ('vertical_text_color' %in% names(heat_map_i_def)) {
+                param[['vertical_text_color']] <- heat_map_i_def[['vertical_text_color']]
+              } else {
+                param[['vertical_text_color']] <- "#000000"
+              }
+
+              # v109: Get colnames_angle (default 45) for continuous heatmaps too
+              if ('colnames_angle' %in% names(heat_map_i_def)) {
+                param[['colnames_angle']] <- as.numeric(heat_map_i_def[['colnames_angle']])
+              } else {
+                param[['colnames_angle']] <- 45
+              }
+
+              # S1.62dev: Get show_colnames flag (default TRUE) for continuous heatmaps too
+              if ('show_colnames' %in% names(heat_map_i_def)) {
+                param[['show_colnames']] <- func.check.bin.val.from.conf(heat_map_i_def[['show_colnames']])
+              } else {
+                param[['show_colnames']] <- TRUE
+              }
+
+              # v105: Get row labels settings for continuous heatmaps too
+              if ('show_row_labels' %in% names(heat_map_i_def)) {
+                param[['show_row_labels']] <- func.check.bin.val.from.conf(heat_map_i_def[['show_row_labels']])
+              } else {
+                param[['show_row_labels']] <- FALSE
+              }
+              if ('row_label_source' %in% names(heat_map_i_def)) {
+                param[['row_label_source']] <- heat_map_i_def[['row_label_source']]
+              } else {
+                param[['row_label_source']] <- "colnames"
+              }
+              if ('row_label_font_size' %in% names(heat_map_i_def)) {
+                param[['row_label_font_size']] <- as.numeric(heat_map_i_def[['row_label_font_size']])
+              } else {
+                param[['row_label_font_size']] <- 2.5
+              }
+              if ('custom_row_labels' %in% names(heat_map_i_def)) {
+                param[['custom_row_labels']] <- heat_map_i_def[['custom_row_labels']]
+              } else {
+                param[['custom_row_labels']] <- ""
+              }
+              # v111: Get row label offset and alignment for continuous heatmaps too
+              if ('row_label_offset' %in% names(heat_map_i_def)) {
+                param[['row_label_offset']] <- as.numeric(heat_map_i_def[['row_label_offset']])
+              } else {
+                param[['row_label_offset']] <- 1.0
+              }
+              if ('row_label_align' %in% names(heat_map_i_def)) {
+                param[['row_label_align']] <- heat_map_i_def[['row_label_align']]
+              } else {
+                param[['row_label_align']] <- "left"
+              }
+              # v108: Get label mapping for continuous heatmaps too
+              if ('label_mapping' %in% names(heat_map_i_def)) {
+                param[['label_mapping']] <- heat_map_i_def[['label_mapping']]
+              } else {
+                param[['label_mapping']] <- list()
+              }
+
+              # v117/v121: Get tip guide line settings (for continuous heatmaps)
+              # v121: Added comprehensive debug logging
+              debug_cat(paste0("\n=== v121: TIP GUIDE SETTINGS DEBUG (continuous) ===\n"))
+              debug_cat(paste0("  heat_map_i_def names: ", paste(names(heat_map_i_def), collapse=", "), "\n"))
+              if ('show_guides' %in% names(heat_map_i_def)) {
+                raw_val <- heat_map_i_def[['show_guides']]
+                debug_cat(paste0("  show_guides raw value: ", raw_val, " (class: ", class(raw_val), ")\n"))
+                param[['show_guides']] <- func.check.bin.val.from.conf(heat_map_i_def[['show_guides']])
+                debug_cat(paste0("  show_guides after conversion: ", param[['show_guides']], "\n"))
+              } else {
+                debug_cat(paste0("  show_guides NOT FOUND in heat_map_i_def\n"))
+                param[['show_guides']] <- FALSE
+              }
+              if ('guide_color1' %in% names(heat_map_i_def)) {
+                param[['guide_color1']] <- heat_map_i_def[['guide_color1']]
+              } else {
+                param[['guide_color1']] <- "#CCCCCC"
+              }
+              if ('guide_color2' %in% names(heat_map_i_def)) {
+                param[['guide_color2']] <- heat_map_i_def[['guide_color2']]
+              } else {
+                param[['guide_color2']] <- "#EEEEEE"
+              }
+              if ('guide_alpha' %in% names(heat_map_i_def)) {
+                param[['guide_alpha']] <- as.numeric(heat_map_i_def[['guide_alpha']])
+              } else {
+                param[['guide_alpha']] <- 0.3
+              }
+              if ('guide_width' %in% names(heat_map_i_def)) {
+                param[['guide_width']] <- as.numeric(heat_map_i_def[['guide_width']])
+              } else {
+                param[['guide_width']] <- 0.5
+              }
+              if ('guide_linetype' %in% names(heat_map_i_def)) {
+                param[['guide_linetype']] <- heat_map_i_def[['guide_linetype']]
+              } else {
+                param[['guide_linetype']] <- "solid"
+              }
+            }
+
+
+
             heat_display_params_list[[indx_for_sav]] <- param
             # print("B12")
             
@@ -2692,38 +3881,201 @@ func.print.lineage.tree <- function(conf_yaml_path,
             
             heat_display_vec <- c(heat_display_vec, TRUE)
             heat_flag <- TRUE
-            acc_heat_list <- heat_map_i_def$according
             heat_map_title <- heat_map_i_def$title
-            # v53: print("heat_map_title is")
-            # v53: print(heat_map_title)
             heat_map_title_list <- c(heat_map_title_list,heat_map_title)
-            l_titles_for_heat <- c()
-            according_from_script <- FALSE
-            
-            # print("B13")
-            
-            if ('according_from_script' %in% names(heat_map_i_def)) {
-              
-              according_from_script<- heat_map_i_def$according_from_script
-            }
-            
-            if ('according_column_range' %in% names(heat_map_i_def)){
+
+            # S1.62dev: Check if this is an RData CNV heatmap
+            if ('data_source' %in% names(heat_map_i_def) && heat_map_i_def$data_source == "rdata") {
+              cat(file=stderr(), "\n[HEATMAP-RENDER] Processing RData CNV heatmap\n")
+              debug_cat(paste0("\n=== S1.62dev: Processing RData CNV heatmap ===\n"))
+
+              # Get the CNV matrix from the function parameter (passed from Shiny app)
+              # Note: cnv_matrix doesn't serialize properly to YAML, so we pass it as a parameter
+              if (!is.null(rdata_cnv_matrix)) {
+                # Apply downsampling if specified in heatmap config
+                cnv_downsample <- if ('cnv_downsample' %in% names(heat_map_i_def)) {
+                  as.numeric(heat_map_i_def$cnv_downsample)
+                } else {
+                  10
+                }
+
+                # Apply downsampling
+                cnv_data <- rdata_cnv_matrix
+                if (cnv_downsample > 1 && ncol(cnv_data) > cnv_downsample) {
+                  keep_cols <- seq(1, ncol(cnv_data), by = cnv_downsample)
+                  cnv_data <- cnv_data[, keep_cols, drop = FALSE]
+                  debug_cat(paste0("  Applied downsampling (factor ", cnv_downsample, "): ", ncol(cnv_data), " columns\n"))
+                }
+
+                # Apply WGD normalization if specified
+                cnv_wgd_norm <- if ('cnv_wgd_norm' %in% names(heat_map_i_def)) {
+                  func.check.bin.val.from.conf(heat_map_i_def$cnv_wgd_norm)
+                } else {
+                  FALSE
+                }
+                if (cnv_wgd_norm) {
+                  cnv_data <- cnv_data / 2
+                  debug_cat("  Applied WGD normalization (values / 2)\n")
+                }
+
+                debug_cat(paste0("  CNV matrix: ", nrow(cnv_data), " samples x ", ncol(cnv_data), " positions\n"))
+                debug_cat(paste0("  Sample names (first 5): ", paste(head(rownames(cnv_data), 5), collapse=", "), "\n"))
+
+                # The CNV matrix rownames should be sample IDs
+                # We need to match them to tree tips
+                # Get tree tip labels
+                g_check <- suppressWarnings(ggtree(tree440))$data
+                g_check_tip <- subset(g_check, isTip == TRUE)
+                tree_tips <- g_check_tip$label
+
+                # Handle NA labels in ggtree
+                if (any(is.na(tree_tips))) {
+                  tip_node_ids <- g_check_tip$node
+                  ntips <- length(tree440$tip.label)
+                  if (all(tip_node_ids >= 1 & tip_node_ids <= ntips)) {
+                    tree_tips <- tree440$tip.label[tip_node_ids]
+                  }
+                }
+
+                cat(file=stderr(), paste0("[HEATMAP-RENDER] Tree tips (first 5): ", paste(head(tree_tips, 5), collapse=", "), "\n"))
+                debug_cat(paste0("  Tree tips (first 5): ", paste(head(tree_tips, 5), collapse=", "), "\n"))
+
+                # Match CNV sample names to tree tips
+                cnv_samples <- rownames(cnv_data)
+                cat(file=stderr(), paste0("[HEATMAP-RENDER] CNV samples (first 5): ", paste(head(cnv_samples, 5), collapse=", "), "\n"))
+
+                # S1.62dev: Improved matching - try multiple strategies
+                # Strategy 1: Direct match (tree tip == CNV sample name)
+                # Strategy 2: Use CSV data to create a mapping (tree tip ID -> sample name column)
+                # Strategy 3: Partial matching (CNV sample contains tree tip or vice versa)
+
+                # Create mapping: find which CNV samples match which tree tips
+                matched_cnv <- data.frame(matrix(NA, nrow = length(tree_tips), ncol = ncol(cnv_data)))
+                rownames(matched_cnv) <- tree_tips
+                colnames(matched_cnv) <- colnames(cnv_data)
+
+                matches_found <- 0
+
+                # First, try to find a mapping column in the CSV data
+                csv_mapping <- NULL
+                if (exists("readfile440") && !is.null(readfile440) && nrow(readfile440) > 0) {
+                  cat(file=stderr(), "[HEATMAP-RENDER] Searching CSV for mapping column...\n")
+                  cat(file=stderr(), paste0("[HEATMAP-RENDER] CSV columns: ", paste(head(names(readfile440), 10), collapse=", "), "...\n"))
+
+                  # Look for a column that contains values matching CNV sample names
+                  for (col_name in names(readfile440)) {
+                    col_vals <- as.character(readfile440[[col_name]])
+                    # Check if any CNV sample names appear in this column
+                    matches_in_col <- sum(cnv_samples %in% col_vals)
+                    if (matches_in_col > 0) {
+                      cat(file=stderr(), paste0("[HEATMAP-RENDER] Found potential mapping column '", col_name, "' with ", matches_in_col, " matches\n"))
+                      if (is.null(csv_mapping) || matches_in_col > csv_mapping$count) {
+                        csv_mapping <- list(column = col_name, count = matches_in_col)
+                      }
+                    }
+                  }
+
+                  # Use the best mapping column if found
+                  if (!is.null(csv_mapping) && csv_mapping$count > 0) {
+                    cat(file=stderr(), paste0("[HEATMAP-RENDER] Using CSV column '", csv_mapping$column, "' for mapping\n"))
+
+                    # Create a mapping from tree tip (ID column) to sample name
+                    id_col_vals <- as.character(readfile440[[title.id]])
+                    sample_col_vals <- as.character(readfile440[[csv_mapping$column]])
+
+                    cat(file=stderr(), paste0("[HEATMAP-RENDER] ID column '", title.id, "' values (first 5): ", paste(head(id_col_vals, 5), collapse=", "), "\n"))
+                    cat(file=stderr(), paste0("[HEATMAP-RENDER] Sample column '", csv_mapping$column, "' values (first 5): ", paste(head(sample_col_vals, 5), collapse=", "), "\n"))
+
+                    for (i in seq_along(tree_tips)) {
+                      tip <- tree_tips[i]
+                      # Find this tree tip in the CSV ID column
+                      csv_row <- which(id_col_vals == tip)
+                      if (length(csv_row) > 0) {
+                        # Get the corresponding sample name from the mapping column
+                        sample_name <- sample_col_vals[csv_row[1]]
+                        # Look up this sample name in the CNV data
+                        if (sample_name %in% cnv_samples) {
+                          matched_cnv[tip, ] <- as.numeric(cnv_data[sample_name, ])
+                          matches_found <- matches_found + 1
+                        }
+                      }
+                    }
+                    cat(file=stderr(), paste0("[HEATMAP-RENDER] After CSV mapping: ", matches_found, " matches\n"))
+                  }
+                }
+
+                # If CSV mapping didn't find everything, try direct matching
+                if (matches_found < length(tree_tips)) {
+                  for (tip in tree_tips) {
+                    if (all(is.na(matched_cnv[tip, ]))) {  # Only if not already matched
+                      # Try exact match
+                      if (tip %in% cnv_samples) {
+                        matched_cnv[tip, ] <- as.numeric(cnv_data[tip, ])
+                        matches_found <- matches_found + 1
+                      } else {
+                        # Try partial matching - CNV sample contains tree tip
+                        for (cnv_s in cnv_samples) {
+                          if (grepl(tip, cnv_s, fixed = TRUE) || grepl(cnv_s, tip, fixed = TRUE)) {
+                            matched_cnv[tip, ] <- as.numeric(cnv_data[cnv_s, ])
+                            matches_found <- matches_found + 1
+                            break
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+
+                cat(file=stderr(), paste0("[HEATMAP-RENDER] Matched ", matches_found, " out of ", length(tree_tips), " tree tips to CNV data\n"))
+                debug_cat(paste0("  Matched ", matches_found, " out of ", length(tree_tips), " tree tips to CNV data\n"))
+
+                # Use the matched CNV data as the heatmap dataframe
+                df_heat_temp <- matched_cnv
+                dxdf440_for_heat[[indx_for_sav]] <- df_heat_temp
+
+                cat(file=stderr(), paste0("[HEATMAP-RENDER] CNV heatmap data: ", nrow(df_heat_temp), " x ", ncol(df_heat_temp), "\n"))
+                debug_cat(paste0("  Created CNV heatmap data: ", nrow(df_heat_temp), " x ", ncol(df_heat_temp), "\n"))
+              } else {
+                debug_cat("  ERROR: rdata_cnv_matrix parameter is NULL - no RData CNV file loaded\n")
+                heat_display_vec <- c(heat_display_vec, FALSE)
+                next
+              }
+            } else {
+              # Standard CSV-based heatmap - extract columns from readfile440
+              acc_heat_list <- heat_map_i_def$according
+              l_titles_for_heat <- c()
+              according_from_script <- FALSE
+
+              # print("B13")
+
+              if ('according_from_script' %in% names(heat_map_i_def)) {
+
+                according_from_script<- heat_map_i_def$according_from_script
+              }
+
+              if ('according_column_range' %in% names(heat_map_i_def)){
               start1 <- heat_map_i_def$according_column_range[1]
               end1 <- heat_map_i_def$according_column_range[2]
               l_titles_for_heat<- names(readfile440)[start1:end1]
               
               
             } else {
+              # v57: DEBUG - trace column extraction
+              debug_cat(paste0("\n=== v57: Extracting heatmap columns from 'according' ===\n"))
+              debug_cat(paste0("  acc_heat_list length: ", length(acc_heat_list), "\n"))
               ind <-1
               for (j in acc_heat_list) {
-                
+
                 j1 <- names(j)
-                
+                debug_cat(paste0("  Column ", ind, ": j1=", j1, "\n"))
+
                 ind<- ind+1
                 j2<- j[[j1]]
-                
+                debug_cat(paste0("    j2 (column name)=", j2, "\n"))
+
                 l_titles_for_heat <- c(l_titles_for_heat,j2)
-              } 
+              }
+              debug_cat(paste0("  Final l_titles_for_heat: ", paste(l_titles_for_heat, collapse=", "), "\n"))
             }
             
             
@@ -2754,12 +4106,21 @@ func.print.lineage.tree <- function(conf_yaml_path,
             #print(names(readfile440))
             
             l_titles_for_heat <- as.character(l_titles_for_heat)
-            
+
+            # v57: DEBUG - show column validation
+            debug_cat(paste0("\n=== v57: Validating heatmap columns ===\n"))
+            debug_cat(paste0("  title.id: ", title.id, "\n"))
+            debug_cat(paste0("  l_titles_for_heat: ", paste(l_titles_for_heat, collapse=", "), "\n"))
+            debug_cat(paste0("  Available CSV columns: ", paste(head(names(readfile440), 10), collapse=", "), "...\n"))
+
             valid_columns <- c(title.id, l_titles_for_heat)
             valid_columns <- valid_columns[valid_columns %in% names(readfile440)]
-            
+            debug_cat(paste0("  Valid columns (after filtering): ", paste(valid_columns, collapse=", "), "\n"))
+            debug_cat(paste0("  Number of valid columns: ", length(valid_columns), "\n"))
+
             # Select only the valid columns
             df_heat_temp <- readfile440[, valid_columns, drop = FALSE]
+            debug_cat(paste0("  df_heat_temp dimensions: ", nrow(df_heat_temp), " rows x ", ncol(df_heat_temp), " cols\n"))
             
             #print("df_heat_temp is")
             #print(df_heat_temp)
@@ -2780,53 +4141,97 @@ func.print.lineage.tree <- function(conf_yaml_path,
             } else {
               # v53: print("No duplicate column names found.")
             }
-            
-            
-            
-            g_check <- ggtree(tree440)$data
+
+
+
+            # v56b: Suppress harmless fortify warnings
+            g_check <- suppressWarnings(ggtree(tree440))$data
             #print(print("B15a"))
-            
+
             if (flag_print_tree_data== TRUE) {
               # v53: print("##tree data##")
-              
-              tib <- as_tibble(g_check) 
+
+              tib <- as_tibble(g_check)
               rows <- nrow(tib)
               # v53: print(tib,n=rows)
-              
+
             }
-            
+
             g_check_tip <- subset(g_check,isTip==TRUE)
-            
-            #question
-            if (id_tip_trim_flag== FALSE) {
-              
-              tip_list <- substr(g_check_tip$label,id_tip_trim_start, id_tip_trim_end)
+
+            # v66: ROBUST FIX - Always use tree440$tip.label as source of truth
+            # ggtree data frame can have NA labels in many scenarios (ladderizing, reordering, etc.)
+            # The tree440$tip.label is indexed 1:Ntip corresponding to tip node IDs 1:Ntip
+            ggtree_labels <- g_check_tip$label
+
+            # v66: DEBUG - show initial state
+            debug_cat(paste0("\n=== v66: TIP LABEL EXTRACTION DEBUG ===\n"))
+            debug_cat(paste0("  ggtree_labels NA count: ", sum(is.na(ggtree_labels)), " out of ", length(ggtree_labels), "\n"))
+            debug_cat(paste0("  tree440$tip.label sample: ", paste(head(tree440$tip.label, 5), collapse=", "), "\n"))
+            debug_cat(paste0("  g_check_tip$node sample: ", paste(head(g_check_tip$node, 5), collapse=", "), "\n"))
+
+            # v66: Check if ANY labels are NA or empty - if so, use tree440$tip.label
+            # This is more robust than only checking if ALL are NA
+            if (any(is.na(ggtree_labels)) || any(ggtree_labels == "")) {
+              debug_cat(paste0("  v6: Found NA/empty labels in ggtree, using tree440$tip.label\n"))
+
+              # For tip nodes, node IDs 1 to Ntip correspond directly to tree$tip.label indices
+              tip_node_ids <- g_check_tip$node
+              ntips <- length(tree440$tip.label)
+
+              # Validate that node IDs are in valid range
+              if (all(tip_node_ids >= 1 & tip_node_ids <= ntips)) {
+                ggtree_labels <- tree440$tip.label[tip_node_ids]
+                debug_cat(paste0("  v6: Successfully extracted labels from tree440$tip.label\n"))
+              } else {
+                # Fallback: use tip labels in their original order from tree440
+                debug_cat(paste0("  v6: WARNING - node IDs out of range, using tree tip order\n"))
+                # Order g_check_tip by y coordinate (visual order) and assign labels
+                tip_order <- order(g_check_tip$y)
+                ggtree_labels <- tree440$tip.label[tip_order]
+              }
+
+              debug_cat(paste0("  v6: After fix, ggtree_labels sample: ", paste(head(ggtree_labels, 5), collapse=", "), "\n"))
+            }
+
+            # v60: FIX - Logic was inverted! When id_tip_trim_flag == TRUE, apply trimming
+            # When id_tip_trim_flag == FALSE (default), use full labels as-is
+            if (id_tip_trim_flag == TRUE) {
+              # Trimming ENABLED: extract substring from tip labels
+              tip_list <- substr(ggtree_labels, id_tip_trim_start, id_tip_trim_end)
             } else {
-              tip_list <- g_check_tip$label
+              # Trimming DISABLED: use full tip labels
+              tip_list <- ggtree_labels
             }
             # v53: print("TIP LIST CHECK")
             # v53: print("tip_list is")
             # v53: print(tip_list)
             # v53: print("df_heat_temp[[title.id]]) is")
             # v53: print(df_heat_temp[[title.id]])
-            
-            
-            df_heat_temp <- df_heat_temp[match(tip_list, df_heat_temp[[title.id]]),]
-            # v53: print("df_heat_temp is bef")
-            # v53: print(df_heat_temp)
-            
-            
-            # v53: print("NOWWW")
-            
-            #df_heat_temp_filtered  <- na.omit(df_heat_temp[, title.id, drop = FALSE])
-            #df_heat_temp_filtered <- df_heat_temp[!is.na(df_heat_temp$title.id), ]
-            #df_heat_temp_filtered <- df_heat_temp[!is.na(df_heat_temp$title.id), ]
+
+            # S1.62dev: Check if this is an RData heatmap - skip CSV-specific matching code
+            is_rdata_heatmap <- 'data_source' %in% names(heat_map_i_def) && heat_map_i_def$data_source == "rdata"
+
+            if (!is_rdata_heatmap) {
+            # v58: DEBUG - Show matching details (CSV only)
+            debug_cat(paste0("\n=== v58: Matching heatmap data to tree tips ===\n"))
+            debug_cat(paste0("  tip_list length: ", length(tip_list), "\n"))
+            debug_cat(paste0("  tip_list sample: ", paste(head(tip_list, 5), collapse=", "), "\n"))
+            debug_cat(paste0("  CSV ID column (", title.id, ") sample: ", paste(head(df_heat_temp[[title.id]], 5), collapse=", "), "\n"))
+
+            # Check for matches before applying
+            matches <- match(tip_list, df_heat_temp[[title.id]])
+            num_matches <- sum(!is.na(matches))
+            debug_cat(paste0("  Number of matches found: ", num_matches, " out of ", length(tip_list), " tips\n"))
+
+            df_heat_temp <- df_heat_temp[matches,]
+            debug_cat(paste0("  After match(): ", nrow(df_heat_temp), " rows\n"))
+
             ro= na.omit(df_heat_temp[[title.id]])
-            # v53: print("ro is")
-            # v53: print(ro)
             df_heat_temp_filtered<- df_heat_temp[df_heat_temp[[title.id]] %in% (ro), ]
-            
+
             df_heat_temp<- df_heat_temp_filtered
+            debug_cat(paste0("  After filtering NAs: ", nrow(df_heat_temp), " rows\n"))
             # v53: print(df_heat_temp)
             # v53: print("df_heat_temp[[title.id]]) is")
             # v53: print(df_heat_temp[[title.id]])
@@ -2856,46 +4261,49 @@ func.print.lineage.tree <- function(conf_yaml_path,
             
             #question????YO YO
             
+            # v58: FIXED - Validate data and ensure unique rownames before setting
+            if (nrow(df_heat_temp) == 0) {
+              # Skip this heatmap if no data
+              debug_cat(paste0("  WARNING: No matching data for heatmap - skipping\n"))
+              heat_display_vec <- c(heat_display_vec, FALSE)
+              # v58: Reset heat_flag if no heatmaps have data
+              if (indx_for_sav == 1) {
+                heat_flag <- FALSE
+                debug_cat(paste0("  Resetting heat_flag to FALSE\n"))
+              }
+              next
+            }
+
             if (id_tip_trim_flag== FALSE) {
               #print("inn1")
-              
-              #print("df_heat_temp is")
-              #print(df_heat_temp)
-              
-              rownames(df_heat_temp) <- paste0(id_tip_prefix,df_heat_temp[[title.id]])
+
+              # v56b: Create row names and ensure they are unique
+              new_rownames <- paste0(id_tip_prefix, df_heat_temp[[title.id]])
+              # Handle duplicates by making unique
+              if (anyDuplicated(new_rownames) > 0) {
+                new_rownames <- make.unique(as.character(new_rownames))
+              }
+              # v56b: Validate length matches before setting
+              if (length(new_rownames) == nrow(df_heat_temp)) {
+                rownames(df_heat_temp) <- new_rownames
+              }
               # v53: print("rownames(df_heat_temp) is")
               # v53: print(rownames(df_heat_temp))
               # v53: print("inn2")
             } else {
               # v53: print("else21")
-              
-              # Find duplicate column names
-              #duplicated_cols <- names(df_heat_temp)[duplicated(names(df_heat_temp))]
-              
-              ## Print the duplicates (if any)
-              #if (length(duplicated_cols) > 0) {
-              #  print(paste("Duplicate column names:", paste(duplicated_cols, collapse = ", ")))
-              #} else {
-              #  print("No duplicate column names found.")
-              #}
-              # v53: print(sum(is.na(df_heat_temp[[title.id]])) )
-              # v53: print(df_heat_temp[[title.id]])
-              #df_heat_temp[[title.id]][is.na(df_heat_temp[[title.id]])] <- "missing_value"
-              #duplicated_values <- df_heat_temp[[title.id]][duplicated(df_heat_temp[[title.id]])]
-              #df_heat_temp[[title.id]] <- make.unique(as.character(df_heat_temp[[title.id]]))
-              #rownames(df_heat_temp) <- df_heat_temp[[title.id]]
-              
-              #print("df_heat_temp is")
-              
-              #print(head(df_heat_temp))
-              #print("title.id is")
-              #print(title.id)
-              #print(colnames(df_heat_temp))
-              #print(df_heat_temp$'Sample.Reads.ID')
-              #rownames(df_heat_temp)
-              #print(df_heat_temp[[title.id]])
-              rownames(df_heat_temp) <- paste0("",df_heat_temp[[title.id]])
-              
+
+              # v56b: Create row names and ensure they are unique
+              new_rownames <- paste0("", df_heat_temp[[title.id]])
+              # Handle duplicates by making unique
+              if (anyDuplicated(new_rownames) > 0) {
+                new_rownames <- make.unique(as.character(new_rownames))
+              }
+              # v56b: Validate length matches before setting
+              if (length(new_rownames) == nrow(df_heat_temp)) {
+                rownames(df_heat_temp) <- new_rownames
+              }
+
               # v53: print("else22")
             }
             # v53: print("check l_titles_for_heat is")
@@ -2914,12 +4322,14 @@ func.print.lineage.tree <- function(conf_yaml_path,
               df_heat_temp <- df_heat_temp[ -c(2) ]
               
             }
-            
-            
-            dxdf440_for_heat[[indx_for_sav]] <- df_heat_temp  
-            
+
+
+            dxdf440_for_heat[[indx_for_sav]] <- df_heat_temp
+            } # S1.62dev: End of if (!is_rdata_heatmap) block - CSV-specific matching code
+
+            } # End of else block (CSV path) - S1.62dev
           } else {
-            
+
             heat_display_vec <- c(heat_display_vec, FALSE)
           }
           temp <- dxdf440_for_heat[[indx_for_sav]]
@@ -2980,8 +4390,9 @@ func.print.lineage.tree <- function(conf_yaml_path,
       
       #print("B18")
       how_many_hi <- 0
-      
-      
+      high_alpha_list <- NULL  # v140: Initialize before highlight block to prevent 'object not found' error
+
+
       FLAG_BULK_DISPLAY <- FALSE
       
       if ('highlight' %in% att1) {
@@ -3010,6 +4421,7 @@ func.print.lineage.tree <- function(conf_yaml_path,
           how_many_hi <- highlight.params.NEW$how_many_hi
           high_label_list<- highlight.params.NEW$high_label_list
           high_color_list<- highlight.params.NEW$high_color_list
+          high_alpha_list<- highlight.params.NEW$high_alpha_list  # v139: Extract alpha list
           high_title_list<- highlight.params.NEW$high_title_list
           lists_list_hi<- highlight.params.NEW$lists_list_hi
           high_offset<- highlight.params.NEW$offset_hi
@@ -3071,12 +4483,13 @@ func.print.lineage.tree <- function(conf_yaml_path,
         
         
       }
-      
-      tree_data <- ggtree(tree440)$data
-      
-      
-      
-      
+
+      # v56b: Suppress harmless fortify warnings
+      tree_data <- suppressWarnings(ggtree(tree440))$data
+
+
+
+
       leaves_id_from_tree1 <- tree_data[tree_data$isTip==TRUE,'label']
       leaves_id_from_tree <- as.list(leaves_id_from_tree1['label'])$label
       
@@ -3370,7 +4783,7 @@ func.print.lineage.tree <- function(conf_yaml_path,
       # v53: cat(file=stderr(), "Ã°Å¸â€Â Passing flag_display_nod_number_on_tree:", flag_display_nod_number_on_tree, "\n")
       # v53: cat(file=stderr(), "Ã°Å¸â€Â Passing highlight_manual_nodes:", highlight_manual_nodes, "\n")
       # v53: cat(file=stderr(), "Ã°Å¸â€Â Passing manual_nodes_to_highlight:", paste(manual_nodes_to_highlight, collapse=", "), "\n")
-      # v53: cat(file=stderr(), "================================================\n\n")
+      # v53: debug_cat("================================================\n\n")
       
       ou <-     func.make.plot.tree.heat.NEW(
         tree440 = tree440,
@@ -3456,15 +4869,19 @@ func.print.lineage.tree <- function(conf_yaml_path,
         high_vertical_offset,
         adjust_height_ecliplse,
         adjust_width_eclipse,
+        high_alpha_list = high_alpha_list,  # v140: Pass transparency list
         flag_colnames,
         viridis_option_list,
         heat_legend_replace,
         tip_name_display_flag=tip_name_display_flag,
         flag_make_newick_file=flag_make_newick_file,
-        bootstrap_label_size =bootstrap_label_size
+        bootstrap_label_size =bootstrap_label_size,
+        heatmap_tree_distance = heatmap_tree_distance,
+        heatmap_global_gap = heatmap_global_gap,  # v125: Gap between multiple heatmaps
+        legend_settings = legend_settings  # v136: Pass legend settings for highlight/bootstrap legends
       )
       # }
-      
+
       #print("ou is")
       #print(class(ou))
       #print(ou)
@@ -3611,18 +5028,22 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
                                          manual_nodes_to_highlight = NA,
                                          flag_calc_scores_for_tree, individual, width_heatmap = NA,
                                          high_offset = 0, high_vertical_offset = 0, adjust_height_ecliplse, adjust_width_eclipse,
+                                         high_alpha_list = NULL,  # v140: Added for transparency control
                                          flag_colnames, viridis_option_list, heat_legend_replace = NA,
                                          tip_name_display_flag = TRUE,
                                          flag_make_newick_file=FALSE,
-                                         bootstrap_label_size = 3.5) {
-  
+                                         bootstrap_label_size = 1.5,  # v129: Reduced from 3.5 for smaller default legend
+                                         heatmap_tree_distance = 0.02,
+                                         heatmap_global_gap = 0.05,  # v125: Gap between multiple heatmaps
+                                         legend_settings = NULL) {  # v136: Legend settings for highlight/bootstrap legends
+
   # === DEBUG CHECKPOINT 4: INNER FUNCTION ENTRY ===
   # v53: cat(file=stderr(), "\nÃ°Å¸â€Â DEBUG CHECKPOINT 4: func.make.plot.tree.heat.NEW ENTRY\n")
   # v53: cat(file=stderr(), "Ã°Å¸â€Â node_number_font_size:", node_number_font_size, "\n")
   # v53: cat(file=stderr(), "Ã°Å¸â€Â flag_display_nod_number_on_tree:", flag_display_nod_number_on_tree, "\n")
   # v53: cat(file=stderr(), "Ã°Å¸â€Â highlight_manual_nodes:", highlight_manual_nodes, "\n")
   # v53: cat(file=stderr(), "Ã°Å¸â€Â manual_nodes_to_highlight:", paste(manual_nodes_to_highlight, collapse=", "), "\n")
-  # v53: cat(file=stderr(), "================================================\n\n")
+  # v53: debug_cat("================================================\n\n")
   
   if (debug_mode == TRUE) {
     # v53: print("In func.make.plot.tree.HEAT")
@@ -3633,7 +5054,8 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   # v53: print("A")
   # v53: print(dx_rx_types1)
   
-  pr440 <- ggtree(tree440) 
+  # v56b: Wrap in suppressWarnings to suppress harmless ggtree/ggplot2 fortify warnings
+  pr440 <- suppressWarnings(ggtree(tree440))
   d440 <- pr440$data
   cc_tipss <- func.create.cc_tipss(d440)
   cc_nodss <- func.create.cc_nodss(d440)
@@ -3697,12 +5119,14 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   
   # Group tree by class
   tree_with_group_CPY <- ggtree::groupOTU(tree440, list_rename_by_class)
-  levels_groups <- levels(ggtree(tree_with_group_CPY)$data$group)
+  # v56b: Wrap in suppressWarnings to suppress harmless fortify warnings
+  levels_groups <- levels(suppressWarnings(ggtree(tree_with_group_CPY))$data$group)
   # v53: print("E")
-  
+
   # Create tree with coloring
-  tree_TRY <- ggtree(tree_with_group_CPY, aes(color = new_class, size = p_val_new),
-                     ladderize = laderize_flag)
+  # v56b: Wrap in suppressWarnings to suppress harmless fortify warnings
+  tree_TRY <- suppressWarnings(ggtree(tree_with_group_CPY, aes(color = new_class, size = p_val_new),
+                     ladderize = laderize_flag))
   
   test_fig <- tree_TRY
   
@@ -3839,7 +5263,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   space_vec <- rep("", tree_size)
   
   round_to <- 5
-  list_boot_display <- c('raw', 'numbered_colored', 'numbered_color', 'shade', 'percentage')
+  list_boot_display <- c('raw', 'numbered_colored', 'numbered_color', 'percentage')
   
   if (boot_values$'format' %in% list_boot_display) {
     if ('param' %in% names(boot_values)) {
@@ -3847,7 +5271,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     } 
   }
   
-  if (boot_values$'format' %in% c("numbered_colored", "shade", "numbered_color", 'percentage', 'percentage_color')) {
+  if (boot_values$'format' %in% c("numbered_colored", "numbered_color", 'percentage', 'percentage_color')) {
     round_to <- 1
   }
   #print("L")
@@ -4052,27 +5476,25 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   # v53: print("Q")
   
   # Add bootstrap visualization if requested
+  # v90: Bootstrap triangle layers are stored separately and added AFTER gheatmap
+  # to avoid "missing aesthetics x and y" error when gheatmap transforms the data.
+  # See bootstrap_triangles_* variables used later after gheatmap section.
+  bootstrap_triangles_enabled <- FALSE
+  bootstrap_triangles_params <- NULL
+
   if (show_boot_flag == TRUE) {
     if (boot_values$'format' == 'triangles') {
-      pr440_short_tips_TRY_new_with_boot <- pr440_short_tips_TRY_new + 
-        geom_nodepoint(
-          position = position_nudge(x = man_boot_x_offset, y = 0),
-          aes(subset = boot_val >= 0.9),
-          size = size_90+bootstrap_label_size, shape = 24, fill = "grey36", colour = "grey20",
-          show.legend = FALSE, alpha = 1/2
-        ) + 
-        geom_nodepoint(
-          position = position_nudge(x = +man_boot_x_offset, y = 0),
-          aes(subset = boot_val >= 0.8 & boot_val < 0.9),
-          size = size_80+bootstrap_label_size, shape = 24, fill = "grey36", colour = "grey20",
-          show.legend = FALSE, alpha = 1/2
-        ) + 
-        geom_nodepoint(
-          position = position_nudge(x = man_boot_x_offset, y = 0),
-          aes(subset = boot_val >= 0.7 & boot_val < 0.8),
-          size = size_70+bootstrap_label_size, shape = 24, fill = "grey36", colour = "grey20",
-          show.legend = FALSE, alpha = 1/2
-        )
+      # v90: Store parameters for later - DO NOT add layers here
+      # These will be added after gheatmap to avoid breaking the layers
+      bootstrap_triangles_enabled <- TRUE
+      bootstrap_triangles_params <- list(
+        man_boot_x_offset = man_boot_x_offset,
+        size_90 = size_90 + bootstrap_label_size,
+        size_80 = size_80 + bootstrap_label_size,
+        size_70 = size_70 + bootstrap_label_size
+      )
+      # Set to base plot - triangles will be added later
+      pr440_short_tips_TRY_new_with_boot <- pr440_short_tips_TRY_new
     }
     
     if (boot_values$'format' == 'raw') {
@@ -4221,7 +5643,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   
   if (flag_display_nod_number_on_tree == TRUE) {
     # v53: cat(file=stderr(), "Ã°Å¸â€Â Ã¢Å“â€œ ADDING NODE NUMBERS with size:", node_number_font_size, "\n")
-    # v53: cat(file=stderr(), "================================================\n\n")
+    # v53: debug_cat("================================================\n\n")
     
     pr440_short_tips_TRY_new_with_boot_more1 <- pr440_short_tips_TRY_new_with_boot_more1 +
       geom_text(
@@ -4231,7 +5653,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       )
   } else {
     # v53: cat(file=stderr(), "Ã°Å¸â€Â Ã¢Å“â€” NODE NUMBERS NOT ENABLED\n")
-    # v53: cat(file=stderr(), "================================================\n\n")
+    # v53: debug_cat("================================================\n\n")
   }
   
   # Highlight manually selected nodes
@@ -4255,7 +5677,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     
     if (nrow(highlight_data) > 0) {
       # v53: cat(file=stderr(), "Ã°Å¸â€Â Ã¢Å“â€œÃ¢Å“â€œ ADDING RED CIRCLES to", nrow(highlight_data), "nodes\n")
-      # v53: cat(file=stderr(), "================================================\n\n")
+      # v53: debug_cat("================================================\n\n")
       
       pr440_short_tips_TRY_new_with_boot_more1 <- pr440_short_tips_TRY_new_with_boot_more1 +
         geom_point(data = highlight_data, 
@@ -4271,7 +5693,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       # v53: cat(file=stderr(), "Ã°Å¸â€Â Ã¢Å“â€”Ã¢Å“â€” NO MATCHING NODES FOUND IN DATA\n")
       # v53: cat(file=stderr(), "Ã°Å¸â€Â Available nodes in data (first 20):", 
       #     paste(head(unique(pr440_short_tips_TRY_new_with_boot_more1$data$node), 20), collapse=", "), "\n")
-      # v53: cat(file=stderr(), "================================================\n\n")
+      # v53: debug_cat("================================================\n\n")
     }
   } else {
     # v53: cat(file=stderr(), "Ã°Å¸â€Â Ã¢Å“â€” HIGHLIGHTING NOT ENABLED\n")
@@ -4281,7 +5703,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     if (is.na(manual_nodes_to_highlight[1])) {
       # v53: cat(file=stderr(), "Ã°Å¸â€Â   Reason: manual_nodes_to_highlight is NA\n")
     }
-    # v53: cat(file=stderr(), "================================================\n\n")
+    # v53: debug_cat("================================================\n\n")
   }
   
   # Get plot boundaries
@@ -4312,11 +5734,25 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   
   p <- pr440_short_tips_TRY_new_with_boot_more1
   b<-0
-  
+
+  # v132: Initialize boudariestt BEFORE highlight code - it's needed for ellipse sizing when heat_flag == TRUE
+  # Previously this was initialized at line ~4795 (after heatmap rendering), causing "object 'boudariestt' not found" error
+  tt_for_boundaries <- p
+  boudariestt <- tryCatch({
+    func.find.plot.boundaries(tt_for_boundaries, debug_mode)
+  }, error = function(e) {
+    debug_cat(paste0("  v32: Error computing boudariestt: ", e$message, "\n"))
+    # Return default values if computation fails
+    list(xmin = min(p$data$x, na.rm = TRUE), xmax = max(p$data$x, na.rm = TRUE))
+  })
+  debug_cat(paste0("  v32: boudariestt initialized early: xmin=", boudariestt$xmin, ", xmax=", boudariestt$xmax, "\n"))
+
   # Handle highlighting if requested
-  if (FLAG_BULK_DISPLAY == TRUE) {
+  # v141: Only apply highlight here when NO heatmap, to prevent double highlighting
+  # When heat_flag == TRUE, highlight is applied AFTER heatmap processing (around line 6421)
+  if (FLAG_BULK_DISPLAY == TRUE && heat_flag == FALSE) {
     x_adj_hi <- 0
-    
+
     # Calculate tip length for ellipse sizing
     # If trimming is disabled (id_tip_trim_end is NA), use the max tip label length
     tip_length <- if (is.na(id_tip_trim_end)) {
@@ -4324,40 +5760,867 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     } else {
       id_tip_trim_end
     }
-    
-    if (heat_flag == FALSE) {
-      # v50: Use multiplicative scaling for height and width sliders
-      base_a <- tip_length * size_tip_text / 800 + man_adjust_elipse_a
-      base_b <- 0.12 + man_adjust_elipse_b
-      a <- base_a * adjust_height_ecliplse  # Slider value is now a multiplier (1.0 = no change)
-      b <- base_b * adjust_width_eclipse    # Slider value is now a multiplier
-    } else {
-      # v50: Use multiplicative scaling for height and width sliders  
-      base_a <- tip_length * size_tip_text / (5.1 * boudariestt$xmax) + man_adjust_elipse_a
-      base_b <- 0.12 + man_adjust_elipse_b
-      a <- base_a * adjust_height_ecliplse
-      b <- base_b * adjust_width_eclipse
-    }   
-    
+
+    # v50: Use multiplicative scaling for height and width sliders
+    base_a <- tip_length * size_tip_text / 800 + man_adjust_elipse_a
+    base_b <- 0.12 + man_adjust_elipse_b
+    a <- base_a * adjust_height_ecliplse  # Slider value is now a multiplier (1.0 = no change)
+    b <- base_b * adjust_width_eclipse    # Slider value is now a multiplier
+
+    # v139: Pass high_alpha_list for transparency
     p <- func_highlight(
       p, how_many_hi, heat_flag, high_color_list, a, b, man_adjust_elipse,
-      pr440_short_tips_TRY, boudariestt, debug_mode, high_offset, high_vertical_offset
+      pr440_short_tips_TRY, boudariestt, debug_mode, high_offset, high_vertical_offset,
+      high_alpha_list
     )
   }
-  
+
   if (length(b) == 0) {
     b <- 0.2
   }
   
   # Add heatmap if requested
-  if (heat_flag == TRUE) { 
-    tt <- p
-    
+  # v99: MANUAL HEATMAP - Replaced gheatmap() with manual geom_tile() approach
+  # because gheatmap was corrupting the plot's @mapping property
+  debug_cat(paste0("\n=== v99: HEATMAP RENDERING ===\n"))
+  debug_cat(paste0("  heat_flag: ", heat_flag, "\n"))
+  if (heat_flag == TRUE) {
+    debug_cat(paste0("  heat_map_title_list length: ", length(heat_map_title_list), "\n"))
+    debug_cat(paste0("  dxdf440_for_heat length: ", length(dxdf440_for_heat), "\n"))
+  }
+
+  # v99: Save a backup of p before heatmap for fallback recovery
+  tt <- p
+
+  # v132: Refresh boudariestt after highlighting changes (was already initialized at v132 block above)
+  # This ensures func.make.second.legend has current plot boundaries
+  boudariestt <- tryCatch({
+    func.find.plot.boundaries(tt, debug_mode)
+  }, error = function(e) {
+    debug_cat(paste0("  v32: Error refreshing boudariestt: ", e$message, "\n"))
+    # Return default values if computation fails
+    list(xmin = min(p$data$x, na.rm = TRUE), xmax = max(p$data$x, na.rm = TRUE))
+  })
+  debug_cat(paste0("  v32: boudariestt refreshed: xmin=", boudariestt$xmin, ", xmax=", boudariestt$xmax, "\n"))
+
+  # v122: MULTIPLE HEATMAPS IMPLEMENTATION
+  # Refactored from v99 to support multiple heatmaps with spacing control
+  # Each heatmap can have its own colors, type (discrete/continuous), and parameters
+  if (heat_flag == TRUE && length(dxdf440_for_heat) > 0) {
+    debug_cat(paste0("\n=== v122: ENTERING MULTIPLE HEATMAPS CODE ===\n"))
+    debug_cat(paste0("  Number of heatmaps to render: ", length(dxdf440_for_heat), "\n"))
+
+    # v122: Get tree info once (shared across all heatmaps)
+    tip_data <- subset(p$data, isTip == TRUE)
+    tree_tips <- tip_data$label
+    tree_xmin <- min(p$data$x, na.rm = TRUE)
+    tree_xmax <- max(p$data$x, na.rm = TRUE)
+    tree_width <- abs(tree_xmax - tree_xmin)
+
+    # v122: Track x position for placing heatmaps side by side
+    # current_heatmap_x_end will be updated after each heatmap
+    current_heatmap_x_start <- tree_xmax
+
+    # v125: Use global gap setting for spacing between multiple heatmaps
+    heatmap_spacing <- heatmap_global_gap * tree_width
+    debug_cat(paste0("  v25: heatmap_global_gap=", heatmap_global_gap, ", heatmap_spacing=", heatmap_spacing, "\n"))
+
+    # v122: Loop through all heatmaps
+    for (heat_idx in 1:length(dxdf440_for_heat)) {
+      debug_cat(paste0("\n=== v122: PROCESSING HEATMAP ", heat_idx, " of ", length(dxdf440_for_heat), " ===\n"))
+
+      # Get this heatmap's data
+      heat_data <- dxdf440_for_heat[[heat_idx]]
+
+      # v122: Validate heatmap data
+      debug_cat(paste0("  Initial heat_data dimensions: ", nrow(heat_data), " x ", ncol(heat_data), "\n"))
+
+      # v122: Check if heat_data is valid - skip this heatmap if invalid
+      if (is.null(heat_data) || !is.data.frame(heat_data) || nrow(heat_data) == 0) {
+        debug_cat(paste0("  ERROR: Invalid heatmap data - skipping heatmap ", heat_idx, "\n"))
+        next  # v122: Continue to next heatmap instead of stopping all heatmaps
+      }
+
+      debug_cat(paste0("  Tree has ", length(tree_tips), " tips\n"))
+
+      # v122: Check current row names
+      current_rownames <- rownames(heat_data)
+      debug_cat(paste0("  Current rownames: ", paste(head(current_rownames, 5), collapse=", "), "\n"))
+
+      # v122: Verify row names are valid and match tree tips
+      if (is.null(current_rownames) || all(current_rownames == as.character(1:nrow(heat_data)))) {
+        debug_cat(paste0("  WARNING: Heat data has default numeric row names - skipping heatmap ", heat_idx, "\n"))
+        next
+      }
+
+      # v122: Check how many row names match tree tips
+      matching_tips <- sum(current_rownames %in% tree_tips)
+      debug_cat(paste0("  Row names matching tree tips: ", matching_tips, " / ", nrow(heat_data), "\n"))
+
+      if (matching_tips == 0) {
+        debug_cat(paste0("  ERROR: No row names match tree tips - skipping heatmap ", heat_idx, "\n"))
+        next
+      } else if (matching_tips < nrow(heat_data)) {
+        debug_cat(paste0("  WARNING: Only ", matching_tips, " row names match - filtering data\n"))
+        heat_data <- heat_data[current_rownames %in% tree_tips, , drop = FALSE]
+        debug_cat(paste0("  After filtering: ", nrow(heat_data), " rows\n"))
+      }
+
+      debug_cat(paste0("  heat_data dimensions: ", nrow(heat_data), " x ", ncol(heat_data), "\n"))
+      debug_cat(paste0("  heat_data rownames sample: ", paste(head(rownames(heat_data), 5), collapse=", "), "\n"))
+      debug_cat(paste0("  heat_data columns: ", paste(colnames(heat_data), collapse=", "), "\n"))
+
+      # v122: Get heatmap parameters for THIS heatmap (use heat_idx, not 1)
+      heat_param <- if (heat_idx <= length(heat_display_params_list)) heat_display_params_list[[heat_idx]] else list()
+      is_discrete <- ifelse(!is.null(heat_param) && !is.na(heat_param['is_discrete']),
+                            heat_param['is_discrete'] == TRUE, FALSE)
+      debug_cat(paste0("  is_discrete: ", is_discrete, "\n"))
+
+      # v122: Calculate heatmap positioning - use current_heatmap_x_start from previous heatmap
+      # For first heatmap, this is tree_xmax; for subsequent, it's the end of the previous heatmap
+      per_heatmap_distance <- if (!is.null(heat_param[['distance']])) heat_param[['distance']] else heatmap_tree_distance
+      heatmap_offset <- tree_width * per_heatmap_distance
+      debug_cat(paste0("  per_heatmap_distance: ", per_heatmap_distance, "\n"))
+      debug_cat(paste0("  current_heatmap_x_start: ", current_heatmap_x_start, "\n"))
+      # v113: Fixed row height and column width to be INDEPENDENT
+      # In coord_flip context with ggtree:
+      # - Data y (tip indices 1,2,3...) becomes visual x after flip
+      # - Data x (column positions) becomes visual y after flip
+      # So:
+      # - geom_tile 'height' (data y extent) -> controls visual row height
+      # - geom_tile 'width' (data x extent) -> controls visual column width
+
+      # Column Width slider controls how wide each heatmap column appears
+      column_width_value <- if (!is.null(heat_param[['height']])) heat_param[['height']] else 0.8
+
+      # Row Height slider controls how tall each row (tip strip) appears
+      # Values: 0.5 = half height (gaps between rows), 1.0 = full (touching), 2.0 = overlapping
+      row_height_value <- if (!is.null(heat_param[['row_height']])) heat_param[['row_height']] else 1.0
+
+      # tile_width: controls column spacing (data x units)
+      # Base is 3% of tree width, scaled by Column Width slider
+      tile_width <- tree_width * 0.03 * column_width_value
+
+      # v116: Calculate actual tip spacing for row height
+      # Tip y-positions are NOT always at 1,2,3... - they depend on tree topology
+      # We calculate the MINIMUM spacing to prevent overlap at row_height_value=1.0
+      tip_y_positions <- sort(unique(tip_data$y))
+      if (length(tip_y_positions) > 1) {
+        tip_spacings <- diff(tip_y_positions)
+        base_tip_spacing <- min(tip_spacings)  # v116: Use minimum to prevent default overlap
+        mean_spacing <- mean(tip_spacings)
+        median_spacing <- median(tip_spacings)
+        debug_cat(paste0("  v16: tip spacing stats: min=", base_tip_spacing,
+                                   ", median=", median_spacing,
+                                   ", mean=", mean_spacing, "\n"))
+      } else {
+        base_tip_spacing <- 1.0  # Fallback for single tip
+      }
+
+      # tile_height: controls row height (data y units)
+      # row_height_value=1.0 means tiles touch at minimum spacing (no overlap)
+      # <1 means gaps, >1 means overlap
+      tile_height <- base_tip_spacing * row_height_value
+
+      debug_cat(paste0("  v16: tip_y range: [", min(tip_y_positions), ", ", max(tip_y_positions), "]\n"))
+      debug_cat(paste0("  v16: n_tips: ", length(tip_y_positions), "\n"))
+      debug_cat(paste0("  v16: base_tip_spacing (min): ", base_tip_spacing, "\n"))
+
+      debug_cat(paste0("  column_width_value: ", column_width_value, "\n"))
+      debug_cat(paste0("  row_height_value: ", row_height_value, "\n"))
+      debug_cat(paste0("  tile_width (column spacing): ", tile_width, "\n"))
+      debug_cat(paste0("  tile_height (row height): ", tile_height, "\n"))
+
+      debug_cat(paste0("  tree_xmin: ", tree_xmin, "\n"))
+      debug_cat(paste0("  tree_xmax: ", tree_xmax, "\n"))
+      debug_cat(paste0("  tree_width: ", tree_width, "\n"))
+      debug_cat(paste0("  heatmap_offset: ", heatmap_offset, "\n"))
+      debug_cat(paste0("  tile_width: ", tile_width, "\n"))
+
+      # v99: Build heatmap data frame for geom_tile
+      # We need: x (column position), y (tip position), fill (value)
+      debug_cat(paste0("\n=== v99: BUILDING HEATMAP TILE DATA ===\n"))
+
+      tile_data_list <- list()
+      for (col_idx in 1:ncol(heat_data)) {
+        col_name <- colnames(heat_data)[col_idx]
+
+        for (row_idx in 1:nrow(heat_data)) {
+          tip_label <- rownames(heat_data)[row_idx]
+          value <- heat_data[row_idx, col_idx]
+
+          # Find y position from tree tip data
+          tip_row <- tip_data[tip_data$label == tip_label, ]
+          if (nrow(tip_row) > 0) {
+            y_pos <- tip_row$y[1]
+            # v122: Use current_heatmap_x_start (which tracks position after previous heatmaps)
+            x_pos <- current_heatmap_x_start + heatmap_offset + (col_idx - 0.5) * tile_width
+
+            # v111: For continuous data, keep value as-is (numeric)
+            # For discrete data, convert to character
+            if (is_discrete) {
+              tile_value <- as.character(value)
+            } else {
+              # Try to convert to numeric, keep as character if fails
+              tile_value <- suppressWarnings(as.numeric(value))
+              if (is.na(tile_value) && !is.na(value)) {
+                # If conversion to numeric failed but original wasn't NA,
+                # this is likely a non-numeric value - treat as NA for continuous
+                tile_value <- NA_real_
+              }
+            }
+
+            tile_data_list[[length(tile_data_list) + 1]] <- data.frame(
+              x = x_pos,
+              y = y_pos,
+              value = if (is_discrete) tile_value else tile_value,
+              column = col_name,
+              stringsAsFactors = FALSE
+            )
+          }
+        }
+      }
+
+      if (length(tile_data_list) > 0) {
+        tile_df <- do.call(rbind, tile_data_list)
+        debug_cat(paste0("  Created tile_df with ", nrow(tile_df), " tiles\n"))
+        debug_cat(paste0("  x range: [", min(tile_df$x), ", ", max(tile_df$x), "]\n"))
+        debug_cat(paste0("  y range: [", min(tile_df$y), ", ", max(tile_df$y), "]\n"))
+        debug_cat(paste0("  Unique values: ", paste(unique(tile_df$value), collapse=", "), "\n"))
+
+        # v99: Add heatmap tiles using geom_tile
+        debug_cat(paste0("\n=== v99: ADDING GEOM_TILE LAYER ===\n"))
+
+        p <- tryCatch({
+          # v112: Add tile layer with explicit aesthetics
+          # In coord_flip context:
+          # - geom_tile 'width' (data x) -> visual y (column spacing/width)
+          # - geom_tile 'height' (data y) -> visual x (row height/span)
+          # So:
+          # - width = tile_width (fixed column spacing)
+          # - height = tile_height (Row Height slider * base)
+
+          # v113: Get grid settings with debug output
+          show_grid <- if (!is.null(heat_param[['show_grid']])) heat_param[['show_grid']] else FALSE
+          grid_color <- if (!is.null(heat_param[['grid_color']])) heat_param[['grid_color']] else "#000000"
+          grid_size <- if (!is.null(heat_param[['grid_size']])) as.numeric(heat_param[['grid_size']]) else 0.5
+
+          debug_cat(paste0("  v13: show_grid=", show_grid, " (class: ", class(show_grid), ")\n"))
+          debug_cat(paste0("  v13: grid_color=", grid_color, ", grid_size=", grid_size, "\n"))
+
+          # v113: Ensure show_grid is properly evaluated as boolean
+          show_grid_bool <- isTRUE(show_grid) || identical(show_grid, TRUE) || identical(show_grid, "yes") || identical(show_grid, "TRUE")
+          debug_cat(paste0("  v13: show_grid_bool=", show_grid_bool, "\n"))
+
+          # v123: For heatmaps after the first, add new_scale_fill() BEFORE adding geom_tile
+          # This is critical - the scale must be reset before the new layer that uses fill
+          if (heat_idx > 1) {
+            debug_cat(paste0("  v23: Adding new_scale_fill() BEFORE geom_tile for heatmap ", heat_idx, "\n"))
+            p <- p + ggnewscale::new_scale_fill()
+          }
+
+          if (show_grid_bool) {
+            # v115: Draw tiles WITHOUT borders first (to avoid overlapping border issues)
+            p_with_tiles <- p + geom_tile(
+              data = tile_df,
+              aes(x = x, y = y, fill = value),
+              width = tile_width,     # v112: Column spacing (fixed)
+              height = tile_height,   # v112: Row height (slider-controlled)
+              inherit.aes = FALSE
+            )
+
+            # v115: Draw explicit grid lines to ensure all borders appear
+            # Calculate grid line positions
+            n_cols <- ncol(heat_data)
+            col_x_positions <- unique(tile_df$x)
+            col_x_positions <- sort(col_x_positions)
+
+            # Calculate y-range for vertical lines (spanning all tips)
+            y_min <- min(tile_df$y) - tile_height / 2
+            y_max <- max(tile_df$y) + tile_height / 2
+
+            # Build vertical grid lines (n_cols + 1 lines: left edge, between columns, right edge)
+            v_lines_x <- c()
+            for (i in seq_along(col_x_positions)) {
+              # Left edge of this column
+              v_lines_x <- c(v_lines_x, col_x_positions[i] - tile_width / 2)
+            }
+            # Right edge of last column
+            if (length(col_x_positions) > 0) {
+              v_lines_x <- c(v_lines_x, col_x_positions[length(col_x_positions)] + tile_width / 2)
+            }
+            v_lines_x <- unique(v_lines_x)
+
+            # Create vertical line data
+            v_lines_df <- data.frame(
+              x = rep(v_lines_x, each = 1),
+              xend = rep(v_lines_x, each = 1),
+              y = y_min,
+              yend = y_max
+            )
+
+            # Build horizontal grid lines (for each row boundary)
+            tip_y_values <- sort(unique(tile_df$y))
+            h_lines_y <- c()
+            for (i in seq_along(tip_y_values)) {
+              # Top and bottom edge of each row
+              h_lines_y <- c(h_lines_y, tip_y_values[i] - tile_height / 2)
+              h_lines_y <- c(h_lines_y, tip_y_values[i] + tile_height / 2)
+            }
+            h_lines_y <- unique(h_lines_y)
+
+            # Calculate x-range for horizontal lines
+            x_min <- min(tile_df$x) - tile_width / 2
+            x_max <- max(tile_df$x) + tile_width / 2
+
+            # Create horizontal line data
+            h_lines_df <- data.frame(
+              x = x_min,
+              xend = x_max,
+              y = rep(h_lines_y, each = 1),
+              yend = rep(h_lines_y, each = 1)
+            )
+
+            # Add grid lines as separate geom_segment layers
+            p_with_tiles <- p_with_tiles +
+              geom_segment(data = v_lines_df, aes(x = x, xend = xend, y = y, yend = yend),
+                           color = grid_color, linewidth = grid_size, inherit.aes = FALSE) +
+              geom_segment(data = h_lines_df, aes(x = x, xend = xend, y = y, yend = yend),
+                           color = grid_color, linewidth = grid_size, inherit.aes = FALSE)
+
+            debug_cat(paste0("  v15: Added explicit grid lines: ", nrow(v_lines_df), " vertical, ", nrow(h_lines_df), " horizontal\n"))
+          } else {
+            p_with_tiles <- p + geom_tile(
+              data = tile_df,
+              aes(x = x, y = y, fill = value),
+              width = tile_width,     # v112: Column spacing (fixed)
+              height = tile_height,   # v112: Row height (slider-controlled)
+              inherit.aes = FALSE
+            )
+          }
+
+          # S1.62dev: Add horizontal row lines (separate from grid - only horizontal lines)
+          show_row_lines_bool <- !is.null(heat_param[['show_row_lines']]) &&
+                                  isTRUE(heat_param[['show_row_lines']])
+          if (show_row_lines_bool) {
+            row_line_color <- if (!is.null(heat_param[['row_line_color']])) heat_param[['row_line_color']] else "#000000"
+            row_line_size <- if (!is.null(heat_param[['row_line_size']])) as.numeric(heat_param[['row_line_size']]) else 0.5
+
+            debug_cat(paste0("  S1.62dev: Adding horizontal row lines (color: ", row_line_color, ", size: ", row_line_size, ")\n"))
+
+            # Build horizontal row lines (above and below each row)
+            tip_y_values <- sort(unique(tile_df$y))
+            row_lines_y <- c()
+            for (i in seq_along(tip_y_values)) {
+              # Top and bottom edge of each row
+              row_lines_y <- c(row_lines_y, tip_y_values[i] - tile_height / 2)
+              row_lines_y <- c(row_lines_y, tip_y_values[i] + tile_height / 2)
+            }
+            row_lines_y <- unique(row_lines_y)
+
+            # Calculate x-range for horizontal lines
+            row_x_min <- min(tile_df$x) - tile_width / 2
+            row_x_max <- max(tile_df$x) + tile_width / 2
+
+            # Create horizontal line data (NO vertical lines)
+            row_lines_df <- data.frame(
+              x = row_x_min,
+              xend = row_x_max,
+              y = rep(row_lines_y, each = 1),
+              yend = rep(row_lines_y, each = 1)
+            )
+
+            # Add row lines as geom_segment layer
+            p_with_tiles <- p_with_tiles +
+              geom_segment(data = row_lines_df, aes(x = x, xend = xend, y = y, yend = yend),
+                           color = row_line_color, linewidth = row_line_size, inherit.aes = FALSE)
+
+            debug_cat(paste0("  S1.62dev: Added ", nrow(row_lines_df), " horizontal row lines\n"))
+          }
+
+          # S1.62dev: Add vertical column lines (separate from grid - only vertical lines)
+          cat(file=stderr(), paste0("[DEBUG-COLLINES-RENDER] heat_param[['show_col_lines']] = ", ifelse(is.null(heat_param[['show_col_lines']]), "NULL", heat_param[['show_col_lines']]), "\n"))
+          cat(file=stderr(), paste0("[DEBUG-COLLINES-RENDER] 'show_col_lines' in names: ", 'show_col_lines' %in% names(heat_param), "\n"))
+          show_col_lines_bool <- !is.null(heat_param[['show_col_lines']]) &&
+                                  isTRUE(heat_param[['show_col_lines']])
+          cat(file=stderr(), paste0("[DEBUG-COLLINES-RENDER] show_col_lines_bool = ", show_col_lines_bool, "\n"))
+          if (show_col_lines_bool) {
+            col_line_color <- if (!is.null(heat_param[['col_line_color']])) heat_param[['col_line_color']] else "#000000"
+            col_line_size <- if (!is.null(heat_param[['col_line_size']])) as.numeric(heat_param[['col_line_size']]) else 0.5
+
+            debug_cat(paste0("  S1.62dev: Adding vertical column lines (color: ", col_line_color, ", size: ", col_line_size, ")\n"))
+
+            # Build vertical column lines (left and right of each column)
+            col_x_values <- sort(unique(tile_df$x))
+            col_lines_x <- c()
+            for (j in seq_along(col_x_values)) {
+              # Left and right edge of each column
+              col_lines_x <- c(col_lines_x, col_x_values[j] - tile_width / 2)
+              col_lines_x <- c(col_lines_x, col_x_values[j] + tile_width / 2)
+            }
+            col_lines_x <- unique(col_lines_x)
+
+            # Calculate y-range for vertical lines
+            col_y_min <- min(tile_df$y) - tile_height / 2
+            col_y_max <- max(tile_df$y) + tile_height / 2
+
+            # Create vertical line data (NO horizontal lines)
+            col_lines_df <- data.frame(
+              x = rep(col_lines_x, each = 1),
+              xend = rep(col_lines_x, each = 1),
+              y = col_y_min,
+              yend = col_y_max
+            )
+
+            # Add column lines as geom_segment layer
+            p_with_tiles <- p_with_tiles +
+              geom_segment(data = col_lines_df, aes(x = x, xend = xend, y = y, yend = yend),
+                           color = col_line_color, linewidth = col_line_size, inherit.aes = FALSE)
+
+            debug_cat(paste0("  S1.62dev: Added ", nrow(col_lines_df), " vertical column lines\n"))
+          }
+
+          # S1.62dev: Add vertical text labels below heatmap
+          show_vertical_text_bool <- !is.null(heat_param[['show_vertical_text']]) &&
+                                      isTRUE(heat_param[['show_vertical_text']])
+          if (show_vertical_text_bool) {
+            vertical_text_column <- if (!is.null(heat_param[['vertical_text_column']])) heat_param[['vertical_text_column']] else ""
+            vertical_text_size <- if (!is.null(heat_param[['vertical_text_size']])) as.numeric(heat_param[['vertical_text_size']]) else 3
+            vertical_text_offset <- if (!is.null(heat_param[['vertical_text_offset']])) as.numeric(heat_param[['vertical_text_offset']]) else 0.5
+            vertical_text_color <- if (!is.null(heat_param[['vertical_text_color']])) heat_param[['vertical_text_color']] else "#000000"
+
+            debug_cat(paste0("  S1.62dev: Adding vertical text labels (column: '", vertical_text_column,
+                             "', size: ", vertical_text_size, ", offset: ", vertical_text_offset, ")\n"))
+
+            # Get column x positions and names
+            col_x_positions <- sort(unique(tile_df$x))
+            col_names <- colnames(heat_data)
+
+            # Y position below the heatmap
+            y_bottom <- min(tile_df$y) - tile_height / 2 - vertical_text_offset
+
+            # Get labels - either from CSV column or use heatmap column names
+            vertical_labels <- col_names
+            if (!is.null(vertical_text_column) && vertical_text_column != "" && exists("data_table") && !is.null(data_table)) {
+              # Try to get labels from CSV column
+              # The vertical_text_column contains labels, and we need to map heatmap column names to those labels
+              # If CSV has a column with the same values as heatmap column names, use corresponding vertical_text_column values
+              if (vertical_text_column %in% names(data_table)) {
+                debug_cat(paste0("  S1.62dev: Found column '", vertical_text_column, "' in CSV\n"))
+                # For RData CNV heatmaps, column names might be genomic positions
+                # Try to find a mapping in the CSV (column names as row values)
+                csv_col_values <- data_table[[vertical_text_column]]
+                debug_cat(paste0("  S1.62dev: CSV column has ", length(csv_col_values), " values\n"))
+
+                # If the number of CSV rows matches the number of heatmap columns, use them directly
+                if (length(csv_col_values) >= length(col_names)) {
+                  vertical_labels <- as.character(csv_col_values[1:length(col_names)])
+                  debug_cat(paste0("  S1.62dev: Using first ", length(col_names), " values from CSV column as labels\n"))
+                }
+              } else {
+                debug_cat(paste0("  S1.62dev: Column '", vertical_text_column, "' not found in CSV, using column names\n"))
+              }
+            }
+
+            # Create text label data frame
+            if (length(col_x_positions) == length(vertical_labels)) {
+              text_df <- data.frame(
+                x = col_x_positions,
+                y = y_bottom,
+                label = vertical_labels,
+                stringsAsFactors = FALSE
+              )
+
+              # Add vertical text labels using geom_text with 90-degree rotation
+              p_with_tiles <- p_with_tiles +
+                geom_text(data = text_df, aes(x = x, y = y, label = label),
+                          angle = 90, hjust = 1, vjust = 0.5,
+                          size = vertical_text_size, color = vertical_text_color,
+                          inherit.aes = FALSE)
+
+              debug_cat(paste0("  S1.62dev: Added ", nrow(text_df), " vertical text labels\n"))
+            } else {
+              debug_cat(paste0("  S1.62dev: Warning - column count mismatch: ", length(col_x_positions),
+                               " positions vs ", length(vertical_labels), " labels\n"))
+            }
+          }
+
+          debug_cat(paste0("  geom_tile added successfully\n"))
+
+          # v100: Add color scale using user-selected colors
+          na_color <- if (!is.null(heat_param[['na_color']])) heat_param[['na_color']] else "grey90"
+          # v122: Use heat_idx to get the correct heatmap title
+          heatmap_title <- if (heat_idx <= length(heat_map_title_list)) heat_map_title_list[[heat_idx]] else paste0("Heatmap ", heat_idx)
+
+          # v123: new_scale_fill() is now added BEFORE geom_tile (see line ~4993)
+
+          if (is_discrete) {
+            debug_cat(paste0("  Adding discrete color scale\n"))
+
+            # v100: Check for custom colors from user
+            man_define_colors <- !is.null(heat_param['man_define_colors']) &&
+                                 !is.na(heat_param['man_define_colors']) &&
+                                 heat_param['man_define_colors'] == TRUE
+            custom_colors_raw <- heat_param[['color_scale_option']]
+
+            # v104: Convert from list to named vector if needed (list preserves names through YAML)
+            if (is.list(custom_colors_raw) && !is.null(names(custom_colors_raw))) {
+              # Convert named list to named character vector
+              custom_colors <- unlist(custom_colors_raw)
+              debug_cat(paste0("  v04: Converted custom_colors from named list to named vector\n"))
+            } else {
+              custom_colors <- custom_colors_raw
+            }
+
+            debug_cat(paste0("  man_define_colors: ", man_define_colors, "\n"))
+            debug_cat(paste0("  custom_colors: ", paste(custom_colors, collapse=", "), "\n"))
+            debug_cat(paste0("  na_color: ", na_color, "\n"))
+
+            if (man_define_colors && !is.null(custom_colors) && length(custom_colors) > 0) {
+              # v101: Use custom colors provided by user
+              debug_cat(paste0("  Using ", length(custom_colors), " custom colors from user\n"))
+
+              # v104: custom_colors should now be a named vector where names are the value labels
+              # Debug: show what we received
+              debug_cat(paste0("  custom_colors names: ", paste(names(custom_colors), collapse=", "), "\n"))
+              debug_cat(paste0("  custom_colors values: ", paste(custom_colors, collapse=", "), "\n"))
+
+              # Get unique values from data (excluding NA) to match with colors
+              unique_vals <- unique(tile_df$value)
+              unique_vals <- unique_vals[!is.na(unique_vals)]
+              debug_cat(paste0("  Unique values in data: ", paste(unique_vals, collapse=", "), "\n"))
+
+              # v101: Fix color mapping - custom_colors is already a named vector
+              # Match colors by value name, not by position
+              if (!is.null(names(custom_colors)) && length(names(custom_colors)) > 0) {
+                # Use the named vector directly - lookup by value name
+                color_vec <- custom_colors[unique_vals]
+                # For any values not in custom_colors, use a fallback color
+                missing_vals <- unique_vals[is.na(color_vec)]
+                if (length(missing_vals) > 0) {
+                  debug_cat(paste0("  WARNING: Missing colors for: ", paste(missing_vals, collapse=", "), "\n"))
+                  # Use grey for missing values
+                  color_vec[is.na(color_vec)] <- "grey50"
+                }
+              } else {
+                # Fallback: custom_colors is unnamed, use positional assignment (sorted order)
+                debug_cat(paste0("  custom_colors is unnamed, using positional assignment\n"))
+                sorted_vals <- sort(unique_vals)
+                if (length(custom_colors) >= length(sorted_vals)) {
+                  color_vec <- setNames(custom_colors[1:length(sorted_vals)], sorted_vals)
+                } else {
+                  color_vec <- setNames(rep(custom_colors, length.out = length(sorted_vals)), sorted_vals)
+                }
+              }
+              debug_cat(paste0("  Color mapping: ", paste(names(color_vec), "=", color_vec, collapse=", "), "\n"))
+
+              p_with_tiles <- p_with_tiles + scale_fill_manual(
+                values = color_vec,
+                name = heatmap_title,
+                na.value = na_color
+              )
+            } else if (!is.null(custom_colors) && length(custom_colors) == 1 &&
+                       custom_colors %in% rownames(RColorBrewer::brewer.pal.info)) {
+              # v100: Use RColorBrewer palette
+              debug_cat(paste0("  Using RColorBrewer palette: ", custom_colors, "\n"))
+              p_with_tiles <- p_with_tiles + scale_fill_brewer(
+                palette = custom_colors,
+                name = heatmap_title,
+                na.value = na_color
+              )
+            } else {
+              # v100: Fallback to viridis
+              debug_cat(paste0("  Using default viridis palette\n"))
+              p_with_tiles <- p_with_tiles + scale_fill_viridis_d(
+                name = heatmap_title,
+                na.value = na_color
+              )
+            }
+          } else {
+            debug_cat(paste0("  Adding continuous color scale\n"))
+
+            # S1.62dev: Debug - show what heat_param contains for colors
+            cat(file=stderr(), paste0("[DEBUG-COLOR-RENDER] heat_param['low'] = ", ifelse(is.null(heat_param['low']), "NULL", paste0("'", heat_param['low'], "'")), "\n"))
+            cat(file=stderr(), paste0("[DEBUG-COLOR-RENDER] heat_param[['low']] = ", ifelse(is.null(heat_param[['low']]), "NULL", paste0("'", heat_param[['low']], "'")), "\n"))
+            cat(file=stderr(), paste0("[DEBUG-COLOR-RENDER] heat_param names: ", paste(names(heat_param), collapse=", "), "\n"))
+            cat(file=stderr(), paste0("[DEBUG-COLOR-RENDER] 'low' in names: ", 'low' %in% names(heat_param), "\n"))
+
+            # v100: Get continuous scale colors from parameters
+            # S1.62dev: Use double brackets for proper value extraction
+            low_color <- if (!is.null(heat_param[['low']]) && !is.na(heat_param[['low']])) heat_param[['low']] else "beige"
+            mid_color <- if (!is.null(heat_param[['mid']]) && !is.na(heat_param[['mid']])) heat_param[['mid']] else "seashell2"
+            high_color <- if (!is.null(heat_param[['high']]) && !is.na(heat_param[['high']])) heat_param[['high']] else "firebrick4"
+            midpoint <- if (!is.null(heat_param[['midpoint']]) && !is.na(heat_param[['midpoint']])) as.numeric(heat_param[['midpoint']]) else 0.02
+            limits <- heat_param[['limits']]
+
+            # v113: Debug output for continuous scale colors including NA color
+            cat(file=stderr(), paste0("[DEBUG-COLOR-RENDER] Final colors: low=", low_color, ", mid=", mid_color, ", high=", high_color, ", midpoint=", midpoint, "\n"))
+            debug_cat(paste0("  Colors: low=", low_color, ", mid=", mid_color, ", high=", high_color, "\n"))
+            debug_cat(paste0("  Midpoint: ", midpoint, "\n"))
+            debug_cat(paste0("  v13: na_color for continuous: ", na_color, "\n"))
+            debug_cat(paste0("  v13: heat_param na_color value: ", ifelse(is.null(heat_param[['na_color']]), "NULL", heat_param[['na_color']]), "\n"))
+
+            # v111: Values should already be numeric from tile building above
+            # No need to convert here as the geom already has the numeric data
+
+            if (!is.null(limits) && !all(is.na(limits))) {
+              p_with_tiles <- p_with_tiles + scale_fill_gradient2(
+                low = low_color, mid = mid_color, high = high_color,
+                midpoint = midpoint,
+                name = heatmap_title,
+                na.value = na_color,
+                limits = limits
+              )
+            } else {
+              p_with_tiles <- p_with_tiles + scale_fill_gradient2(
+                low = low_color, mid = mid_color, high = high_color,
+                midpoint = midpoint,
+                name = heatmap_title,
+                na.value = na_color
+              )
+            }
+          }
+
+          debug_cat(paste0("  Color scale added successfully\n"))
+
+          # v105: Add row labels if enabled
+          show_row_labels <- if (!is.null(heat_param[['show_row_labels']])) heat_param[['show_row_labels']] else FALSE
+          if (show_row_labels) {
+            debug_cat(paste0("  Adding row labels...\n"))
+
+            row_label_source <- if (!is.null(heat_param[['row_label_source']])) heat_param[['row_label_source']] else "colnames"
+            row_label_font_size <- if (!is.null(heat_param[['row_label_font_size']])) heat_param[['row_label_font_size']] else 2.5
+            custom_row_labels <- if (!is.null(heat_param[['custom_row_labels']])) heat_param[['custom_row_labels']] else ""
+            label_mapping <- if (!is.null(heat_param[['label_mapping']])) heat_param[['label_mapping']] else list()
+
+            # Determine labels to use
+            if (row_label_source == "mapping" && length(label_mapping) > 0) {
+              # v108: Use per-column label mapping
+              labels_to_use <- sapply(colnames(heat_data), function(col_name) {
+                if (!is.null(label_mapping[[col_name]]) && nchar(label_mapping[[col_name]]) > 0) {
+                  label_mapping[[col_name]]
+                } else {
+                  col_name  # Default to column name if not mapped
+                }
+              })
+              debug_cat(paste0("  Using label mapping for ", length(labels_to_use), " columns\n"))
+            } else if (row_label_source == "custom" && nchar(custom_row_labels) > 0) {
+              labels_to_use <- trimws(strsplit(custom_row_labels, ",")[[1]])
+              # Pad or truncate to match number of columns
+              if (length(labels_to_use) < ncol(heat_data)) {
+                labels_to_use <- c(labels_to_use, rep("", ncol(heat_data) - length(labels_to_use)))
+              } else if (length(labels_to_use) > ncol(heat_data)) {
+                labels_to_use <- labels_to_use[1:ncol(heat_data)]
+              }
+            } else {
+              # Use column names
+              labels_to_use <- colnames(heat_data)
+            }
+
+            debug_cat(paste0("  Row labels: ", paste(labels_to_use, collapse=", "), "\n"))
+
+            # v113: Improved row labels positioning
+            # Labels appear below the heatmap (at lower y values than the tips)
+            # With scale_y_reverse + coord_flip, this places them visually to the right
+
+            # v113: Get row label offset and alignment from heat_param
+            row_label_offset <- if (!is.null(heat_param[['row_label_offset']])) as.numeric(heat_param[['row_label_offset']]) else 1.0
+            row_label_align <- if (!is.null(heat_param[['row_label_align']])) heat_param[['row_label_align']] else "left"
+
+            debug_cat(paste0("  v13: row_label_offset from heat_param: ", row_label_offset, "\n"))
+            debug_cat(paste0("  v13: row_label_align from heat_param: ", row_label_align, "\n"))
+
+            # v113: Calculate label y position based on offset
+            # Labels go below minimum tip y (which is typically 1)
+            # Offset controls how far below: 0 = at the edge of tiles, 5 = far from tiles
+            label_y_pos <- min(tile_df$y) - (tile_height / 2) - row_label_offset
+
+            # v109: Get colnames angle from heat_param if available
+            colnames_angle <- if (!is.null(heat_param[['colnames_angle']])) as.numeric(heat_param[['colnames_angle']]) else 0
+
+            # Create label data - one label per column (visual "row")
+            label_df <- data.frame(
+              x = numeric(ncol(heat_data)),  # Will be set per column
+              y = label_y_pos,               # All labels at same y position
+              label = labels_to_use,
+              stringsAsFactors = FALSE
+            )
+
+            # Set x position for each label to match its column position
+            for (col_idx in 1:ncol(heat_data)) {
+              col_tiles <- tile_df[tile_df$column == colnames(heat_data)[col_idx], ]
+              if (nrow(col_tiles) > 0) {
+                # Use the column's x position (all tiles in a column have same x)
+                label_df$x[col_idx] <- unique(col_tiles$x)[1]
+              }
+            }
+
+            # v113: Determine hjust based on alignment setting
+            # In coord_flip context with angle=0:
+            # - hjust controls visual horizontal alignment
+            # - left=0 (text starts at anchor), center=0.5, right=1 (text ends at anchor)
+            # In coord_flip context with angle=90 or angle=45:
+            # - vjust becomes more relevant for visual positioning
+            hjust_val <- switch(row_label_align,
+                                "left" = 0,
+                                "center" = 0.5,
+                                "right" = 1,
+                                0)  # default to left
+
+            # v113: For angled text, also adjust vjust for better alignment
+            vjust_val <- if (colnames_angle == 0) 0.5 else if (colnames_angle > 0) 1 else 0
+
+            # Add text labels
+            p_with_tiles <- p_with_tiles + geom_text(
+              data = label_df,
+              aes(x = x, y = y, label = label),
+              size = row_label_font_size,
+              hjust = hjust_val,
+              vjust = vjust_val,
+              angle = colnames_angle,
+              inherit.aes = FALSE
+            )
+            debug_cat(paste0("  Row labels added successfully\n"))
+            debug_cat(paste0("  Label position: label_y_pos=", label_y_pos, ", angle=", colnames_angle, ", hjust=", hjust_val, ", vjust=", vjust_val, "\n"))
+          }
+
+          # v116/v119: Add tip guide lines (vertical lines from tips through heatmap)
+          show_guides <- if (!is.null(heat_param[['show_guides']])) heat_param[['show_guides']] else FALSE
+          show_guides_bool <- isTRUE(show_guides) || identical(show_guides, TRUE) || identical(show_guides, "yes") || identical(show_guides, "TRUE")
+
+          # v119: Debug output to trace guide line settings
+          debug_cat(paste0("\n=== v119: TIP GUIDE LINES CHECK ===\n"))
+          debug_cat(paste0("  show_guides raw value: ", show_guides, " (class: ", class(show_guides), ")\n"))
+          debug_cat(paste0("  show_guides_bool: ", show_guides_bool, "\n"))
+
+          if (show_guides_bool) {
+            debug_cat(paste0("\n=== v116: ADDING TIP GUIDE LINES ===\n"))
+
+            # Get guide line settings
+            guide_color1 <- if (!is.null(heat_param[['guide_color1']])) heat_param[['guide_color1']] else "#CCCCCC"
+            guide_color2 <- if (!is.null(heat_param[['guide_color2']])) heat_param[['guide_color2']] else "#EEEEEE"
+            guide_alpha <- if (!is.null(heat_param[['guide_alpha']])) as.numeric(heat_param[['guide_alpha']]) else 0.3
+            guide_width <- if (!is.null(heat_param[['guide_width']])) as.numeric(heat_param[['guide_width']]) else 0.5
+            guide_linetype <- if (!is.null(heat_param[['guide_linetype']])) heat_param[['guide_linetype']] else "solid"
+
+            debug_cat(paste0("  guide_color1: ", guide_color1, "\n"))
+            debug_cat(paste0("  guide_color2: ", guide_color2, "\n"))
+            debug_cat(paste0("  guide_alpha: ", guide_alpha, "\n"))
+            debug_cat(paste0("  guide_width: ", guide_width, "\n"))
+            debug_cat(paste0("  guide_linetype: ", guide_linetype, "\n"))
+
+            # v125: Get tip positions from tip_data to start guide lines at actual tip locations
+            # Each tip may have a different x position based on branch lengths
+            n_tips <- nrow(tip_data)
+            debug_cat(paste0("  Number of tips: ", n_tips, "\n"))
+
+            # v125: Calculate x-end (right edge of heatmap)
+            x_max <- max(tile_df$x) + tile_width / 2  # End at right edge of heatmap
+
+            # v125: Build guide lines data using each tip's actual x position
+            # This connects each guide line directly to its tree tip
+            guide_lines_list <- lapply(seq_len(nrow(tip_data)), function(tip_idx) {
+              tip_label <- tip_data$label[tip_idx]
+              tip_x <- tip_data$x[tip_idx]  # Actual x position of this tip
+              tip_y <- tip_data$y[tip_idx]  # Actual y position of this tip
+
+              data.frame(
+                x = tip_x,  # v125: Start at actual tip x position
+                xend = x_max,
+                y = tip_y,
+                yend = tip_y,
+                color_idx = tip_idx %% 2  # 0 for even, 1 for odd
+              )
+            })
+            guide_lines_df <- do.call(rbind, guide_lines_list)
+
+            debug_cat(paste0("  v25: Guide lines from individual tip x positions to x_max=", x_max, "\n"))
+            debug_cat(paste0("  v25: Tip x range: [", min(tip_data$x), ", ", max(tip_data$x), "]\n"))
+
+            # Apply transparency to the colors
+            guide_color1_alpha <- adjustcolor(guide_color1, alpha.f = guide_alpha)
+            guide_color2_alpha <- adjustcolor(guide_color2, alpha.f = guide_alpha)
+
+            # Add the guide lines as a layer
+            p_with_tiles <- p_with_tiles +
+              geom_segment(
+                data = guide_lines_df[guide_lines_df$color_idx == 0, ],
+                aes(x = x, xend = xend, y = y, yend = yend),
+                color = guide_color1_alpha,
+                linewidth = guide_width,
+                linetype = guide_linetype,
+                inherit.aes = FALSE
+              ) +
+              geom_segment(
+                data = guide_lines_df[guide_lines_df$color_idx == 1, ],
+                aes(x = x, xend = xend, y = y, yend = yend),
+                color = guide_color2_alpha,
+                linewidth = guide_width,
+                linetype = guide_linetype,
+                inherit.aes = FALSE
+              )
+
+            debug_cat(paste0("  v16: Added ", n_tips, " tip guide lines\n"))
+          }
+
+          debug_cat(paste0("  Final layers: ", length(p_with_tiles$layers), "\n"))
+          p_with_tiles
+
+        }, error = function(e) {
+          debug_cat(paste0("  ERROR adding heatmap: ", e$message, "\n"))
+          debug_cat(paste0("  Returning tree without heatmap\n"))
+          p
+        })
+
+        debug_cat(paste0("=== v122: HEATMAP ", heat_idx, " COMPLETE ===\n"))
+        debug_cat(paste0("  p layers after heatmap: ", length(p$layers), "\n"))
+        debug_cat(paste0("  Layer types: ", paste(sapply(p$layers, function(l) class(l$geom)[1]), collapse=", "), "\n"))
+
+        # v125: Update current_heatmap_x_start for next heatmap
+        # Calculate the rightmost x position of this heatmap + global gap
+        this_heatmap_x_end <- max(tile_df$x) + tile_width / 2
+        current_heatmap_x_start <- this_heatmap_x_end + heatmap_spacing  # v125: Add gap between heatmaps
+        debug_cat(paste0("  v25: Updated current_heatmap_x_start to ", current_heatmap_x_start, " (added gap=", heatmap_spacing, ")\n"))
+
+      } else {
+        debug_cat(paste0("  WARNING: No tile data created - skipping heatmap ", heat_idx, "\n"))
+      }
+    } # End of v122 for loop for this heatmap
+  }
+  # END v122 MULTIPLE HEATMAPS
+
+  # v94: Track p right after heatmap block
+  debug_cat(paste0("\n=== v94: Immediately after simplified heatmap block ===\n"))
+  debug_cat(paste0("  heat_flag: ", heat_flag, "\n"))
+  debug_cat(paste0("  p layers: ", length(p$layers), "\n"))
+  debug_cat(paste0("  Layer types: ", paste(sapply(p$layers, function(l) class(l$geom)[1]), collapse=", "), "\n"))
+
+  # ========================================================================
+  # v91: ORIGINAL COMPLEX HEATMAP CODE COMMENTED OUT BELOW
+
+  # The following 800+ lines of complex heatmap logic have been commented out
+  # to simplify debugging. This will be rebuilt step by step.
+  # ========================================================================
+
+  if (FALSE) {
+  # ORIGINAL CODE START (commented out for v91)
+  # v58: FIX - Also check that dxdf440_for_heat has data, not just heat_flag
+  # if (heat_flag == TRUE && length(dxdf440_for_heat) > 0) {
+    tt_DISABLED <- p
+
+    # v63: DEBUG - show x range BEFORE scaling
+    x_range_before <- range(tt_DISABLED$data$x, na.rm = TRUE)
+    debug_cat(paste0("\n=== v63: Pre-scaling x range: [", x_range_before[1], ", ", x_range_before[2], "] ===\n"))
+
     for (i in cc_totss) {
       par <- tt$data$parent[i]
       parX <- tt$data$x[par]
       tt$data[tt$data$node[i], "x"] <- tt$data[tt$data$node[i], "x"] * 15
     }
+
+    # v63: DEBUG - show x range AFTER scaling
+    x_range_after <- range(tt$data$x, na.rm = TRUE)
+    debug_cat(paste0("=== v63: Post-scaling x range: [", x_range_after[1], ", ", x_range_after[2], "] ===\n"))
     
     how_many_tips <- length(tt$data$isTip)
     
@@ -4367,9 +6630,13 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     }
     
     # Calculate max column name length for formatting
+    # v86: CRITICAL FIX - renamed loop variable from 'j' to 'h_idx' to avoid conflict with
+    # the heatmap counter 'j' that's used later in the code for tracking enabled heatmaps.
+    # Using 'j' here was overwriting the counter and causing j=2 instead of j=1 for the
+    # first heatmap, which led to incorrect scale application and "Problem while setting up geom" errors.
     max_len_col_name_heat <- 0
-    for (j in 1:length(heat_map_title_list)) {  
-      colnames_heat <- colnames(dxdf440_for_heat[[j]])
+    for (h_idx in 1:length(heat_map_title_list)) {
+      colnames_heat <- colnames(dxdf440_for_heat[[h_idx]])
       max_len_col_name_heat <- max(max_len_col_name_heat, max(nchar(colnames_heat)))
     }
     
@@ -4413,8 +6680,10 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       if (j > 1) {
         off <- off + man_adj_heat_loc2
         tt <- pr440_short_tips_TRY_heat + new_scale_fill()
+        # v69: Repair mapping after new_scale_fill (can cause corruption)
+        tt <- func.repair.ggtree.mapping(tt)
       }
-      
+
       if (j > 2) {
         off <- off + man_adj_heat_loc3
       }
@@ -4486,13 +6755,15 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       p <- tt
       
       # Handle column names
-      if (is.na(flag_colnames[1])) {
-        for (a in 1:length(heat_map_title_list)) {
-          flag_colnames[a] <- FALSE
-        }
+      # S1.62dev: Use per-heatmap show_colnames from heat_param if available, else fall back to flag_colnames
+      show_colnames_for_heatmap <- TRUE  # default to showing
+      if (!is.null(heat_param) && 'show_colnames' %in% names(heat_param)) {
+        show_colnames_for_heatmap <- heat_param[['show_colnames']]
+      } else if (!is.na(flag_colnames[1]) && j1 <= length(flag_colnames)) {
+        show_colnames_for_heatmap <- flag_colnames[j1]
       }
-      
-      if (flag_colnames[j1] == FALSE) {
+
+      if (show_colnames_for_heatmap == FALSE) {
         dt <- dxdf440_for_heat[[j1]]
         colnames_len <- length(colnames(dt))
         custom_column_labels <- rep("", colnames_len)
@@ -4502,28 +6773,70 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       }
       
       # Replace heat legend labels if requested
+      # v87: CRITICAL FIX - renamed loop variable from 'j' to 'legend_key' to avoid overwriting heatmap counter
       if (!is.na(heat_legend_replace[1])) {
-        for (j in names(heat_legend_replace)) {
-          if (j %in% custom_column_labels) {
-            custom_column_labels[custom_column_labels == j] <- heat_legend_replace[j]
+        for (legend_key in names(heat_legend_replace)) {
+          if (legend_key %in% custom_column_labels) {
+            custom_column_labels[custom_column_labels == legend_key] <- heat_legend_replace[legend_key]
           }
         }
-      }   
-      
+      }
+
       # Calculate max column name length again for formatting
+      # v87: CRITICAL FIX - renamed loop variable from 'j' to 'col_idx2' to avoid overwriting heatmap counter
       max_len_col_name_heat <- 0
-      for (j in 1:length(custom_column_labels)) {  
+      for (col_idx2 in 1:length(custom_column_labels)) {
         max_len_col_name_heat <- max(max_len_col_name_heat, max(nchar(custom_column_labels)))
       }
-      
+
+      # v89: RESTORED factor conversion for discrete heatmap data
+      # The v88 change to skip factor conversion was WRONG - gheatmap needs factors
+      # for discrete data to work properly with ggplot2's discrete color scales.
+      # Without factors, "Problem while setting up geom" errors occur during rendering.
+      if (!is.null(heat_param) && heat_param['is_discrete'] == TRUE) {
+        debug_cat(paste0("\n=== v89: Converting discrete heatmap to factors ===\n"))
+        for (col_idx in 1:ncol(dxdf440_for_heat[[j1]])) {
+          col_name <- colnames(dxdf440_for_heat[[j1]])[col_idx]
+          col_vals <- dxdf440_for_heat[[j1]][, col_idx]
+          unique_vals <- sort(unique(na.omit(col_vals)))
+          debug_cat(paste0("  Column '", col_name, "': ", length(unique_vals), " unique values\n"))
+          debug_cat(paste0("  Unique values: ", paste(head(unique_vals, 10), collapse=", "),
+                                    if(length(unique_vals) > 10) "..." else "", "\n"))
+          # v89: RESTORED - Convert to factor with sorted levels (REQUIRED for discrete heatmaps)
+          dxdf440_for_heat[[j1]][, col_idx] <- factor(col_vals, levels = unique_vals)
+          debug_cat(paste0("  Converted to factor with ", length(unique_vals), " levels\n"))
+        }
+        debug_cat(paste0("================================\n"))
+      }
+
       # Create the heatmap
+      # v61: DEBUG - show data structure before gheatmap call
+      debug_cat(paste0("\n=== v61: GHEATMAP DATA DEBUG ===\n"))
+      debug_cat(paste0("  Heatmap index: j1=", j1, ", j=", j, "\n"))
+      heat_data <- dxdf440_for_heat[[j1]]
+      debug_cat(paste0("  heat_data dimensions: ", nrow(heat_data), " x ", ncol(heat_data), "\n"))
+      debug_cat(paste0("  heat_data rownames sample: ", paste(head(rownames(heat_data), 5), collapse=", "), "\n"))
+      debug_cat(paste0("  heat_data columns: ", paste(colnames(heat_data), collapse=", "), "\n"))
+      tt_tips <- subset(tt$data, isTip == TRUE)
+      debug_cat(paste0("  Tree tip labels sample: ", paste(head(tt_tips$label, 5), collapse=", "), "\n"))
+      # Check if rownames match tree tip labels
+      matching_tips <- sum(rownames(heat_data) %in% tt_tips$label)
+      debug_cat(paste0("  Rownames matching tree tips: ", matching_tips, " / ", nrow(heat_data), "\n"))
+      debug_cat(paste0("  offset (new_heat_x): ", new_heat_x, "\n"))
+      debug_cat(paste0("  width (wi): ", wi, "\n"))
+      debug_cat(paste0("================================\n"))
+
+      # v83: RESTORED duplicate gheatmap pattern from v61 - THIS IS INTENTIONAL
+      # The user confirmed this pattern was in the original lineage plotter code and is required.
+      # DO NOT REMOVE THIS DUPLICATE CALL - it is necessary for gheatmap to work correctly.
+      # First gheatmap call creates the initial structure
       pr440_short_tips_TRY_heat <- gheatmap(
-        tt, 
-        data = dxdf440_for_heat[[j1]], 
-        colnames_angle = colnames_angle, 
-        offset = new_heat_x, 
+        tt,
+        data = dxdf440_for_heat[[j1]],
+        colnames_angle = colnames_angle,
+        offset = new_heat_x,
         width = wi,
-        font.size = size_font_heat_map_legend, 
+        font.size = size_font_heat_map_legend,
         colnames_offset_x = 0,
         colnames_offset_y = heat_names_offset,
         legend_title = heat_map_title_list[[j1]],
@@ -4531,17 +6844,26 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
         custom_column_labels = custom_column_labels,
         color = NA
       )
-      
-      # Apply special processing for first heatmap
+
+      # v83: IMMEDIATELY repair mapping after first gheatmap call
+      # This MUST happen before any other operations on the plot
+      pr440_short_tips_TRY_heat <- func.repair.ggtree.mapping(pr440_short_tips_TRY_heat, verbose = FALSE)
+
+      # v83: REQUIRED second gheatmap call - DO NOT REMOVE
+      # For j==1 (first heatmap):
+      #   - Continuous: call gheatmap on result (pr440_short_tips_TRY_heat)
+      #   - Discrete: call gheatmap on original tree (tt)
+      # This duplicate call is intentional and required for proper rendering.
       if (j == 1) {
         if (heat_param['is_discrete'] == FALSE) {
+          # Continuous heatmaps: apply gheatmap on the result
           pr440_short_tips_TRY_heat <- gheatmap(
-            pr440_short_tips_TRY_heat, 
-            data = dxdf440_for_heat[[j1]], 
-            colnames_angle = colnames_angle, 
-            offset = new_heat_x, 
+            pr440_short_tips_TRY_heat,
+            data = dxdf440_for_heat[[j1]],
+            colnames_angle = colnames_angle,
+            offset = new_heat_x,
             width = wi,
-            font.size = size_font_heat_map_legend, 
+            font.size = size_font_heat_map_legend,
             colnames_offset_x = 0,
             colnames_offset_y = heat_names_offset,
             legend_title = heat_map_title_list[[j1]],
@@ -4550,13 +6872,14 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             color = NA
           )
         } else {
+          # Discrete heatmaps: apply gheatmap on original tree again
           pr440_short_tips_TRY_heat <- gheatmap(
-            tt, 
-            data = dxdf440_for_heat[[j1]], 
-            colnames_angle = colnames_angle, 
-            offset = new_heat_x, 
+            tt,
+            data = dxdf440_for_heat[[j1]],
+            colnames_angle = colnames_angle,
+            offset = new_heat_x,
             width = wi,
-            font.size = size_font_heat_map_legend, 
+            font.size = size_font_heat_map_legend,
             colnames_offset_x = 0,
             colnames_offset_y = heat_names_offset,
             legend_title = heat_map_title_list[[j1]],
@@ -4565,54 +6888,325 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             color = NA
           )
         }
+        # v83: IMMEDIATELY repair mapping after second gheatmap call
+        pr440_short_tips_TRY_heat <- func.repair.ggtree.mapping(pr440_short_tips_TRY_heat, verbose = FALSE)
       }
-      
+
+      # v85: REMOVED direct layer data modification - it corrupts ggplot2 internal state
+      # gheatmap creates tile layers with character values, and scale_fill_manual can handle
+      # both character and factor values. Direct modification of layer$data causes
+      # "Problem while setting up geom" errors during ggplot_build.
+      #
+      # Instead, we collect the unique values for scale setup without modifying layer data.
+      tile_values <- c()
+      for (layer_idx in seq_along(pr440_short_tips_TRY_heat$layers)) {
+        layer <- pr440_short_tips_TRY_heat$layers[[layer_idx]]
+        if (inherits(layer$geom, "GeomTile") && !is.null(layer$data) && is.data.frame(layer$data)) {
+          if ("value" %in% names(layer$data)) {
+            layer_vals <- unique(na.omit(layer$data$value))
+            tile_values <- c(tile_values, layer_vals)
+            debug_cat(paste0("  v5: Found tile layer ", layer_idx, " with values: ",
+                                      paste(head(layer_vals, 5), collapse=", "), "\n"))
+          }
+        }
+      }
+      tile_values <- unique(tile_values)
+      debug_cat(paste0("  v5: All tile values: ", paste(tile_values, collapse=", "), "\n"))
+
+      # v82: DEBUG - verify gheatmap result and tile layer data
+      debug_cat(paste0("\n=== v71: POST-GHEATMAP DEBUG ===\n"))
+      debug_cat(paste0("  Number of layers in plot: ", length(pr440_short_tips_TRY_heat$layers), "\n"))
+      gheatmap_xrange <- range(pr440_short_tips_TRY_heat$data$x, na.rm = TRUE)
+      debug_cat(paste0("  Plot data x range: [", gheatmap_xrange[1], ", ", gheatmap_xrange[2], "]\n"))
+
+      # Check if there's rect/tile data (heatmap)
+      layer_types <- sapply(pr440_short_tips_TRY_heat$layers, function(l) class(l$geom)[1])
+      debug_cat(paste0("  Layer geom types: ", paste(layer_types, collapse=", "), "\n"))
+
+      # v72: Enhanced debugging to find and inspect the GeomTile layer
+      for (layer_idx in seq_along(pr440_short_tips_TRY_heat$layers)) {
+        layer <- pr440_short_tips_TRY_heat$layers[[layer_idx]]
+        if (inherits(layer$geom, "GeomTile")) {
+          debug_cat(paste0("  GeomTile found at layer ", layer_idx, "\n"))
+          tryCatch({
+            layer_data <- layer$data
+            if (is.function(layer_data)) {
+              debug_cat(paste0("    Layer data is a function, evaluating...\n"))
+              layer_data <- layer_data(pr440_short_tips_TRY_heat$data)
+            }
+            if (!is.null(layer_data) && is.data.frame(layer_data)) {
+              debug_cat(paste0("    Layer data rows: ", nrow(layer_data), "\n"))
+              debug_cat(paste0("    Layer data columns: ", paste(names(layer_data), collapse=", "), "\n"))
+              if ("x" %in% names(layer_data)) {
+                x_vals <- layer_data$x
+                debug_cat(paste0("    Tile x range: [", min(x_vals, na.rm=TRUE), ", ", max(x_vals, na.rm=TRUE), "]\n"))
+              }
+              if ("y" %in% names(layer_data)) {
+                y_vals <- layer_data$y
+                debug_cat(paste0("    Tile y range: [", min(y_vals, na.rm=TRUE), ", ", max(y_vals, na.rm=TRUE), "]\n"))
+              }
+              # v72: Check value column (this is what fill maps to in gheatmap)
+              if ("value" %in% names(layer_data)) {
+                debug_cat(paste0("    Value column (unique): ", paste(unique(layer_data$value), collapse=", "), "\n"))
+                debug_cat(paste0("    Value column class: ", class(layer_data$value)[1], "\n"))
+              }
+              # v72: Check width column (tile width)
+              if ("width" %in% names(layer_data)) {
+                width_vals <- layer_data$width
+                debug_cat(paste0("    Width values: [", min(width_vals, na.rm=TRUE), ", ", max(width_vals, na.rm=TRUE), "]\n"))
+              }
+              if ("fill" %in% names(layer_data)) {
+                debug_cat(paste0("    Fill values (first 5): ", paste(head(layer_data$fill, 5), collapse=", "), "\n"))
+              }
+              # v72: Check the layer's aesthetic mapping
+              if (!is.null(layer$mapping)) {
+                debug_cat(paste0("    Layer mapping: ", paste(names(layer$mapping), collapse=", "), "\n"))
+              }
+            } else {
+              debug_cat(paste0("    WARNING: Layer data is not a data.frame: ", class(layer_data)[1], "\n"))
+            }
+          }, error = function(e) {
+            debug_cat(paste0("    ERROR accessing layer data: ", e$message, "\n"))
+          })
+        }
+      }
+
+      # v82: Removed aggressive ggplot_build debugging that was causing premature errors
+      # The build will be done at the end when saving the plot
+
       # Apply correct coloring scale based on heatmap type
       if (heat_param['is_discrete'] == FALSE) {
         limits <- heat_param[['limits']]
-        
+
         if (is.na(limits[1]) == TRUE) {
           pr440_short_tips_TRY_heat <- pr440_short_tips_TRY_heat +
             scale_fill_gradient2(
-              low = heat_param['low'], 
-              mid = heat_param['mid'], 
-              high = heat_param['high'], 
+              low = heat_param['low'],
+              mid = heat_param['mid'],
+              high = heat_param['high'],
               midpoint = .02,
-              name = heat_map_title_list[[j1]] 
+              name = heat_map_title_list[[j1]],
+              na.value = "white"
             )
         } else {
           pr440_short_tips_TRY_heat <- pr440_short_tips_TRY_heat +
             scale_fill_gradient2(
-              low = heat_param['low'], 
-              mid = heat_param['mid'], 
-              high = heat_param['high'], 
+              low = heat_param['low'],
+              mid = heat_param['mid'],
+              high = heat_param['high'],
               midpoint = .02,
               name = heat_map_title_list[[j1]],
-              limits = limits
+              limits = limits,
+              na.value = "white"
             )
         }
+        # v82: Removed aggressive mapping repair - will do single repair at end of heatmap loop
       } else {
+        # v65: DEBUG - trace discrete heatmap color path
+        debug_cat(paste0("\n=== v65: DISCRETE HEATMAP COLOR DEBUG ===\n"))
+        debug_cat(paste0("  heat_param['is_discrete']: ", heat_param['is_discrete'], "\n"))
+        debug_cat(paste0("  heat_param['man']: ", heat_param['man'], "\n"))
+        debug_cat(paste0("  heat_param['man_define_colors']: ", heat_param['man_define_colors'], "\n"))
+        debug_cat(paste0("  heat_param[['color_scale_option']]: ",
+                                  if(is.null(heat_param[['color_scale_option']])) "NULL"
+                                  else paste(class(heat_param[['color_scale_option']]), collapse=", "), "\n"))
+        if (!is.null(heat_param[['color_scale_option']])) {
+          debug_cat(paste0("  color_scale_option value: ",
+                                    paste(heat_param[['color_scale_option']], collapse=", "), "\n"))
+          if (is.list(heat_param[['color_scale_option']])) {
+            debug_cat(paste0("  color_scale_option$color_scale_option: ",
+                                      heat_param[['color_scale_option']]$color_scale_option, "\n"))
+          }
+        }
+        debug_cat(paste0("========================================\n"))
+
         if (heat_param['man'] == FALSE) {
           if (heat_param['man_define_colors'] == FALSE) {
-            pr440_short_tips_TRY_heat <- pr440_short_tips_TRY_heat +
-              scale_fill_hue(name = heat_map_title_list[[j1]])
+            # v67: SIMPLIFIED - color_scale_option is now directly a palette name string (e.g., "Set1")
+            # No more nested list handling needed after the fix at line 2616
+            palette_name <- heat_param[['color_scale_option']]
+
+            debug_cat(paste0("\n=== v67: Discrete palette check ===\n"))
+            debug_cat(paste0("  palette_name: ", if(is.null(palette_name)) "NULL" else palette_name, "\n"))
+            if (!is.null(palette_name)) {
+              debug_cat(paste0("  Is valid RColorBrewer palette: ",
+                                        palette_name %in% rownames(RColorBrewer::brewer.pal.info), "\n"))
+            }
+            debug_cat(paste0("================================\n"))
+
+            # v67: Use RColorBrewer palette if available, otherwise use default hue
+            if (!is.null(palette_name) && is.character(palette_name) &&
+                palette_name %in% rownames(RColorBrewer::brewer.pal.info)) {
+              # Get unique values to determine number of colors needed
+              heat_data_vals <- unique(na.omit(dxdf440_for_heat[[j1]][,1]))
+              n_vals <- length(heat_data_vals)
+              max_colors <- RColorBrewer::brewer.pal.info[palette_name, "maxcolors"]
+              n_colors <- min(n_vals, max_colors)
+
+              debug_cat(paste0("\n=== v67: Applying discrete palette ===\n"))
+              debug_cat(paste0("  Palette: ", palette_name, "\n"))
+              debug_cat(paste0("  Number of unique values: ", n_vals, "\n"))
+              debug_cat(paste0("  Colors to use: ", n_colors, "\n"))
+              debug_cat(paste0("================================\n"))
+
+              # v70: Get NA color from heat_param (default white)
+              na_color <- if (!is.null(heat_param[['na_color']])) heat_param[['na_color']] else "white"
+              debug_cat(paste0("  NA color: ", na_color, "\n"))
+
+              pr440_short_tips_TRY_heat <- pr440_short_tips_TRY_heat +
+                scale_fill_brewer(palette = palette_name, name = heat_map_title_list[[j1]], na.value = na_color)
+              # v82: Removed aggressive mapping repair - will do single repair at end of heatmap loop
+            } else {
+              debug_cat(paste0("  v7: Using default hue scale (no valid palette specified)\n"))
+              # v70: Get NA color from heat_param (default white)
+              na_color <- if (!is.null(heat_param[['na_color']])) heat_param[['na_color']] else "white"
+              pr440_short_tips_TRY_heat <- pr440_short_tips_TRY_heat +
+                scale_fill_hue(name = heat_map_title_list[[j1]], na.value = na_color)
+              # v82: Removed aggressive mapping repair - will do single repair at end of heatmap loop
+            }
           } else {
-            pr440_short_tips_TRY_heat <- pr440_short_tips_TRY_heat +
-              scale_fill_manual(
-                values = heat_param[['color_scale_option']]$color_scale_option, 
-                name = heat_map_title_list[[j1]],
-                na.value = 'WHITE'
-              ) +              
-              theme_minimal() +
-              theme(
-                panel.background = element_rect(fill = "white", color = NA),
-                plot.background = element_rect(fill = "white", color = NA),
-                panel.grid = element_blank(),
-                panel.border = element_blank(),
-                axis.text = element_blank(),
-                axis.ticks = element_blank(),
-                axis.title = element_blank()
-              )
+            # v70: man_define_colors is TRUE - use custom color values
+            # color_scale_option should be a named vector of colors
+            custom_colors <- heat_param[['color_scale_option']]
+            debug_cat(paste0("\n=== v70: Applying custom discrete colors ===\n"))
+            debug_cat(paste0("  custom_colors class: ", paste(class(custom_colors), collapse=", "), "\n"))
+            debug_cat(paste0("  custom_colors length: ", length(custom_colors), "\n"))
+            debug_cat(paste0("  custom_colors names: ", paste(head(names(custom_colors), 10), collapse=", "), "\n"))
+            debug_cat(paste0("  custom_colors values: ", paste(head(custom_colors, 10), collapse=", "), "\n"))
+
+            # v85: Use tile_values collected from actual tile layer data (not dxdf440_for_heat)
+            # This ensures we match exactly what gheatmap created
+            heat_data_vals <- tile_values
+            debug_cat(paste0("  v5: Using tile_values from layer: ", paste(head(heat_data_vals, 10), collapse=", "), "\n"))
+
+            # v73: Fix - properly subset custom_colors to match tile values
+            # This prevents NA names which cause scale_fill_manual to fail
+            n_levels <- length(heat_data_vals)
+
+            if (n_levels == 0) {
+              # v85: If no tile values found, fall back to using dxdf440_for_heat
+              debug_cat(paste0("  v5: WARNING - no tile values found, using source data\n"))
+              for (col_idx in 1:ncol(dxdf440_for_heat[[j1]])) {
+                col_vals <- dxdf440_for_heat[[j1]][, col_idx]
+                if (is.factor(col_vals)) {
+                  col_levels <- levels(col_vals)
+                  if (!is.null(col_levels) && length(col_levels) > 0) {
+                    heat_data_vals <- c(heat_data_vals, col_levels)
+                  }
+                } else {
+                  col_unique <- unique(na.omit(col_vals))
+                  if (length(col_unique) > 0) {
+                    heat_data_vals <- c(heat_data_vals, col_unique)
+                  }
+                }
+              }
+              heat_data_vals <- unique(heat_data_vals)
+              n_levels <- length(heat_data_vals)
+            }
+
+            if (is.null(names(custom_colors)) || length(names(custom_colors)) == 0) {
+              debug_cat(paste0("  v3: WARNING - custom_colors has no names, subsetting and assigning by position\n"))
+              debug_cat(paste0("  v3: Number of tile values: ", n_levels, "\n"))
+              debug_cat(paste0("  v3: Number of custom colors: ", length(custom_colors), "\n"))
+
+              # CRITICAL: Only use as many colors as there are values
+              if (n_levels > 0 && length(custom_colors) >= n_levels) {
+                # Subset colors to match values exactly
+                colors_to_use <- custom_colors[1:n_levels]
+                names(colors_to_use) <- as.character(heat_data_vals)
+                custom_colors <- colors_to_use
+                debug_cat(paste0("  v3: Subsetted to ", n_levels, " colors\n"))
+                debug_cat(paste0("  v3: Final names: ", paste(names(custom_colors), collapse=", "), "\n"))
+                debug_cat(paste0("  v3: Final values: ", paste(custom_colors, collapse=", "), "\n"))
+              } else if (n_levels > 0) {
+                # Not enough colors, recycle
+                debug_cat(paste0("  v3: WARNING - not enough colors, recycling\n"))
+                colors_to_use <- rep(custom_colors, length.out = n_levels)
+                names(colors_to_use) <- as.character(heat_data_vals)
+                custom_colors <- colors_to_use
+              }
+            } else {
+              # custom_colors already has names - ensure they match values
+              debug_cat(paste0("  v3: custom_colors already named: ", paste(names(custom_colors), collapse=", "), "\n"))
+              # Only keep colors whose names are in heat_data_vals
+              valid_names <- names(custom_colors) %in% as.character(heat_data_vals)
+              if (any(valid_names)) {
+                custom_colors <- custom_colors[valid_names]
+                debug_cat(paste0("  v3: After filtering: ", paste(names(custom_colors), collapse=", "), "\n"))
+              }
+            }
+            # v70: Get NA color from heat_param (default white)
+            na_color <- if (!is.null(heat_param[['na_color']])) heat_param[['na_color']] else "white"
+            debug_cat(paste0("  NA color: ", na_color, "\n"))
+            debug_cat(paste0("================================\n"))
+
+            # v88: CRITICAL FIX - Test ggplot_build BEFORE applying scale to diagnose root cause
+            debug_cat(paste0("  v8: Testing ggplot_build BEFORE scale application...\n"))
+            pre_scale_ok <- tryCatch({
+              test_build_pre <- ggplot2::ggplot_build(pr440_short_tips_TRY_heat)
+              debug_cat(paste0("  v8: Pre-scale ggplot_build: SUCCESS\n"))
+              TRUE
+            }, error = function(e) {
+              debug_cat(paste0("  v8: Pre-scale ggplot_build: FAILED - ", e$message, "\n"))
+              debug_cat(paste0("  v8: ERROR IS IN GHEATMAP OUTPUT, NOT SCALE\n"))
+              # Get more info about the error
+              debug_cat(paste0("  v8: Checking individual layers...\n"))
+              for (li in seq_along(pr440_short_tips_TRY_heat$layers)) {
+                layer_test <- tryCatch({
+                  # Try to compute layer data
+                  layer <- pr440_short_tips_TRY_heat$layers[[li]]
+                  if (is.function(layer$data)) {
+                    test_d <- layer$data(pr440_short_tips_TRY_heat$data)
+                  } else {
+                    test_d <- layer$data
+                  }
+                  # Check if layer has valid mapping
+                  if (!is.null(layer$mapping)) {
+                    mapping_names <- names(layer$mapping)
+                    debug_cat(paste0("    Layer ", li, " (", class(layer$geom)[1], "): mapping=", paste(mapping_names, collapse=","), "\n"))
+                  } else {
+                    debug_cat(paste0("    Layer ", li, " (", class(layer$geom)[1], "): no mapping\n"))
+                  }
+                  TRUE
+                }, error = function(e2) {
+                  debug_cat(paste0("    Layer ", li, " (", class(pr440_short_tips_TRY_heat$layers[[li]]$geom)[1], "): FAILED - ", e2$message, "\n"))
+                  FALSE
+                })
+              }
+              FALSE
+            })
+
+            # v88: Apply scale regardless of pre-test result (the scale itself isn't the problem)
+            debug_cat(paste0("  v8: Applying scale_fill_manual...\n"))
+            tryCatch({
+              pr440_short_tips_TRY_heat <- pr440_short_tips_TRY_heat +
+                scale_fill_manual(
+                  values = custom_colors,
+                  name = heat_map_title_list[[j1]],
+                  na.value = na_color
+                )
+              debug_cat(paste0("  v8: scale_fill_manual applied\n"))
+
+              # v88: Test after scale
+              post_scale_ok <- tryCatch({
+                test_build_post <- ggplot2::ggplot_build(pr440_short_tips_TRY_heat)
+                debug_cat(paste0("  v8: Post-scale ggplot_build: SUCCESS\n"))
+                TRUE
+              }, error = function(e) {
+                debug_cat(paste0("  v8: Post-scale ggplot_build: FAILED - ", e$message, "\n"))
+                FALSE
+              })
+
+            }, error = function(e) {
+              debug_cat(paste0("  v8: scale_fill_manual failed: ", e$message, "\n"))
+              debug_cat(paste0("  v8: Trying scale_fill_discrete as fallback\n"))
+              tryCatch({
+                pr440_short_tips_TRY_heat <<- pr440_short_tips_TRY_heat +
+                  scale_fill_discrete(name = heat_map_title_list[[j1]], na.value = na_color)
+              }, error = function(e2) {
+                debug_cat(paste0("  v8: scale_fill_discrete also failed: ", e2$message, "\n"))
+              })
+            })
           }
         } else {
           pr440_short_tips_TRY_heat <- pr440_short_tips_TRY_heat +
@@ -4622,7 +7216,12 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             )
         }
       }
-      
+
+      # v68: DEBUG - after scale application
+      debug_cat(paste0("\n=== v68: After scale application ===\n"))
+      debug_cat(paste0("  j=", j, ", j1=", j1, "\n"))
+      debug_cat(paste0("================================\n"))
+
       # Apply theme for first heatmap
       if (j == 1) {
         pr440_short_tips_TRY_heat <- pr440_short_tips_TRY_heat + 
@@ -4684,26 +7283,218 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
         # v53: print(param)
       }
       
-      # Store position for next heatmap
-      min_col_x_of_frame_of_prev_heat <- func.calc.min_col_x_of_frame_of_prev_heat(pr440_short_tips_TRY_heat, colnames_sub_df_heat_j)
+      # v68: DEBUG - before func.calc call
+      debug_cat(paste0("\n=== v68: Before func.calc.min_col_x ===\n"))
+
+      # Store position for next heatmap (wrapped in tryCatch to prevent errors from breaking the loop)
+      min_col_x_of_frame_of_prev_heat <- tryCatch({
+        func.calc.min_col_x_of_frame_of_prev_heat(pr440_short_tips_TRY_heat, colnames_sub_df_heat_j)
+      }, error = function(e) {
+        debug_cat(paste0("  v8: WARNING - func.calc.min_col_x_of_frame_of_prev_heat failed: ", e$message, "\n"))
+        0  # Return default value
+      })
+
+      debug_cat(paste0("  v8: min_col_x_of_frame_of_prev_heat = ", min_col_x_of_frame_of_prev_heat, "\n"))
+      debug_cat(paste0("================================\n"))
     }
-    
+
+    # v68: DEBUG - after for loop
+    debug_cat(paste0("\n=== v68: After heatmap for loop ===\n"))
+
     # Update plot with heatmap
     p <- pr440_short_tips_TRY_heat
+
+    # v71: Repair mapping before final state check
+    p <- func.repair.ggtree.mapping(p, verbose = TRUE)
+
+    # v71: Diagnose any layer issues
+    problematic_layers <- func.diagnose.layer.issues(p, verbose = TRUE)
+
+    # v71: Final heatmap state with layer analysis
+    debug_cat(paste0("\n=== v71: FINAL HEATMAP STATE ===\n"))
+    final_xrange <- range(p$data$x, na.rm = TRUE)
+    debug_cat(paste0("  Tree data x range: [", final_xrange[1], ", ", final_xrange[2], "]\n"))
+    debug_cat(paste0("  Number of layers: ", length(p$layers), "\n"))
+
+    # v71: Check for heatmap layer (GeomTile) and get its x coordinates
+    layer_types <- sapply(p$layers, function(l) class(l$geom)[1])
+    debug_cat(paste0("  Layer types: ", paste(layer_types, collapse=", "), "\n"))
+
+    # v71: Find the GeomTile layer (heatmap) and get its data directly
+    heatmap_xmax <- NULL
+    for (i in seq_along(p$layers)) {
+      layer <- p$layers[[i]]
+      if (inherits(layer$geom, "GeomTile")) {
+        debug_cat(paste0("  Found GeomTile at layer ", i, "\n"))
+        # Try to access the layer data
+        tryCatch({
+          layer_data <- layer$data
+          if (is.function(layer_data)) {
+            layer_data <- layer_data(p$data)
+          }
+          if (!is.null(layer_data) && "x" %in% names(layer_data)) {
+            tile_x <- layer_data$x
+            if (length(tile_x) > 0 && !all(is.na(tile_x))) {
+              tile_xmax <- max(tile_x, na.rm = TRUE)
+              debug_cat(paste0("    GeomTile x range: [", min(tile_x, na.rm = TRUE), ", ", tile_xmax, "]\n"))
+              heatmap_xmax <- tile_xmax
+            }
+          } else {
+            debug_cat(paste0("    GeomTile layer data does not have x column\n"))
+          }
+        }, error = function(e) {
+          debug_cat(paste0("    Could not access GeomTile data: ", e$message, "\n"))
+        })
+      }
+    }
+
+    # v71: Also try ggplot_build but don't fail if it doesn't work
+    if (is.null(heatmap_xmax)) {
+      tryCatch({
+        # Repair mapping one more time before building
+        p <- func.repair.ggtree.mapping(p)
+        built <- ggplot2::ggplot_build(p)
+        for (i in seq_along(built$data)) {
+          if ("x" %in% names(built$data[[i]])) {
+            layer_x <- built$data[[i]]$x
+            if (length(layer_x) > 0 && !all(is.na(layer_x))) {
+              layer_xmax <- max(layer_x, na.rm = TRUE)
+              debug_cat(paste0("    Built layer ", i, " x range: [",
+                                        min(layer_x, na.rm = TRUE), ", ", layer_xmax, "]\n"))
+              if (is.null(heatmap_xmax) || layer_xmax > heatmap_xmax) {
+                heatmap_xmax <- layer_xmax
+              }
+            }
+          }
+        }
+      }, error = function(e) {
+        debug_cat(paste0("  v1: ggplot_build failed (will use fallback): ", e$message, "\n"))
+      })
+    }
+    debug_cat(paste0("================================\n"))
+
+    # v71: Calculate expected x range using multiple methods
+    # gheatmap places tiles at x positions based on tree width and offset
+    tree_width <- abs(final_xrange[2] - final_xrange[1])
+
+    # Method 1: Based on offset and width parameters (gheatmap uses offset relative to tips at x=0)
+    # The heatmap should span from x=offset to x=offset+width (approximately)
+    calculated_xmax <- new_heat_x + wi + 0.3  # Add margin
+
+    # Method 2: Use a proportion of tree width as margin (safer fallback)
+    proportional_xmax <- tree_width * 0.3 + wi + 0.5
+
+    # v71: Method 3: Use a larger fixed margin to ensure heatmap is visible
+    fixed_margin_xmax <- 2.5  # Fixed generous margin
+
+    # Use the largest of: calculated, proportional, fixed, or detected from built data
+    expected_xmax <- max(
+      calculated_xmax,
+      proportional_xmax,
+      fixed_margin_xmax,
+      ifelse(is.null(heatmap_xmax), calculated_xmax, heatmap_xmax + 0.5)
+    )
+
+    debug_cat(paste0("\n=== v71: EXPANDING X-AXIS FOR HEATMAP ===\n"))
+    debug_cat(paste0("  Tree x range: [", final_xrange[1], ", ", final_xrange[2], "]\n"))
+    debug_cat(paste0("  Tree width: ", tree_width, "\n"))
+    debug_cat(paste0("  Heatmap offset (new_heat_x): ", new_heat_x, "\n"))
+    debug_cat(paste0("  Heatmap width (wi): ", wi, "\n"))
+    debug_cat(paste0("  Calculated x max: ", calculated_xmax, "\n"))
+    debug_cat(paste0("  Proportional x max: ", proportional_xmax, "\n"))
+    debug_cat(paste0("  Fixed margin x max: ", fixed_margin_xmax, "\n"))
+    debug_cat(paste0("  Detected from build: ", ifelse(is.null(heatmap_xmax), "NULL", heatmap_xmax), "\n"))
+    debug_cat(paste0("  Final expected max x: ", expected_xmax, "\n"))
+    debug_cat(paste0("  Setting coord_flip xlim to: [", final_xrange[1], ", ", expected_xmax, "]\n"))
+    debug_cat(paste0("========================================\n"))
+
+    # v88: SIMPLIFIED EXPANSION - Skip expansion functions if plot can't be built
+    # Test if plot is buildable before trying expansion
+    plot_buildable <- tryCatch({
+      ggplot2::ggplot_build(p)
+      debug_cat(paste0("  v8: Plot is buildable, proceeding with expansion\n"))
+      TRUE
+    }, error = function(e) {
+      debug_cat(paste0("  v8: Plot is NOT buildable: ", e$message, "\n"))
+      debug_cat(paste0("  v8: Skipping expansion - will render plot as-is\n"))
+      FALSE
+    })
+
+    if (plot_buildable) {
+      # Calculate how much expansion is needed on the right side (positive x direction)
+      expansion_ratio <- (expected_xmax - final_xrange[2]) / abs(final_xrange[1] - final_xrange[2])
+      expansion_ratio <- max(0.3, expansion_ratio)
+
+      debug_cat(paste0("  v8: Using hexpand() with ratio: ", expansion_ratio, "\n"))
+
+      # v88: Try hexpand first
+      expansion_success <- FALSE
+      tryCatch({
+        p <- p + ggtree::hexpand(ratio = expansion_ratio, direction = 1)
+        expansion_success <- TRUE
+        debug_cat(paste0("  v8: hexpand applied successfully\n"))
+      }, error = function(e) {
+        debug_cat(paste0("  v8: hexpand failed: ", e$message, "\n"))
+      })
+
+      # v88: Fallback to xlim_expand
+      if (!expansion_success) {
+        debug_cat(paste0("  v8: Trying xlim_expand fallback\n"))
+        tryCatch({
+          p <- p + ggtree::xlim_expand(c(0, expected_xmax), "right")
+          expansion_success <- TRUE
+          debug_cat(paste0("  v8: xlim_expand applied\n"))
+        }, error = function(e2) {
+          debug_cat(paste0("  v8: xlim_expand also failed: ", e2$message, "\n"))
+        })
+      }
+
+      # v88: Final fallback - just add geom_blank with expanded limits
+      if (!expansion_success) {
+        tryCatch({
+          # Use geom_blank to expand plot limits without modifying coordinate system
+          p <- p + geom_blank(data = data.frame(x = c(final_xrange[1], expected_xmax), y = c(1, 1)),
+                              aes(x = x, y = y))
+          debug_cat(paste0("  v8: geom_blank expansion applied\n"))
+        }, error = function(e3) {
+          debug_cat(paste0("  v8: All expansion methods failed\n"))
+        })
+      }
+
+      # Repair mapping after changes
+      p <- func.repair.ggtree.mapping(p)
+    } else {
+      # v88: Plot is not buildable - don't add any expansion, just try to render
+      debug_cat(paste0("  v8: WARNING - Plot cannot be built, skipping all expansion\n"))
+    }
   }
-  
+  # ========================================================================
+
   # Default ellipse parameters if not set
   a <- 1
   b <- 1
-  
+
   if (!exists("high_title_list")) {
     high_title_list <- ""
   }
-  
-  # Apply highlighting again after heatmap if needed
-  if (FLAG_BULK_DISPLAY == TRUE) {
+
+  # v132: Initialize/refresh boudariestt before highlight code - required for ellipse sizing when heat_flag == TRUE
+  if (!exists("boudariestt") || is.null(boudariestt)) {
+    boudariestt <- tryCatch({
+      func.find.plot.boundaries(p, debug_mode)
+    }, error = function(e) {
+      debug_cat(paste0("  v32: Error computing boudariestt (2nd block): ", e$message, "\n"))
+      list(xmin = min(p$data$x, na.rm = TRUE), xmax = max(p$data$x, na.rm = TRUE))
+    })
+    debug_cat(paste0("  v32: boudariestt initialized (2nd block): xmin=", boudariestt$xmin, ", xmax=", boudariestt$xmax, "\n"))
+  }
+
+  # v139: Apply highlighting ONLY after heatmap (when heat_flag == TRUE)
+  # The heatmap changes the coordinate system, so highlights need to be recalculated
+  # When there's no heatmap, the first func_highlight call (line ~4835) is sufficient
+  if (FLAG_BULK_DISPLAY == TRUE && heat_flag == TRUE) {
     x_adj_hi <- 0
-    
+
     # Calculate tip length for ellipse sizing
     # If trimming is disabled (id_tip_trim_end is NA), use the max tip label length
     tip_length <- if (is.na(id_tip_trim_end)) {
@@ -4711,24 +7502,46 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     } else {
       id_tip_trim_end
     }
-    
-    if (heat_flag == FALSE) {
-      # v50: Use multiplicative scaling for height and width sliders
-      base_a <- tip_length * size_tip_text / 800 + man_adjust_elipse_a
-      base_b <- 0.12 + man_adjust_elipse_b
-      a <- base_a * adjust_height_ecliplse  # Slider value is now a multiplier (1.0 = no change)
-      b <- base_b * adjust_width_eclipse    # Slider value is now a multiplier
-    } else {
-      # v50: Use multiplicative scaling for height and width sliders  
-      base_a <- tip_length * size_tip_text / (5.1 * boudariestt$xmax) + man_adjust_elipse_a
-      base_b <- 0.12 + man_adjust_elipse_b
-      a <- base_a * adjust_height_ecliplse
-      b <- base_b * adjust_width_eclipse
-    }   
-    
+
+    # v146: Scale both 'a' (height) and 'b' (width) based on plot dimensions
+    # When heatmap expands the x-range, we need to scale ellipses proportionally
+    # to maintain the same visual relationship with the tree
+
+    # Calculate the tree width (from 0 to max tree x)
+    tree_width <- max(pr440_short_tips_TRY$data$x, na.rm = TRUE)
+
+    # Calculate the total plot width (tree + heatmaps)
+    total_width <- boudariestt$xmax - boudariestt$xmin
+
+    # Scale factor: ratio of tree to total plot (clamped to reasonable range)
+    # When no heatmap, this is close to 1; with heatmaps, this gets smaller
+    tree_ratio <- tree_width / max(total_width, tree_width)
+    tree_ratio <- min(max(tree_ratio, 0.1), 1.0)
+
+    debug_cat(paste0("\n=== v146: ELLIPSE SCALING FOR HEATMAP ===\n"))
+    debug_cat(paste0("  Tree width: ", round(tree_width, 2), "\n"))
+    debug_cat(paste0("  Total plot width: ", round(total_width, 2), "\n"))
+    debug_cat(paste0("  Tree ratio (tree/total): ", round(tree_ratio, 3), "\n"))
+
+    # v146: Scale both height (a) and width (b) based on tree ratio
+    # Use the same base calculation as non-heatmap case, then scale by tree_ratio
+    base_a <- (tip_length * size_tip_text / 800 + man_adjust_elipse_a) * tree_ratio
+    base_b <- (0.12 + man_adjust_elipse_b) * tree_ratio
+
+    a <- base_a * adjust_height_ecliplse
+    b <- base_b * adjust_width_eclipse
+
+    debug_cat(paste0("  Base a (height): ", round(base_a, 4), "\n"))
+    debug_cat(paste0("  Base b (width): ", round(base_b, 4), "\n"))
+    debug_cat(paste0("  Final a (after user adjust): ", round(a, 4), "\n"))
+    debug_cat(paste0("  Final b (after user adjust): ", round(b, 4), "\n"))
+    debug_cat(paste0("=============================================\n"))
+
+    # v139: Pass high_alpha_list for transparency
     p <- func_highlight(
-      p, how_many_hi, heat_flag, high_color_list, a, b, man_adjust_elipse, 
-      pr440_short_tips_TRY, boudariestt, debug_mode, high_offset, high_vertical_offset
+      p, how_many_hi, heat_flag, high_color_list, a, b, man_adjust_elipse,
+      pr440_short_tips_TRY, boudariestt, debug_mode, high_offset, high_vertical_offset,
+      high_alpha_list
     )
   }
   
@@ -4736,45 +7549,179 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     b <- 0.2
   }
   
-  # Add second legend if heatmap exists
-  
+  # v94: DEBUG - track layers after if(FALSE) block
+  debug_cat(paste0("\n=== v94: AFTER if(FALSE) block ===\n"))
+  debug_cat(paste0("  p layers: ", length(p$layers), "\n"))
+  debug_cat(paste0("  Layer types: ", paste(sapply(p$layers, function(l) class(l$geom)[1]), collapse=", "), "\n"))
+  debug_cat(paste0("================================\n"))
+
   # Add second legend if heatmap exists
   if (length(heat_map_title_list) > 0) {
-    p <- func.make.second.legend(
-      p,
-      FLAG_BULK_DISPLAY,
-      how_many_hi,
-      heat_flag,
-      how_many_boxes,
-      how_mant_rows,
-      boudariestt,
-      y_off_base,
-      high_title_list,
-      size_font_legend_title,
-      high_label_list,
-      size_font_legend_text,
-      high_color_list,
-      a,
-      b,
-      x_range_min,
-      show_boot_flag,
-      size_90,
-      size_80,
-      size_70,
-      man_adjust_image_of_second_legend,
-      man_multiply_second_legend,
-      man_multiply_second_legend_text,
-      man_multiply_elipse,
-      man_space_second_legend,
-      man_space_second_legend_multiplier,
-      man_offset_for_highlight_legend_x,
-      debug_mode,
-      boot_values,
-      man_offset_second_legend,
-      width
-    )
+    debug_cat(paste0("\n=== v95: Before func.make.second.legend ===\n"))
+    debug_cat(paste0("  p layers: ", length(p$layers), "\n"))
+    debug_cat(paste0("  heat_flag: ", heat_flag, "\n"))
+    debug_cat(paste0("  FLAG_BULK_DISPLAY: ", FLAG_BULK_DISPLAY, "\n"))
+
+    # v95: Debug boudariestt
+    if (exists("boudariestt") && !is.null(boudariestt)) {
+      debug_cat(paste0("  boudariestt$xmax: ", boudariestt$xmax, "\n"))
+      debug_cat(paste0("  boudariestt$xmin: ", boudariestt$xmin, "\n"))
+    } else {
+      debug_cat(paste0("  WARNING: boudariestt is NULL or doesn't exist!\n"))
+    }
+
+    # v133: Get legend settings for highlight and bootstrap legends
+    # v135: Use legend_settings parameter instead of values$legend_settings
+    legend_settings_local <- legend_settings
+    highlight_x_off <- if (!is.null(legend_settings_local$highlight_x_offset)) legend_settings_local$highlight_x_offset else 0
+    highlight_y_off <- if (!is.null(legend_settings_local$highlight_y_offset)) legend_settings_local$highlight_y_offset else 0
+    highlight_title_sz <- legend_settings_local$highlight_title_size  # NULL is ok, will use default
+    highlight_text_sz <- legend_settings_local$highlight_text_size    # NULL is ok, will use default
+    highlight_title_g <- if (!is.null(legend_settings_local$highlight_title_gap)) legend_settings_local$highlight_title_gap else 1
+    highlight_label_g <- if (!is.null(legend_settings_local$highlight_label_gap)) legend_settings_local$highlight_label_gap else 0.5
+    bootstrap_x_off <- if (!is.null(legend_settings_local$bootstrap_x_offset)) legend_settings_local$bootstrap_x_offset else 0
+    bootstrap_y_off <- if (!is.null(legend_settings_local$bootstrap_y_offset)) legend_settings_local$bootstrap_y_offset else 0
+    bootstrap_title_x_off <- if (!is.null(legend_settings_local$bootstrap_title_x_offset)) legend_settings_local$bootstrap_title_x_offset else 2  # v143
+    bootstrap_title_sz <- legend_settings_local$bootstrap_title_size  # NULL is ok, will use default
+    bootstrap_text_sz <- legend_settings_local$bootstrap_text_size    # NULL is ok, will use default
+    bootstrap_title_g <- if (!is.null(legend_settings_local$bootstrap_title_gap)) legend_settings_local$bootstrap_title_gap else 2
+    bootstrap_label_g <- if (!is.null(legend_settings_local$bootstrap_label_gap)) legend_settings_local$bootstrap_label_gap else 2
+    # v138: Get show/hide settings for highlight and bootstrap legends
+    show_highlight_leg <- if (!is.null(legend_settings_local$show_highlight)) legend_settings_local$show_highlight else TRUE
+    show_bootstrap_leg <- if (!is.null(legend_settings_local$show_bootstrap)) legend_settings_local$show_bootstrap else TRUE
+
+    debug_cat(paste0("  v33: highlight offsets - x:", highlight_x_off, ", y:", highlight_y_off, "\n"))
+    debug_cat(paste0("  v33: bootstrap offsets - x:", bootstrap_x_off, ", y:", bootstrap_y_off, "\n"))
+    debug_cat(paste0("  v38: show_highlight_legend:", show_highlight_leg, ", show_bootstrap_legend:", show_bootstrap_leg, "\n"))
+
+    # v151: Calculate y_off_base to position legends on the RIGHT side
+    # With coord_flip + scale_y_reverse: y values become horizontal positions
+    # y = 1 is at visual LEFT, y = max_tips is at visual RIGHT
+    # CRITICAL: Using y > max_tips EXPANDS the plot range and shrinks the tree!
+    # Solution: Use y = max_tips (not max_tips + 5) to minimize expansion
+    n_tips <- sum(p$data$isTip == TRUE, na.rm = TRUE)
+    max_y_in_data <- max(p$data$y, na.rm = TRUE)
+    y_off_base <- max(n_tips, max_y_in_data)  # Stay within existing data range
+    debug_cat(paste0("  v51: y_off_base=", y_off_base, " (n_tips=", n_tips, ", max_y=", round(max_y_in_data, 2), ")\n"))
+
+    # v95: Wrap in tryCatch to catch any errors
+    p <- tryCatch({
+      result <- func.make.second.legend(
+        p,
+        FLAG_BULK_DISPLAY,
+        how_many_hi,
+        heat_flag,
+        how_many_boxes,
+        how_mant_rows,
+        boudariestt,
+        y_off_base,
+        high_title_list,
+        size_font_legend_title,
+        high_label_list,
+        size_font_legend_text,
+        high_color_list,
+        a,
+        b,
+        x_range_min,
+        show_boot_flag,
+        size_90,
+        size_80,
+        size_70,
+        man_adjust_image_of_second_legend,
+        man_multiply_second_legend,
+        man_multiply_second_legend_text,
+        man_multiply_elipse,
+        man_space_second_legend,
+        man_space_second_legend_multiplier,
+        man_offset_for_highlight_legend_x,
+        debug_mode,
+        boot_values,
+        man_offset_second_legend,
+        width,
+        bootstrap_label_size,
+        # v133: New highlight and bootstrap legend settings
+        highlight_x_offset = highlight_x_off,
+        highlight_y_offset = highlight_y_off,
+        highlight_title_size = highlight_title_sz,
+        highlight_text_size = highlight_text_sz,
+        highlight_title_gap = highlight_title_g,
+        highlight_label_gap = highlight_label_g,
+        bootstrap_x_offset = bootstrap_x_off,
+        bootstrap_y_offset = bootstrap_y_off,
+        bootstrap_title_x_offset = bootstrap_title_x_off,  # v143
+        bootstrap_title_size_mult = bootstrap_title_sz,
+        bootstrap_text_size_mult = bootstrap_text_sz,
+        bootstrap_title_gap = bootstrap_title_g,
+        bootstrap_label_gap = bootstrap_label_g,
+        # v138: Show/hide legend controls
+        show_highlight_legend = show_highlight_leg,
+        show_bootstrap_legend = show_bootstrap_leg,
+        # v145: Pass transparency list for legend ellipses
+        high_alpha_list = high_alpha_list
+      )
+      debug_cat(paste0("  func.make.second.legend: SUCCESS\n"))
+      result
+    }, error = function(e) {
+      debug_cat(paste0("  func.make.second.legend ERROR: ", e$message, "\n"))
+      debug_cat(paste0("  Returning plot without second legend modifications\n"))
+      p  # Return original plot on error
+    })
+
+    debug_cat(paste0("=== v95: After func.make.second.legend ===\n"))
+    debug_cat(paste0("  p layers: ", length(p$layers), "\n"))
+    debug_cat(paste0("  Layer types: ", paste(sapply(p$layers, function(l) class(l$geom)[1]), collapse=", "), "\n"))
   }
-  
+
+  # v94: DEBUG - before bootstrap triangles
+  debug_cat(paste0("\n=== v94: Before bootstrap triangles ===\n"))
+  debug_cat(paste0("  p layers: ", length(p$layers), "\n"))
+  debug_cat(paste0("  Layer types: ", paste(sapply(p$layers, function(l) class(l$geom)[1]), collapse=", "), "\n"))
+
+  # v96: FIX - Repair corrupted mapping BEFORE adding bootstrap triangles
+  # gheatmap() corrupts the plot's @mapping attribute (changes it from ggplot2::mapping to data.frame)
+  # This causes geom_nodepoint() calls below to crash silently
+  # We must repair the mapping BEFORE adding any new layers
+  debug_cat(paste0("\n=== v96: Repairing mapping before bootstrap triangles ===\n"))
+  debug_cat(paste0("  Mapping class before repair: ", paste(class(p$mapping), collapse=", "), "\n"))
+  p <- func.repair.ggtree.mapping(p, verbose = TRUE)
+  debug_cat(paste0("  Mapping class after repair: ", paste(class(p$mapping), collapse=", "), "\n"))
+
+  # v90: Add bootstrap triangles AFTER heatmap processing to avoid "missing x and y" error
+  # When gheatmap transforms the plot data, any geom_nodepoint layers added beforehand
+  # lose their x and y aesthetic mappings. By adding them here (after gheatmap),
+  # the layers are created with the correct data structure.
+  if (bootstrap_triangles_enabled && !is.null(bootstrap_triangles_params)) {
+    debug_cat(paste0("\n=== v90: Adding bootstrap triangles after heatmap ===\n"))
+    tryCatch({
+      # v126: Reverted to v124 approach - separate geom_nodepoint for each bootstrap level
+      # Using scale_size_manual with mapped size was conflicting with tree edge width scale
+      p <- p +
+        geom_nodepoint(
+          position = position_nudge(x = bootstrap_triangles_params$man_boot_x_offset, y = 0),
+          aes(subset = boot_val >= 0.9),
+          size = bootstrap_triangles_params$size_90, shape = 24, fill = "grey36", colour = "grey20",
+          show.legend = FALSE, alpha = 1/2
+        ) +
+        geom_nodepoint(
+          position = position_nudge(x = bootstrap_triangles_params$man_boot_x_offset, y = 0),
+          aes(subset = boot_val >= 0.8 & boot_val < 0.9),
+          size = bootstrap_triangles_params$size_80, shape = 24, fill = "grey36", colour = "grey20",
+          show.legend = FALSE, alpha = 1/2
+        ) +
+        geom_nodepoint(
+          position = position_nudge(x = bootstrap_triangles_params$man_boot_x_offset, y = 0),
+          aes(subset = boot_val >= 0.7 & boot_val < 0.8),
+          size = bootstrap_triangles_params$size_70, shape = 24, fill = "grey36", colour = "grey20",
+          show.legend = FALSE, alpha = 1/2
+        )
+      debug_cat(paste0("  Bootstrap triangles added successfully\n"))
+    }, error = function(e) {
+      debug_cat(paste0("  v6 ERROR adding bootstrap triangles: ", e$message, "\n"))
+      debug_cat(paste0("  Continuing without bootstrap triangles\n"))
+    })
+    debug_cat(paste0("================================\n"))
+  }
+
   # Add score information if requested
   if (flag_calc_scores_for_tree == TRUE) {
     # v53: print("SCORE")
@@ -4785,10 +7732,178 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     ari_score_text <- paste0(" ari score: ", ari_score_rounded)
     p <- p + ggtitle(paste0(ps_score_text, ari_score_text))
   }
-  
-  # Save the plot to file
-  ggsave(out_file_path, plot = p, width = width, height = height, units = units_out, limitsize = FALSE)  
-  
+
+  # v69: Repair any corrupted mapping before saving/returning
+  # This fixes the "@mapping must be <ggplot2::mapping>" error in newer ggplot2 versions
+  p <- func.repair.ggtree.mapping(p)
+
+  # S1.3-PERF: Removed intermediate call to func.move.tiplabels.to.front() here
+  # Layer reordering is now done ONCE at the end in generate_plot() to avoid redundant calls.
+  # v180 original comment: "Move tip labels to front so they render on top of highlight ellipses"
+
+  # v72: FINAL DEBUG - verify heatmap layer exists and inspect plot state
+  debug_cat(paste0("\n=== v72: FINAL PLOT STATE BEFORE GGSAVE ===\n"))
+  debug_cat(paste0("  Number of layers: ", length(p$layers), "\n"))
+  layer_types <- sapply(p$layers, function(l) class(l$geom)[1])
+  debug_cat(paste0("  Layer types: ", paste(layer_types, collapse=", "), "\n"))
+
+  # Check for GeomTile (heatmap)
+  geomtile_idx <- which(layer_types == "GeomTile")
+  if (length(geomtile_idx) > 0) {
+    debug_cat(paste0("  GeomTile found at layers: ", paste(geomtile_idx, collapse=", "), "\n"))
+    for (idx in geomtile_idx) {
+      tryCatch({
+        tile_layer <- p$layers[[idx]]
+        tile_data <- tile_layer$data
+        if (is.function(tile_data)) {
+          tile_data <- tile_data(p$data)
+        }
+        if (!is.null(tile_data) && is.data.frame(tile_data)) {
+          debug_cat(paste0("    Layer ", idx, " data rows: ", nrow(tile_data), "\n"))
+          if ("x" %in% names(tile_data)) {
+            debug_cat(paste0("    Layer ", idx, " x range: [", min(tile_data$x, na.rm=TRUE), ", ", max(tile_data$x, na.rm=TRUE), "]\n"))
+          }
+          if ("value" %in% names(tile_data)) {
+            debug_cat(paste0("    Layer ", idx, " values: ", paste(unique(tile_data$value), collapse=", "), "\n"))
+          }
+        }
+      }, error = function(e) {
+        debug_cat(paste0("    ERROR: ", e$message, "\n"))
+      })
+    }
+  } else {
+    debug_cat(paste0("  WARNING: No GeomTile layers found! Heatmap may not be displayed.\n"))
+  }
+
+  # Check coordinate system
+  if (!is.null(p$coordinates)) {
+    debug_cat(paste0("  Coordinate system: ", class(p$coordinates)[1], "\n"))
+    if (inherits(p$coordinates, "CoordCartesian")) {
+      if (!is.null(p$coordinates$limits$x)) {
+        debug_cat(paste0("  X limits: [", p$coordinates$limits$x[1], ", ", p$coordinates$limits$x[2], "]\n"))
+      }
+    }
+  }
+
+  # Try a final ggplot_build to get computed values
+  tryCatch({
+    final_built <- ggplot2::ggplot_build(p)
+    debug_cat(paste0("  ggplot_build successful\n"))
+
+    # Find tile layer in built data
+    for (i in seq_along(final_built$data)) {
+      if ("fill" %in% names(final_built$data[[i]]) && "width" %in% names(final_built$data[[i]])) {
+        bd <- final_built$data[[i]]
+        debug_cat(paste0("  Built layer ", i, ": ", nrow(bd), " rows, x=[",
+                                  min(bd$x, na.rm=TRUE), ", ", max(bd$x, na.rm=TRUE),
+                                  "], fill=", paste(unique(bd$fill), collapse=","), "\n"))
+      }
+    }
+
+    # Check panel ranges
+    if (!is.null(final_built$layout$panel_params)) {
+      for (panel_idx in seq_along(final_built$layout$panel_params)) {
+        pp <- final_built$layout$panel_params[[panel_idx]]
+        if (!is.null(pp$x.range)) {
+          debug_cat(paste0("  Panel ", panel_idx, " x.range: [", pp$x.range[1], ", ", pp$x.range[2], "]\n"))
+        }
+      }
+    }
+  }, error = function(e) {
+    debug_cat(paste0("  ggplot_build error: ", e$message, "\n"))
+  })
+  debug_cat(paste0("============================================\n"))
+
+  # v88: Save the plot with comprehensive error handling and multiple fallbacks
+  save_success <- FALSE
+
+  # v167: OPTION C - Use standard ggsave (legends are native ggplot layers now)
+  # No gtable manipulation needed - legends are part of the plot object
+  tryCatch({
+    debug_cat(paste0("\n=== v167: Saving plot with native ggplot legends ===\n"))
+    ggsave(out_file_path, plot = p, width = width, height = height, units = units_out, limitsize = FALSE)
+    save_success <- TRUE
+    debug_cat(paste0("=== v167: Plot saved successfully ===\n"))
+    debug_cat(paste0("  LOOK FOR: 'v167 Test Legend' with red square alongside other legends\n"))
+  }, error = function(e) {
+    debug_cat(paste0("\n=== v167: GGSAVE ERROR ===\n"))
+    debug_cat(paste0("  Primary error: ", e$message, "\n"))
+  })
+
+  # v88: Fallback 1 - repair mapping and try again
+  if (!save_success) {
+    debug_cat(paste0("  v8: Trying fallback 1 - repair mapping\n"))
+    tryCatch({
+      p_repaired <- func.repair.ggtree.mapping(p, verbose = TRUE)
+      ggsave(out_file_path, plot = p_repaired, width = width, height = height,
+             units = units_out, limitsize = FALSE)
+      save_success <- TRUE
+      debug_cat(paste0("  v8: Fallback 1 succeeded\n"))
+    }, error = function(e2) {
+      debug_cat(paste0("  v8: Fallback 1 failed: ", e2$message, "\n"))
+    })
+  }
+
+  # v88: Fallback 2 - remove heatmap scale and try with defaults
+  if (!save_success && heat_flag) {
+    debug_cat(paste0("  v8: Trying fallback 2 - reset fill scale to defaults\n"))
+    tryCatch({
+      # Create fresh plot with default scale
+      p_default <- p + scale_fill_discrete(na.value = "white")
+      p_default <- func.repair.ggtree.mapping(p_default)
+      ggsave(out_file_path, plot = p_default, width = width, height = height,
+             units = units_out, limitsize = FALSE)
+      save_success <- TRUE
+      debug_cat(paste0("  v8: Fallback 2 succeeded (using default colors)\n"))
+    }, error = function(e3) {
+      debug_cat(paste0("  v8: Fallback 2 failed: ", e3$message, "\n"))
+    })
+  }
+
+  # v88: Fallback 3 - use print() to render instead of ggsave
+  if (!save_success) {
+    debug_cat(paste0("  v8: Trying fallback 3 - direct PNG rendering\n"))
+    tryCatch({
+      # Determine file extension
+      file_ext <- tolower(tools::file_ext(out_file_path))
+      if (file_ext == "png") {
+        png(out_file_path, width = width, height = height, units = units_out, res = 300)
+      } else if (file_ext == "pdf") {
+        pdf(out_file_path, width = width, height = height)
+      } else {
+        png(out_file_path, width = width, height = height, units = units_out, res = 300)
+      }
+      print(p)
+      dev.off()
+      save_success <- TRUE
+      debug_cat(paste0("  v8: Fallback 3 succeeded\n"))
+    }, error = function(e4) {
+      debug_cat(paste0("  v8: Fallback 3 failed: ", e4$message, "\n"))
+      tryCatch(dev.off(), error = function(x) {})  # Clean up device
+    })
+  }
+
+  # v88: Final fallback - save tree without heatmap
+  if (!save_success && heat_flag) {
+    debug_cat(paste0("  v8: Trying fallback 4 - save tree without heatmap\n"))
+    tryCatch({
+      # Use the original tree plot (tt) without heatmap
+      ggsave(out_file_path, plot = tt, width = width, height = height,
+             units = units_out, limitsize = FALSE)
+      save_success <- TRUE
+      debug_cat(paste0("  v8: Fallback 4 succeeded (saved tree only, no heatmap)\n"))
+      debug_cat(paste0("  v8: WARNING - Heatmap could not be rendered\n"))
+    }, error = function(e5) {
+      debug_cat(paste0("  v8: Fallback 4 failed: ", e5$message, "\n"))
+      stop(e5)  # Re-throw if all fallbacks fail
+    })
+  }
+
+  if (!save_success) {
+    debug_cat(paste0("  v8: All save attempts failed\n"))
+    stop("Could not save plot after multiple attempts")
+  }
+
   return(p)
 }
 
@@ -4814,7 +7929,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
 # Define UI
 ui <- dashboardPage(
-  dashboardHeader(title = "Lineage Tree Plotter v56"),
+  dashboardHeader(title = "Lineage Tree Plotter v159"),
   
   dashboardSidebar(
     width = 300,
@@ -4825,16 +7940,11 @@ ui <- dashboardPage(
       menuItem("Bootstrap Values", tabName = "bootstrap", icon = icon("percentage")),
       menuItem("Highlighting", tabName = "highlighting", icon = icon("highlighter")),
       menuItem("Heatmap", tabName = "heatmap", icon = icon("th")),
+      menuItem("Legend", tabName = "legend", icon = icon("list")),
+      menuItem("Extra", tabName = "extra", icon = icon("plus-circle")),  # v130: New tab for title, text, images
       menuItem("Download", tabName = "download", icon = icon("download")),
       menuItem("Configuration", tabName = "config", icon = icon("cogs"))
-    ),
-    
-    # Add toggle for Basic/Advanced mode
-    checkboxInput("advanced_mode", "Advanced Mode", FALSE),
-    
-    # Configuration file input
-    fileInput("yaml_config", "Import YAML Configuration", 
-              accept = c(".yaml", ".yml"))
+    )
   ),
   
   dashboardBody(
@@ -4865,20 +7975,39 @@ ui <- dashboardPage(
         tabName = "data_upload",
         fluidRow(
           box(
-            title = "📌 Version Info",
+            title = "EZLineagePlotter - Stable Release",
             status = "success",
             solidHeader = TRUE,
             width = 12,
             collapsible = TRUE,
-            tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #28a745;",
-                     tags$h4(style = "color: #155724; margin: 0;", "🎨 v17.2-IMPROVED Active!"),
+            tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #155724;",
+                     tags$h4(style = "color: #155724; margin: 0;", "Version S2.0 (Stable)"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
-                            "New in this version:",
+                            "Stable release with RData CNV heatmap support.",
+                            tags$br(), tags$br(),
+                            tags$strong("New in S2.0:"),
                             tags$ul(
-                              tags$li("Switch between saved classifications with radio buttons"),
-                              tags$li("Preview color changes before saving"),
-                              tags$li("Consistent plot display across all tabs"),
-                              tags$li("Ready/Processing indicator next to plots")
+                              tags$li("RData CNV heatmaps: Import CNV data from QDNAseq/scIMPACT pipelines"),
+                              tags$li("Automatic sample matching via CSV lookup columns"),
+                              tags$li("Red-white-blue color scheme for CNV (red=loss, blue=gain)"),
+                              tags$li("Vertical column lines option for heatmaps"),
+                              tags$li("Horizontal row lines option for heatmaps"),
+                              tags$li("Multiple heatmap support (CSV + RData together)")
+                            ),
+                            tags$strong("From S1.6:"),
+                            tags$ul(
+                              tags$li("Performance optimizations - faster rendering"),
+                              tags$li("Legend Background color fix"),
+                              tags$li("Multiple highlights with heatmap fix")
+                            ),
+                            tags$strong("Core Features:"),
+                            tags$ul(
+                              tags$li("Tree visualization with classification coloring"),
+                              tags$li("Multiple heatmaps with discrete/continuous color scales"),
+                              tags$li("Highlight regions with customizable ellipses"),
+                              tags$li("Bootstrap value display (triangles, percentages, colors)"),
+                              tags$li("Flexible legend positioning and styling"),
+                              tags$li("Export to PDF/PNG with custom dimensions")
                             )
                      )
             )
@@ -4955,9 +8084,79 @@ ui <- dashboardPage(
             ),
             DTOutput("matching_table")
           )
+        ),
+
+        # S1.62: Optional YAML Settings Import
+        fluidRow(
+          box(
+            title = "Import Saved Settings (Optional)",
+            status = "warning",
+            solidHeader = TRUE,
+            width = 12,
+            collapsible = TRUE,
+            collapsed = TRUE,
+            tags$div(
+              style = "background: #fff3cd; padding: 10px; border-radius: 5px; margin-bottom: 10px;",
+              tags$p(style = "margin: 0; color: #856404;",
+                icon("info-circle"),
+                " Load visual settings from a previously saved YAML configuration.",
+                tags$br(),
+                tags$small("This will apply classification colors, heatmap settings, bootstrap options, etc. to your current tree and CSV data.")
+              )
+            ),
+            conditionalPanel(
+              condition = "output.files_loaded == 'TRUE'",
+              fileInput("yaml_config", "Choose YAML Configuration File",
+                        accept = c(".yaml", ".yml")),
+              verbatimTextOutput("yaml_import_status")
+            ),
+            conditionalPanel(
+              condition = "output.files_loaded != 'TRUE'",
+              tags$div(
+                style = "color: #856404; padding: 10px; text-align: center;",
+                icon("exclamation-triangle"),
+                " Please upload tree and CSV files first before importing settings."
+              )
+            )
+          )
+        ),
+
+        # S1.62dev: Optional RData CNV File Import
+        fluidRow(
+          box(
+            title = "Import CNV Data from RData (Optional)",
+            status = "info",
+            solidHeader = TRUE,
+            width = 12,
+            collapsible = TRUE,
+            collapsed = TRUE,
+            tags$div(
+              style = "background: #d1ecf1; padding: 10px; border-radius: 5px; margin-bottom: 10px;",
+              tags$p(style = "margin: 0; color: #0c5460;",
+                icon("dna"),
+                " Load CNV (Copy Number Variation) data from an RData file.",
+                tags$br(),
+                tags$small("The RData file should contain 'results_CNV_tool_final' with CNV copy number data. This can be displayed as a heatmap aligned with the tree.")
+              )
+            ),
+            conditionalPanel(
+              condition = "output.files_loaded == 'TRUE'",
+              fileInput("rdata_file", "Choose RData CNV File",
+                        accept = c(".RData", ".rdata", ".Rdata")),
+              verbatimTextOutput("rdata_import_status")
+            ),
+            conditionalPanel(
+              condition = "output.files_loaded != 'TRUE'",
+              tags$div(
+                style = "color: #0c5460; padding: 10px; text-align: center;",
+                icon("exclamation-triangle"),
+                " Please upload tree and CSV files first before importing CNV data."
+              )
+            )
+          )
         )
       ),
-      
+
       # Tree Display Tab
       tabItem(
         tabName = "tree_display",
@@ -4967,7 +8166,7 @@ ui <- dashboardPage(
             status = "primary",
             solidHeader = TRUE,
             width = 4,
-            checkboxInput("trim_tips", "Trim Tips", value = TRUE),
+            checkboxInput("trim_tips", "Trim Tips", value = FALSE),
             conditionalPanel(
               condition = "input.trim_tips == true",
               sliderInput("tip_length", "Tip Length", min = 0.01, max = 0.2, value = 0.05, step = 0.01)
@@ -5023,12 +8222,29 @@ ui <- dashboardPage(
           box(
             title = tagList(
               "Tree Preview ",
-              uiOutput("tree_status_indicator", inline = TRUE)  
+              # v57: Static status indicator elements for shinyjs toggling (immediate UI updates)
+              span(id = "status_waiting",
+                style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #f8f9fa; color: #6c757d; font-size: 12px;",
+                icon("clock"), " Waiting for data"
+              ),
+              span(id = "status_processing",
+                style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #6c757d; color: #ffffff; font-size: 12px; font-weight: bold;",
+                icon("spinner", class = "fa-spin"), " Processing..."
+              ),
+              span(id = "status_ready",
+                style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #28a745; color: #ffffff; font-size: 12px; font-weight: bold;",
+                icon("check-circle"), " Ready"
+              ),
+              span(id = "status_click_to_generate",
+                style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #e9ecef; color: #6c757d; font-size: 12px;",
+                icon("hourglass-half"), " Click to generate"
+              )
             ),
-            status = "primary", 
+            status = "primary",
             solidHeader = TRUE,
             width = 12,
-            plotOutput("tree_preview", height = "600px")
+            # v146: Changed to imageOutput with auto height for consistent aspect ratio
+            imageOutput("tree_preview", height = "auto")
           )
         )
       ),
@@ -5066,16 +8282,32 @@ ui <- dashboardPage(
           box(
             title = tagList(
               "Preview ",
-              uiOutput("classification_status_indicator", inline = TRUE)
+              # v59: Static status indicators for immediate shinyjs updates (same as Tree Display)
+              span(id = "class_status_waiting",
+                style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #f8f9fa; color: #6c757d; font-size: 12px;",
+                icon("clock"), " Waiting for data"
+              ),
+              span(id = "class_status_processing",
+                style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #6c757d; color: #ffffff; font-size: 12px; font-weight: bold;",
+                icon("spinner", class = "fa-spin"), " Processing..."
+              ),
+              span(id = "class_status_ready",
+                style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #28a745; color: #ffffff; font-size: 12px; font-weight: bold;",
+                icon("check-circle"), " Ready"
+              ),
+              span(id = "class_status_click_to_generate",
+                style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #e9ecef; color: #6c757d; font-size: 12px;",
+                icon("hourglass-half"), " Click to generate"
+              )
             ),
-            status = "primary", 
+            status = "primary",
             solidHeader = TRUE,
             width = 12,
             imageOutput("classification_preview", height = "auto")
           )
         )
       ),
-      
+
       # Bootstrap Values Tab
       tabItem(
         tabName = "bootstrap",
@@ -5094,17 +8326,25 @@ ui <- dashboardPage(
                              "Raw Values" = "raw",
                              "Percentage" = "percentage",
                              "Color-coded Numbers" = "numbered_color",
-                             "Color-coded Percentage" = "percentage_color",
-                             "Shade" = "shade"
+                             "Color-coded Percentage" = "percentage_color"
                            ), selected = "triangles"),
               sliderInput("bootstrap_param", "Bootstrap Precision (decimal places)", 
                           min = 1, max = 5, value = 1, step = 1),
+              # v130: Reduced default from 3 to 1.5 for smaller bootstrap legend by default
               sliderInput("bootstrap_label_size",
-                          "Bootstrap Label Size:",
-                          min = 1,
+                          "Bootstrap Triangle Size:",
+                          min = 0,
                           max = 10,
-                          value = 3,
+                          value = 1.5,
                           step = 0.5,
+                          width = "100%"),
+              # v114: Bootstrap position adjustment slider - finest precision with 0.001 step
+              sliderInput("man_boot_x_offset",
+                          "Bootstrap Position (higher/lower):",
+                          min = -0.5,
+                          max = 0.5,
+                          value = 0,
+                          step = 0.001,
                           width = "100%")
             )
           ),
@@ -5112,16 +8352,32 @@ ui <- dashboardPage(
           box(
             title = tagList(
               "Preview ",
-              uiOutput("bootstrap_status_indicator", inline = TRUE)
+              # v59: Static status indicators for immediate shinyjs updates
+              span(id = "boot_status_waiting",
+                style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #f8f9fa; color: #6c757d; font-size: 12px;",
+                icon("clock"), " Waiting for data"
+              ),
+              span(id = "boot_status_processing",
+                style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #6c757d; color: #ffffff; font-size: 12px; font-weight: bold;",
+                icon("spinner", class = "fa-spin"), " Processing..."
+              ),
+              span(id = "boot_status_ready",
+                style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #28a745; color: #ffffff; font-size: 12px; font-weight: bold;",
+                icon("check-circle"), " Ready"
+              ),
+              span(id = "boot_status_click_to_generate",
+                style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #e9ecef; color: #6c757d; font-size: 12px;",
+                icon("hourglass-half"), " Click to generate"
+              )
             ),
-            status = "primary", 
+            status = "primary",
             solidHeader = TRUE,
             width = 8,
             imageOutput("bootstrap_preview", height = "auto")
           )
         )
       ),
-      
+
       # Highlighting Tab
       # ============================================================================
       # HIGHLIGHTING TAB - COMPLETE REPLACEMENT
@@ -5213,16 +8469,32 @@ ui <- dashboardPage(
           box(
             title = tagList(
               "Tree Preview ",
-              uiOutput("highlight_status_indicator", inline = TRUE)
+              # v59: Static status indicators for immediate shinyjs updates
+              span(id = "high_status_waiting",
+                style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #f8f9fa; color: #6c757d; font-size: 12px;",
+                icon("clock"), " Waiting for data"
+              ),
+              span(id = "high_status_processing",
+                style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #6c757d; color: #ffffff; font-size: 12px; font-weight: bold;",
+                icon("spinner", class = "fa-spin"), " Processing..."
+              ),
+              span(id = "high_status_ready",
+                style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #28a745; color: #ffffff; font-size: 12px; font-weight: bold;",
+                icon("check-circle"), " Ready"
+              ),
+              span(id = "high_status_click_to_generate",
+                style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #e9ecef; color: #6c757d; font-size: 12px;",
+                icon("hourglass-half"), " Click to generate"
+              )
             ),
-            status = "primary", 
+            status = "primary",
             solidHeader = TRUE,
             width = 12,
             imageOutput("highlight_preview", height = "auto")
           )
         )
       ),
-      
+
       # Heatmap Tab
       tabItem(
         tabName = "heatmap",
@@ -5238,18 +8510,15 @@ ui <- dashboardPage(
               hr(),
               
               # Global settings
+              # v105: Removed global Distance from Tree slider - now per-heatmap only
               fluidRow(
-                column(4,
-                       sliderInput("heatmap_global_width", "Individual Heatmap Width", 
-                                   min = 0.1, max = 3, value = 0.8, step = 0.1)
-                ),
-                column(4,
-                       sliderInput("heatmap_global_gap", "Gap Between Heatmaps", 
+                column(6,
+                       sliderInput("heatmap_global_gap", "Gap Between Heatmaps",
                                    min = 0, max = 1, value = 0.05, step = 0.01)
                 ),
-                column(4,
-                       sliderInput("heatmap_global_font", "Legend Font Size", 
-                                   min = 1, max = 10, value = 3.5, step = 0.1)
+                column(6,
+                       tags$p(class = "text-muted", style = "padding-top: 20px;",
+                              "Legend font size is controlled in the Legend tab. Per-heatmap settings are in each heatmap box below.")
                 )
               ),
               
@@ -5258,11 +8527,11 @@ ui <- dashboardPage(
               # Add new heatmap button
               fluidRow(
                 column(12,
-                       actionButton("add_new_heatmap", "Add New Heatmap", 
+                       actionButton("add_new_heatmap", "Add New Heatmap",
                                     icon = icon("plus"), class = "btn-success",
                                     style = "margin-bottom: 15px;"),
                        tags$span(class = "text-muted", style = "margin-left: 10px;",
-                                 "Maximum 6 heatmaps allowed")
+                                 "Maximum 10 heatmaps allowed")  # v141: Increased from 6 to 10
                 )
               ),
               
@@ -5286,16 +8555,460 @@ ui <- dashboardPage(
           box(
             title = tagList(
               "Preview ",
-              uiOutput("heatmap_status_indicator", inline = TRUE)
+              # v59: Static status indicators for immediate shinyjs updates
+              span(id = "heat_status_waiting",
+                style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #f8f9fa; color: #6c757d; font-size: 12px;",
+                icon("clock"), " Waiting for data"
+              ),
+              span(id = "heat_status_processing",
+                style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #6c757d; color: #ffffff; font-size: 12px; font-weight: bold;",
+                icon("spinner", class = "fa-spin"), " Processing..."
+              ),
+              span(id = "heat_status_ready",
+                style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #28a745; color: #ffffff; font-size: 12px; font-weight: bold;",
+                icon("check-circle"), " Ready"
+              ),
+              span(id = "heat_status_click_to_generate",
+                style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #e9ecef; color: #6c757d; font-size: 12px;",
+                icon("hourglass-half"), " Click to generate"
+              )
             ),
-            status = "primary", 
+            status = "primary",
             solidHeader = TRUE,
             width = 12,
             imageOutput("heatmap_preview", height = "auto")
           )
         )
       ),
-      
+
+      # Legend Tab (v122)
+      tabItem(
+        tabName = "legend",
+        fluidRow(
+          # v122: Settings on left (4 columns), preview on right (8 columns)
+          column(4,
+            # Legend Position box
+            box(
+              title = NULL,  # v122: No side-by-side title
+              status = "primary",
+              solidHeader = FALSE,
+              width = 12,
+              tags$h4(icon("arrows-alt"), " Legend Position", style = "margin-top: 0;"),
+              tags$p(class = "text-muted", "Where legends appear on the plot:"),
+              selectInput("legend_position", NULL,  # v122: Title is above, not in label
+                          choices = c("Right (default)" = "right",
+                                      "Left" = "left",
+                                      "Top" = "top",
+                                      "Bottom" = "bottom",
+                                      "None (hide all)" = "none"),
+                          selected = "right")
+            ),
+
+            # v180: Legend Visibility box - simplified heatmap control
+            box(
+              title = NULL,
+              status = "info",
+              solidHeader = FALSE,
+              width = 12,
+              tags$h4(icon("eye"), " Legend Visibility", style = "margin-top: 0;"),
+              tags$p(class = "text-muted", "Toggle which legends to show:"),
+              checkboxInput("legend_show_classification", "Classification Legend", value = TRUE),
+              checkboxInput("legend_show_highlight", "Highlight Legend", value = TRUE),
+              checkboxInput("legend_show_bootstrap", "Bootstrap Legend", value = TRUE),
+              checkboxInput("legend_show_pvalue", "P Value Legend", value = TRUE),
+              checkboxInput("legend_show_heatmap", "Heatmap Legends", value = TRUE)  # v180: Simplified to single checkbox
+            ),
+
+            # Font Sizes box
+            box(
+              title = NULL,
+              status = "warning",
+              solidHeader = FALSE,
+              width = 12,
+              tags$h4(icon("text-height"), " Font Sizes", style = "margin-top: 0;"),
+              sliderInput("legend_title_size", "Legend Title Size",
+                          min = 4, max = 48, value = 12, step = 1),
+              sliderInput("legend_text_size", "Legend Text Size",
+                          min = 2, max = 36, value = 10, step = 1)
+            ),
+
+            # v180: Symbol & Spacing Settings box - enhanced with more controls
+            box(
+              title = NULL,
+              status = "success",
+              solidHeader = FALSE,
+              width = 12,
+              tags$h4(icon("square"), " Symbol & Spacing Settings", style = "margin-top: 0;"),
+              sliderInput("legend_key_size", "Legend Key Size (symbols)",
+                          min = 0.1, max = 5, value = 1, step = 0.1),
+              tags$hr(style = "margin: 10px 0;"),
+              tags$p(class = "text-muted", tags$small("Key dimensions:")),
+              fluidRow(
+                column(6,
+                  sliderInput("legend_key_width", "Key Width",
+                              min = 0.5, max = 3, value = 1, step = 0.1)
+                ),
+                column(6,
+                  sliderInput("legend_key_height", "Key Height",
+                              min = 0.5, max = 3, value = 1, step = 0.1)
+                )
+              ),
+              tags$hr(style = "margin: 10px 0;"),
+              tags$p(class = "text-muted", tags$small("Spacing between legends:")),
+              sliderInput("legend_spacing", "Horizontal Spacing (top/bottom)",
+                          min = 0.05, max = 3, value = 0.3, step = 0.05),
+              sliderInput("legend_spacing_vertical", "Vertical Spacing (left/right)",
+                          min = 0.1, max = 5, value = 1, step = 0.1),
+              tags$hr(style = "margin: 10px 0;"),
+              tags$p(class = "text-muted", tags$small("Spacing within each legend:")),
+              sliderInput("legend_title_key_spacing", "Title to Keys Spacing",
+                          min = 0, max = 2, value = 0.2, step = 0.05),  # v180: Renamed for clarity
+              sliderInput("legend_key_spacing", "Between Keys Spacing",
+                          min = 0, max = 2, value = 0.1, step = 0.05),  # v180: Actual key spacing
+              tags$hr(style = "margin: 10px 0;"),
+              tags$p(class = "text-muted", tags$small("Legend item order:")),
+              checkboxInput("legend_reverse_order", "Reverse item order in legends", value = FALSE),
+              tags$p(class = "text-muted", tags$small(
+                "Note: Legend item order is determined by the data order. ",
+                "Use this checkbox to reverse it."
+              ))
+            ),
+
+            # v180: Legend Background box
+            box(
+              title = NULL,
+              status = "warning",
+              solidHeader = FALSE,
+              width = 12,
+              collapsible = TRUE,
+              collapsed = TRUE,
+              tags$h4(icon("palette"), " Legend Background", style = "margin-top: 0;"),
+              tags$p(class = "text-muted", tags$small("Legend box appearance:")),
+              fluidRow(
+                column(6,
+                  colourpicker::colourInput("legend_box_background", "Box Background",
+                                            value = "transparent", showColour = "both",
+                                            allowTransparent = TRUE)
+                ),
+                column(6,
+                  sliderInput("legend_margin", "Legend Margin",
+                              min = 0, max = 2, value = 0.2, step = 0.05)
+                )
+              )
+            ),
+
+            # v179: Removed Highlight Legend Settings and Bootstrap Legend Settings
+            # These are no longer needed since legends now use native ggplot positioning
+
+            # Apply button
+            box(
+              title = NULL,
+              status = "primary",
+              solidHeader = FALSE,
+              width = 12,
+              actionButton("apply_legend_settings", "Apply Legend Settings",
+                           class = "btn-success btn-lg btn-block",
+                           icon = icon("check"))
+            )
+          ),
+
+          # v127: Plot preview on right (8 columns) - using imageOutput like other tabs
+          # Added processing/ready status indicators like other tabs have
+          column(8,
+            box(
+              title = tagList(
+                "Legend Preview ",
+                # v127: Static status indicators for immediate shinyjs updates
+                span(id = "legend_status_waiting",
+                  style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #f8f9fa; color: #6c757d; font-size: 12px;",
+                  icon("clock"), " Waiting for data"
+                ),
+                span(id = "legend_status_processing",
+                  style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #6c757d; color: #ffffff; font-size: 12px; font-weight: bold;",
+                  icon("spinner", class = "fa-spin"), " Processing..."
+                ),
+                span(id = "legend_status_ready",
+                  style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #28a745; color: #ffffff; font-size: 12px; font-weight: bold;",
+                  icon("check-circle"), " Ready"
+                )
+              ),
+              status = "primary",
+              solidHeader = TRUE,
+              width = 12,
+              imageOutput("legend_preview", height = "auto")
+            )
+          )
+        )
+      ),
+
+      # v130: Extra Tab - Page title, custom text annotations, and images
+      # v141: Redesigned to add plot positioning and clarify text overlay behavior
+      tabItem(
+        tabName = "extra",
+        fluidRow(
+          # Plot Position Section (v141: NEW)
+          box(
+            title = tagList(
+              icon("arrows-alt"), " Plot Position ",
+              span(id = "extra_status_waiting",
+                style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #f8f9fa; color: #6c757d; font-size: 12px;",
+                icon("clock"), " Waiting for data"
+              ),
+              span(id = "extra_status_processing",
+                style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #6c757d; color: #ffffff; font-size: 12px; font-weight: bold;",
+                icon("spinner", class = "fa-spin"), " Processing..."
+              ),
+              span(id = "extra_status_ready",
+                style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #28a745; color: #ffffff; font-size: 12px;",
+                icon("check"), " Ready"
+              )
+            ),
+            status = "primary",
+            solidHeader = TRUE,
+            width = 6,
+            collapsible = FALSE,
+            tags$p(class = "text-muted",
+              "Move the entire plot (tree + heatmap + legend) on the page. ",
+              "Text annotations are overlaid on top."
+            ),
+            fluidRow(
+              column(6,
+                sliderInput("plot_offset_x", "Horizontal Position:",
+                           min = -5, max = 5, value = 0, step = 0.1,
+                           post = " (left/right)")
+              ),
+              column(6,
+                sliderInput("plot_offset_y", "Vertical Position:",
+                           min = -10, max = 5, value = 0, step = 0.1,
+                           post = " (down/up)")
+              )
+            ),
+            fluidRow(
+              column(12,
+                actionButton("reset_plot_position", "Reset to Center",
+                            class = "btn-secondary btn-sm", icon = icon("undo"))
+              )
+            ),
+            hr(),
+            # v146: Scale slider to zoom plot without distorting proportions
+            tags$p(class = "text-muted",
+              "Scale the entire plot up or down (zoom) without changing proportions."
+            ),
+            fluidRow(
+              column(12,
+                sliderInput("plot_scale_percent", "Plot Scale:",
+                           min = 25, max = 200, value = 100, step = 5,
+                           post = "%")
+              )
+            ),
+            fluidRow(
+              column(12,
+                actionButton("reset_plot_scale", "Reset to 100%",
+                            class = "btn-secondary btn-sm", icon = icon("undo"))
+              )
+            ),
+            hr(),
+            # v179: Tree stretch controls - make tree longer/shorter and wider/narrower
+            tags$p(class = "text-muted",
+              tags$strong("Tree Stretch:"), " Stretch the tree independently (may distort proportions)."
+            ),
+            fluidRow(
+              column(6,
+                sliderInput("tree_stretch_x", "Tree Length (horizontal):",
+                           min = 0.5, max = 3, value = 1, step = 0.1,
+                           post = "x")
+              ),
+              column(6,
+                sliderInput("tree_stretch_y", "Tree Width (vertical):",
+                           min = 0.5, max = 3, value = 1, step = 0.1,
+                           post = "x")
+              )
+            ),
+            fluidRow(
+              column(12,
+                actionButton("reset_tree_stretch", "Reset to 1x",
+                            class = "btn-secondary btn-sm", icon = icon("undo"))
+              )
+            ),
+            hr(),
+            # v179: Background color control
+            tags$p(class = "text-muted",
+              tags$strong("Background:"), " Set the plot background color."
+            ),
+            fluidRow(
+              column(6,
+                colourpicker::colourInput("background_color", "Background Color:",
+                                          value = "#FFFFFF", showColour = "both",
+                                          allowTransparent = TRUE)
+              ),
+              column(6,
+                actionButton("reset_background", "Reset to White",
+                            class = "btn-secondary btn-sm", icon = icon("undo"),
+                            style = "margin-top: 25px;")
+              )
+            )
+          ),
+
+          # Preview Box
+          box(
+            title = "Preview",
+            status = "primary",
+            solidHeader = TRUE,
+            width = 6,
+            # v146: Changed to auto height for consistent aspect ratio with other tabs
+            imageOutput("extra_preview", height = "auto"),
+            actionButton("extra_apply", "Apply to Plot", class = "btn-primary", style = "margin-top: 10px;")
+          )
+        ),
+
+        # Page Title Section
+        fluidRow(
+          box(
+            title = tagList(icon("heading"), " Page Title"),
+            status = "info",
+            solidHeader = TRUE,
+            width = 12,
+            collapsible = TRUE,
+            collapsed = TRUE,
+            checkboxInput("enable_page_title", "Enable Page Title", value = FALSE),
+            conditionalPanel(
+              condition = "input.enable_page_title == true",
+              textInput("page_title_text", "Title Text:", value = ""),
+              fluidRow(
+                column(6,
+                  numericInput("page_title_x", "X Position:", value = 0.5, min = 0, max = 1, step = 0.01)
+                ),
+                column(6,
+                  numericInput("page_title_y", "Y Position:", value = 0.95, min = 0, max = 1, step = 0.01)
+                )
+              ),
+              sliderInput("page_title_size", "Font Size:", min = 6, max = 72, value = 18, step = 1),
+              colourpicker::colourInput("page_title_color", "Color:", value = "#000000"),
+              fluidRow(
+                column(6,
+                  checkboxInput("page_title_bold", "Bold", value = TRUE)
+                ),
+                column(6,
+                  checkboxInput("page_title_underline", "Underline", value = FALSE)
+                )
+              ),
+              selectInput("page_title_hjust", "Horizontal Alignment:",
+                          choices = c("Left" = "0", "Center" = "0.5", "Right" = "1"), selected = "0.5")
+            )
+          )
+        ),
+
+        # Custom Text Annotations Section (Overlay)
+        fluidRow(
+          box(
+            title = tagList(icon("font"), " Text Overlay"),
+            status = "success",
+            solidHeader = TRUE,
+            width = 12,
+            collapsible = TRUE,
+            collapsed = FALSE,
+            tags$div(
+              style = "background: #d4edda; padding: 10px; border-radius: 5px; margin-bottom: 15px;",
+              tags$p(style = "margin: 0; color: #155724;",
+                icon("info-circle"),
+                " Text is placed as an ", tags$b("overlay"), " on top of the plot. ",
+                "Position the plot using the controls above, then add text wherever you want. ",
+                "If text covers the plot, it will appear on top."
+              )
+            ),
+
+            fluidRow(
+              column(3,
+                textInput("custom_text_content", "Text:", value = "")
+              ),
+              column(2,
+                numericInput("custom_text_x", "X Position:", value = 0.5, min = 0, max = 1, step = 0.01)
+              ),
+              column(2,
+                numericInput("custom_text_y", "Y Position:", value = 0.5, min = 0, max = 1, step = 0.01)
+              ),
+              column(2,
+                sliderInput("custom_text_size", "Size:", min = 4, max = 36, value = 12, step = 1)
+              ),
+              column(2,
+                colourpicker::colourInput("custom_text_color", "Color:", value = "#000000")
+              )
+            ),
+            fluidRow(
+              column(3,
+                selectInput("custom_text_fontface", "Font Style:",
+                            choices = c("Plain" = "plain", "Bold" = "bold", "Italic" = "italic", "Bold Italic" = "bold.italic"))
+              ),
+              column(3,
+                selectInput("custom_text_hjust", "H. Align:",
+                            choices = c("Left" = "0", "Center" = "0.5", "Right" = "1"), selected = "0.5")
+              ),
+              column(3,
+                selectInput("custom_text_vjust", "V. Align:",
+                            choices = c("Top" = "1", "Middle" = "0.5", "Bottom" = "0"), selected = "0.5")
+              ),
+              column(3,
+                numericInput("custom_text_angle", "Rotation:", value = 0, min = -180, max = 180, step = 1)
+              )
+            ),
+            fluidRow(
+              column(4,
+                actionButton("add_custom_text", "Add Text", class = "btn-success", icon = icon("plus"))
+              ),
+              column(4,
+                actionButton("clear_custom_texts", "Clear All Texts", class = "btn-warning", icon = icon("trash"))
+              )
+            ),
+            hr(),
+            h5("Added Texts:"),
+            uiOutput("custom_texts_list")
+          )
+        ),
+
+        # Custom Images Section
+        fluidRow(
+          box(
+            title = tagList(icon("image"), " Image Overlay"),
+            status = "warning",
+            solidHeader = TRUE,
+            width = 12,
+            collapsible = TRUE,
+            collapsed = TRUE,
+            p("Add images as an overlay at specific positions on the page."),
+
+            fluidRow(
+              column(4,
+                fileInput("custom_image_file", "Select Image:",
+                          accept = c("image/png", "image/jpeg", "image/gif", "image/svg+xml"))
+              ),
+              column(2,
+                numericInput("custom_image_x", "X Position:", value = 0.5, min = 0, max = 1, step = 0.01)
+              ),
+              column(2,
+                numericInput("custom_image_y", "Y Position:", value = 0.5, min = 0, max = 1, step = 0.01)
+              ),
+              column(2,
+                numericInput("custom_image_width", "Width:", value = 0.2, min = 0.01, max = 1, step = 0.01)
+              ),
+              column(2,
+                numericInput("custom_image_height", "Height (0=auto):", value = 0, min = 0, max = 1, step = 0.01)
+              )
+            ),
+            fluidRow(
+              column(4,
+                actionButton("add_custom_image", "Add Image", class = "btn-success", icon = icon("plus"))
+              ),
+              column(4,
+                actionButton("clear_custom_images", "Clear All Images", class = "btn-warning", icon = icon("trash"))
+              )
+            ),
+            hr(),
+            h5("Added Images:"),
+            uiOutput("custom_images_list")
+          )
+        )
+      ),
+
       # Download Tab
       tabItem(
         tabName = "download",
@@ -5306,10 +9019,17 @@ ui <- dashboardPage(
             solidHeader = TRUE,
             width = 4,
             textInput("individual_name", "Sample/Individual Name", value = "Sample1"),
-            selectInput("output_format", "File Format", 
+            selectInput("output_format", "File Format",
                         choices = c("pdf", "png", "tiff", "svg", "jpeg"), selected = "pdf"),
-            numericInput("output_width", "Width", value = 170),
-            numericInput("output_height", "Height", value = 60),
+            # v138: Page orientation option
+            selectInput("page_orientation", "Page Orientation",
+                        choices = c("Landscape" = "landscape", "Portrait" = "portrait"),
+                        selected = "landscape"),
+            # v179: Option to preserve plot proportions when changing orientation
+            checkboxInput("keep_proportions", "Keep plot proportions (don't stretch)", value = TRUE),
+            # v125: Default to A4 landscape size (297 x 210 mm)
+            numericInput("output_width", "Width", value = 29.7),
+            numericInput("output_height", "Height", value = 21),
             selectInput("output_units", "Units", choices = c("cm", "mm", "in"), selected = "cm"),
             textInput("output_path", "Output Directory", value = "./"),
             checkboxInput("replace_name", "Use Custom File Name", value = FALSE),
@@ -5322,11 +9042,27 @@ ui <- dashboardPage(
           ),
           
           box(
-            title = "Final Preview",
-            status = "primary", 
+            title = tagList(
+              "Final Preview ",
+              # v142: Status indicators for Download tab
+              span(id = "download_status_waiting",
+                style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #f8f9fa; color: #6c757d; font-size: 12px;",
+                icon("clock"), " Waiting for data"
+              ),
+              span(id = "download_status_processing",
+                style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #6c757d; color: #ffffff; font-size: 12px; font-weight: bold;",
+                icon("spinner", class = "fa-spin"), " Processing..."
+              ),
+              span(id = "download_status_ready",
+                style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #28a745; color: #ffffff; font-size: 12px; font-weight: bold;",
+                icon("check-circle"), " Ready"
+              )
+            ),
+            status = "primary",
             solidHeader = TRUE,
             width = 8,
-            plotOutput("final_preview", height = "600px"),
+            # v125: Changed to imageOutput to match other previews
+            imageOutput("final_preview", height = "auto"),
             downloadButton("download_plot", "Download Plot", class = "btn-primary"),
             downloadButton("download_yaml", "Download YAML Configuration", class = "btn-success")
           )
@@ -5380,11 +9116,296 @@ server <- function(input, output, session) {
     progress_message = "",  # Current progress message
     progress_visible = FALSE,  # Whether to show progress bar
     plot_generating = FALSE,  # Whether plot is currently being generated
-    plot_ready = FALSE  # Whether plot is ready to display
+    plot_ready = FALSE,  # Whether plot is ready to display
+    yaml_import_status = NULL,  # S1.62dev: Status message for YAML import
+    # S1.62dev: RData CNV data storage
+    rdata_cnv_env = NULL,       # Raw environment from loaded RData
+    rdata_cnv_matrix = NULL,    # Processed CNV matrix (rows=positions, cols=samples)
+    rdata_import_status = NULL, # Status message for RData import
+    rdata_sample_names = NULL,  # Sample names from RData (column names)
+    # v121: Legend settings
+    # S1.5: Added all missing defaults for proper legend styling
+    legend_settings = list(
+      position = "right",
+      show_classification = TRUE,
+      show_highlight = TRUE,
+      show_bootstrap = TRUE,
+      show_heatmap = TRUE,
+      show_pvalue = TRUE,
+      title_size = 12,
+      text_size = 10,
+      key_size = 1,
+      key_width = 1,
+      key_height = 1,
+      spacing = 0.3,
+      spacing_vertical = 1,
+      title_key_spacing = 0.2,
+      key_spacing = 0.2,
+      reverse_order = FALSE,
+      box_background = "transparent",
+      margin = 0.2
+    ),
+    # v130: Extra tab - page title, custom texts, and images
+    page_title = list(
+      enabled = FALSE,
+      text = "",
+      x = 0.5,
+      y = 0.95,
+      size = 18,
+      color = "#000000",
+      bold = TRUE,
+      underline = FALSE,
+      hjust = 0.5
+    ),
+    custom_texts = list(),  # List of custom text annotations
+    custom_images = list(),  # List of custom images
+    # v141: Plot position offsets for Extra tab
+    plot_offset_x = 0,  # Horizontal offset (negative = left, positive = right)
+    plot_offset_y = 0,  # Vertical offset (negative = down, positive = up)
+    # v146: Plot scale percentage (zoom without distorting proportions)
+    plot_scale_percent = 100,
+    # v179: Tree stretch controls (may distort proportions)
+    tree_stretch_x = 1,  # Horizontal stretch (tree length)
+    tree_stretch_y = 1,  # Vertical stretch (tree width)
+    # v179: Background color control
+    background_color = "#FFFFFF"
   )
   
   classification_loading <- reactiveVal(FALSE)
-  
+
+  # S1.4-PERF: Plot trigger mechanism to batch multiple rapid updates
+  # Instead of calling generate_plot() directly, observers increment this trigger.
+  # A debounced observer watches the trigger and calls generate_plot() once.
+  # This prevents redundant recalculations when multiple inputs change rapidly.
+  plot_trigger <- reactiveVal(0)
+
+  # S1.4-PERF: Debounced version of plot_trigger - batches rapid updates
+  plot_trigger_debounced <- debounce(reactive(plot_trigger()), 100)  # 100ms debounce
+
+  # S1.4-PERF: Helper function to request plot regeneration (use instead of direct generate_plot())
+  request_plot_update <- function() {
+    plot_trigger(plot_trigger() + 1)
+  }
+
+  # v107: Trigger for heatmap UI regeneration - only fires when we need to rebuild the UI
+  # (add/remove/reorder heatmaps, or when CSV data changes)
+  # This prevents the UI from rebuilding every time a slider or input changes
+  heatmap_ui_trigger <- reactiveVal(0)
+
+  # ==========================================================================
+  # S1-PERF: DEBOUNCED REACTIVE INPUTS
+  # ==========================================================================
+  # These debounced versions prevent plot regeneration on every tiny slider movement.
+  # The delay (300ms) waits until the user stops adjusting before triggering updates.
+  # Use these instead of direct input$ values for sliders that affect plot rendering.
+
+  DEBOUNCE_MS <- 300  # Debounce delay in milliseconds
+
+  # Legend Tab sliders
+  legend_title_size_d <- debounce(reactive(input$legend_title_size), DEBOUNCE_MS)
+  legend_text_size_d <- debounce(reactive(input$legend_text_size), DEBOUNCE_MS)
+  legend_key_size_d <- debounce(reactive(input$legend_key_size), DEBOUNCE_MS)
+  legend_key_width_d <- debounce(reactive(input$legend_key_width), DEBOUNCE_MS)
+  legend_key_height_d <- debounce(reactive(input$legend_key_height), DEBOUNCE_MS)
+  legend_spacing_d <- debounce(reactive(input$legend_spacing), DEBOUNCE_MS)
+  legend_spacing_vertical_d <- debounce(reactive(input$legend_spacing_vertical), DEBOUNCE_MS)
+  legend_title_key_spacing_d <- debounce(reactive(input$legend_title_key_spacing), DEBOUNCE_MS)
+  legend_key_spacing_d <- debounce(reactive(input$legend_key_spacing), DEBOUNCE_MS)
+  legend_margin_d <- debounce(reactive(input$legend_margin), DEBOUNCE_MS)
+
+  # Extra Tab sliders
+  plot_offset_x_d <- debounce(reactive(input$plot_offset_x), DEBOUNCE_MS)
+  plot_offset_y_d <- debounce(reactive(input$plot_offset_y), DEBOUNCE_MS)
+  plot_scale_percent_d <- debounce(reactive(input$plot_scale_percent), DEBOUNCE_MS)
+  tree_stretch_x_d <- debounce(reactive(input$tree_stretch_x), DEBOUNCE_MS)
+  tree_stretch_y_d <- debounce(reactive(input$tree_stretch_y), DEBOUNCE_MS)
+  page_title_size_d <- debounce(reactive(input$page_title_size), DEBOUNCE_MS)
+  page_title_x_d <- debounce(reactive(input$page_title_x), DEBOUNCE_MS)
+  page_title_y_d <- debounce(reactive(input$page_title_y), DEBOUNCE_MS)
+
+  # Highlight sliders
+  highlight_offset_d <- debounce(reactive(input$highlight_offset), DEBOUNCE_MS)
+  highlight_vertical_offset_d <- debounce(reactive(input$highlight_vertical_offset), DEBOUNCE_MS)
+  highlight_adjust_height_d <- debounce(reactive(input$highlight_adjust_height), DEBOUNCE_MS)
+  highlight_adjust_width_d <- debounce(reactive(input$highlight_adjust_width), DEBOUNCE_MS)
+
+  # Bootstrap sliders
+  man_boot_x_offset_d <- debounce(reactive(input$man_boot_x_offset), DEBOUNCE_MS)
+  bootstrap_label_size_d <- debounce(reactive(input$bootstrap_label_size), DEBOUNCE_MS)
+
+  # Heatmap sliders
+  heatmap_global_gap_d <- debounce(reactive(input$heatmap_global_gap), DEBOUNCE_MS)
+
+  # Tree display sliders
+  tip_font_size_d <- debounce(reactive(input$tip_font_size), DEBOUNCE_MS)
+  edge_width_d <- debounce(reactive(input$edge_width), DEBOUNCE_MS)
+  node_number_font_size_d <- debounce(reactive(input$node_number_font_size), DEBOUNCE_MS)
+  tip_length_d <- debounce(reactive(input$tip_length), DEBOUNCE_MS)
+
+  # S1.62dev: Background color (debounced to prevent rapid picker updates from causing lag)
+  background_color_d <- debounce(reactive(input$background_color), DEBOUNCE_MS)
+
+  # ==========================================================================
+  # END DEBOUNCED REACTIVE INPUTS
+  # ==========================================================================
+
+  # ==========================================================================
+  # S1.4-PERF: DEBOUNCED PLOT REGENERATION OBSERVER
+  # ==========================================================================
+  # This single observer handles all debounced plot update requests.
+  # Instead of calling generate_plot() directly from many observers,
+  # use request_plot_update() which increments plot_trigger.
+  # This observer batches rapid updates and calls generate_plot() once.
+  observeEvent(plot_trigger_debounced(), {
+    req(values$plot_ready)  # Only regenerate if a plot exists
+    req(plot_trigger() > 0)  # Ignore initial value
+    cat(file=stderr(), "[PERF] Debounced plot trigger fired - regenerating plot\n")
+    generate_plot()
+  }, ignoreInit = TRUE)
+  # ==========================================================================
+
+  # v59: Helper functions to toggle status indicator via shinyjs (immediate UI updates)
+  # Updated to toggle status indicators on ALL preview tabs (Tree Display, Classification, Bootstrap, Highlighting, Heatmap)
+  show_status_waiting <- function() {
+    # Tree Display tab
+    shinyjs::show("status_waiting")
+    shinyjs::hide("status_processing")
+    shinyjs::hide("status_ready")
+    shinyjs::hide("status_click_to_generate")
+    # Classification tab
+    shinyjs::show("class_status_waiting")
+    shinyjs::hide("class_status_processing")
+    shinyjs::hide("class_status_ready")
+    shinyjs::hide("class_status_click_to_generate")
+    # Bootstrap tab
+    shinyjs::show("boot_status_waiting")
+    shinyjs::hide("boot_status_processing")
+    shinyjs::hide("boot_status_ready")
+    shinyjs::hide("boot_status_click_to_generate")
+    # Highlighting tab
+    shinyjs::show("high_status_waiting")
+    shinyjs::hide("high_status_processing")
+    shinyjs::hide("high_status_ready")
+    shinyjs::hide("high_status_click_to_generate")
+    # Heatmap tab
+    shinyjs::show("heat_status_waiting")
+    shinyjs::hide("heat_status_processing")
+    shinyjs::hide("heat_status_ready")
+    shinyjs::hide("heat_status_click_to_generate")
+    # v127: Legend tab
+    shinyjs::show("legend_status_waiting")
+    shinyjs::hide("legend_status_processing")
+    shinyjs::hide("legend_status_ready")
+    # v142: Download tab
+    shinyjs::show("download_status_waiting")
+    shinyjs::hide("download_status_processing")
+    shinyjs::hide("download_status_ready")
+  }
+
+  show_status_processing <- function() {
+    # Tree Display tab
+    shinyjs::hide("status_waiting")
+    shinyjs::show("status_processing")
+    shinyjs::hide("status_ready")
+    shinyjs::hide("status_click_to_generate")
+    # Classification tab
+    shinyjs::hide("class_status_waiting")
+    shinyjs::show("class_status_processing")
+    shinyjs::hide("class_status_ready")
+    shinyjs::hide("class_status_click_to_generate")
+    # Bootstrap tab
+    shinyjs::hide("boot_status_waiting")
+    shinyjs::show("boot_status_processing")
+    shinyjs::hide("boot_status_ready")
+    shinyjs::hide("boot_status_click_to_generate")
+    # Highlighting tab
+    shinyjs::hide("high_status_waiting")
+    shinyjs::show("high_status_processing")
+    shinyjs::hide("high_status_ready")
+    shinyjs::hide("high_status_click_to_generate")
+    # Heatmap tab
+    shinyjs::hide("heat_status_waiting")
+    shinyjs::show("heat_status_processing")
+    shinyjs::hide("heat_status_ready")
+    shinyjs::hide("heat_status_click_to_generate")
+    # v127: Legend tab
+    shinyjs::hide("legend_status_waiting")
+    shinyjs::show("legend_status_processing")
+    shinyjs::hide("legend_status_ready")
+    # v142: Download tab
+    shinyjs::hide("download_status_waiting")
+    shinyjs::show("download_status_processing")
+    shinyjs::hide("download_status_ready")
+  }
+
+  show_status_ready <- function() {
+    # Tree Display tab
+    shinyjs::hide("status_waiting")
+    shinyjs::hide("status_processing")
+    shinyjs::show("status_ready")
+    shinyjs::hide("status_click_to_generate")
+    # Classification tab
+    shinyjs::hide("class_status_waiting")
+    shinyjs::hide("class_status_processing")
+    shinyjs::show("class_status_ready")
+    shinyjs::hide("class_status_click_to_generate")
+    # Bootstrap tab
+    shinyjs::hide("boot_status_waiting")
+    shinyjs::hide("boot_status_processing")
+    shinyjs::show("boot_status_ready")
+    shinyjs::hide("boot_status_click_to_generate")
+    # Highlighting tab
+    shinyjs::hide("high_status_waiting")
+    shinyjs::hide("high_status_processing")
+    shinyjs::show("high_status_ready")
+    shinyjs::hide("high_status_click_to_generate")
+    # Heatmap tab
+    shinyjs::hide("heat_status_waiting")
+    shinyjs::hide("heat_status_processing")
+    shinyjs::show("heat_status_ready")
+    shinyjs::hide("heat_status_click_to_generate")
+    # v127: Legend tab
+    shinyjs::hide("legend_status_waiting")
+    shinyjs::hide("legend_status_processing")
+    shinyjs::show("legend_status_ready")
+    # v142: Download tab
+    shinyjs::hide("download_status_waiting")
+    shinyjs::hide("download_status_processing")
+    shinyjs::show("download_status_ready")
+  }
+
+  show_status_click_to_generate <- function() {
+    # Tree Display tab
+    shinyjs::hide("status_waiting")
+    shinyjs::hide("status_processing")
+    shinyjs::hide("status_ready")
+    shinyjs::show("status_click_to_generate")
+    # Classification tab
+    shinyjs::hide("class_status_waiting")
+    shinyjs::hide("class_status_processing")
+    shinyjs::hide("class_status_ready")
+    shinyjs::show("class_status_click_to_generate")
+    # Bootstrap tab
+    shinyjs::hide("boot_status_waiting")
+    shinyjs::hide("boot_status_processing")
+    shinyjs::hide("boot_status_ready")
+    shinyjs::show("boot_status_click_to_generate")
+    # Highlighting tab
+    shinyjs::hide("high_status_waiting")
+    shinyjs::hide("high_status_processing")
+    shinyjs::hide("high_status_ready")
+    shinyjs::show("high_status_click_to_generate")
+    # Heatmap tab
+    shinyjs::hide("heat_status_waiting")
+    shinyjs::hide("heat_status_processing")
+    shinyjs::hide("heat_status_ready")
+    shinyjs::show("heat_status_click_to_generate")
+    # v127: Legend tab (no click_to_generate status, just show waiting)
+    shinyjs::show("legend_status_waiting")
+    shinyjs::hide("legend_status_processing")
+    shinyjs::hide("legend_status_ready")
+  }
+
   # Initialize YAML data structure immediately
   values$yaml_data <- list(
     "Individual general definitions" = list(
@@ -5497,12 +9518,94 @@ server <- function(input, output, session) {
   outputOptions(output, "match_success", suspendWhenHidden = FALSE)
   outputOptions(output, "match_warning", suspendWhenHidden = FALSE)
   outputOptions(output, "match_error", suspendWhenHidden = FALSE)
-  
+
+  # S1.62dev: YAML import status output
+  output$yaml_import_status <- renderText({
+    if (is.null(values$yaml_import_status)) {
+      ""
+    } else {
+      values$yaml_import_status
+    }
+  })
+
+  # S1.62dev: RData CNV import status output
+  output$rdata_import_status <- renderText({
+    if (is.null(values$rdata_import_status)) {
+      ""
+    } else {
+      values$rdata_import_status
+    }
+  })
+
+  # S1.62dev: RData CNV file upload observer
+  observeEvent(input$rdata_file, {
+    cat(file=stderr(), "[RDATA-IMPORT] Observer triggered\n")
+    req(input$rdata_file)
+    cat(file=stderr(), "[RDATA-IMPORT] File received:", input$rdata_file$datapath, "\n")
+
+    # Show progress indicator
+    values$progress_message <- "🧬 Loading CNV data from RData..."
+    values$progress_visible <- TRUE
+    values$rdata_import_status <- "Processing RData file..."
+
+    # Require tree and CSV to be loaded first
+    if (is.null(values$tree) || is.null(values$csv_data)) {
+      cat(file=stderr(), "[RDATA-IMPORT] ERROR: tree or csv_data is NULL\n")
+      values$rdata_import_status <- "Error: Please upload tree and CSV files first."
+      values$progress_visible <- FALSE
+      showNotification("Please upload tree and CSV files first", type = "error")
+      return()
+    }
+
+    # Extract CNV data from RData file
+    result <- func.extract.cnv.from.rdata(input$rdata_file$datapath, downsample_factor = 10)
+
+    if (!is.null(result$error)) {
+      cat(file=stderr(), "[RDATA-IMPORT] ERROR:", result$error, "\n")
+      values$rdata_import_status <- paste("❌ Error:", result$error)
+      values$progress_visible <- FALSE
+      showNotification(result$error, type = "error")
+      return()
+    }
+
+    # Store the extracted data
+    values$rdata_cnv_matrix <- result$matrix
+    values$rdata_sample_names <- result$sample_names
+
+    # S1.62dev: Store chromosome information if available
+    values$rdata_chr_info <- result$chr_info
+    values$rdata_start_info <- result$start_info
+    values$rdata_end_info <- result$end_info
+
+    cat(file=stderr(), "[RDATA-IMPORT] Successfully loaded CNV data\n")
+    cat(file=stderr(), "[RDATA-IMPORT] Matrix dimensions:", nrow(result$matrix), "x", ncol(result$matrix), "\n")
+    cat(file=stderr(), "[RDATA-IMPORT] Sample names:", paste(head(result$sample_names, 5), collapse=", "),
+        if(length(result$sample_names) > 5) "..." else "", "\n")
+
+    # S1.62dev: Build status message including chromosome info
+    status_msg <- paste0(
+      "✅ CNV data loaded successfully!\n",
+      "Samples: ", result$n_samples, "\n",
+      "Genomic positions: ", result$n_positions
+    )
+    if (!is.null(result$chr_info)) {
+      unique_chrs <- unique(result$chr_info)
+      status_msg <- paste0(status_msg, "\nChromosomes: ", paste(unique_chrs, collapse=", "))
+    } else {
+      status_msg <- paste0(status_msg, "\nChromosome info: Not available in this RData file")
+    }
+    values$rdata_import_status <- status_msg
+
+    values$progress_visible <- FALSE
+    showNotification(paste("CNV data loaded:", result$n_samples, "samples,", result$n_positions, "positions"),
+                     type = "message")
+  })
+
   # Bootstrap checkbox observer
   # Bootstrap checkbox observer
   observeEvent(input$show_bootstrap, {
-    # v53: cat(file=stderr(), "\n===observeEvent show_bootstrap FIRED===\n")
-    # v53: cat(file=stderr(), "New value:", input$show_bootstrap, "\n")
+    # v53: debug_cat("\n===observeEvent show_bootstrap FIRED===\n")
+    # v53: debug_cat("New value:", input$show_bootstrap, "\n")
     # v53: cat(file=stderr(), "plot_ready:", values$plot_ready, "\n")
     
     req(values$plot_ready)
@@ -5517,93 +9620,101 @@ server <- function(input, output, session) {
   }, ignoreInit = TRUE)
   
   # Bootstrap format observer
+  # S1.4-PERF: Using request_plot_update() for batched updates
   observeEvent(input$bootstrap_format, {
-    # v53: cat(file=stderr(), "\n===observeEvent bootstrap_format FIRED===\n")
     req(values$plot_ready, input$show_bootstrap == TRUE)
-    generate_plot()
+    request_plot_update()
   }, ignoreInit = TRUE)
-  
+
   # Bootstrap param observer
+  # S1.4-PERF: Using request_plot_update() for batched updates
   observeEvent(input$bootstrap_param, {
-    # v53: cat(file=stderr(), "\n===observeEvent bootstrap_param FIRED===\n")
-    # v53: cat(file=stderr(), "New value:", input$bootstrap_param, "\n")
     req(values$plot_ready, input$show_bootstrap == TRUE)
-    generate_plot()
+    request_plot_update()
   }, ignoreInit = TRUE)
-  
+
   # Bootstrap label size observer
+  # S1.4-PERF: Using request_plot_update() for batched updates
   observeEvent(input$bootstrap_label_size, {
-    # v53: cat(file=stderr(), "\n===observeEvent bootstrap_label_size FIRED===\n")
-    # v53: cat(file=stderr(), "New value:", input$bootstrap_label_size, "\n")
     req(values$plot_ready, input$show_bootstrap == TRUE)
-    generate_plot()
+    request_plot_update()
   }, ignoreInit = TRUE)
-  
-  # Process YAML configuration when loaded
+
+  # v112: Bootstrap position offset observer - makes slider immediately responsive
+  # S1.4-PERF: Using request_plot_update() for batched updates
+  observeEvent(man_boot_x_offset_d(), {
+    req(values$plot_ready, input$show_bootstrap == TRUE)
+    request_plot_update()
+  }, ignoreInit = TRUE)
+
+  # S1.62dev: YAML import - Settings Only mode
+  # Applies visual settings from YAML to the currently loaded tree/CSV data
+  # Does NOT try to load files from paths (those paths are session-specific temp files)
   observeEvent(input$yaml_config, {
+    cat(file=stderr(), "[YAML-IMPORT] Observer triggered\n")
     req(input$yaml_config)
-    
-    yaml_data <- parse_yaml_config(input$yaml_config$datapath)
-    if ("error" %in% names(yaml_data)) {
-      showNotification(yaml_data$error, type = "error")
+    cat(file=stderr(), "[YAML-IMPORT] File received:", input$yaml_config$datapath, "\n")
+
+    # S1.62dev: Show progress indicator immediately
+    values$progress_message <- "📋 Importing YAML settings..."
+    values$progress_visible <- TRUE
+    values$yaml_import_status <- "Processing YAML configuration..."
+
+    # S1.62dev: Require tree and CSV to be loaded first
+    if (is.null(values$tree) || is.null(values$csv_data)) {
+      cat(file=stderr(), "[YAML-IMPORT] ERROR: tree or csv_data is NULL\n")
+      values$yaml_import_status <- "Error: Please upload tree and CSV files first before importing settings."
+      values$progress_visible <- FALSE
+      showNotification("Please upload tree and CSV files first", type = "error")
       return()
     }
-    
-    # Load the configuration into the app
-    updateTextInput(session, "individual_name", value = yaml_data$`Individual general definitions`$Individual)
-    
-    # Load tree file if available
-    if (!is.null(yaml_data$`Individual general definitions`$`tree path`) && 
-        file.exists(yaml_data$`Individual general definitions`$`tree path`[[1]])) {
-      # Load tree file
-      tree_file <- yaml_data$`Individual general definitions`$`tree path`[[1]]
-      tree <- read.tree(tree_file)
-      values$tree <- tree
-      values$tree_data <- ggtree(tree)$data
-      
-      # Update tree summary
-      output$tree_summary <- renderPrint({
-        cat("Tree loaded from YAML configuration\n")
-        cat("Number of tips:", length(tree$tip.label), "\n")
-        cat("Number of internal nodes:", tree$Nnode, "\n")
-      })
-    }
-    
-    # Load CSV file if available
-    if (!is.null(yaml_data$`Individual general definitions`$`mapping csv file`) && 
-        file.exists(yaml_data$`Individual general definitions`$`mapping csv file`)) {
-      csv_file <- yaml_data$`Individual general definitions`$`mapping csv file`
-      csv_data <- read.csv(csv_file)
-      values$csv_data <- csv_data
-      
-      # Update ID column
-      id_col <- yaml_data$`Mapping exl renaming titles`$`ID column`
-      if (id_col %in% names(csv_data)) {
-        updateSelectInput(session, "id_column", choices = names(csv_data), selected = id_col)
-      } else {
-        updateSelectInput(session, "id_column", choices = names(csv_data))
+    cat(file=stderr(), "[YAML-IMPORT] Tree and CSV are loaded, proceeding with YAML parse\n")
+
+    # S1.62dev: Use withProgress for visible feedback during import
+    # Show progress bar at top of page with notification style
+    withProgress(message = 'Importing YAML settings...', value = 0, style = 'notification', {
+      setProgress(value = 0.05, message = "Importing YAML settings...", detail = "Reading file...")
+      yaml_data <- parse_yaml_config(input$yaml_config$datapath)
+      if ("error" %in% names(yaml_data)) {
+        cat(file=stderr(), "[YAML-IMPORT] ERROR parsing YAML:", yaml_data$error, "\n")
+        values$yaml_import_status <- paste("Error parsing YAML:", yaml_data$error)
+        values$progress_visible <- FALSE
+        showNotification(yaml_data$error, type = "error")
+        return()
       }
-      
-      # Update Individual column
-      individual_col <- yaml_data$`Individual general definitions`$`individual column`
-      if (!is.null(individual_col) && individual_col %in% names(csv_data)) {
-        updateSelectInput(session, "individual_column", choices = names(csv_data), selected = individual_col)
-      } else {
-        updateSelectInput(session, "individual_column", choices = names(csv_data))
-      }
-      
-      # Update CSV summary
-      output$csv_summary <- renderPrint({
-        cat("CSV loaded from YAML configuration\n")
-        cat("Number of rows:", nrow(csv_data), "\n")
-        cat("Number of columns:", ncol(csv_data), "\n")
-        cat("ID column:", id_col, "\n")
-      })
+      cat(file=stderr(), "[YAML-IMPORT] YAML parsed successfully\n")
+      setProgress(value = 0.2, detail = "File parsed successfully...")
+    cat(file=stderr(), "[YAML-IMPORT] YAML keys:", paste(names(yaml_data), collapse=", "), "\n")
+
+    # S1.62dev: Track what settings were imported
+    imported_settings <- c()
+
+    # Load individual name if available
+    if (!is.null(yaml_data$`Individual general definitions`$Individual)) {
+      updateTextInput(session, "individual_name", value = yaml_data$`Individual general definitions`$Individual)
+      imported_settings <- c(imported_settings, "Individual name")
     }
-    
+
+    # S1.62dev: Load individual column if available
+    if (!is.null(yaml_data$`Individual general definitions`$`individual column`)) {
+      updateSelectInput(session, "individual_column", selected = yaml_data$`Individual general definitions`$`individual column`)
+      imported_settings <- c(imported_settings, "Individual column")
+    }
+
+    # S1.62dev: Load ID column if available
+    if (!is.null(yaml_data$`Mapping exl renaming titles`$`ID column`)) {
+      updateSelectInput(session, "id_column", selected = yaml_data$`Mapping exl renaming titles`$`ID column`)
+      imported_settings <- c(imported_settings, "ID column")
+    }
+
+    # S1.62dev: Skip file loading - use existing tree and CSV data
+    # The YAML file paths point to temporary R session directories that no longer exist
+
     # Load display settings
     if (!is.null(yaml_data$`visual definitions`)) {
       
+      setProgress(value = 0.3, detail = "Loading display settings...")
+
       # Load Bootstrap settings
       if (!is.null(yaml_data$`visual definitions`$Bootstrap)) {
         bootstrap_display <- yaml_data$`visual definitions`$Bootstrap$display
@@ -5614,8 +9725,15 @@ server <- function(input, output, session) {
                                selected = yaml_data$`visual definitions`$Bootstrap$format)
           }
           if (!is.null(yaml_data$`visual definitions`$Bootstrap$param)) {
-            updateSliderInput(session, "bootstrap_param", 
+            updateSliderInput(session, "bootstrap_param",
                               value = as.numeric(yaml_data$`visual definitions`$Bootstrap$param))
+          }
+          # S1.62dev: Import bootstrap label size
+          if (!is.null(yaml_data$`visual definitions`$Bootstrap$label_size)) {
+            updateSliderInput(session, "bootstrap_label_size",
+                              value = as.numeric(yaml_data$`visual definitions`$Bootstrap$label_size))
+            cat(file=stderr(), "[YAML-IMPORT] Imported bootstrap_label_size:",
+                yaml_data$`visual definitions`$Bootstrap$label_size, "\n")
           }
         } else {
           updateCheckboxInput(session, "show_bootstrap", value = FALSE)
@@ -5623,24 +9741,57 @@ server <- function(input, output, session) {
       }
       
       # Load Rotation settings
+      # S1.62dev: Fixed - populate rotation1_config/rotation2_config instead of rotation_settings
       if (!is.null(yaml_data$`visual definitions`$rotation1)) {
         rotation1_display <- yaml_data$`visual definitions`$rotation1$display
         if (func.check.bin.val.from.conf(rotation1_display)) {
           updateCheckboxInput(session, "enable_rotation", value = TRUE)
           updateRadioButtons(session, "rotation_type", selected = "primary")
-          
-          # Load rotation classes
-          if (!is.null(yaml_data$`visual definitions`$rotation1$according)) {
-            values$rotation_settings$primary <- yaml_data$`visual definitions`$rotation1$according
+
+          # Load rotation classes into rotation1_config
+          if (!is.null(yaml_data$`visual definitions`$rotation1$according) &&
+              length(yaml_data$`visual definitions`$rotation1$according) > 0) {
+            config <- list()
+            for (i in seq_along(yaml_data$`visual definitions`$rotation1$according)) {
+              r <- yaml_data$`visual definitions`$rotation1$according[[i]]
+              if (!is.null(r$col) && !is.null(r$val)) {
+                config[[i]] <- list(col = r$col, val = r$val)
+              }
+            }
+            values$rotation1_config <- config
+
+            # Update UI to show the rotation groups
+            if (length(config) > 0) {
+              updateNumericInput(session, "rotation1_num_groups", value = length(config))
+            }
+            cat(file=stderr(), "[YAML-IMPORT] Imported rotation1 with", length(config), "groups\n")
           }
         }
       }
-      
+
       if (!is.null(yaml_data$`visual definitions`$rotation2)) {
         rotation2_display <- yaml_data$`visual definitions`$rotation2$display
         if (func.check.bin.val.from.conf(rotation2_display)) {
-          # If both rotations are enabled, default to primary first
-          values$rotation_settings$secondary <- yaml_data$`visual definitions`$rotation2$according
+          updateRadioButtons(session, "rotation_type", selected = "secondary")
+
+          # Load rotation classes into rotation2_config
+          if (!is.null(yaml_data$`visual definitions`$rotation2$according) &&
+              length(yaml_data$`visual definitions`$rotation2$according) > 0) {
+            config <- list()
+            for (i in seq_along(yaml_data$`visual definitions`$rotation2$according)) {
+              r <- yaml_data$`visual definitions`$rotation2$according[[i]]
+              if (!is.null(r$col) && !is.null(r$val)) {
+                config[[i]] <- list(col = r$col, val = r$val)
+              }
+            }
+            values$rotation2_config <- config
+
+            # Update UI to show the rotation groups
+            if (length(config) > 0) {
+              updateNumericInput(session, "rotation2_num_groups", value = length(config))
+            }
+            cat(file=stderr(), "[YAML-IMPORT] Imported rotation2 with", length(config), "groups\n")
+          }
         }
       }
       
@@ -5669,13 +9820,36 @@ server <- function(input, output, session) {
       # Load Font sizes
       if (!is.null(yaml_data$`visual definitions`$font_size)) {
         if (!is.null(yaml_data$`visual definitions`$font_size$tips)) {
-          updateSliderInput(session, "tip_font_size", 
+          updateSliderInput(session, "tip_font_size",
                             value = as.numeric(yaml_data$`visual definitions`$font_size$tips))
         }
-        
-        # Other font sizes could be loaded here
+
+        # S1.62dev: Load heatmap font size
+        if (!is.null(yaml_data$`visual definitions`$font_size$heat_map_legend)) {
+          updateSliderInput(session, "heatmap_font_size",
+                            value = as.numeric(yaml_data$`visual definitions`$font_size$heat_map_legend))
+        }
       }
-      
+
+      # S1.62dev: Load node numbers settings
+      if (!is.null(yaml_data$`visual definitions`$node_numbers)) {
+        node_numbers_display <- yaml_data$`visual definitions`$node_numbers$display
+        if (func.check.bin.val.from.conf(node_numbers_display)) {
+          updateCheckboxInput(session, "display_node_numbers", value = TRUE)
+          if (!is.null(yaml_data$`visual definitions`$node_numbers$font_size)) {
+            updateSliderInput(session, "node_number_font_size",
+                              value = as.numeric(yaml_data$`visual definitions`$node_numbers$font_size))
+          }
+          cat(file=stderr(), "[YAML-IMPORT] Imported node_numbers display=yes, font_size=",
+              yaml_data$`visual definitions`$node_numbers$font_size, "\n")
+        } else {
+          updateCheckboxInput(session, "display_node_numbers", value = FALSE)
+          cat(file=stderr(), "[YAML-IMPORT] Imported node_numbers display=no\n")
+        }
+      }
+
+      setProgress(value = 0.5, detail = "Loading classifications...")
+
       # Load Classification settings
       if (!is.null(yaml_data$`visual definitions`$classification)) {
         values$classifications <- list()
@@ -5852,7 +10026,7 @@ server <- function(input, output, session) {
       
       if (!is.null(yaml_data$`Individual general definitions`$out_file$`replace name`)) {
         replace_name <- yaml_data$`Individual general definitions`$out_file$`replace name`
-        
+
         if (!is.null(replace_name$flag) && func.check.bin.val.from.conf(replace_name$flag)) {
           updateCheckboxInput(session, "replace_name", value = TRUE)
           if (!is.null(replace_name$name)) {
@@ -5860,18 +10034,355 @@ server <- function(input, output, session) {
           }
         }
       }
+
+      # S1.62dev: Import page orientation and dimensions
+      if (!is.null(yaml_data$`Individual general definitions`$out_file$page_orientation)) {
+        updateSelectInput(session, "page_orientation",
+                          selected = yaml_data$`Individual general definitions`$out_file$page_orientation)
+        cat(file=stderr(), "[YAML-IMPORT] page_orientation:",
+            yaml_data$`Individual general definitions`$out_file$page_orientation, "\n")
+      }
+      if (!is.null(yaml_data$`Individual general definitions`$out_file$output_width)) {
+        updateNumericInput(session, "output_width",
+                           value = as.numeric(yaml_data$`Individual general definitions`$out_file$output_width))
+        cat(file=stderr(), "[YAML-IMPORT] output_width:",
+            yaml_data$`Individual general definitions`$out_file$output_width, "\n")
+      }
+      if (!is.null(yaml_data$`Individual general definitions`$out_file$output_height)) {
+        updateNumericInput(session, "output_height",
+                           value = as.numeric(yaml_data$`Individual general definitions`$out_file$output_height))
+        cat(file=stderr(), "[YAML-IMPORT] output_height:",
+            yaml_data$`Individual general definitions`$out_file$output_height, "\n")
+      }
+      if (!is.null(yaml_data$`Individual general definitions`$out_file$output_units)) {
+        updateSelectInput(session, "output_units",
+                          selected = yaml_data$`Individual general definitions`$out_file$output_units)
+        cat(file=stderr(), "[YAML-IMPORT] output_units:",
+            yaml_data$`Individual general definitions`$out_file$output_units, "\n")
+      }
+      if (!is.null(yaml_data$`Individual general definitions`$out_file$keep_proportions)) {
+        val <- func.check.bin.val.from.conf(yaml_data$`Individual general definitions`$out_file$keep_proportions)
+        updateCheckboxInput(session, "keep_proportions", value = val)
+        cat(file=stderr(), "[YAML-IMPORT] keep_proportions:", val, "\n")
+      }
+
+      imported_settings <- c(imported_settings, "Output settings")
     }
-    
-    # Force update of UI elements based on loaded data
+
+    setProgress(value = 0.6, detail = "Loading heatmaps...")
+
+    # S1.62dev: Import heatmaps from new format
+    if (!is.null(yaml_data$`visual definitions`$heatmaps) &&
+        length(yaml_data$`visual definitions`$heatmaps) > 0) {
+      cat(file=stderr(), "[YAML-IMPORT] Found heatmaps section with", length(yaml_data$`visual definitions`$heatmaps), "heatmaps\n")
+
+      # Enable heatmap display checkbox
+      updateCheckboxInput(session, "enable_heatmap", value = TRUE)
+
+      values$heatmap_configs <- list()
+      for (i in seq_along(yaml_data$`visual definitions`$heatmaps)) {
+        h <- yaml_data$`visual definitions`$heatmaps[[i]]
+
+        new_config <- list(
+          columns = if (!is.null(h$columns)) unlist(h$columns) else character(0),
+          title = if (!is.null(h$title)) h$title else paste0("Heatmap ", i),
+          # S1.62dev: Import auto_type flag, default to FALSE for backward compatibility
+          auto_type = if (!is.null(h$auto_type)) func.check.bin.val.from.conf(h$auto_type) else FALSE,
+          type = if (!is.null(h$is_discrete) && func.check.bin.val.from.conf(h$is_discrete)) "discrete" else "continuous",
+          show_colnames = if (!is.null(h$show_colnames)) func.check.bin.val.from.conf(h$show_colnames) else TRUE,
+          colnames_angle = if (!is.null(h$colnames_angle)) as.numeric(h$colnames_angle) else 45,
+          distance = if (!is.null(h$distance)) as.numeric(h$distance) else 0.02,
+          height = if (!is.null(h$height)) as.numeric(h$height) else 0.8,
+          # S1.62dev: Import row label settings from YAML instead of hardcoding
+          show_row_labels = if (!is.null(h$show_row_labels)) func.check.bin.val.from.conf(h$show_row_labels) else FALSE,
+          row_label_source = if (!is.null(h$row_label_source)) h$row_label_source else "colnames",
+          row_label_font_size = if (!is.null(h$row_label_font_size)) as.numeric(h$row_label_font_size) else 2.5,
+          custom_row_labels = if (!is.null(h$custom_row_labels)) h$custom_row_labels else "",
+          row_label_offset = if (!is.null(h$row_label_offset)) as.numeric(h$row_label_offset) else 1.0,
+          row_label_align = if (!is.null(h$row_label_align)) h$row_label_align else "left",
+          label_mapping = if (!is.null(h$label_mapping)) h$label_mapping else list(),
+          discrete_palette = if (!is.null(h$discrete_palette)) h$discrete_palette else "Set1",
+          # S1.62dev: Import custom discrete colors from YAML instead of hardcoding
+          custom_discrete = if (!is.null(h$custom_discrete)) func.check.bin.val.from.conf(h$custom_discrete) else FALSE,
+          custom_colors = if (!is.null(h$custom_colors) && length(h$custom_colors) > 0) h$custom_colors else list(),
+          cont_palette = if (!is.null(h$cont_palette)) h$cont_palette else "Blues",
+          low_color = if (!is.null(h$low_color)) h$low_color else "#FFFFCC",
+          high_color = if (!is.null(h$high_color)) h$high_color else "#006837",
+          use_midpoint = if (!is.null(h$use_midpoint)) func.check.bin.val.from.conf(h$use_midpoint) else FALSE,
+          mid_color = if (!is.null(h$mid_color)) h$mid_color else "#FFFF99",
+          midpoint = if (!is.null(h$midpoint)) as.numeric(h$midpoint) else 0,
+          # S1.61dev: Guide line settings
+          show_guide_lines = if (!is.null(h$show_guide_lines)) func.check.bin.val.from.conf(h$show_guide_lines) else FALSE,
+          guide_color1 = if (!is.null(h$guide_color1)) h$guide_color1 else "#CCCCCC",
+          guide_color2 = if (!is.null(h$guide_color2)) h$guide_color2 else "#EEEEEE",
+          guide_alpha = if (!is.null(h$guide_alpha)) as.numeric(h$guide_alpha) else 0.3,
+          guide_width = if (!is.null(h$guide_width)) as.numeric(h$guide_width) else 0.5,
+          guide_linetype = if (!is.null(h$guide_linetype)) h$guide_linetype else "solid",
+          # S1.62dev: Import grid settings from YAML
+          show_grid = if (!is.null(h$show_grid)) func.check.bin.val.from.conf(h$show_grid) else FALSE,
+          grid_color = if (!is.null(h$grid_color)) h$grid_color else "#000000",
+          grid_size = if (!is.null(h$grid_size)) as.numeric(h$grid_size) else 0.5
+        )
+        values$heatmap_configs <- c(values$heatmap_configs, list(new_config))
+      }
+      # Trigger heatmap UI regeneration
+      heatmap_ui_trigger(heatmap_ui_trigger() + 1)
+
+      # S1.62dev: Also populate values$heatmaps for immediate plot rendering
+      # This converts heatmap_configs to the format expected by the plot function
+      heatmaps_for_plot <- lapply(values$heatmap_configs, function(cfg) {
+        if (is.null(cfg$columns) || length(cfg$columns) == 0) {
+          return(NULL)
+        }
+        list(
+          title = if (!is.null(cfg$title)) cfg$title else "Heatmap",
+          columns = cfg$columns,
+          is_discrete = if (!is.null(cfg$type) && cfg$type == "discrete") TRUE else FALSE,
+          # S1.62dev: Include show_colnames for column name visibility
+          show_colnames = if (!is.null(cfg$show_colnames)) cfg$show_colnames else TRUE,
+          colnames_angle = if (!is.null(cfg$colnames_angle)) cfg$colnames_angle else 45,
+          discrete_palette = if (!is.null(cfg$discrete_palette)) cfg$discrete_palette else "Set1",
+          # S1.62dev: color_scheme is what the plot function actually reads for discrete heatmaps
+          color_scheme = if (!is.null(cfg$discrete_palette)) cfg$discrete_palette else "Set1",
+          cont_palette = if (!is.null(cfg$cont_palette)) cfg$cont_palette else "Blues",
+          custom_discrete = if (!is.null(cfg$custom_discrete)) cfg$custom_discrete else FALSE,
+          man_define_colors = if (!is.null(cfg$custom_discrete)) cfg$custom_discrete else FALSE,
+          custom_colors = if (!is.null(cfg$custom_colors)) cfg$custom_colors else list(),
+          low_color = if (!is.null(cfg$low_color)) cfg$low_color else "#FFFFCC",
+          high_color = if (!is.null(cfg$high_color)) cfg$high_color else "#006837",
+          use_midpoint = if (!is.null(cfg$use_midpoint)) cfg$use_midpoint else FALSE,
+          mid_color = if (!is.null(cfg$mid_color)) cfg$mid_color else "#FFFF99",
+          midpoint = if (!is.null(cfg$midpoint)) cfg$midpoint else 0,
+          distance = if (!is.null(cfg$distance)) cfg$distance else 0.02,
+          height = if (!is.null(cfg$height)) cfg$height else 0.8,
+          row_height = if (!is.null(cfg$row_height)) cfg$row_height else 1,
+          show_grid = if (!is.null(cfg$show_grid)) cfg$show_grid else FALSE,
+          grid_color = if (!is.null(cfg$grid_color)) cfg$grid_color else "white",
+          grid_size = if (!is.null(cfg$grid_size)) cfg$grid_size else 0.5,
+          # S1.62dev: Row line settings
+          show_row_lines = if (!is.null(cfg$show_row_lines)) cfg$show_row_lines else FALSE,
+          row_line_color = if (!is.null(cfg$row_line_color)) cfg$row_line_color else "#000000",
+          row_line_size = if (!is.null(cfg$row_line_size)) cfg$row_line_size else 0.5,
+          show_guides = if (!is.null(cfg$show_guides)) cfg$show_guides else FALSE,
+          guide_color1 = if (!is.null(cfg$guide_color1)) cfg$guide_color1 else "#CCCCCC",
+          guide_color2 = if (!is.null(cfg$guide_color2)) cfg$guide_color2 else "#EEEEEE",
+          guide_alpha = if (!is.null(cfg$guide_alpha)) cfg$guide_alpha else 0.3,
+          guide_width = if (!is.null(cfg$guide_width)) cfg$guide_width else 0.5,
+          guide_linetype = if (!is.null(cfg$guide_linetype)) cfg$guide_linetype else "solid",
+          show_row_labels = if (!is.null(cfg$show_row_labels)) cfg$show_row_labels else FALSE,
+          row_label_source = if (!is.null(cfg$row_label_source)) cfg$row_label_source else "colnames",
+          row_label_font_size = if (!is.null(cfg$row_label_font_size)) cfg$row_label_font_size else 2.5,
+          # S1.62dev: Added missing row_label_offset and row_label_align
+          row_label_offset = if (!is.null(cfg$row_label_offset)) cfg$row_label_offset else 1.0,
+          row_label_align = if (!is.null(cfg$row_label_align)) cfg$row_label_align else "left",
+          custom_row_labels = if (!is.null(cfg$custom_row_labels)) cfg$custom_row_labels else ""
+        )
+      })
+      # Remove NULL entries (configs without columns)
+      heatmaps_for_plot <- heatmaps_for_plot[!sapply(heatmaps_for_plot, is.null)]
+      if (length(heatmaps_for_plot) > 0) {
+        values$heatmaps <- heatmaps_for_plot
+        cat(file=stderr(), "[YAML-IMPORT] Also populated values$heatmaps with", length(heatmaps_for_plot), "heatmaps for plot\n")
+      }
+
+      imported_settings <- c(imported_settings, "Heatmaps")
+      cat(file=stderr(), "[YAML-IMPORT] Imported", length(values$heatmap_configs), "heatmap configs\n")
+    }
+
+    setProgress(value = 0.75, detail = "Loading highlights...")
+
+    # S1.62dev: Import highlights from new format
+    if (!is.null(yaml_data$`visual definitions`$highlights) &&
+        length(yaml_data$`visual definitions`$highlights) > 0) {
+      cat(file=stderr(), "[YAML-IMPORT] Found highlights section with", length(yaml_data$`visual definitions`$highlights), "highlights\n")
+
+      # Enable highlight checkbox
+      updateCheckboxInput(session, "enable_highlight", value = TRUE)
+
+      values$highlights <- list()
+      for (i in seq_along(yaml_data$`visual definitions`$highlights)) {
+        h <- yaml_data$`visual definitions`$highlights[[i]]
+
+        # Build items list
+        items_list <- list()
+        if (!is.null(h$items) && length(h$items) > 0) {
+          for (j in seq_along(h$items)) {
+            item <- h$items[[j]]
+            items_list[[j]] <- list(
+              column = if (!is.null(item$column)) item$column else "",
+              value = if (!is.null(item$value)) item$value else "",
+              display_name = if (!is.null(item$display_name)) item$display_name else "",
+              color = if (!is.null(item$color)) item$color else "#FF0000",
+              transparency = if (!is.null(item$transparency)) as.numeric(item$transparency) else 0.5
+            )
+          }
+        }
+
+        new_highlight <- list(
+          enabled = if (!is.null(h$enabled)) func.check.bin.val.from.conf(h$enabled) else TRUE,
+          title = if (!is.null(h$title)) h$title else "Highlight",
+          column = if (!is.null(h$column)) h$column else "",
+          offset = if (!is.null(h$offset)) as.numeric(h$offset) else 0,
+          vertical_offset = if (!is.null(h$vertical_offset)) as.numeric(h$vertical_offset) else 0,
+          adjust_height = if (!is.null(h$adjust_height)) as.numeric(h$adjust_height) else 1,
+          adjust_width = if (!is.null(h$adjust_width)) as.numeric(h$adjust_width) else 1,
+          items = items_list
+        )
+        values$highlights <- c(values$highlights, list(new_highlight))
+      }
+
+      # Set active highlight index
+      values$active_highlight_index <- length(values$highlights)
+
+      imported_settings <- c(imported_settings, "Highlights")
+      cat(file=stderr(), "[YAML-IMPORT] Imported", length(values$highlights), "highlights\n")
+    }
+
+    # S1.62dev: Import legend settings from new format
+    if (!is.null(yaml_data$`visual definitions`$legend)) {
+      cat(file=stderr(), "[YAML-IMPORT] Found legend section\n")
+      leg <- yaml_data$`visual definitions`$legend
+
+      if (!is.null(leg$position)) {
+        values$legend_settings$position <- leg$position
+        updateSelectInput(session, "legend_position", selected = leg$position)
+      }
+      # S1.62dev: Import legend visibility settings and update UI checkboxes
+      if (!is.null(leg$show_classification)) {
+        val <- func.check.bin.val.from.conf(leg$show_classification)
+        values$legend_settings$show_classification <- val
+        updateCheckboxInput(session, "legend_show_classification", value = val)
+        cat(file=stderr(), "[YAML-IMPORT] legend_show_classification:", val, "\n")
+      }
+      if (!is.null(leg$show_highlight)) {
+        val <- func.check.bin.val.from.conf(leg$show_highlight)
+        values$legend_settings$show_highlight <- val
+        updateCheckboxInput(session, "legend_show_highlight", value = val)
+        cat(file=stderr(), "[YAML-IMPORT] legend_show_highlight:", val, "\n")
+      }
+      if (!is.null(leg$show_bootstrap)) {
+        val <- func.check.bin.val.from.conf(leg$show_bootstrap)
+        values$legend_settings$show_bootstrap <- val
+        updateCheckboxInput(session, "legend_show_bootstrap", value = val)
+        cat(file=stderr(), "[YAML-IMPORT] legend_show_bootstrap:", val, "\n")
+      }
+      if (!is.null(leg$show_pvalue)) {
+        val <- func.check.bin.val.from.conf(leg$show_pvalue)
+        values$legend_settings$show_pvalue <- val
+        updateCheckboxInput(session, "legend_show_pvalue", value = val)
+        cat(file=stderr(), "[YAML-IMPORT] legend_show_pvalue:", val, "\n")
+      }
+      if (!is.null(leg$show_heatmap)) {
+        val <- func.check.bin.val.from.conf(leg$show_heatmap)
+        values$legend_settings$show_heatmap <- val
+        updateCheckboxInput(session, "legend_show_heatmap", value = val)
+        cat(file=stderr(), "[YAML-IMPORT] legend_show_heatmap:", val, "\n")
+      }
+      if (!is.null(leg$title_size)) {
+        values$legend_settings$title_size <- as.numeric(leg$title_size)
+        updateSliderInput(session, "legend_title_size", value = as.numeric(leg$title_size))
+      }
+      if (!is.null(leg$text_size)) {
+        values$legend_settings$text_size <- as.numeric(leg$text_size)
+        updateSliderInput(session, "legend_text_size", value = as.numeric(leg$text_size))
+      }
+      if (!is.null(leg$box_background)) {
+        values$legend_settings$box_background <- leg$box_background
+      }
+      if (!is.null(leg$margin)) {
+        values$legend_settings$margin <- as.numeric(leg$margin)
+        updateSliderInput(session, "legend_margin", value = as.numeric(leg$margin))
+      }
+      imported_settings <- c(imported_settings, "Legend")
+    }
+
+    # S1.62dev: Import extra settings (plot position, scale, stretch, background)
+    if (!is.null(yaml_data$`visual definitions`$extra_settings)) {
+      cat(file=stderr(), "[YAML-IMPORT] Found extra_settings section\n")
+      extra <- yaml_data$`visual definitions`$extra_settings
+
+      if (!is.null(extra$plot_offset_x)) {
+        values$plot_offset_x <- as.numeric(extra$plot_offset_x)
+        updateSliderInput(session, "plot_offset_x", value = as.numeric(extra$plot_offset_x))
+        cat(file=stderr(), "[YAML-IMPORT] plot_offset_x:", extra$plot_offset_x, "\n")
+      }
+      if (!is.null(extra$plot_offset_y)) {
+        values$plot_offset_y <- as.numeric(extra$plot_offset_y)
+        updateSliderInput(session, "plot_offset_y", value = as.numeric(extra$plot_offset_y))
+        cat(file=stderr(), "[YAML-IMPORT] plot_offset_y:", extra$plot_offset_y, "\n")
+      }
+      if (!is.null(extra$plot_scale)) {
+        updateSliderInput(session, "plot_scale", value = as.numeric(extra$plot_scale))
+        cat(file=stderr(), "[YAML-IMPORT] plot_scale:", extra$plot_scale, "\n")
+      }
+      if (!is.null(extra$tree_stretch_x)) {
+        updateSliderInput(session, "tree_stretch_x", value = as.numeric(extra$tree_stretch_x))
+        cat(file=stderr(), "[YAML-IMPORT] tree_stretch_x:", extra$tree_stretch_x, "\n")
+      }
+      if (!is.null(extra$tree_stretch_y)) {
+        updateSliderInput(session, "tree_stretch_y", value = as.numeric(extra$tree_stretch_y))
+        cat(file=stderr(), "[YAML-IMPORT] tree_stretch_y:", extra$tree_stretch_y, "\n")
+      }
+      if (!is.null(extra$background_color)) {
+        colourpicker::updateColourInput(session, "background_color", value = extra$background_color)
+        cat(file=stderr(), "[YAML-IMPORT] background_color:", extra$background_color, "\n")
+      }
+      imported_settings <- c(imported_settings, "Extra settings")
+    }
+
+    # S1.62dev: Track visual definitions imported
+    if (!is.null(yaml_data$`visual definitions`)) {
+      if (!is.null(yaml_data$`visual definitions`$Bootstrap)) {
+        imported_settings <- c(imported_settings, "Bootstrap")
+      }
+      if (!is.null(yaml_data$`visual definitions`$rotation1) || !is.null(yaml_data$`visual definitions`$rotation2)) {
+        imported_settings <- c(imported_settings, "Rotation")
+      }
+      if (!is.null(yaml_data$`visual definitions`$`trim tips`)) {
+        imported_settings <- c(imported_settings, "Trim tips")
+      }
+      if (!is.null(yaml_data$`visual definitions`$edge_width_multiplier)) {
+        imported_settings <- c(imported_settings, "Edge width")
+      }
+      if (!is.null(yaml_data$`visual definitions`$font_size)) {
+        imported_settings <- c(imported_settings, "Font size")
+      }
+      if (!is.null(yaml_data$`visual definitions`$classification) &&
+          length(yaml_data$`visual definitions`$classification) > 0) {
+        imported_settings <- c(imported_settings, "Classification")
+      }
+    }
+
+    # Force update of UI elements based on currently loaded data
     updateSelectInput(session, "classification_column", choices = names(values$csv_data), selected = character(0))
     updateSelectInput(session, "highlight_column", choices = names(values$csv_data), selected = character(0))
-    # v55: heatmap_columns removed - now using individual column selects per heatmap
-    # updateSelectizeInput(session, "heatmap_columns", choices = names(values$csv_data))
-    
-    # Generate initial plot based on loaded configuration
-    generate_plot()
-    
-    showNotification("YAML configuration loaded successfully", type = "message")
+
+    cat(file=stderr(), "[YAML-IMPORT] imported_settings:", paste(imported_settings, collapse=", "), "\n")
+
+    # Generate plot with imported settings
+    request_plot_update()
+
+    # S1.62dev: Set status message and finalize
+    setProgress(value = 0.95, detail = "Finalizing...")
+
+    if (length(imported_settings) > 0) {
+      values$yaml_import_status <- paste0(
+        "✅ Settings imported successfully!\n",
+        "Applied: ", paste(imported_settings, collapse = ", ")
+      )
+      cat(file=stderr(), "[YAML-IMPORT] SUCCESS - Settings imported:", paste(imported_settings, collapse=", "), "\n")
+      showNotification("YAML settings imported successfully", type = "message")
+    } else {
+      values$yaml_import_status <- "⚠️ YAML loaded but no applicable settings found."
+      cat(file=stderr(), "[YAML-IMPORT] WARNING - No applicable settings found in YAML\n")
+      showNotification("YAML loaded but no applicable settings found", type = "warning")
+    }
+
+    # S1.62dev: Hide progress indicator when done
+    values$progress_visible <- FALSE
+    values$progress_message <- ""
+
+    }) # End withProgress
   })
   
   # When CSV file is uploaded
@@ -5887,8 +10398,26 @@ server <- function(input, output, session) {
     # Read CSV file
     tryCatch({
       csv_data <- read.csv(csv_file$datapath)
+
+      # S1-PERF: Filter out columns with empty/auto-generated names IMMEDIATELY
+      # This fixes the "large number of options" warnings and speeds up all processing
+      # Patterns: "...XXXX" (readr), "X", "X.1", "X.2" (base R), empty names
+      col_names <- names(csv_data)
+      is_auto_named <- grepl("^\\.\\.\\.", col_names) |  # readr pattern: ...15372
+                       grepl("^X(\\.\\d+)?$", col_names) |  # base R pattern: X, X.1, X.2
+                       col_names == "" | is.na(col_names)
+      valid_cols <- !is_auto_named
+      if (sum(!valid_cols) > 0) {
+        removed_count <- sum(!valid_cols)
+        cat(file=stderr(), sprintf("[PERF] Removed %d empty/auto-named columns on CSV load (keeping %d)\n",
+            removed_count, sum(valid_cols)))
+        csv_data <- csv_data[, valid_cols, drop = FALSE]
+      }
+
       values$csv_data <- csv_data
-      
+      # v107: Trigger heatmap UI regeneration when CSV data changes (new column choices)
+      heatmap_ui_trigger(heatmap_ui_trigger() + 1)
+
       # Update ID column dropdown
       updateSelectInput(session, "id_column", choices = names(csv_data))
       
@@ -5926,7 +10455,12 @@ server <- function(input, output, session) {
       
       # Hide progress
       values$progress_visible <- FALSE
-      
+
+      # v57: Update status indicator - CSV is loaded
+      if (!is.null(values$tree)) {
+        show_status_click_to_generate()
+      }
+
       # Don't auto-match - user must click "Process Data" button
       # v53: cat(file=stderr(), "CSV loaded. Ready for user to select columns and click 'Process Data'.\n")
     }, error = function(e) {
@@ -5934,7 +10468,7 @@ server <- function(input, output, session) {
       showNotification(paste("Error loading CSV:", e$message), type = "error")
     })
   })
-  
+
   # Update individual value dropdown when column is selected
   observeEvent(input$individual_column, {
     # v53: cat(file=stderr(), paste("individual_column changed to:", input$individual_column), "\n")
@@ -6009,8 +10543,9 @@ server <- function(input, output, session) {
     tryCatch({
       tree <- read.tree(tree_file$datapath)
       values$tree <- tree
-      values$tree_data <- ggtree(tree)$data
-      
+      # v56b: Suppress harmless fortify warnings
+      values$tree_data <- suppressWarnings(ggtree(tree))$data
+
       # Update tree summary
       output$tree_summary <- renderPrint({
         cat("Tree loaded successfully\n")
@@ -6030,7 +10565,12 @@ server <- function(input, output, session) {
       
       # Hide progress
       values$progress_visible <- FALSE
-      
+
+      # v57: Update status indicator - tree is loaded, ready to generate
+      if (!is.null(values$csv_data)) {
+        show_status_click_to_generate()
+      }
+
       # Don't auto-match - user must click "Process Data" button
       # v53: cat(file=stderr(), "Tree loaded. Ready for user to select columns and click 'Process Data'.\n")
     }, error = function(e) {
@@ -6451,11 +10991,18 @@ server <- function(input, output, session) {
         }
         
         if (!is.null(heatmaps_to_use) && length(heatmaps_to_use) > 0) {
+          # v56c: DEBUG
+          debug_cat(paste0("\n=== v56c: Adding ", length(heatmaps_to_use), " heatmap(s) to classification ", i, " ===\n"))
+
           class_item[[as.character(i)]]$heatmap_display <- list()
-          
+
           for (j in seq_along(heatmaps_to_use)) {
             heatmap_entry <- heatmaps_to_use[[j]]
-            
+
+            # v56c: DEBUG
+            debug_cat(paste0("  Processing heatmap ", j, ": ", heatmap_entry$title, "\n"))
+            debug_cat(paste0("    Columns: ", paste(heatmap_entry$columns, collapse=", "), "\n"))
+
             heatmap_item <- list()
             heatmap_item[[as.character(j)]] <- list(
               display = "yes",
@@ -6465,27 +11012,95 @@ server <- function(input, output, session) {
             )
             
             if (heatmap_entry$is_discrete) {
-              if (!is.null(heatmap_entry$use_custom_colors) && heatmap_entry$use_custom_colors) {
+              # v70: Fixed bug - use man_define_colors (not use_custom_colors) and custom_colors (not colors)
+              if (!is.null(heatmap_entry$man_define_colors) && heatmap_entry$man_define_colors) {
                 heatmap_item[[as.character(j)]]$man_define_colors <- "yes"
-                heatmap_item[[as.character(j)]]$color_scale_option <- heatmap_entry$colors
+                # v104: Store custom colors as a list with explicit names to preserve value->color mapping
+                custom_colors_as_list <- as.list(heatmap_entry$custom_colors)
+                names(custom_colors_as_list) <- names(heatmap_entry$custom_colors)
+                heatmap_item[[as.character(j)]]$color_scale_option <- custom_colors_as_list
               } else {
                 heatmap_item[[as.character(j)]]$color_scale_option <- heatmap_entry$color_scheme
               }
+              # v70: Add NA color (default white)
+              heatmap_item[[as.character(j)]]$na_color <- if (!is.null(heatmap_entry$na_color)) heatmap_entry$na_color else "white"
             } else {
               heatmap_item[[as.character(j)]]$low <- heatmap_entry$low_color
               heatmap_item[[as.character(j)]]$mid <- if (!is.null(heatmap_entry$mid_color)) heatmap_entry$mid_color else heatmap_entry$low_color
               heatmap_item[[as.character(j)]]$high <- heatmap_entry$high_color
               heatmap_item[[as.character(j)]]$midpoint <- if (!is.null(heatmap_entry$midpoint)) heatmap_entry$midpoint else 0
+              # v112: Add NA color for continuous heatmaps (default grey90)
+              heatmap_item[[as.character(j)]]$na_color <- if (!is.null(heatmap_entry$na_color)) heatmap_entry$na_color else "grey90"
             }
-            
-            # Add columns
+
+            # v104: Add per-heatmap distance
+            heatmap_item[[as.character(j)]]$distance <- if (!is.null(heatmap_entry$distance)) heatmap_entry$distance else 0.02
+
+            # v105: Add per-heatmap height (now called Column Width in UI)
+            heatmap_item[[as.character(j)]]$height <- if (!is.null(heatmap_entry$height)) heatmap_entry$height else 0.8
+
+            # v110: Add per-heatmap row height
+            heatmap_item[[as.character(j)]]$row_height <- if (!is.null(heatmap_entry$row_height)) heatmap_entry$row_height else 1.0
+
+            # v111: Add grid settings
+            heatmap_item[[as.character(j)]]$show_grid <- if (!is.null(heatmap_entry$show_grid) && heatmap_entry$show_grid) "yes" else "no"
+            heatmap_item[[as.character(j)]]$grid_color <- if (!is.null(heatmap_entry$grid_color)) heatmap_entry$grid_color else "#000000"
+            heatmap_item[[as.character(j)]]$grid_size <- if (!is.null(heatmap_entry$grid_size)) heatmap_entry$grid_size else 0.5
+
+            # S1.62dev: Add row line settings (horizontal lines only)
+            heatmap_item[[as.character(j)]]$show_row_lines <- if (!is.null(heatmap_entry$show_row_lines) && heatmap_entry$show_row_lines) "yes" else "no"
+            heatmap_item[[as.character(j)]]$row_line_color <- if (!is.null(heatmap_entry$row_line_color)) heatmap_entry$row_line_color else "#000000"
+            heatmap_item[[as.character(j)]]$row_line_size <- if (!is.null(heatmap_entry$row_line_size)) heatmap_entry$row_line_size else 0.5
+
+            # S1.62dev: Add column line settings (vertical lines)
+            heatmap_item[[as.character(j)]]$show_col_lines <- if (!is.null(heatmap_entry$show_col_lines) && heatmap_entry$show_col_lines) "yes" else "no"
+            heatmap_item[[as.character(j)]]$col_line_color <- if (!is.null(heatmap_entry$col_line_color)) heatmap_entry$col_line_color else "#000000"
+            heatmap_item[[as.character(j)]]$col_line_size <- if (!is.null(heatmap_entry$col_line_size)) heatmap_entry$col_line_size else 0.5
+
+            # S1.62dev: Add vertical text labels settings
+            heatmap_item[[as.character(j)]]$show_vertical_text <- if (!is.null(heatmap_entry$show_vertical_text) && heatmap_entry$show_vertical_text) "yes" else "no"
+            heatmap_item[[as.character(j)]]$vertical_text_column <- if (!is.null(heatmap_entry$vertical_text_column)) heatmap_entry$vertical_text_column else ""
+            heatmap_item[[as.character(j)]]$vertical_text_size <- if (!is.null(heatmap_entry$vertical_text_size)) heatmap_entry$vertical_text_size else 3
+            heatmap_item[[as.character(j)]]$vertical_text_offset <- if (!is.null(heatmap_entry$vertical_text_offset)) heatmap_entry$vertical_text_offset else 0.5
+            heatmap_item[[as.character(j)]]$vertical_text_color <- if (!is.null(heatmap_entry$vertical_text_color)) heatmap_entry$vertical_text_color else "#000000"
+
+            # v118: Add guide line settings (was missing - this caused tip guide lines not to work!)
+            heatmap_item[[as.character(j)]]$show_guides <- if (!is.null(heatmap_entry$show_guides) && heatmap_entry$show_guides) "yes" else "no"
+            heatmap_item[[as.character(j)]]$guide_color1 <- if (!is.null(heatmap_entry$guide_color1)) heatmap_entry$guide_color1 else "#CCCCCC"
+            heatmap_item[[as.character(j)]]$guide_color2 <- if (!is.null(heatmap_entry$guide_color2)) heatmap_entry$guide_color2 else "#EEEEEE"
+            heatmap_item[[as.character(j)]]$guide_alpha <- if (!is.null(heatmap_entry$guide_alpha)) heatmap_entry$guide_alpha else 0.3
+            heatmap_item[[as.character(j)]]$guide_width <- if (!is.null(heatmap_entry$guide_width)) heatmap_entry$guide_width else 0.5
+            heatmap_item[[as.character(j)]]$guide_linetype <- if (!is.null(heatmap_entry$guide_linetype)) heatmap_entry$guide_linetype else "solid"
+
+            # v109: Add colnames_angle
+            heatmap_item[[as.character(j)]]$colnames_angle <- if (!is.null(heatmap_entry$colnames_angle)) heatmap_entry$colnames_angle else 45
+
+            # S1.62dev: Add show_colnames flag for column name visibility
+            heatmap_item[[as.character(j)]]$show_colnames <- if (!is.null(heatmap_entry$show_colnames) && heatmap_entry$show_colnames) "yes" else "no"
+
+            # v105: Add row labels settings
+            heatmap_item[[as.character(j)]]$show_row_labels <- if (!is.null(heatmap_entry$show_row_labels) && heatmap_entry$show_row_labels) "yes" else "no"
+            heatmap_item[[as.character(j)]]$row_label_source <- if (!is.null(heatmap_entry$row_label_source)) heatmap_entry$row_label_source else "colnames"
+            heatmap_item[[as.character(j)]]$row_label_font_size <- if (!is.null(heatmap_entry$row_label_font_size)) heatmap_entry$row_label_font_size else 2.5
+            # v111: Add row label offset and alignment
+            heatmap_item[[as.character(j)]]$row_label_offset <- if (!is.null(heatmap_entry$row_label_offset)) heatmap_entry$row_label_offset else 1.0
+            heatmap_item[[as.character(j)]]$row_label_align <- if (!is.null(heatmap_entry$row_label_align)) heatmap_entry$row_label_align else "left"
+            heatmap_item[[as.character(j)]]$custom_row_labels <- if (!is.null(heatmap_entry$custom_row_labels)) heatmap_entry$custom_row_labels else ""
+            # v108: Add label mapping
+            if (!is.null(heatmap_entry$label_mapping) && length(heatmap_entry$label_mapping) > 0) {
+              heatmap_item[[as.character(j)]]$label_mapping <- heatmap_entry$label_mapping
+            }
+
+            # Add columns - format must match expected YAML structure
+            # Each column entry needs to be a named list like list("1" = "column_name")
             if (!is.null(heatmap_entry$columns)) {
               for (k in seq_along(heatmap_entry$columns)) {
-                column_entry <- list(heatmap_entry$columns[k])
+                column_entry <- list()
+                column_entry[[as.character(k)]] <- heatmap_entry$columns[k]
                 heatmap_item[[as.character(j)]]$according[[k]] <- column_entry
               }
             }
-            
+
             class_item[[as.character(i)]]$heatmap_display[[j]] <- heatmap_item
           }
         }
@@ -6495,7 +11110,13 @@ server <- function(input, output, session) {
         # *** KEY FIX: MOVED HERE - BEFORE adding class_item to YAML ***
         # ========================================================
         highlight_to_apply <- NULL
-        
+
+        # v131: DEBUG - trace highlight decision
+        debug_cat(paste0("\n=== v131: HIGHLIGHT DECISION (classification ", i, ") ===\n"))
+        debug_cat(paste0("  temp_highlight_preview is NULL: ", is.null(values$temp_highlight_preview), "\n"))
+        debug_cat(paste0("  active_highlight_index: ", values$active_highlight_index, "\n"))
+        debug_cat(paste0("  highlights length: ", length(values$highlights), "\n"))
+
         # v53: cat(file=stderr(), "\n📝 === ADDING HIGHLIGHT TO CLASSIFICATION", i, "===\n")
         
         if (!is.null(values$temp_highlight_preview)) {
@@ -6511,10 +11132,13 @@ server <- function(input, output, session) {
           # SAVED MODE: User selected a saved highlight
           # v53: cat(file=stderr(), "Ã°Å¸â€Ëœ Using saved highlight #", values$active_highlight_index, "\n")
           highlight_to_apply <- values$highlights[[values$active_highlight_index]]
+        } else {
+          debug_cat("  NO highlight source found (will set display='no')\n")
         }
-        
+
         # Apply highlight to THIS classification
         if (!is.null(highlight_to_apply)) {
+          debug_cat(paste0("  APPLYING highlight with ", length(highlight_to_apply$items), " items (display='yes')\n"))
           # v53: cat(file=stderr(), "Ã¢Å“â€œ Applying highlight to class_item\n")
           
           # Build highlight YAML structure
@@ -6536,6 +11160,7 @@ server <- function(input, output, session) {
               value1 = item$value,
               display_name = item$display_name,
               color = item$color,
+              transparency = if (!is.null(item$transparency)) item$transparency else 0.5,  # v139: Add transparency
               display_title = highlight_to_apply$title
             )
             highlight_yaml$according <- c(highlight_yaml$according, list(acc_item))
@@ -6586,20 +11211,235 @@ server <- function(input, output, session) {
       )
       
       default_classification[["1"]]$according <- list(default_according)
-      
+
+      # v56: Add heatmaps to default classification if values$heatmaps is set
+      if (!is.null(values$heatmaps) && length(values$heatmaps) > 0) {
+        # v56c: DEBUG
+        debug_cat(paste0("\n=== v56c: Adding ", length(values$heatmaps), " heatmap(s) to DEFAULT classification ===\n"))
+
+        default_classification[["1"]]$heatmap_display <- list()
+
+        for (j in seq_along(values$heatmaps)) {
+          heatmap_entry <- values$heatmaps[[j]]
+
+          # v56c: DEBUG
+          debug_cat(paste0("  Processing heatmap ", j, ": ", heatmap_entry$title, "\n"))
+          debug_cat(paste0("    Columns: ", paste(heatmap_entry$columns, collapse=", "), "\n"))
+          # S1.62dev: Debug data_source
+          debug_cat(paste0("    S1.62dev data_source: ", if (!is.null(heatmap_entry$data_source)) heatmap_entry$data_source else "NULL", "\n"))
+          debug_cat(paste0("    S1.62dev all fields: ", paste(names(heatmap_entry), collapse=", "), "\n"))
+
+          heatmap_item <- list()
+          heatmap_item[[as.character(j)]] <- list(
+            display = "yes",
+            title = heatmap_entry$title,
+            is_discrete = if (heatmap_entry$is_discrete) "yes" else "no",
+            according = list()
+          )
+
+          if (heatmap_entry$is_discrete) {
+            # v69: Check for custom colors (man_define_colors flag)
+            if (!is.null(heatmap_entry$man_define_colors) && heatmap_entry$man_define_colors) {
+              heatmap_item[[as.character(j)]]$man_define_colors <- "yes"
+              # v104: Store custom colors as a list with explicit names to preserve value->color mapping
+              # Named vectors can lose their names when passed through list structures
+              custom_colors_as_list <- as.list(heatmap_entry$custom_colors)
+              names(custom_colors_as_list) <- names(heatmap_entry$custom_colors)
+              heatmap_item[[as.character(j)]]$color_scale_option <- custom_colors_as_list
+              debug_cat(paste0("    v104: Storing ", length(custom_colors_as_list), " custom colors with names: ", paste(names(custom_colors_as_list), collapse=", "), "\n"))
+            } else {
+              heatmap_item[[as.character(j)]]$color_scale_option <- heatmap_entry$color_scheme
+            }
+            # v70: Add NA color (default white)
+            heatmap_item[[as.character(j)]]$na_color <- if (!is.null(heatmap_entry$na_color)) heatmap_entry$na_color else "white"
+          } else {
+            heatmap_item[[as.character(j)]]$low <- heatmap_entry$low_color
+            heatmap_item[[as.character(j)]]$mid <- if (!is.null(heatmap_entry$mid_color)) heatmap_entry$mid_color else heatmap_entry$low_color
+            heatmap_item[[as.character(j)]]$high <- heatmap_entry$high_color
+            heatmap_item[[as.character(j)]]$midpoint <- if (!is.null(heatmap_entry$midpoint)) heatmap_entry$midpoint else 0
+            # v114: Add NA color for continuous heatmaps (was missing in default classification path)
+            heatmap_item[[as.character(j)]]$na_color <- if (!is.null(heatmap_entry$na_color)) heatmap_entry$na_color else "grey90"
+          }
+
+          # v104: Add per-heatmap distance
+          heatmap_item[[as.character(j)]]$distance <- if (!is.null(heatmap_entry$distance)) heatmap_entry$distance else 0.02
+
+          # v105: Add per-heatmap height
+          heatmap_item[[as.character(j)]]$height <- if (!is.null(heatmap_entry$height)) heatmap_entry$height else 0.8
+
+          # v114: Add per-heatmap row height (was missing in default classification path)
+          heatmap_item[[as.character(j)]]$row_height <- if (!is.null(heatmap_entry$row_height)) heatmap_entry$row_height else 1.0
+
+          # v114: Add grid settings (were missing in default classification path)
+          heatmap_item[[as.character(j)]]$show_grid <- if (!is.null(heatmap_entry$show_grid) && heatmap_entry$show_grid) "yes" else "no"
+          heatmap_item[[as.character(j)]]$grid_color <- if (!is.null(heatmap_entry$grid_color)) heatmap_entry$grid_color else "#000000"
+          heatmap_item[[as.character(j)]]$grid_size <- if (!is.null(heatmap_entry$grid_size)) heatmap_entry$grid_size else 0.5
+
+          # S1.62dev: Add row line settings (horizontal lines only)
+          heatmap_item[[as.character(j)]]$show_row_lines <- if (!is.null(heatmap_entry$show_row_lines) && heatmap_entry$show_row_lines) "yes" else "no"
+          heatmap_item[[as.character(j)]]$row_line_color <- if (!is.null(heatmap_entry$row_line_color)) heatmap_entry$row_line_color else "#000000"
+          heatmap_item[[as.character(j)]]$row_line_size <- if (!is.null(heatmap_entry$row_line_size)) heatmap_entry$row_line_size else 0.5
+
+          # S1.62dev: Add column line settings (vertical lines)
+          heatmap_item[[as.character(j)]]$show_col_lines <- if (!is.null(heatmap_entry$show_col_lines) && heatmap_entry$show_col_lines) "yes" else "no"
+          heatmap_item[[as.character(j)]]$col_line_color <- if (!is.null(heatmap_entry$col_line_color)) heatmap_entry$col_line_color else "#000000"
+          heatmap_item[[as.character(j)]]$col_line_size <- if (!is.null(heatmap_entry$col_line_size)) heatmap_entry$col_line_size else 0.5
+
+          # S1.62dev: Add vertical text labels settings
+          heatmap_item[[as.character(j)]]$show_vertical_text <- if (!is.null(heatmap_entry$show_vertical_text) && heatmap_entry$show_vertical_text) "yes" else "no"
+          heatmap_item[[as.character(j)]]$vertical_text_column <- if (!is.null(heatmap_entry$vertical_text_column)) heatmap_entry$vertical_text_column else ""
+          heatmap_item[[as.character(j)]]$vertical_text_size <- if (!is.null(heatmap_entry$vertical_text_size)) heatmap_entry$vertical_text_size else 3
+          heatmap_item[[as.character(j)]]$vertical_text_offset <- if (!is.null(heatmap_entry$vertical_text_offset)) heatmap_entry$vertical_text_offset else 0.5
+          heatmap_item[[as.character(j)]]$vertical_text_color <- if (!is.null(heatmap_entry$vertical_text_color)) heatmap_entry$vertical_text_color else "#000000"
+
+          # v120: Add guide line settings (were missing in default classification path - caused tip guide lines not to work!)
+          heatmap_item[[as.character(j)]]$show_guides <- if (!is.null(heatmap_entry$show_guides) && heatmap_entry$show_guides) "yes" else "no"
+          heatmap_item[[as.character(j)]]$guide_color1 <- if (!is.null(heatmap_entry$guide_color1)) heatmap_entry$guide_color1 else "#CCCCCC"
+          heatmap_item[[as.character(j)]]$guide_color2 <- if (!is.null(heatmap_entry$guide_color2)) heatmap_entry$guide_color2 else "#EEEEEE"
+          heatmap_item[[as.character(j)]]$guide_alpha <- if (!is.null(heatmap_entry$guide_alpha)) heatmap_entry$guide_alpha else 0.3
+          heatmap_item[[as.character(j)]]$guide_width <- if (!is.null(heatmap_entry$guide_width)) heatmap_entry$guide_width else 0.5
+          heatmap_item[[as.character(j)]]$guide_linetype <- if (!is.null(heatmap_entry$guide_linetype)) heatmap_entry$guide_linetype else "solid"
+
+          # v109: Add colnames_angle
+          heatmap_item[[as.character(j)]]$colnames_angle <- if (!is.null(heatmap_entry$colnames_angle)) heatmap_entry$colnames_angle else 45
+
+          # S1.62dev: Add show_colnames flag for column name visibility
+          heatmap_item[[as.character(j)]]$show_colnames <- if (!is.null(heatmap_entry$show_colnames) && heatmap_entry$show_colnames) "yes" else "no"
+
+          # v105: Add row labels settings
+          heatmap_item[[as.character(j)]]$show_row_labels <- if (!is.null(heatmap_entry$show_row_labels) && heatmap_entry$show_row_labels) "yes" else "no"
+          heatmap_item[[as.character(j)]]$row_label_source <- if (!is.null(heatmap_entry$row_label_source)) heatmap_entry$row_label_source else "colnames"
+          heatmap_item[[as.character(j)]]$row_label_font_size <- if (!is.null(heatmap_entry$row_label_font_size)) heatmap_entry$row_label_font_size else 2.5
+          # v114: Add row label offset and alignment (were missing in default classification path)
+          heatmap_item[[as.character(j)]]$row_label_offset <- if (!is.null(heatmap_entry$row_label_offset)) heatmap_entry$row_label_offset else 1.0
+          heatmap_item[[as.character(j)]]$row_label_align <- if (!is.null(heatmap_entry$row_label_align)) heatmap_entry$row_label_align else "left"
+          heatmap_item[[as.character(j)]]$custom_row_labels <- if (!is.null(heatmap_entry$custom_row_labels)) heatmap_entry$custom_row_labels else ""
+          # v108: Add label mapping
+          if (!is.null(heatmap_entry$label_mapping) && length(heatmap_entry$label_mapping) > 0) {
+            heatmap_item[[as.character(j)]]$label_mapping <- heatmap_entry$label_mapping
+          }
+
+          # S1.62dev: Add data source for RData heatmaps
+          # Note: cnv_matrix is NOT serialized to YAML - it's passed as a parameter to func.print.lineage.tree
+          if (!is.null(heatmap_entry$data_source) && heatmap_entry$data_source == "rdata") {
+            heatmap_item[[as.character(j)]]$data_source <- "rdata"
+            heatmap_item[[as.character(j)]]$use_midpoint <- "yes"  # Always use midpoint for CNV
+            # Store CNV settings (but NOT the matrix itself - that's passed separately)
+            heatmap_item[[as.character(j)]]$cnv_downsample <- if (!is.null(heatmap_entry$cnv_downsample)) heatmap_entry$cnv_downsample else 10
+            heatmap_item[[as.character(j)]]$cnv_wgd_norm <- if (!is.null(heatmap_entry$cnv_wgd_norm) && heatmap_entry$cnv_wgd_norm) "yes" else "no"
+            debug_cat(paste0("    S1.62dev: RData heatmap (CNV matrix passed via parameter)\n"))
+          } else {
+            heatmap_item[[as.character(j)]]$data_source <- "csv"
+            # Add columns - format must match expected YAML structure
+            if (!is.null(heatmap_entry$columns)) {
+              for (k in seq_along(heatmap_entry$columns)) {
+                column_entry <- list()
+                column_entry[[as.character(k)]] <- heatmap_entry$columns[k]
+                heatmap_item[[as.character(j)]]$according[[k]] <- column_entry
+              }
+            }
+          }
+
+          default_classification[["1"]]$heatmap_display[[j]] <- heatmap_item
+          # S1.62dev: Debug final heatmap_item structure
+          debug_cat(paste0("    S1.62dev final heatmap_item[[", as.character(j), "]] fields: ",
+                          paste(names(heatmap_item[[as.character(j)]]), collapse=", "), "\n"))
+          debug_cat(paste0("    S1.62dev final data_source in heatmap_item: ",
+                          if (!is.null(heatmap_item[[as.character(j)]]$data_source)) heatmap_item[[as.character(j)]]$data_source else "NULL", "\n"))
+        }
+      }
+
+      # v129: Add highlighting support to default classification (was missing!)
+      # v130: Fixed - removed values$preview_highlight_active check (was never set)
+      # Determine which highlight to apply (same logic as custom classification path)
+      highlight_to_apply <- NULL
+
+      # v131: DEBUG - trace highlight decision for default classification
+      debug_cat(paste0("\n=== v131: HIGHLIGHT DECISION (DEFAULT classification) ===\n"))
+      debug_cat(paste0("  temp_highlight_preview is NULL: ", is.null(values$temp_highlight_preview), "\n"))
+      debug_cat(paste0("  active_highlight_index: ", values$active_highlight_index, "\n"))
+      debug_cat(paste0("  highlights length: ", length(values$highlights), "\n"))
+
+      # Check if preview mode is active (match custom classification logic at line 8765)
+      if (!is.null(values$temp_highlight_preview)) {
+        # PREVIEW MODE: Apply temporary highlight for preview
+        highlight_to_apply <- values$temp_highlight_preview
+      } else if (!is.null(values$active_highlight_index) &&
+                 !is.null(values$highlights) &&
+                 length(values$highlights) >= values$active_highlight_index) {
+        # SAVED MODE: User selected a saved highlight
+        highlight_to_apply <- values$highlights[[values$active_highlight_index]]
+      }
+
+      # Apply highlight to default classification
+      if (!is.null(highlight_to_apply)) {
+        debug_cat(paste0("\n=== v129: Adding highlight to DEFAULT classification ===\n"))
+
+        # Build highlight YAML structure
+        highlight_yaml <- list(
+          display = "yes",
+          offset = highlight_to_apply$offset,
+          vertical_offset = if(!is.null(highlight_to_apply$vertical_offset)) highlight_to_apply$vertical_offset else 0,
+          adjust_height = highlight_to_apply$adjust_height,
+          adjust_width = highlight_to_apply$adjust_width,
+          according = list()
+        )
+
+        # Add each highlighted value
+        for (j in seq_along(highlight_to_apply$items)) {
+          item <- highlight_to_apply$items[[j]]
+          acc_item <- list()
+          acc_item[[as.character(j)]] <- list(
+            title1 = highlight_to_apply$column,
+            value1 = item$value,
+            display_name = item$display_name,
+            color = item$color,
+            transparency = if (!is.null(item$transparency)) item$transparency else 0.5,  # v139: Add transparency
+            display_title = highlight_to_apply$title
+          )
+          highlight_yaml$according <- c(highlight_yaml$according, list(acc_item))
+        }
+
+        # ADD TO DEFAULT CLASSIFICATION
+        default_classification[["1"]]$highlight <- highlight_yaml
+        debug_cat(paste0("  Highlight added with ", length(highlight_to_apply$items), " items\n"))
+      } else {
+        # No highlight - disable it
+        debug_cat("  NO highlight to apply (setting display='no')\n")
+        default_classification[["1"]]$highlight <- list(display = "no")
+      }
+
+      # S1.62dev: Debug final classification structure before storing
+      if (!is.null(default_classification[["1"]]$heatmap_display)) {
+        debug_cat(paste0("\n=== S1.62dev: Final heatmap_display in default_classification ===\n"))
+        for (h_idx in seq_along(default_classification[["1"]]$heatmap_display)) {
+          hm_item <- default_classification[["1"]]$heatmap_display[[h_idx]]
+          hm_inner <- hm_item[[as.character(h_idx)]]
+          debug_cat(paste0("  Heatmap ", h_idx, " in YAML structure:\n"))
+          debug_cat(paste0("    fields: ", paste(names(hm_inner), collapse=", "), "\n"))
+          debug_cat(paste0("    data_source: ", if (!is.null(hm_inner$data_source)) hm_inner$data_source else "NULL", "\n"))
+        }
+      }
       values$yaml_data$`visual definitions`$classification <- list(default_classification)
     }
-    
+
     # Update font sizes
+    # v128: Use Legend tab font size settings for legend_title and legend_text
+    # This ensures bootstrap legend matches other legends' font sizes
     values$yaml_data$`visual definitions`$font_size <- list(
       tips = if(!is.null(input$tip_font_size)) input$tip_font_size else 3,
-      legend_title = 30,
-      legend_text = 20,
+      legend_title = if(!is.null(input$legend_title_size)) input$legend_title_size else 12,
+      legend_text = if(!is.null(input$legend_text_size)) input$legend_text_size else 10,
       legend_box = 15,
       heat_map_title = 25,
       heat_map_legend = if(!is.null(input$heatmap_font_size)) input$heatmap_font_size else 3.8
     )
-    
+
+    # v125: Add heatmap global settings (gap between heatmaps)
+    values$yaml_data$`visual definitions`$heatmap_global <- list(
+      gap = if(!is.null(values$heatmap_global_gap)) values$heatmap_global_gap else 0.05
+    )
+
     # Add compare_two_trees flag (always FALSE for Shiny app)
     values$yaml_data$`visual definitions`$compare_two_trees <- "no"
     
@@ -6614,6 +11454,9 @@ server <- function(input, output, session) {
   # Match tree tip labels with CSV IDs
   # Match tree tip labels with CSV IDs
   match_tree_with_csv <- function() {
+    # S1-PERF: Timing instrumentation to identify bottlenecks
+    perf_start_total <- Sys.time()
+
     # Validate all required inputs before attempting match
     if (is.null(values$tree)) {
       # v53: cat(file=stderr(), "ERROR: Cannot match - No tree loaded\n")
@@ -6675,7 +11518,10 @@ server <- function(input, output, session) {
     
     # Filter CSV by individual if needed
     filtered_csv <- values$csv_data
-    
+
+    # S1-PERF: Time individual filtering
+    perf_filter_start <- Sys.time()
+
     # Only filter if not using all data and individual column/value are selected
     if (!input$use_all_data && 
         !is.null(input$individual_column) && input$individual_column != "" &&
@@ -6706,25 +11552,37 @@ server <- function(input, output, session) {
     } else {
       # v53: print("Using all data (no individual filtering)")
     }
-    
+
+    # S1-PERF: End individual filtering timing
+    perf_filter_end <- Sys.time()
+    cat(file=stderr(), sprintf("[PERF] Individual filtering: %.3f sec\n",
+        as.numeric(difftime(perf_filter_end, perf_filter_start, units="secs"))))
+
     # Store the filtered CSV for use in other functions
     values$filtered_by_individual <- filtered_csv
-    
+
     # Get tree tips and CSV IDs
     tree_labels <- values$tree$tip.label
     csv_ids <- filtered_csv[[input$id_column]]
-    
+
     # Debug output
     # v53: print("Tree tip labels (first few):")
     # v53: print(head(tree_labels))
     # v53: print("CSV IDs column:")
     # v53: print(head(csv_ids))
-    
+
+    # S1-PERF: Time ID matching
+    perf_match_start <- Sys.time()
+
     # Attempt to match tree labels with CSV IDs
     match_result <- match_tree_ids_with_csv(tree_labels, csv_ids)
     values$id_match <- match_result
-    
-    
+
+    # S1-PERF: End ID matching timing
+    perf_match_end <- Sys.time()
+    cat(file=stderr(), sprintf("[PERF] ID matching (match_tree_ids_with_csv): %.3f sec\n",
+        as.numeric(difftime(perf_match_end, perf_match_start, units="secs"))))
+
     # STORE THE INFERRED TRIMMING PARAMETERS
     values$trimming_params <- match_result$trimming_params
     
@@ -6749,18 +11607,18 @@ server <- function(input, output, session) {
     # Debug the match result
     # v53: print("Match result summary:")
     # v53: print(match_result$summary)
-    
+
+    # S1-PERF: Time filtered CSV creation
+    perf_filtcsv_start <- Sys.time()
+
     # Create filtered CSV data with only the matched rows
     if (match_result$summary$exact_matches > 0 || 
         match_result$summary$numeric_matches > 0 || 
         match_result$summary$prefix_suffix_matches > 0) {
       
-      # Get all matched CSV IDs
-      matched_ids <- c()
-      for (mapping in match_result$mapping) {
-        matched_ids <- c(matched_ids, mapping)
-      }
-      matched_ids <- unique(matched_ids)
+      # S1-PERF: Get all matched CSV IDs using unlist() instead of loop
+      # Growing vectors in loops is O(n²) - unlist is O(n)
+      matched_ids <- unique(unlist(match_result$mapping, use.names = FALSE))
       
       # Filter CSV to only include matched rows
       values$filtered_csv <- filtered_csv[filtered_csv[[input$id_column]] %in% matched_ids, ]
@@ -6772,7 +11630,12 @@ server <- function(input, output, session) {
     } else {
       values$filtered_csv <- NULL
     }
-    
+
+    # S1-PERF: End filtered CSV creation timing
+    perf_filtcsv_end <- Sys.time()
+    cat(file=stderr(), sprintf("[PERF] Filtered CSV creation: %.3f sec\n",
+        as.numeric(difftime(perf_filtcsv_end, perf_filtcsv_start, units="secs"))))
+
     # ADD THIS DEBUG OUTPUT HERE:
     # v53: cat(file=stderr(), "\n=== AFTER FILTERING SECTION ===\n")
     # v53: cat(file=stderr(), "Made it past the filtering block\n")
@@ -6871,15 +11734,36 @@ server <- function(input, output, session) {
       # v53: cat(file=stderr(), "About to check filtered_csv for temp file creation\n")
       # v53: cat(file=stderr(), "values$filtered_csv is NULL:", is.null(values$filtered_csv), "\n")
       
+      # S1-PERF: Time temp CSV writing
+      perf_tempcsv_start <- Sys.time()
+
       # Create temp CSV file IMMEDIATELY after filtering, BEFORE generate_plot
       if (!is.null(values$filtered_csv) && nrow(values$filtered_csv) > 0) {
         # v53: cat(file=stderr(), "Creating temp CSV file...\n")
         values$temp_csv_path <- tempfile(fileext = ".csv")
-        write.csv(values$filtered_csv, values$temp_csv_path, row.names = FALSE)
+
+        # S1-PERF: Filter out columns with empty/auto-generated names (like "...15355")
+        # These are likely empty columns that slow down CSV read/write significantly
+        csv_to_write <- values$filtered_csv
+        col_names <- names(csv_to_write)
+        # Keep only columns with real names (not starting with "..." or empty)
+        valid_cols <- !grepl("^\\.\\.\\.", col_names) & col_names != "" & !is.na(col_names)
+        if (sum(valid_cols) < length(col_names)) {
+          cat(file=stderr(), sprintf("[PERF] Filtering out %d empty/unnamed columns from temp CSV\n",
+              sum(!valid_cols)))
+          csv_to_write <- csv_to_write[, valid_cols, drop = FALSE]
+        }
+
+        write.csv(csv_to_write, values$temp_csv_path, row.names = FALSE)
         # v53: cat(file=stderr(), "Created temp CSV at:", values$temp_csv_path, "\n")
       } else {
         # v53: cat(file=stderr(), "WARNING: No filtered CSV data available for temp file\n")
       }
+
+      # S1-PERF: End temp CSV writing timing
+      perf_tempcsv_end <- Sys.time()
+      cat(file=stderr(), sprintf("[PERF] Temp CSV write: %.3f sec\n",
+          as.numeric(difftime(perf_tempcsv_end, perf_tempcsv_start, units="secs"))))
       # v53: cat(file=stderr(), "About to call generate_plot()\n")
       
       # Debug: Check filtered CSV state
@@ -6892,11 +11776,24 @@ server <- function(input, output, session) {
       # v53: cat(file=stderr(), "Ã°Å¸â€Â temp CSV exists:", file.exists(values$temp_csv_path), "\n")
       # v53: cat(file=stderr(), "Ã°Å¸â€Â About to call generate_plot()...\n\n")
       
+      # S1-PERF: Time generate_plot
+      perf_genplot_start <- Sys.time()
+
       # v53: cat(file=stderr(), "About to call generate_plot()\n")
       # Generate initial plot
       generate_plot()
       # v53: cat(file=stderr(), "Finished generate_plot()\n")
-      
+
+      # S1-PERF: End generate_plot timing
+      perf_genplot_end <- Sys.time()
+      cat(file=stderr(), sprintf("[PERF] generate_plot(): %.3f sec\n",
+          as.numeric(difftime(perf_genplot_end, perf_genplot_start, units="secs"))))
+
+      # S1-PERF: Total time
+      perf_end_total <- Sys.time()
+      cat(file=stderr(), sprintf("[PERF] === TOTAL Process Data: %.3f sec ===\n",
+          as.numeric(difftime(perf_end_total, perf_start_total, units="secs"))))
+
       # Show notification based on match quality
       if (match_warning_val) {
         showNotification(
@@ -7385,6 +12282,12 @@ server <- function(input, output, session) {
   # Update Preview button - FIXED for Windows
   # Update Preview button - SIMPLIFIED DEBUGGING
   observeEvent(input$update_highlight_preview, {
+    cat(file=stderr(), paste0("\n[DEBUG-2ND-HIGHLIGHT] *** UPDATE_HIGHLIGHT_PREVIEW CLICKED at ", format(Sys.time(), "%H:%M:%OS3"), " ***\n"))
+    cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT]   enable_highlight=", input$enable_highlight, "\n"))
+    cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT]   highlight_column=", input$highlight_column, "\n"))
+    cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT]   highlight_values=", paste(input$highlight_values, collapse=", "), "\n"))
+    cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT]   num highlight_values=", length(input$highlight_values), "\n"))
+
     
     # v53: cat(file=stderr(), "\n\nÃ°Å¸â€Â´Ã°Å¸â€Â´Ã°Å¸â€Â´ UPDATE HIGHLIGHT PREVIEW CLICKED Ã°Å¸â€Â´Ã°Å¸â€Â´Ã°Å¸â€Â´\n")
     
@@ -7414,8 +12317,9 @@ server <- function(input, output, session) {
       return(NULL)
     }
     
-    # v53: cat(file=stderr(), "Ã¢Å“â€œ All checks passed, collecting settings...\n")
-    
+    # v53: cat(file=stderr(), "Ã¢Å"â€œ All checks passed, collecting settings...\n")
+    cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT]   All checks passed, collecting highlight_items...\n"))
+
     # Collect settings for each value
     highlight_items <- lapply(seq_along(input$highlight_values), function(i) {
       val <- input$highlight_values[i]
@@ -7436,9 +12340,11 @@ server <- function(input, output, session) {
       )
     })
     
-    # v53: cat(file=stderr(), "Ã¢Å“â€œ Collected", length(highlight_items), "items\n")
-    
+    # v53: cat(file=stderr(), "Ã¢Å"â€œ Collected", length(highlight_items), "items\n")
+    cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT]   Collected ", length(highlight_items), " highlight_items\n"))
+
     # Store as temporary preview
+    cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT]   Storing temp_highlight_preview...\n"))
     values$temp_highlight_preview <- list(
       enabled = TRUE,
       title = input$highlight_title,
@@ -7467,16 +12373,18 @@ server <- function(input, output, session) {
     # v53: cat(file=stderr(), "Ã°Å¸â€Â´ =====================================\n\n")
     
     
-    # v53: cat(file=stderr(), "ðŸŸ¢ RIGHT BEFORE generate_plot() call:\n")
-    # v53: cat(file=stderr(), "ðŸŸ¢ temp_highlight_preview is NULL:", is.null(values$temp_highlight_preview), "\n")
+    # v131: DEBUG - confirm temp_highlight_preview is set before generate_plot()
+    debug_cat("\n=== v131: HIGHLIGHT BUTTON - BEFORE generate_plot() ===\n")
+    debug_cat(paste0("  temp_highlight_preview is NULL: ", is.null(values$temp_highlight_preview), "\n"))
     if (!is.null(values$temp_highlight_preview)) {
-      # v53: cat(file=stderr(), "ðŸŸ¢ temp_highlight_preview column:", values$temp_highlight_preview$column, "\n")
-      # v53: cat(file=stderr(), "ðŸŸ¢ temp_highlight_preview items:", length(values$temp_highlight_preview$items), "\n")
+      debug_cat(paste0("  temp_highlight_preview column: ", values$temp_highlight_preview$column, "\n"))
+      debug_cat(paste0("  temp_highlight_preview items: ", length(values$temp_highlight_preview$items), "\n"))
     }
-    # v53: cat(file=stderr(), "\n")
-    # v53: cat(file=stderr(), "ðŸŸ¢ðŸŸ¢ðŸŸ¢ CALLING generate_plot() FROM HIGHLIGHT BUTTON\n")
+    debug_cat("  CALLING generate_plot() NOW...\n")
+    cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT]   About to call generate_plot() at ", format(Sys.time(), "%H:%M:%OS3"), "\n"))
     values$debug_trace_id <- "HIGHLIGHT_BUTTON_PREVIEW"
     generate_plot()
+    cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT]   generate_plot() returned at ", format(Sys.time(), "%H:%M:%OS3"), "\n"))
     values$debug_trace_id <- NULL
     
     # v53: cat(file=stderr(), "Ã¢Å“â€œ generate_plot() completed\n\n")
@@ -8213,8 +13121,14 @@ server <- function(input, output, session) {
   
   # Render heatmap cards UI
   output$heatmap_cards_ui <- renderUI({
-    configs <- values$heatmap_configs
-    
+    # v107: Use trigger to control when UI regenerates
+    # This prevents rebuilding UI on every property change (slider, color, etc.)
+    heatmap_ui_trigger()  # Take dependency on trigger only
+
+    # Use isolate() to get values without creating reactive dependencies
+    configs <- isolate(values$heatmap_configs)
+    csv_data_local <- isolate(values$csv_data)
+
     if (length(configs) == 0) {
       return(tags$div(
         class = "alert alert-info",
@@ -8222,26 +13136,68 @@ server <- function(input, output, session) {
         " No heatmaps configured. Click 'Add New Heatmap' to create one."
       ))
     }
-    
+
     # Build cards for each heatmap
     cards <- lapply(seq_along(configs), function(i) {
       cfg <- configs[[i]]
       card_id <- paste0("heatmap_card_", i)
+
+      # Get column choices from CSV (using isolated value)
+      col_choices <- if (!is.null(csv_data_local)) names(csv_data_local) else character(0)
       
-      # Get column choices from CSV
-      col_choices <- if (!is.null(values$csv_data)) names(values$csv_data) else character(0)
-      
-      # v56: Determine detected type based on first column (if multiple, they should be same type)
+      # v56/v110/v119: Determine detected type based on first column (if multiple, they should be same type)
+      # v119: Improved detection - also try to convert string columns to numeric
       detected_type <- "unknown"
-      if (!is.null(cfg$columns) && length(cfg$columns) > 0 && !is.null(values$csv_data)) {
+      if (!is.null(cfg$columns) && length(cfg$columns) > 0 && !is.null(csv_data_local)) {
         # Check first column to determine type
         first_col <- cfg$columns[1]
-        if (first_col %in% names(values$csv_data)) {
-          col_data <- values$csv_data[[first_col]]
+        if (first_col %in% names(csv_data_local)) {
+          col_data <- csv_data_local[[first_col]]
           if (!is.null(col_data)) {
-            unique_vals <- length(unique(na.omit(col_data)))
+            non_na_vals <- na.omit(col_data)
+            unique_vals <- length(unique(non_na_vals))
             is_numeric <- is.numeric(col_data)
-            detected_type <- if (is_numeric && unique_vals > 10) "continuous" else "discrete"
+
+            # v119: If not already numeric, try to convert (handles "1", "2", "3.5" etc.)
+            if (!is_numeric && length(non_na_vals) > 0) {
+              # Try converting to numeric
+              converted <- suppressWarnings(as.numeric(as.character(non_na_vals)))
+              # Check if most values converted successfully (at least 80%)
+              conversion_rate <- sum(!is.na(converted)) / length(non_na_vals)
+              if (conversion_rate >= 0.8) {
+                is_numeric <- TRUE
+                non_na_vals <- converted[!is.na(converted)]
+                unique_vals <- length(unique(non_na_vals))
+              }
+            }
+
+            # v124: Harmonized detection with apply_heatmaps section
+            # Logic: decimals = continuous, otherwise check unique values and range
+            if (is_numeric && length(non_na_vals) > 0) {
+              # Check if values have decimals (not all integers)
+              has_decimals <- any(non_na_vals != floor(non_na_vals))
+              # Calculate value range for additional check
+              val_range <- diff(range(non_na_vals, na.rm = TRUE))
+
+              if (has_decimals) {
+                # Decimals ALWAYS mean continuous (measurements, percentages)
+                detected_type <- "continuous"
+              } else {
+                # v124: Match apply section logic - boolean-like or small categorical = discrete
+                is_boolean_like <- unique_vals <= 2 && val_range <= 1
+                is_small_categorical <- unique_vals <= 3 && val_range <= 2
+                if (is_boolean_like || is_small_categorical) {
+                  detected_type <- "discrete"
+                } else if (unique_vals >= 5 || val_range >= 5) {
+                  # v124: >=5 unique values OR range>=5 = continuous
+                  detected_type <- "continuous"
+                } else {
+                  detected_type <- "discrete"
+                }
+              }
+            } else {
+              detected_type <- "discrete"
+            }
           }
         }
       }
@@ -8288,49 +13244,113 @@ server <- function(input, output, session) {
         ),
         
         hr(style = "margin: 10px 0;"),
-        
-        # Main configuration
+
+        # S1.62dev: Data source selector (CSV or RData CNV)
         fluidRow(
-          column(8,
-                 # v56: Changed to selectizeInput with multiple=TRUE for multiple columns
-                 selectizeInput(paste0("heatmap_columns_", i), "Data Columns (select one or more)",
-                                choices = col_choices,
-                                selected = if (!is.null(cfg$columns)) cfg$columns else NULL,
-                                multiple = TRUE,
-                                options = list(placeholder = "Select columns..."))
-          ),
-          column(4,
-                 textInput(paste0("heatmap_title_", i), "Legend Title",
-                           value = if (!is.null(cfg$title)) cfg$title else paste0("Heatmap ", i))
+          column(12,
+                 radioButtons(paste0("heatmap_data_source_", i), "Data Source:",
+                              choices = c("CSV Columns" = "csv", "RData CNV" = "rdata"),
+                              selected = if (!is.null(cfg$data_source)) cfg$data_source else "csv",
+                              inline = TRUE)
           )
         ),
-        
-        fluidRow(
-          column(4,
-                 tags$label("Detected Type"),
-                 tags$div(
-                   class = if (detected_type == "continuous") "label label-info" else "label label-success",
-                   style = "display: block; padding: 8px; text-align: center; margin-top: 0;",
-                   if (detected_type == "continuous") "Continuous (numeric)" else "Discrete (categorical)"
-                 )
-          ),
-          column(4,
-                 tags$label("Selected Columns"),
-                 tags$div(
-                   style = "padding: 8px; background: #f5f5f5; border-radius: 3px;",
-                   if (!is.null(cfg$columns) && length(cfg$columns) > 0) {
-                     paste(length(cfg$columns), "column(s)")
-                   } else {
-                     tags$span(class = "text-muted", "None selected")
-                   }
-                 )
-          ),
-          column(4,
-                 checkboxInput(paste0("heatmap_show_colnames_", i), "Show column names", 
-                               value = if (!is.null(cfg$show_colnames)) cfg$show_colnames else TRUE)
+
+        # S1.62dev: Conditional panel for CSV columns (default)
+        conditionalPanel(
+          condition = paste0("input.heatmap_data_source_", i, " == 'csv'"),
+          # Main configuration
+          fluidRow(
+            column(8,
+                   # v56: Changed to selectizeInput with multiple=TRUE for multiple columns
+                   selectizeInput(paste0("heatmap_columns_", i), "Data Columns (select one or more)",
+                                  choices = col_choices,
+                                  selected = if (!is.null(cfg$columns)) cfg$columns else NULL,
+                                  multiple = TRUE,
+                                  options = list(placeholder = "Select columns..."))
+            ),
+            column(4,
+                   textInput(paste0("heatmap_title_", i), "Legend Title",
+                             value = if (!is.null(cfg$title)) cfg$title else paste0("Heatmap ", i))
+            )
           )
         ),
-        
+
+        # S1.62dev: Conditional panel for RData CNV
+        conditionalPanel(
+          condition = paste0("input.heatmap_data_source_", i, " == 'rdata'"),
+          fluidRow(
+            column(4,
+                   textInput(paste0("heatmap_title_rdata_", i), "Legend Title",
+                             value = if (!is.null(cfg$title)) cfg$title else "CNV")
+            ),
+            column(4,
+                   sliderInput(paste0("heatmap_cnv_downsample_", i), "Downsample Factor",
+                               min = 1, max = 50, value = if (!is.null(cfg$cnv_downsample)) cfg$cnv_downsample else 10,
+                               step = 1)
+            ),
+            column(4,
+                   checkboxInput(paste0("heatmap_cnv_wgd_norm_", i), "WGD Normalization",
+                                 value = if (!is.null(cfg$cnv_wgd_norm)) cfg$cnv_wgd_norm else FALSE)
+            )
+          ),
+          fluidRow(
+            column(12,
+                   tags$div(
+                     style = "background: #d1ecf1; padding: 10px; border-radius: 5px; margin-top: 5px;",
+                     tags$small(
+                       icon("info-circle"),
+                       " CNV data will be displayed from the loaded RData file. ",
+                       "Default color scale: Blue (loss) - White (neutral) - Red (gain)."
+                     )
+                   )
+            )
+          )
+        ),
+
+        # S1.62dev: CSV-only options (column range and detected type)
+        conditionalPanel(
+          condition = paste0("input.heatmap_data_source_", i, " == 'csv'"),
+          # v121: Column range selector - allows quick selection of contiguous columns
+          fluidRow(
+            column(6,
+                   tags$div(
+                     style = "display: flex; align-items: flex-end; gap: 10px;",
+                     tags$div(
+                       style = "flex: 1;",
+                       textInput(paste0("heatmap_col_range_", i), "Column Range (e.g., 2-10)",
+                                 value = "",
+                                 placeholder = "2-10 or 3-15")
+                     ),
+                     tags$div(
+                       style = "padding-bottom: 15px;",
+                       actionButton(paste0("heatmap_add_range_", i), "Add Range",
+                                    class = "btn-sm btn-info",
+                                    icon = icon("plus"))
+                     )
+                   )
+            ),
+            column(6,
+                   tags$div(
+                     style = "padding-top: 25px;",
+                     tags$small(class = "text-muted",
+                                icon("info-circle"),
+                                " Enter column numbers (e.g., '2-10') to add columns by position")
+                   )
+            )
+          ),
+
+          # v127: Dynamic detected type display - updates when columns change
+          fluidRow(
+            column(4,
+                   tags$label("Detected Type"),
+                   uiOutput(paste0("heatmap_detected_type_display_", i))
+            ),
+            # v111: Removed "Data Columns Count" - not useful to the user
+          column(4),
+          column(4)
+          )
+        ),  # End CSV conditionalPanel
+
         # Type override and settings
         fluidRow(
           column(4,
@@ -8348,76 +13368,217 @@ server <- function(input, output, session) {
           ),
           column(4,
                  sliderInput(paste0("heatmap_colnames_angle_", i), "Column name angle",
-                             min = 0, max = 90, value = 45, step = 15)
+                             min = 0, max = 90,
+                             value = if (!is.null(cfg$colnames_angle)) cfg$colnames_angle else 45,
+                             step = 15)
           )
         ),
-        
-        # Discrete settings
-        conditionalPanel(
-          condition = paste0("(input.heatmap_auto_type_", i, " && '", detected_type, "' == 'discrete') || (!input.heatmap_auto_type_", i, " && input.heatmap_type_", i, " == 'discrete')"),
-          tags$div(
-            style = "background-color: #f9f9f9; padding: 10px; border-radius: 5px; margin-top: 10px;",
-            tags$h5(icon("palette"), " Discrete Color Settings"),
-            fluidRow(
-              column(6,
-                     selectInput(paste0("heatmap_discrete_palette_", i), "Color Palette",
-                                 choices = discrete_palettes,
-                                 selected = if (!is.null(cfg$discrete_palette)) cfg$discrete_palette else "Set1")
-              ),
-              column(6,
-                     checkboxInput(paste0("heatmap_custom_discrete_", i), "Use custom colors per value", 
-                                   value = if (!is.null(cfg$custom_discrete)) cfg$custom_discrete else FALSE)
-              )
-            ),
-            # Custom colors UI will be rendered separately
-            uiOutput(paste0("heatmap_discrete_colors_ui_", i))
+
+        # v105: Per-heatmap distance and height sliders
+        fluidRow(
+          column(4,
+                 sliderInput(paste0("heatmap_distance_", i), "Distance from Tree",
+                             min = 0, max = 1.0,
+                             value = if (!is.null(cfg$distance)) cfg$distance else 0.02,
+                             step = 0.01)
+          ),
+          column(4,
+                 sliderInput(paste0("heatmap_height_", i), "Row Height",
+                             min = 0.1, max = 3.0,
+                             value = if (!is.null(cfg$height)) cfg$height else 0.8,
+                             step = 0.1)
+          ),
+          column(4,
+                 sliderInput(paste0("heatmap_row_height_", i), "Column Width",
+                             min = 0.5, max = 3.0,
+                             value = if (!is.null(cfg$row_height)) cfg$row_height else 1.0,
+                             step = 0.1)
           )
         ),
-        
-        # Continuous settings
-        conditionalPanel(
-          condition = paste0("(input.heatmap_auto_type_", i, " && '", detected_type, "' == 'continuous') || (!input.heatmap_auto_type_", i, " && input.heatmap_type_", i, " == 'continuous')"),
-          tags$div(
-            style = "background-color: #f0f7ff; padding: 10px; border-radius: 5px; margin-top: 10px;",
-            tags$h5(icon("sliders-h"), " Continuous Color Settings"),
-            fluidRow(
-              column(4,
-                     selectInput(paste0("heatmap_cont_palette_", i), "Color Palette",
-                                 choices = continuous_palettes,
-                                 selected = if (!is.null(cfg$cont_palette)) cfg$cont_palette else "Blues")
-              ),
-              column(4,
-                     colourInput(paste0("heatmap_low_color_", i), "Low Color",
-                                 value = if (!is.null(cfg$low_color)) cfg$low_color else "#FFFFCC")
-              ),
-              column(4,
-                     colourInput(paste0("heatmap_high_color_", i), "High Color",
-                                 value = if (!is.null(cfg$high_color)) cfg$high_color else "#006837")
-              )
+
+        # v111: Grid options for heatmap squares
+        fluidRow(
+          column(4,
+                 checkboxInput(paste0("heatmap_show_grid_", i), "Show grid around tiles",
+                               value = if (!is.null(cfg$show_grid)) cfg$show_grid else FALSE)
+          ),
+          column(4,
+                 colourInput(paste0("heatmap_grid_color_", i), "Grid color",
+                             value = if (!is.null(cfg$grid_color)) cfg$grid_color else "#000000",
+                             showColour = "background")
+          ),
+          column(4,
+                 sliderInput(paste0("heatmap_grid_size_", i), "Grid line width",
+                             min = 0.1, max = 2.0,
+                             value = if (!is.null(cfg$grid_size)) cfg$grid_size else 0.5,
+                             step = 0.1)
+          )
+        ),
+        # S1.62dev: Horizontal row lines option
+        fluidRow(
+          column(4,
+                 checkboxInput(paste0("heatmap_show_row_lines_", i), "Show horizontal row lines",
+                               value = if (!is.null(cfg$show_row_lines)) cfg$show_row_lines else FALSE)
+          ),
+          column(4,
+                 colourInput(paste0("heatmap_row_line_color_", i), "Row line color",
+                             value = if (!is.null(cfg$row_line_color)) cfg$row_line_color else "#000000",
+                             showColour = "background")
+          ),
+          column(4,
+                 sliderInput(paste0("heatmap_row_line_size_", i), "Row line width",
+                             min = 0.1, max = 2.0,
+                             value = if (!is.null(cfg$row_line_size)) cfg$row_line_size else 0.5,
+                             step = 0.1)
+          )
+        ),
+        # S1.62dev: Vertical column lines option
+        fluidRow(
+          column(4,
+                 checkboxInput(paste0("heatmap_show_col_lines_", i), "Show vertical column lines",
+                               value = if (!is.null(cfg$show_col_lines)) cfg$show_col_lines else FALSE)
+          ),
+          column(4,
+                 colourInput(paste0("heatmap_col_line_color_", i), "Column line color",
+                             value = if (!is.null(cfg$col_line_color)) cfg$col_line_color else "#000000",
+                             showColour = "background")
+          ),
+          column(4,
+                 sliderInput(paste0("heatmap_col_line_size_", i), "Column line width",
+                             min = 0.1, max = 2.0,
+                             value = if (!is.null(cfg$col_line_size)) cfg$col_line_size else 0.5,
+                             step = 0.1)
+          )
+        ),
+
+        # S1.62dev: Vertical text labels below heatmap
+        tags$div(
+          style = "background-color: #f5f0e8; padding: 10px; border-radius: 5px; margin-top: 10px; margin-bottom: 10px;",
+          tags$h5(icon("font"), " Vertical Text Labels (below heatmap)"),
+          fluidRow(
+            column(4,
+                   checkboxInput(paste0("heatmap_show_vertical_text_", i), "Show vertical text labels",
+                                 value = if (!is.null(cfg$show_vertical_text)) cfg$show_vertical_text else FALSE)
             ),
-            fluidRow(
-              column(4,
-                     checkboxInput(paste0("heatmap_use_midpoint_", i), "Use midpoint color",
-                                   value = if (!is.null(cfg$use_midpoint)) cfg$use_midpoint else FALSE)
-              ),
-              column(4,
-                     conditionalPanel(
-                       condition = paste0("input.heatmap_use_midpoint_", i),
-                       colourInput(paste0("heatmap_mid_color_", i), "Mid Color",
-                                   value = if (!is.null(cfg$mid_color)) cfg$mid_color else "#FFFF99")
-                     )
-              ),
-              column(4,
-                     conditionalPanel(
-                       condition = paste0("input.heatmap_use_midpoint_", i),
-                       numericInput(paste0("heatmap_midpoint_", i), "Midpoint Value",
-                                    value = if (!is.null(cfg$midpoint)) cfg$midpoint else 0,
-                                    step = 0.1)
-                     )
-              )
+            column(4,
+                   selectizeInput(paste0("heatmap_vertical_text_column_", i), "Text from CSV column:",
+                                  choices = col_choices,
+                                  selected = if (!is.null(cfg$vertical_text_column)) cfg$vertical_text_column else NULL,
+                                  options = list(placeholder = "Select column"))
+            ),
+            column(4,
+                   sliderInput(paste0("heatmap_vertical_text_size_", i), "Text size",
+                               min = 1, max = 10,
+                               value = if (!is.null(cfg$vertical_text_size)) cfg$vertical_text_size else 3,
+                               step = 0.5)
+            )
+          ),
+          fluidRow(
+            column(4,
+                   numericInput(paste0("heatmap_vertical_text_offset_", i), "Vertical offset",
+                                value = if (!is.null(cfg$vertical_text_offset)) cfg$vertical_text_offset else 0.5,
+                                min = -5, max = 10, step = 0.1)
+            ),
+            column(4,
+                   colourInput(paste0("heatmap_vertical_text_color_", i), "Text color",
+                               value = if (!is.null(cfg$vertical_text_color)) cfg$vertical_text_color else "#000000",
+                               showColour = "background")
+            ),
+            column(4)
+          )
+        ),
+
+        # v116: Tip Guide Lines - vertical lines from tips through heatmap
+        tags$div(
+          style = "background-color: #e8f4f8; padding: 10px; border-radius: 5px; margin-top: 10px; margin-bottom: 10px;",
+          tags$h5(icon("grip-lines-vertical"), " Tip Guide Lines"),
+          fluidRow(
+            column(4,
+                   checkboxInput(paste0("heatmap_show_guides_", i), "Show vertical guide lines",
+                                 value = if (!is.null(cfg$show_guides)) cfg$show_guides else FALSE)
+            ),
+            column(4,
+                   colourInput(paste0("heatmap_guide_color1_", i), "Guide color 1",
+                               value = if (!is.null(cfg$guide_color1)) cfg$guide_color1 else "#CCCCCC",
+                               showColour = "background")
+            ),
+            column(4,
+                   colourInput(paste0("heatmap_guide_color2_", i), "Guide color 2",
+                               value = if (!is.null(cfg$guide_color2)) cfg$guide_color2 else "#EEEEEE",
+                               showColour = "background")
+            )
+          ),
+          fluidRow(
+            column(4,
+                   sliderInput(paste0("heatmap_guide_alpha_", i), "Guide transparency",
+                               min = 0.05, max = 1.0,
+                               value = if (!is.null(cfg$guide_alpha)) cfg$guide_alpha else 0.3,
+                               step = 0.05)
+            ),
+            column(4,
+                   sliderInput(paste0("heatmap_guide_width_", i), "Guide line width",
+                               min = 0.1, max = 10.0,
+                               value = if (!is.null(cfg$guide_width)) cfg$guide_width else 0.5,
+                               step = 0.1)
+            ),
+            column(4,
+                   selectInput(paste0("heatmap_guide_linetype_", i), "Line type",
+                               choices = c("solid" = "solid",
+                                          "dashed" = "dashed",
+                                          "dotted" = "dotted",
+                                          "dotdash" = "dotdash",
+                                          "longdash" = "longdash",
+                                          "twodash" = "twodash"),
+                               selected = if (!is.null(cfg$guide_linetype)) cfg$guide_linetype else "solid")
             )
           )
-        )
+        ),
+
+        # v105/v108: Row labels settings with per-column mapping
+        tags$div(
+          style = "background-color: #fff9e6; padding: 10px; border-radius: 5px; margin-top: 10px; margin-bottom: 10px;",
+          tags$h5(icon("font"), " Row Labels (next to heatmap)"),
+          fluidRow(
+            column(4,
+                   checkboxInput(paste0("heatmap_show_row_labels_", i), "Show row labels",
+                                 value = if (!is.null(cfg$show_row_labels)) cfg$show_row_labels else FALSE)
+            ),
+            column(4,
+                   selectInput(paste0("heatmap_row_label_source_", i), "Label source",
+                               choices = c("Column names" = "colnames",
+                                           "Custom mapping" = "mapping",
+                                           "Comma-separated list" = "custom"),
+                               selected = if (!is.null(cfg$row_label_source)) cfg$row_label_source else "colnames")
+            ),
+            column(4,
+                   sliderInput(paste0("heatmap_row_label_font_size_", i), "Label font size",
+                               min = 1, max = 12,  # v109: Increased max from 8 to 12
+                               value = if (!is.null(cfg$row_label_font_size)) cfg$row_label_font_size else 2.5,
+                               step = 0.5)
+            )
+          ),
+          # v111: Row label offset and alignment options
+          fluidRow(
+            column(4,
+                   sliderInput(paste0("heatmap_row_label_offset_", i), "Label offset from heatmap",
+                               min = -8, max = 8,
+                               value = if (!is.null(cfg$row_label_offset)) cfg$row_label_offset else 1.0,
+                               step = 0.5)
+            ),
+            column(4,
+                   selectInput(paste0("heatmap_row_label_align_", i), "Label alignment",
+                               choices = c("Left" = "left", "Center" = "center", "Right" = "right"),
+                               selected = if (!is.null(cfg$row_label_align)) cfg$row_label_align else "left")
+            ),
+            column(4)
+          ),
+          # v108: Dynamic UI for custom labels - either mapping or comma-separated
+          uiOutput(paste0("heatmap_custom_labels_ui_", i))
+        ),
+
+        # v108: Replaced conditionalPanels with uiOutput for reactive type detection
+        # This ensures the color settings show up immediately when columns are selected
+        uiOutput(paste0("heatmap_type_settings_ui_", i))
       )
     })
     
@@ -8426,19 +13587,29 @@ server <- function(input, output, session) {
   
   # Add new heatmap
   observeEvent(input$add_new_heatmap, {
-    if (length(values$heatmap_configs) >= 6) {
-      showNotification("Maximum 6 heatmaps allowed", type = "warning")
+    # v141: Increased max heatmaps from 6 to 10
+    if (length(values$heatmap_configs) >= 10) {
+      showNotification("Maximum 10 heatmaps allowed", type = "warning")
       return()
     }
     
     # v56: Add new empty config with columns (plural) for multiple column support
+    # v107: Added distance and height initialization to prevent reactive loops
     new_config <- list(
+      # S1.62dev: Data source selector (csv or rdata)
+      data_source = "csv",
       columns = character(0),  # v56: Changed from column to columns
       title = paste0("Heatmap ", length(values$heatmap_configs) + 1),
       auto_type = TRUE,
       type = "discrete",
       show_colnames = TRUE,
       colnames_angle = 45,
+      distance = 0.02,       # v107: Initialize distance
+      height = 0.8,          # v107: Initialize height
+      show_row_labels = FALSE,         # v107: Initialize row label settings
+      row_label_source = "colnames",
+      row_label_font_size = 2.5,
+      custom_row_labels = "",
       discrete_palette = "Set1",
       custom_discrete = FALSE,
       custom_colors = list(),
@@ -8447,25 +13618,32 @@ server <- function(input, output, session) {
       high_color = "#006837",
       use_midpoint = FALSE,
       mid_color = "#FFFF99",
-      midpoint = 0
+      midpoint = 0,
+      # S1.62dev: CNV-specific settings
+      cnv_downsample = 10,
+      cnv_wgd_norm = FALSE
     )
     
     values$heatmap_configs <- c(values$heatmap_configs, list(new_config))
+    # v107: Trigger UI regeneration when heatmap is added
+    heatmap_ui_trigger(heatmap_ui_trigger() + 1)
     showNotification(paste("Heatmap", length(values$heatmap_configs), "added"), type = "message")
   })
-  
+
   # Generic observer for heatmap removal buttons
   observe({
     lapply(1:6, function(i) {
       observeEvent(input[[paste0("heatmap_remove_", i)]], {
         if (i <= length(values$heatmap_configs)) {
           values$heatmap_configs <- values$heatmap_configs[-i]
+          # v107: Trigger UI regeneration when heatmap is removed
+          heatmap_ui_trigger(heatmap_ui_trigger() + 1)
           showNotification(paste("Heatmap", i, "removed"), type = "message")
         }
       }, ignoreInit = TRUE)
     })
   })
-  
+
   # Generic observer for move up buttons
   observe({
     lapply(2:6, function(i) {
@@ -8476,11 +13654,13 @@ server <- function(input, output, session) {
           configs[[i]] <- configs[[i-1]]
           configs[[i-1]] <- temp
           values$heatmap_configs <- configs
+          # v107: Trigger UI regeneration when heatmap is moved
+          heatmap_ui_trigger(heatmap_ui_trigger() + 1)
         }
       }, ignoreInit = TRUE)
     })
   })
-  
+
   # Generic observer for move down buttons
   observe({
     lapply(1:5, function(i) {
@@ -8491,6 +13671,8 @@ server <- function(input, output, session) {
           configs[[i]] <- configs[[i+1]]
           configs[[i+1]] <- temp
           values$heatmap_configs <- configs
+          # v107: Trigger UI regeneration when heatmap is moved
+          heatmap_ui_trigger(heatmap_ui_trigger() + 1)
         }
       }, ignoreInit = TRUE)
     })
@@ -8512,14 +13694,348 @@ server <- function(input, output, session) {
           values$heatmap_configs[[i]]$title <- input[[paste0("heatmap_title_", i)]]
         }
       }, ignoreInit = TRUE)
-      
+
+      # S1.62dev: Data source change (csv or rdata)
+      observeEvent(input[[paste0("heatmap_data_source_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          values$heatmap_configs[[i]]$data_source <- input[[paste0("heatmap_data_source_", i)]]
+          # If switching to RData, set type to continuous and appropriate colors
+          if (input[[paste0("heatmap_data_source_", i)]] == "rdata") {
+            cat(file=stderr(), paste0("\n[DEBUG-COLOR] Data source changed to 'rdata' for heatmap ", i, "\n"))
+            values$heatmap_configs[[i]]$type <- "continuous"
+            values$heatmap_configs[[i]]$auto_type <- FALSE
+            # S1.62dev: Set red-white-blue color scheme for CNV (red=loss, blue=gain)
+            values$heatmap_configs[[i]]$low_color <- "#FF0000"   # Red for deletion/loss
+            values$heatmap_configs[[i]]$mid_color <- "#FFFFFF"   # White for neutral
+            values$heatmap_configs[[i]]$high_color <- "#0000FF"  # Blue for amplification/gain
+            values$heatmap_configs[[i]]$use_midpoint <- TRUE
+            values$heatmap_configs[[i]]$midpoint <- 2  # Diploid baseline
+            cat(file=stderr(), paste0("[DEBUG-COLOR] Set config colors: low=#FF0000, mid=#FFFFFF, high=#0000FF\n"))
+            # S1.62dev: Update UI color pickers to reflect the new colors
+            updateColourInput(session, paste0("heatmap_low_color_", i), value = "#FF0000")
+            updateColourInput(session, paste0("heatmap_mid_color_", i), value = "#FFFFFF")
+            updateColourInput(session, paste0("heatmap_high_color_", i), value = "#0000FF")
+            updateCheckboxInput(session, paste0("heatmap_use_midpoint_", i), value = TRUE)
+            updateNumericInput(session, paste0("heatmap_midpoint_", i), value = 2)
+            cat(file=stderr(), "[DEBUG-COLOR] Called updateColourInput for low/mid/high colors\n")
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      # S1.62dev: RData title change
+      observeEvent(input[[paste0("heatmap_title_rdata_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          values$heatmap_configs[[i]]$title <- input[[paste0("heatmap_title_rdata_", i)]]
+        }
+      }, ignoreInit = TRUE)
+
+      # S1.62dev: CNV downsample factor change
+      observeEvent(input[[paste0("heatmap_cnv_downsample_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          values$heatmap_configs[[i]]$cnv_downsample <- input[[paste0("heatmap_cnv_downsample_", i)]]
+        }
+      }, ignoreInit = TRUE)
+
+      # S1.62dev: CNV WGD normalization change
+      observeEvent(input[[paste0("heatmap_cnv_wgd_norm_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          values$heatmap_configs[[i]]$cnv_wgd_norm <- input[[paste0("heatmap_cnv_wgd_norm_", i)]]
+        }
+      }, ignoreInit = TRUE)
+
       # Column names angle change
       observeEvent(input[[paste0("heatmap_colnames_angle_", i)]], {
         if (i <= length(values$heatmap_configs)) {
           values$heatmap_configs[[i]]$colnames_angle <- input[[paste0("heatmap_colnames_angle_", i)]]
         }
       }, ignoreInit = TRUE)
-      
+
+      # v107: Per-heatmap distance from tree (with guard to prevent reactive loop)
+      # Changed ignoreInit to TRUE since values are now initialized in new_config
+      observeEvent(input[[paste0("heatmap_distance_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_distance_", i)]]
+          current_val <- values$heatmap_configs[[i]]$distance
+          # Only update if value actually changed (prevents reactive loop)
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$distance <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      # v107: Per-heatmap height (with guard to prevent reactive loop)
+      # Changed ignoreInit to TRUE since values are now initialized in new_config
+      observeEvent(input[[paste0("heatmap_height_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_height_", i)]]
+          current_val <- values$heatmap_configs[[i]]$height
+          # Only update if value actually changed (prevents reactive loop)
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$height <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      # v110: Per-heatmap row height (controls visual height of each row)
+      observeEvent(input[[paste0("heatmap_row_height_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_row_height_", i)]]
+          current_val <- values$heatmap_configs[[i]]$row_height
+          # Only update if value actually changed (prevents reactive loop)
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$row_height <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      # v119: Grid settings observers (were missing)
+      observeEvent(input[[paste0("heatmap_show_grid_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_show_grid_", i)]]
+          current_val <- values$heatmap_configs[[i]]$show_grid
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$show_grid <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      observeEvent(input[[paste0("heatmap_grid_color_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_grid_color_", i)]]
+          current_val <- values$heatmap_configs[[i]]$grid_color
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$grid_color <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      observeEvent(input[[paste0("heatmap_grid_size_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_grid_size_", i)]]
+          current_val <- values$heatmap_configs[[i]]$grid_size
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$grid_size <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      # S1.62dev: Row line settings observers
+      observeEvent(input[[paste0("heatmap_show_row_lines_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_show_row_lines_", i)]]
+          current_val <- values$heatmap_configs[[i]]$show_row_lines
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$show_row_lines <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      observeEvent(input[[paste0("heatmap_row_line_color_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_row_line_color_", i)]]
+          current_val <- values$heatmap_configs[[i]]$row_line_color
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$row_line_color <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      observeEvent(input[[paste0("heatmap_row_line_size_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_row_line_size_", i)]]
+          current_val <- values$heatmap_configs[[i]]$row_line_size
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$row_line_size <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      # S1.62dev: Vertical column lines observers
+      observeEvent(input[[paste0("heatmap_show_col_lines_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_show_col_lines_", i)]]
+          current_val <- values$heatmap_configs[[i]]$show_col_lines
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$show_col_lines <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      observeEvent(input[[paste0("heatmap_col_line_color_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_col_line_color_", i)]]
+          current_val <- values$heatmap_configs[[i]]$col_line_color
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$col_line_color <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      observeEvent(input[[paste0("heatmap_col_line_size_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_col_line_size_", i)]]
+          current_val <- values$heatmap_configs[[i]]$col_line_size
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$col_line_size <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      # S1.62dev: Vertical text labels observers
+      observeEvent(input[[paste0("heatmap_show_vertical_text_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_show_vertical_text_", i)]]
+          current_val <- values$heatmap_configs[[i]]$show_vertical_text
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$show_vertical_text <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      observeEvent(input[[paste0("heatmap_vertical_text_column_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_vertical_text_column_", i)]]
+          current_val <- values$heatmap_configs[[i]]$vertical_text_column
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$vertical_text_column <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      observeEvent(input[[paste0("heatmap_vertical_text_size_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_vertical_text_size_", i)]]
+          current_val <- values$heatmap_configs[[i]]$vertical_text_size
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$vertical_text_size <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      observeEvent(input[[paste0("heatmap_vertical_text_offset_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_vertical_text_offset_", i)]]
+          current_val <- values$heatmap_configs[[i]]$vertical_text_offset
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$vertical_text_offset <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      observeEvent(input[[paste0("heatmap_vertical_text_color_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_vertical_text_color_", i)]]
+          current_val <- values$heatmap_configs[[i]]$vertical_text_color
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$vertical_text_color <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      # v119: Guide line settings observers (were missing - caused guide lines to not work)
+      observeEvent(input[[paste0("heatmap_show_guides_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_show_guides_", i)]]
+          current_val <- values$heatmap_configs[[i]]$show_guides
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$show_guides <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      observeEvent(input[[paste0("heatmap_guide_color1_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_guide_color1_", i)]]
+          current_val <- values$heatmap_configs[[i]]$guide_color1
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$guide_color1 <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      observeEvent(input[[paste0("heatmap_guide_color2_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_guide_color2_", i)]]
+          current_val <- values$heatmap_configs[[i]]$guide_color2
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$guide_color2 <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      observeEvent(input[[paste0("heatmap_guide_alpha_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_guide_alpha_", i)]]
+          current_val <- values$heatmap_configs[[i]]$guide_alpha
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$guide_alpha <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      observeEvent(input[[paste0("heatmap_guide_width_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_guide_width_", i)]]
+          current_val <- values$heatmap_configs[[i]]$guide_width
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$guide_width <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      # S1.61: Guide line type observer
+      observeEvent(input[[paste0("heatmap_guide_linetype_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_guide_linetype_", i)]]
+          current_val <- values$heatmap_configs[[i]]$guide_linetype
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$guide_linetype <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      # v107: Row labels settings (with guards to prevent reactive loop)
+      # Changed ignoreInit to TRUE since values are now initialized in new_config
+      observeEvent(input[[paste0("heatmap_show_row_labels_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_show_row_labels_", i)]]
+          current_val <- values$heatmap_configs[[i]]$show_row_labels
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$show_row_labels <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      observeEvent(input[[paste0("heatmap_row_label_source_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_row_label_source_", i)]]
+          current_val <- values$heatmap_configs[[i]]$row_label_source
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$row_label_source <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      observeEvent(input[[paste0("heatmap_row_label_font_size_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_row_label_font_size_", i)]]
+          current_val <- values$heatmap_configs[[i]]$row_label_font_size
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$row_label_font_size <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      observeEvent(input[[paste0("heatmap_custom_row_labels_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_custom_row_labels_", i)]]
+          current_val <- values$heatmap_configs[[i]]$custom_row_labels
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$custom_row_labels <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
       # Auto type change
       observeEvent(input[[paste0("heatmap_auto_type_", i)]], {
         if (i <= length(values$heatmap_configs)) {
@@ -8535,16 +14051,77 @@ server <- function(input, output, session) {
       }, ignoreInit = TRUE)
       
       # Discrete palette change
+      # S1.62dev: Fixed - also update values$heatmaps and trigger plot regeneration
       observeEvent(input[[paste0("heatmap_discrete_palette_", i)]], {
         if (i <= length(values$heatmap_configs)) {
           values$heatmap_configs[[i]]$discrete_palette <- input[[paste0("heatmap_discrete_palette_", i)]]
+          # S1.62dev: Also update values$heatmaps if it exists (heatmap was already applied)
+          if (!is.null(values$heatmaps) && i <= length(values$heatmaps)) {
+            values$heatmaps[[i]]$color_scheme <- input[[paste0("heatmap_discrete_palette_", i)]]
+            request_plot_update()
+          }
         }
       }, ignoreInit = TRUE)
       
       # Continuous palette change
+      # S1.62dev: Fixed - also update values$heatmaps and trigger plot regeneration
+      # S1.62dev: Also update Low/High/Mid color inputs based on selected palette
       observeEvent(input[[paste0("heatmap_cont_palette_", i)]], {
         if (i <= length(values$heatmap_configs)) {
-          values$heatmap_configs[[i]]$cont_palette <- input[[paste0("heatmap_cont_palette_", i)]]
+          palette_name <- input[[paste0("heatmap_cont_palette_", i)]]
+          values$heatmap_configs[[i]]$cont_palette <- palette_name
+
+          # S1.62dev: Don't override colors for RData heatmaps - they use red-white-blue by default
+          current_data_source <- input[[paste0("heatmap_data_source_", i)]]
+          if (!is.null(current_data_source) && current_data_source == "rdata") {
+            cat(file=stderr(), paste0("[DEBUG-COLOR] Skipping palette color update for RData heatmap ", i, "\n"))
+            return()  # Don't change colors for RData - user can manually change if needed
+          }
+
+          # S1.62dev: Define color mappings for each palette
+          palette_colors <- list(
+            # Sequential palettes (low=light, high=dark)
+            Blues = list(low = "#DEEBF7", high = "#08519C", mid = "#6BAED6"),
+            Greens = list(low = "#E5F5E0", high = "#006D2C", mid = "#74C476"),
+            Reds = list(low = "#FEE0D2", high = "#A50F15", mid = "#FB6A4A"),
+            Purples = list(low = "#EFEDF5", high = "#54278F", mid = "#9E9AC8"),
+            Oranges = list(low = "#FEE6CE", high = "#A63603", mid = "#FD8D3C"),
+            # Viridis family
+            Viridis = list(low = "#FDE725", high = "#440154", mid = "#21918C"),
+            Plasma = list(low = "#F0F921", high = "#0D0887", mid = "#CC4778"),
+            Inferno = list(low = "#FCFFA4", high = "#000004", mid = "#BB3754"),
+            Magma = list(low = "#FCFDBF", high = "#000004", mid = "#B63679"),
+            # Diverging palettes (low=color1, mid=neutral, high=color2)
+            RdBu = list(low = "#2166AC", high = "#B2182B", mid = "#F7F7F7"),
+            RdYlGn = list(low = "#D73027", high = "#1A9850", mid = "#FFFFBF"),
+            PiYG = list(low = "#C51B7D", high = "#4D9221", mid = "#F7F7F7"),
+            BrBG = list(low = "#8C510A", high = "#01665E", mid = "#F5F5F5")
+          )
+
+          # Update color inputs if palette is recognized
+          if (palette_name %in% names(palette_colors)) {
+            colors <- palette_colors[[palette_name]]
+            colourpicker::updateColourInput(session, paste0("heatmap_low_color_", i), value = colors$low)
+            colourpicker::updateColourInput(session, paste0("heatmap_high_color_", i), value = colors$high)
+            colourpicker::updateColourInput(session, paste0("heatmap_mid_color_", i), value = colors$mid)
+
+            # Also update config
+            values$heatmap_configs[[i]]$low_color <- colors$low
+            values$heatmap_configs[[i]]$high_color <- colors$high
+            values$heatmap_configs[[i]]$mid_color <- colors$mid
+          }
+
+          # S1.62dev: Also update values$heatmaps if it exists (heatmap was already applied)
+          if (!is.null(values$heatmaps) && i <= length(values$heatmaps)) {
+            values$heatmaps[[i]]$cont_palette <- palette_name
+            if (palette_name %in% names(palette_colors)) {
+              colors <- palette_colors[[palette_name]]
+              values$heatmaps[[i]]$low_color <- colors$low
+              values$heatmaps[[i]]$high_color <- colors$high
+              values$heatmaps[[i]]$mid_color <- colors$mid
+            }
+            request_plot_update()
+          }
         }
       }, ignoreInit = TRUE)
       
@@ -8578,96 +14155,1173 @@ server <- function(input, output, session) {
           values$heatmap_configs[[i]]$midpoint <- input[[paste0("heatmap_midpoint_", i)]]
         }
       }, ignoreInit = TRUE)
+
+      # v121: Column range observer - allows adding columns by position range (e.g., "2-10")
+      observeEvent(input[[paste0("heatmap_add_range_", i)]], {
+        range_text <- input[[paste0("heatmap_col_range_", i)]]
+        if (is.null(range_text) || nchar(trimws(range_text)) == 0) {
+          showNotification("Please enter a column range (e.g., 2-10)", type = "warning")
+          return()
+        }
+
+        # Parse the range
+        range_text <- trimws(range_text)
+        parts <- strsplit(range_text, "-")[[1]]
+        if (length(parts) != 2) {
+          showNotification("Invalid range format. Use 'start-end' (e.g., 2-10)", type = "error")
+          return()
+        }
+
+        start_col <- suppressWarnings(as.integer(trimws(parts[1])))
+        end_col <- suppressWarnings(as.integer(trimws(parts[2])))
+
+        if (is.na(start_col) || is.na(end_col)) {
+          showNotification("Column numbers must be integers (e.g., 2-10)", type = "error")
+          return()
+        }
+
+        if (start_col < 1 || end_col < start_col) {
+          showNotification("Invalid range: start must be >= 1 and end must be >= start", type = "error")
+          return()
+        }
+
+        # Get current CSV column names
+        csv_cols <- if (!is.null(values$csv_data)) names(values$csv_data) else character(0)
+        if (length(csv_cols) == 0) {
+          showNotification("No CSV data loaded", type = "error")
+          return()
+        }
+
+        if (end_col > length(csv_cols)) {
+          showNotification(paste0("End column (", end_col, ") exceeds number of columns (", length(csv_cols), ")"), type = "error")
+          return()
+        }
+
+        # Get column names for the range
+        range_cols <- csv_cols[start_col:end_col]
+
+        # Get current selection and add range columns
+        current_cols <- input[[paste0("heatmap_columns_", i)]]
+        if (is.null(current_cols)) current_cols <- character(0)
+
+        # Add new columns (avoiding duplicates)
+        new_cols <- unique(c(current_cols, range_cols))
+
+        # Update the selectize input
+        updateSelectizeInput(session, paste0("heatmap_columns_", i), selected = new_cols)
+
+        # Also update config
+        if (i <= length(values$heatmap_configs)) {
+          values$heatmap_configs[[i]]$columns <- new_cols
+        }
+
+        # Clear the range input
+        updateTextInput(session, paste0("heatmap_col_range_", i), value = "")
+
+        showNotification(paste0("Added columns ", start_col, "-", end_col, " (", length(range_cols), " columns): ",
+                                paste(range_cols, collapse = ", ")), type = "message")
+      }, ignoreInit = TRUE)
     })
   })
-  
-  # Render discrete color pickers for each heatmap
+
+  # v62: Render palette previews for discrete heatmaps
   observe({
     lapply(1:6, function(i) {
-      output[[paste0("heatmap_discrete_colors_ui_", i)]] <- renderUI({
-        req(input[[paste0("heatmap_custom_discrete_", i)]])
-        
-        if (!input[[paste0("heatmap_custom_discrete_", i)]]) {
-          return(NULL)
-        }
-        
-        # v56: Use columns (plural) - get unique values from first column
-        cols_selected <- input[[paste0("heatmap_columns_", i)]]
-        if (is.null(cols_selected) || length(cols_selected) == 0 || is.null(values$csv_data)) {
-          return(tags$p(class = "text-muted", "Select column(s) first"))
-        }
-        
-        # Get unique values from first column (for discrete coloring)
-        first_col <- cols_selected[1]
-        unique_vals <- unique(na.omit(values$csv_data[[first_col]]))
-        if (length(unique_vals) > 20) {
-          return(tags$p(class = "text-warning", 
-                        icon("exclamation-triangle"),
-                        " Too many unique values (", length(unique_vals), "). Consider using a palette instead."))
-        }
-        
-        # Generate color pickers for each value
-        color_pickers <- lapply(seq_along(unique_vals), function(j) {
-          val <- as.character(unique_vals[j])
-          default_color <- rainbow(length(unique_vals))[j]
-          
-          fluidRow(
-            column(6, tags$label(val, style = "padding-top: 7px;")),
-            column(6, 
-                   colourInput(paste0("heatmap_", i, "_color_", j), NULL,
-                               value = default_color, showColour = "background")
+      output[[paste0("heatmap_discrete_palette_preview_", i)]] <- renderUI({
+        palette_name <- input[[paste0("heatmap_discrete_palette_", i)]]
+        if (is.null(palette_name)) palette_name <- "Set1"
+
+        # Get colors from the selected palette (8 colors for preview)
+        n_colors <- 8
+        colors <- tryCatch({
+          if (palette_name %in% c("Set1", "Set2", "Set3", "Paired", "Dark2", "Accent", "Pastel1", "Pastel2")) {
+            RColorBrewer::brewer.pal(min(n_colors, RColorBrewer::brewer.pal.info[palette_name, "maxcolors"]), palette_name)
+          } else {
+            rainbow(n_colors)
+          }
+        }, error = function(e) rainbow(n_colors))
+
+        # Create color swatches
+        swatches <- lapply(colors, function(col) {
+          tags$span(style = paste0(
+            "display: inline-block; width: 20px; height: 20px; ",
+            "background-color: ", col, "; margin-right: 2px; border: 1px solid #ccc; border-radius: 2px;"
+          ))
+        })
+
+        tags$div(
+          style = "margin-top: 5px;",
+          do.call(tagList, swatches)
+        )
+      })
+    })
+  })
+
+  # v62: Render palette previews for continuous heatmaps
+  observe({
+    lapply(1:6, function(i) {
+      output[[paste0("heatmap_cont_palette_preview_", i)]] <- renderUI({
+        palette_name <- input[[paste0("heatmap_cont_palette_", i)]]
+        if (is.null(palette_name)) palette_name <- "Blues"
+
+        # Get colors from the selected palette (gradient preview with 10 colors)
+        n_colors <- 10
+        colors <- tryCatch({
+          if (palette_name %in% c("Viridis", "Plasma", "Inferno", "Magma")) {
+            viridis::viridis(n_colors, option = tolower(palette_name))
+          } else if (palette_name %in% rownames(RColorBrewer::brewer.pal.info)) {
+            colorRampPalette(RColorBrewer::brewer.pal(9, palette_name))(n_colors)
+          } else {
+            colorRampPalette(c("white", "blue"))(n_colors)
+          }
+        }, error = function(e) colorRampPalette(c("white", "blue"))(n_colors))
+
+        # Create gradient preview as a bar
+        gradient_css <- paste0(
+          "background: linear-gradient(to right, ",
+          paste(colors, collapse = ", "), ");"
+        )
+
+        tags$div(
+          style = paste0(
+            "margin-top: 5px; height: 20px; border-radius: 3px; border: 1px solid #ccc; ",
+            gradient_css
+          )
+        )
+      })
+    })
+  })
+
+  # v64: Render palette previews for discrete heatmaps
+  observe({
+    lapply(1:6, function(i) {
+      output[[paste0("heatmap_discrete_palette_preview_", i)]] <- renderUI({
+        palette_name <- input[[paste0("heatmap_discrete_palette_", i)]]
+        if (is.null(palette_name)) palette_name <- "Set1"
+
+        # Get colors from the selected palette
+        n_colors <- 8  # Show 8 colors for discrete palette preview
+        colors <- tryCatch({
+          if (palette_name %in% rownames(RColorBrewer::brewer.pal.info)) {
+            max_colors <- RColorBrewer::brewer.pal.info[palette_name, "maxcolors"]
+            RColorBrewer::brewer.pal(min(n_colors, max_colors), palette_name)
+          } else {
+            rainbow(n_colors)
+          }
+        }, error = function(e) rainbow(n_colors))
+
+        # Create discrete color swatches preview
+        color_boxes <- lapply(colors, function(col) {
+          tags$div(
+            style = paste0(
+              "display: inline-block; width: ", 100/length(colors), "%; ",
+              "height: 20px; background-color: ", col, ";"
             )
           )
         })
-        
+
         tags$div(
-          style = "max-height: 200px; overflow-y: auto; padding: 10px; background: white; border-radius: 3px;",
-          do.call(tagList, color_pickers)
+          style = "margin-top: 5px; border-radius: 3px; border: 1px solid #ccc; overflow: hidden;",
+          do.call(tags$div, c(list(style = "display: flex;"), color_boxes))
         )
       })
+    })
+  })
+
+  # v70: R color names list for dropdown menus (used in both classification and heatmap)
+  heat_r_colors <- c(
+    "Custom" = "",
+    # Basic colors
+    "red", "blue", "green", "yellow", "orange", "purple", "pink", "brown",
+    "gray", "black", "white", "cyan", "magenta",
+    # Dark variants
+    "darkred", "darkblue", "darkgreen", "darkorange", "darkviolet",
+    "darkgray", "darkcyan", "darkmagenta",
+    # Light variants
+    "lightblue", "lightgreen", "lightyellow", "lightpink", "lightgray",
+    "lightcyan", "lightcoral", "lightsalmon",
+    # Named colors
+    "steelblue", "skyblue", "navy", "maroon", "olive", "teal", "coral",
+    "tomato", "salmon", "khaki", "plum", "orchid", "tan",
+    # Greens
+    "forestgreen", "limegreen", "seagreen", "springgreen",
+    # Blues
+    "royalblue", "dodgerblue", "deepskyblue", "cornflowerblue",
+    # Reds/Pinks
+    "crimson", "firebrick", "indianred", "hotpink", "deeppink"
+  )
+
+  # v127: Dynamic detected type display - updates when column selection changes
+  # This replaces the static label that was set at UI render time
+  observe({
+    lapply(1:6, function(i) {
+      output[[paste0("heatmap_detected_type_display_", i)]] <- renderUI({
+        # Take dependency on column selection to reactively update
+        cols_selected <- input[[paste0("heatmap_columns_", i)]]
+
+        # If no columns selected, show placeholder
+        if (is.null(cols_selected) || length(cols_selected) == 0 || is.null(values$csv_data)) {
+          return(tags$div(
+            class = "label label-default",
+            style = "display: block; padding: 8px; text-align: center; margin-top: 0;",
+            "Select column first"
+          ))
+        }
+
+        # Compute detected type from the first column (same logic as heatmap_type_settings_ui_)
+        first_col <- cols_selected[1]
+        if (!(first_col %in% names(values$csv_data))) {
+          return(tags$div(
+            class = "label label-warning",
+            style = "display: block; padding: 8px; text-align: center; margin-top: 0;",
+            "Column not found"
+          ))
+        }
+
+        col_data <- values$csv_data[[first_col]]
+        unique_vals <- length(unique(na.omit(col_data)))
+        is_numeric <- is.numeric(col_data)
+
+        # v127: Check for decimals in string representation BEFORE conversion
+        has_decimal_in_string <- FALSE
+        if (is.character(col_data) || is.factor(col_data)) {
+          char_data <- as.character(na.omit(col_data))
+          char_data <- char_data[!toupper(trimws(char_data)) %in% c("NA", "N/A", "#N/A", "NULL", "")]
+          if (length(char_data) > 0) {
+            has_decimal_in_string <- any(grepl("\\.[0-9]+", char_data))
+          }
+        } else if (is.numeric(col_data)) {
+          char_data <- as.character(na.omit(col_data))
+          has_decimal_in_string <- any(grepl("\\.[0-9]+", char_data))
+        }
+
+        # Try to convert character columns to numeric
+        originally_numeric <- is_numeric
+        if (!is_numeric && is.character(col_data)) {
+          clean_col_data <- col_data
+          clean_col_data[toupper(trimws(clean_col_data)) %in% c("NA", "N/A", "#N/A", "NULL", "")] <- NA
+          numeric_attempt <- suppressWarnings(as.numeric(clean_col_data))
+          non_na_original <- sum(!is.na(clean_col_data))
+          non_na_converted <- sum(!is.na(numeric_attempt))
+          if (non_na_original > 0 && (non_na_converted / non_na_original) >= 0.5) {
+            is_numeric <- TRUE
+            col_data <- numeric_attempt
+          }
+        }
+
+        # Determine type
+        detected_type <- "discrete"
+        if (is_numeric) {
+          non_na_vals <- na.omit(col_data)
+          unique_numeric_vals <- length(unique(non_na_vals))
+          epsilon <- 1e-6
+          has_decimals <- any(abs(non_na_vals - floor(non_na_vals)) > epsilon, na.rm = TRUE)
+
+          if (!has_decimals && has_decimal_in_string) {
+            has_decimals <- TRUE
+          }
+
+          val_range <- if (length(non_na_vals) > 0) diff(range(non_na_vals)) else 0
+
+          if (has_decimals) {
+            detected_type <- "continuous"
+          } else if (originally_numeric) {
+            is_boolean_like <- unique_numeric_vals <= 2 && val_range <= 1
+            is_small_categorical <- unique_numeric_vals <= 3 && val_range <= 2
+            detected_type <- if (is_boolean_like || is_small_categorical) "discrete" else "continuous"
+          } else {
+            detected_type <- if (unique_numeric_vals > 8 || val_range > 10) "continuous" else "discrete"
+          }
+        }
+
+        # Debug output to console
+        debug_cat(paste0("  v27 DETECTED TYPE DISPLAY: column=", first_col,
+                                   ", detected=", detected_type, "\n"))
+
+        # Return the styled label
+        tags$div(
+          class = if (detected_type == "continuous") "label label-info" else "label label-success",
+          style = "display: block; padding: 8px; text-align: center; margin-top: 0;",
+          if (detected_type == "continuous") "Continuous (numeric)" else "Discrete (categorical)"
+        )
+      })
+    })
+  })
+
+  # v108: New reactive renderUI for type-specific settings (discrete vs continuous)
+  # This replaces the old conditionalPanels which used a hardcoded detected_type
+  observe({
+    lapply(1:6, function(i) {
+      output[[paste0("heatmap_type_settings_ui_", i)]] <- renderUI({
+        # Take dependency on column selection to reactively update when columns change
+        cols_selected <- input[[paste0("heatmap_columns_", i)]]
+        auto_type <- input[[paste0("heatmap_auto_type_", i)]]
+        forced_type <- input[[paste0("heatmap_type_", i)]]
+
+        # S1.62dev: Check if this is an RData heatmap - show continuous settings directly
+        data_source <- input[[paste0("heatmap_data_source_", i)]]
+        if (!is.null(data_source) && data_source == "rdata") {
+          # RData CNV heatmaps are always continuous - show continuous color settings
+          cfg <- isolate(values$heatmap_configs[[i]])
+          continuous_palettes <- c("Blues", "Greens", "Reds", "Purples", "Oranges",
+                                   "Viridis", "Plasma", "Inferno", "Magma",
+                                   "RdBu", "RdYlGn", "PiYG", "BrBG")
+          return(tags$div(
+            style = "background-color: #e6f3ff; padding: 10px; border-radius: 5px; margin-top: 10px;",
+            tags$h5(icon("dna"), " CNV Color Settings"),
+            fluidRow(
+              column(4,
+                     selectInput(paste0("heatmap_cont_palette_", i), "Color Palette",
+                                 choices = continuous_palettes,
+                                 selected = if (!is.null(cfg$cont_palette)) cfg$cont_palette else "RdBu")
+              ),
+              column(4,
+                     # S1.62dev: Default red for deletion/loss
+                     colourInput(paste0("heatmap_low_color_", i), "Low (Deletion)",
+                                 value = if (!is.null(cfg$low_color)) cfg$low_color else "#FF0000")
+              ),
+              column(4,
+                     # S1.62dev: Default blue for amplification/gain
+                     colourInput(paste0("heatmap_high_color_", i), "High (Amplification)",
+                                 value = if (!is.null(cfg$high_color)) cfg$high_color else "#0000FF")
+              )
+            ),
+            fluidRow(
+              column(4,
+                     checkboxInput(paste0("heatmap_use_midpoint_", i), "Use midpoint color",
+                                   value = if (!is.null(cfg$use_midpoint)) cfg$use_midpoint else TRUE)
+              ),
+              column(4,
+                     conditionalPanel(
+                       condition = paste0("input.heatmap_use_midpoint_", i),
+                       colourInput(paste0("heatmap_mid_color_", i), "Mid (Diploid)",
+                                   value = if (!is.null(cfg$mid_color)) cfg$mid_color else "#FFFFFF")
+                     )
+              ),
+              column(4,
+                     conditionalPanel(
+                       condition = paste0("input.heatmap_use_midpoint_", i),
+                       numericInput(paste0("heatmap_midpoint_", i), "Midpoint Value",
+                                    value = if (!is.null(cfg$midpoint)) cfg$midpoint else 0,
+                                    step = 0.5)
+                     )
+              )
+            ),
+            fluidRow(
+              column(4,
+                     colourInput(paste0("heatmap_", i, "_cont_na_color"), "NA Color",
+                                 value = if (!is.null(cfg$na_color)) cfg$na_color else "#BEBEBE",
+                                 showColour = "background")
+              ),
+              column(8,
+                     tags$p(class = "text-muted", style = "margin-top: 25px;",
+                            icon("info-circle"), " Blue-White-Red scale centered at 0")
+              )
+            )
+          ))
+        }
+
+        # If no columns selected, show nothing
+        if (is.null(cols_selected) || length(cols_selected) == 0 || is.null(values$csv_data)) {
+          return(tags$p(class = "text-muted", style = "margin-top: 10px;",
+                        icon("info-circle"), " Select column(s) to see color settings"))
+        }
+
+        # Compute detected type from the first column
+        first_col <- cols_selected[1]
+        if (!(first_col %in% names(values$csv_data))) {
+          return(tags$p(class = "text-muted", "Column not found"))
+        }
+
+        col_data <- values$csv_data[[first_col]]
+        unique_vals <- length(unique(na.omit(col_data)))
+        is_numeric <- is.numeric(col_data)
+
+        # v117: Check for decimals in string representation BEFORE conversion
+        # This catches values like "15.7" that might lose precision
+        # Also check originally numeric data by converting to string
+        # IMPORTANT: Filter out "NA" strings which are not R's NA
+        has_decimal_in_string <- FALSE
+        if (is.character(col_data) || is.factor(col_data)) {
+          char_data <- as.character(na.omit(col_data))
+          # v117: Remove "NA" strings (case-insensitive) that are NOT R's NA
+          # v118: Added #N/A to the list of NA-like strings
+          char_data <- char_data[!toupper(trimws(char_data)) %in% c("NA", "N/A", "#N/A", "NULL", "")]
+          if (length(char_data) > 0) {
+            has_decimal_in_string <- any(grepl("\\.[0-9]+", char_data))
+          }
+        } else if (is.numeric(col_data)) {
+          # v116: For originally numeric data, convert to string and check for decimals
+          char_data <- as.character(na.omit(col_data))
+          has_decimal_in_string <- any(grepl("\\.[0-9]+", char_data))
+        }
+
+        # v111: Better detection - also try to convert character columns to numeric
+        originally_numeric <- is_numeric  # v112: Track if originally numeric
+        if (!is_numeric && is.character(col_data)) {
+          # v117: Filter out NA-like strings before attempting conversion
+          # v118: Added #N/A to the list of NA-like strings
+          clean_col_data <- col_data
+          clean_col_data[toupper(trimws(clean_col_data)) %in% c("NA", "N/A", "#N/A", "NULL", "")] <- NA
+          # Try converting to numeric - see what proportion succeeds
+          numeric_attempt <- suppressWarnings(as.numeric(clean_col_data))
+          non_na_original <- sum(!is.na(clean_col_data))  # v117: Count after cleaning NA strings
+          non_na_converted <- sum(!is.na(numeric_attempt))
+          # v116: Lower threshold to 50% for consistency with heatmap config
+          if (non_na_original > 0 && (non_na_converted / non_na_original) >= 0.5) {
+            is_numeric <- TRUE
+            col_data <- numeric_attempt  # Use converted data for further analysis
+          }
+        }
+
+        # v112: Better detection for numeric columns
+        if (is_numeric) {
+          # Recalculate unique values after numeric conversion (important!)
+          non_na_vals <- na.omit(col_data)
+          unique_numeric_vals <- length(unique(non_na_vals))
+
+          # v116: More robust decimal detection with epsilon for floating-point precision
+          epsilon <- 1e-6
+          has_decimals <- any(abs(non_na_vals - floor(non_na_vals)) > epsilon, na.rm = TRUE)
+
+          # v116: Also use string-based detection as fallback
+          if (!has_decimals && has_decimal_in_string) {
+            has_decimals <- TRUE
+          }
+
+          # Check the range of values
+          val_range <- if (length(non_na_vals) > 0) diff(range(non_na_vals)) else 0
+
+          # v116: Simplified logic - decimals ALWAYS mean continuous
+          if (has_decimals) {
+            detected_type <- "continuous"
+          } else if (originally_numeric) {
+            # Originally numeric without decimals
+            is_boolean_like <- unique_numeric_vals <= 2 && val_range <= 1
+            is_small_categorical <- unique_numeric_vals <= 3 && val_range <= 2
+            detected_type <- if (is_boolean_like || is_small_categorical) "discrete" else "continuous"
+          } else {
+            # Converted from character without decimals - be more conservative
+            detected_type <- if (unique_numeric_vals > 8 || val_range > 10) "continuous" else "discrete"
+          }
+        } else {
+          detected_type <- "discrete"
+        }
+
+        # Determine actual type based on auto-detect checkbox
+        actual_type <- if (isTRUE(auto_type) || is.null(auto_type)) detected_type else forced_type
+        if (is.null(actual_type)) actual_type <- "discrete"
+
+        # Get config for current values (isolated to prevent loops)
+        cfg <- isolate(values$heatmap_configs[[i]])
+
+        # Palette options
+        discrete_palettes <- c("Set1", "Set2", "Set3", "Paired", "Dark2", "Accent", "Pastel1", "Pastel2")
+        continuous_palettes <- c("Blues", "Greens", "Reds", "Purples", "Oranges",
+                                 "Viridis", "Plasma", "Inferno", "Magma",
+                                 "RdBu", "RdYlGn", "PiYG", "BrBG")
+
+        if (actual_type == "discrete") {
+          # Discrete settings UI
+          tags$div(
+            style = "background-color: #f9f9f9; padding: 10px; border-radius: 5px; margin-top: 10px;",
+            tags$h5(icon("palette"), " Discrete Color Settings"),
+            tags$div(
+              style = "background-color: #f0f0f0; padding: 10px; margin-bottom: 10px; border-radius: 5px;",
+              fluidRow(
+                column(6,
+                       selectInput(paste0("heatmap_discrete_palette_", i), "Color Palette",
+                                   choices = discrete_palettes,
+                                   selected = if (!is.null(cfg$discrete_palette)) cfg$discrete_palette else "Set1")
+                ),
+                column(6, style = "padding-top: 25px;",
+                       actionButton(paste0("apply_heatmap_palette_", i), "Apply Palette to All",
+                                    icon = icon("palette"), class = "btn-info btn-sm")
+                )
+              ),
+              uiOutput(paste0("heatmap_discrete_palette_preview_", i))
+            ),
+            tags$h6("Value Colors:", style = "margin-top: 10px; margin-bottom: 5px;"),
+            uiOutput(paste0("heatmap_discrete_colors_ui_", i))
+          )
+        } else {
+          # Continuous settings UI
+          tags$div(
+            style = "background-color: #f0f7ff; padding: 10px; border-radius: 5px; margin-top: 10px;",
+            tags$h5(icon("sliders-h"), " Continuous Color Settings"),
+            fluidRow(
+              column(4,
+                     selectInput(paste0("heatmap_cont_palette_", i), "Color Palette",
+                                 choices = continuous_palettes,
+                                 selected = if (!is.null(cfg$cont_palette)) cfg$cont_palette else "Blues"),
+                     uiOutput(paste0("heatmap_cont_palette_preview_", i))
+              ),
+              column(4,
+                     colourInput(paste0("heatmap_low_color_", i), "Low Color",
+                                 value = if (!is.null(cfg$low_color)) cfg$low_color else "#FFFFCC")
+              ),
+              column(4,
+                     colourInput(paste0("heatmap_high_color_", i), "High Color",
+                                 value = if (!is.null(cfg$high_color)) cfg$high_color else "#006837")
+              )
+            ),
+            fluidRow(
+              column(4,
+                     checkboxInput(paste0("heatmap_use_midpoint_", i), "Use midpoint color",
+                                   value = if (!is.null(cfg$use_midpoint)) cfg$use_midpoint else FALSE)
+              ),
+              column(4,
+                     conditionalPanel(
+                       condition = paste0("input.heatmap_use_midpoint_", i),
+                       colourInput(paste0("heatmap_mid_color_", i), "Mid Color",
+                                   value = if (!is.null(cfg$mid_color)) cfg$mid_color else "#FFFF99")
+                     )
+              ),
+              column(4,
+                     conditionalPanel(
+                       condition = paste0("input.heatmap_use_midpoint_", i),
+                       numericInput(paste0("heatmap_midpoint_", i), "Midpoint Value",
+                                    value = if (!is.null(cfg$midpoint)) cfg$midpoint else 0,
+                                    step = 0.1)
+                     )
+              )
+            ),
+            # v112: NA color for continuous heatmaps
+            fluidRow(
+              column(4,
+                     colourInput(paste0("heatmap_", i, "_cont_na_color"), "NA Color",
+                                 value = if (!is.null(cfg$na_color)) cfg$na_color else "#BEBEBE",
+                                 showColour = "background")
+              ),
+              column(8)
+            )
+          )
+        }
+      })
+    })
+  })
+
+  # v108: Render custom labels UI (mapping or comma-separated)
+  observe({
+    lapply(1:6, function(i) {
+      output[[paste0("heatmap_custom_labels_ui_", i)]] <- renderUI({
+        # Depend on label source selection and column selection
+        label_source <- input[[paste0("heatmap_row_label_source_", i)]]
+        cols_selected <- input[[paste0("heatmap_columns_", i)]]
+
+        # Show nothing for "colnames" source
+        if (is.null(label_source) || label_source == "colnames") {
+          return(NULL)
+        }
+
+        # Show comma-separated text input for "custom" source
+        if (label_source == "custom") {
+          cfg <- isolate(values$heatmap_configs[[i]])
+          return(fluidRow(
+            column(12,
+                   textInput(paste0("heatmap_custom_row_labels_", i), "Custom labels (comma-separated)",
+                             value = if (!is.null(cfg$custom_row_labels)) cfg$custom_row_labels else "",
+                             placeholder = "Label1, Label2, Label3...")
+            )
+          ))
+        }
+
+        # Show per-column mapping UI for "mapping" source
+        if (label_source == "mapping") {
+          if (is.null(cols_selected) || length(cols_selected) == 0) {
+            return(tags$p(class = "text-muted",
+                          icon("info-circle"), " Select columns first to map labels"))
+          }
+
+          cfg <- isolate(values$heatmap_configs[[i]])
+          existing_mapping <- if (!is.null(cfg$label_mapping)) cfg$label_mapping else list()
+
+          # Create a text input for each column
+          mapping_rows <- lapply(seq_along(cols_selected), function(j) {
+            col_name <- cols_selected[j]
+            # Get existing mapping or default to column name
+            existing_label <- if (!is.null(existing_mapping[[col_name]])) existing_mapping[[col_name]] else col_name
+
+            fluidRow(
+              style = "margin-bottom: 5px; padding: 3px 0;",
+              column(5,
+                     tags$div(
+                       style = "padding-top: 7px; font-family: monospace; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;",
+                       title = col_name,
+                       col_name
+                     )
+              ),
+              column(1,
+                     tags$div(style = "padding-top: 7px; text-align: center;", icon("arrow-right"))
+              ),
+              column(6,
+                     textInput(paste0("heatmap_", i, "_label_", j), NULL,
+                               value = existing_label,
+                               placeholder = "Custom label...")
+              )
+            )
+          })
+
+          return(tags$div(
+            style = "background-color: #fff; padding: 10px; border-radius: 5px; border: 1px solid #e0e0e0;",
+            tags$h6("Column to Label Mapping:", style = "margin-top: 0; margin-bottom: 8px;"),
+            tags$small(class = "text-muted", paste0(length(cols_selected), " column(s) - edit labels on the right")),
+            tags$hr(style = "margin: 8px 0;"),
+            do.call(tagList, mapping_rows)
+          ))
+        }
+
+        return(NULL)
+      })
+    })
+  })
+
+  # v70: Render discrete color pickers for each heatmap - with NA color and dropdown menus
+  observe({
+    lapply(1:6, function(i) {
+      output[[paste0("heatmap_discrete_colors_ui_", i)]] <- renderUI({
+        # v69: Use columns (plural) - get unique values from first column
+        cols_selected <- input[[paste0("heatmap_columns_", i)]]
+        if (is.null(cols_selected) || length(cols_selected) == 0 || is.null(values$csv_data)) {
+          return(tags$p(class = "text-muted", "Select column(s) first to see value-color mappings"))
+        }
+
+        # Get unique values from first column (for discrete coloring)
+        first_col <- cols_selected[1]
+        if (!(first_col %in% names(values$csv_data))) {
+          return(tags$p(class = "text-muted", "Column not found"))
+        }
+
+        # v125: Filter to only patient-specific data (rows matching tree tips)
+        # This prevents "Too many unique values" error when CSV has more values than tree tips
+        filtered_data <- values$csv_data
+        if (!is.null(values$tree) && !is.null(input$id_column) && input$id_column %in% names(values$csv_data)) {
+          tree_tips <- values$tree$tip.label
+          id_col_data <- as.character(values$csv_data[[input$id_column]])
+          matching_rows <- id_col_data %in% tree_tips
+          if (any(matching_rows)) {
+            filtered_data <- values$csv_data[matching_rows, , drop = FALSE]
+            debug_cat(paste0("v125: Filtered unique values from ", nrow(values$csv_data), " to ", nrow(filtered_data), " rows (tree tips)\n"))
+          }
+        }
+
+        unique_vals <- sort(unique(na.omit(filtered_data[[first_col]])))
+        n_vals <- length(unique_vals)
+
+        if (n_vals == 0) {
+          return(tags$p(class = "text-muted", "No values found in selected column"))
+        }
+
+        if (n_vals > 30) {
+          return(tags$p(class = "text-warning",
+                        icon("exclamation-triangle"),
+                        paste0(" Too many unique values (", n_vals, "). Use a palette - individual colors not shown.")))
+        }
+
+        # v69: Get current palette for default colors
+        current_palette <- input[[paste0("heatmap_discrete_palette_", i)]]
+        if (is.null(current_palette)) current_palette <- "Set1"
+
+        # Generate default colors from palette
+        default_colors <- tryCatch({
+          max_colors <- RColorBrewer::brewer.pal.info[current_palette, "maxcolors"]
+          if (n_vals <= max_colors) {
+            RColorBrewer::brewer.pal(max(3, n_vals), current_palette)[1:n_vals]
+          } else {
+            # Use colorRampPalette for more colors
+            colorRampPalette(RColorBrewer::brewer.pal(max_colors, current_palette))(n_vals)
+          }
+        }, error = function(e) {
+          rainbow(n_vals)
+        })
+
+        # v70: Generate color pickers for each value WITH dropdown menu
+        color_pickers <- lapply(seq_along(unique_vals), function(j) {
+          val <- as.character(unique_vals[j])
+
+          # v69: Check if there's an existing custom color for this value
+          existing_color <- isolate(input[[paste0("heatmap_", i, "_color_", j)]])
+          color_to_use <- if (!is.null(existing_color)) existing_color else default_colors[j]
+
+          fluidRow(
+            style = "margin-bottom: 3px;",
+            column(4, tags$label(val, style = "padding-top: 5px; font-weight: normal; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;", title = val)),
+            column(4,
+                   colourInput(paste0("heatmap_", i, "_color_", j), NULL,
+                               value = color_to_use, showColour = "background")
+            ),
+            column(4,
+                   selectInput(paste0("heatmap_", i, "_color_name_", j), NULL,
+                               choices = heat_r_colors, selected = "")
+            )
+          )
+        })
+
+        # v70: NA color picker (always shown at the end)
+        existing_na_color <- isolate(input[[paste0("heatmap_", i, "_na_color")]])
+        na_color_to_use <- if (!is.null(existing_na_color)) existing_na_color else "white"
+
+        na_color_row <- fluidRow(
+          style = "margin-bottom: 3px; background-color: #f8f8f8; padding: 5px; border-radius: 3px; margin-top: 10px;",
+          column(4, tags$label("NA / Missing", style = "padding-top: 5px; font-weight: bold; font-style: italic;")),
+          column(4,
+                 colourInput(paste0("heatmap_", i, "_na_color"), NULL,
+                             value = na_color_to_use, showColour = "background")
+          ),
+          column(4,
+                 selectInput(paste0("heatmap_", i, "_na_color_name"), NULL,
+                             choices = heat_r_colors, selected = "")
+          )
+        )
+
+        # v104: Restructured with z-index fixes for dropdown menus
+        # All dropdowns now float above other elements when opened
+        tags$div(
+          style = "padding: 10px; background: white; border-radius: 3px; border: 1px solid #ddd; position: relative;",
+          # v104: CSS to make selectize dropdowns float above everything
+          tags$style(HTML(paste0("
+            #heatmap_discrete_colors_ui_", i, " .selectize-dropdown {
+              z-index: 10000 !important;
+              position: absolute !important;
+            }
+            #heatmap_discrete_colors_ui_", i, " .selectize-control {
+              position: relative;
+            }
+          "))),
+          tags$small(class = "text-muted", paste0(n_vals, " unique value(s) + NA color")),
+          tags$hr(style = "margin: 5px 0;"),
+          # v70: Header row
+          fluidRow(
+            style = "margin-bottom: 5px; font-weight: bold; font-size: 11px;",
+            column(4, "Value"),
+            column(4, "Color"),
+            column(4, "R Color Name")
+          ),
+          # v104: Removed max-height constraint and overflow:auto to prevent dropdown clipping
+          # The scrollable container was causing dropdown menus to be hidden
+          tags$div(
+            style = "max-height: 350px; overflow-y: visible; overflow-x: visible;",
+            do.call(tagList, color_pickers)
+          ),
+          # v103: NA color row outside scrollable area - dropdown won't be clipped
+          na_color_row
+        )
+      })
+    })
+  })
+
+  # v70: Observer to update heatmap color pickers when R color name dropdown changes
+  observe({
+    lapply(1:6, function(i) {
+      # Observe changes to color name dropdowns for each value (up to 30 values)
+      lapply(1:30, function(j) {
+        observeEvent(input[[paste0("heatmap_", i, "_color_name_", j)]], {
+          color_name <- input[[paste0("heatmap_", i, "_color_name_", j)]]
+          if (!is.null(color_name) && color_name != "") {
+            updateColourInput(session, paste0("heatmap_", i, "_color_", j), value = color_name)
+          }
+        }, ignoreInit = TRUE)
+      })
+
+      # v70: Also observe NA color name dropdown
+      observeEvent(input[[paste0("heatmap_", i, "_na_color_name")]], {
+        color_name <- input[[paste0("heatmap_", i, "_na_color_name")]]
+        if (!is.null(color_name) && color_name != "") {
+          updateColourInput(session, paste0("heatmap_", i, "_na_color"), value = color_name)
+        }
+      }, ignoreInit = TRUE)
+    })
+  })
+
+  # v69: Observer for "Apply Palette to All" buttons for heatmaps
+  observe({
+    lapply(1:6, function(i) {
+      observeEvent(input[[paste0("apply_heatmap_palette_", i)]], {
+        cols_selected <- input[[paste0("heatmap_columns_", i)]]
+        if (is.null(cols_selected) || length(cols_selected) == 0 || is.null(values$csv_data)) {
+          showNotification("Please select a column first", type = "warning")
+          return()
+        }
+
+        # Get unique values
+        first_col <- cols_selected[1]
+        if (!(first_col %in% names(values$csv_data))) return()
+
+        unique_vals <- sort(unique(na.omit(values$csv_data[[first_col]])))
+        n_vals <- length(unique_vals)
+
+        if (n_vals == 0 || n_vals > 30) return()
+
+        # Get selected palette
+        palette_name <- input[[paste0("heatmap_discrete_palette_", i)]]
+        if (is.null(palette_name)) palette_name <- "Set1"
+
+        # Generate colors from palette
+        new_colors <- tryCatch({
+          max_colors <- RColorBrewer::brewer.pal.info[palette_name, "maxcolors"]
+          if (n_vals <= max_colors) {
+            RColorBrewer::brewer.pal(max(3, n_vals), palette_name)[1:n_vals]
+          } else {
+            colorRampPalette(RColorBrewer::brewer.pal(max_colors, palette_name))(n_vals)
+          }
+        }, error = function(e) {
+          rainbow(n_vals)
+        })
+
+        # Update all color pickers
+        for (j in seq_along(unique_vals)) {
+          updateColourInput(session, paste0("heatmap_", i, "_color_", j), value = new_colors[j])
+        }
+
+        showNotification(paste("Applied", palette_name, "palette to", n_vals, "values"), type = "message")
+      }, ignoreInit = TRUE)
     })
   })
   
   # Apply heatmaps button
   observeEvent(input$apply_heatmaps, {
+    cat(file=stderr(), "\n[HEATMAP-APPLY] Apply Heatmaps button clicked!\n")
+
     # Convert heatmap_configs to the format expected by the plotting function
     if (length(values$heatmap_configs) == 0) {
       showNotification("No heatmaps configured", type = "warning")
       return()
     }
-    
-    # v56: Build heatmaps list from configs with multiple column support
+
+    cat(file=stderr(), paste0("[HEATMAP-APPLY] Processing ", length(values$heatmap_configs), " heatmap config(s)\n"))
+
+    # v56a: Build heatmaps list from configs with multiple column support
+    # Read directly from inputs to ensure we get current values (fixes ignoreInit issue)
     heatmaps_list <- lapply(seq_along(values$heatmap_configs), function(i) {
       cfg <- values$heatmap_configs[[i]]
-      
-      # v56: Check columns (plural)
-      if (is.null(cfg$columns) || length(cfg$columns) == 0) {
+
+      # S1.62dev: Check data source - CSV columns or RData CNV
+      current_data_source <- input[[paste0("heatmap_data_source_", i)]]
+      if (is.null(current_data_source)) current_data_source <- "csv"
+      cat(file=stderr(), paste0("[HEATMAP-APPLY] Heatmap ", i, " data_source: '", current_data_source, "'\n"))
+
+      # S1.62dev: Handle RData CNV source
+      if (current_data_source == "rdata") {
+        cat(file=stderr(), "[HEATMAP-APPLY] Entering RData CNV path\n")
+        # Check if RData CNV matrix is available
+        if (is.null(values$rdata_cnv_matrix)) {
+          showNotification(paste("Heatmap", i, ": No RData CNV file loaded. Please upload an RData file first."), type = "error")
+          return(NULL)
+        }
+
+        # Get CNV settings - these will be stored and applied later in func.print.lineage.tree
+        cnv_downsample <- input[[paste0("heatmap_cnv_downsample_", i)]]
+        if (is.null(cnv_downsample)) cnv_downsample <- 10
+        cnv_wgd_norm <- input[[paste0("heatmap_cnv_wgd_norm_", i)]]
+        if (is.null(cnv_wgd_norm)) cnv_wgd_norm <- FALSE
+
+        debug_cat(paste0("  S1.62dev: RData CNV heatmap ", i, ": downsample=", cnv_downsample, ", wgd_norm=", cnv_wgd_norm, "\n"))
+        debug_cat(paste0("  S1.62dev: Raw CNV matrix: ", nrow(values$rdata_cnv_matrix), " samples x ", ncol(values$rdata_cnv_matrix), " positions\n"))
+
+        # Build heatmap entry for RData CNV
+        # Note: cnv_matrix is NOT stored here - it's passed as a parameter to func.print.lineage.tree
+        # because large matrices don't serialize properly to YAML
+        cat(file=stderr(), paste0("[DEBUG-COLOR] Building RData heatmap entry for heatmap ", i, "\n"))
+        cat(file=stderr(), paste0("[DEBUG-COLOR] cfg$low_color = ", ifelse(is.null(cfg$low_color), "NULL", cfg$low_color), "\n"))
+        cat(file=stderr(), paste0("[DEBUG-COLOR] cfg$mid_color = ", ifelse(is.null(cfg$mid_color), "NULL", cfg$mid_color), "\n"))
+        cat(file=stderr(), paste0("[DEBUG-COLOR] cfg$high_color = ", ifelse(is.null(cfg$high_color), "NULL", cfg$high_color), "\n"))
+        cat(file=stderr(), paste0("[DEBUG-COLLINES] show_col_lines input = ", ifelse(is.null(input[[paste0("heatmap_show_col_lines_", i)]]), "NULL", input[[paste0("heatmap_show_col_lines_", i)]]), "\n"))
+        heatmap_entry <- list(
+          title = cfg$title,
+          is_discrete = FALSE,  # CNV data is always continuous
+          data_source = "rdata",
+          # Store CNV settings (processing happens in func.print.lineage.tree)
+          cnv_downsample = cnv_downsample,
+          cnv_wgd_norm = cnv_wgd_norm,
+          columns = character(0),  # No columns for RData - data comes from parameter
+          show_colnames = if (!is.null(cfg$show_colnames)) cfg$show_colnames else FALSE,  # Usually too many columns
+          colnames_angle = if (!is.null(cfg$colnames_angle)) cfg$colnames_angle else 90,
+          font_size = input$heatmap_global_font,
+          # Distance and height settings
+          distance = if (!is.null(input[[paste0("heatmap_distance_", i)]])) input[[paste0("heatmap_distance_", i)]] else 0.02,
+          height = if (!is.null(input[[paste0("heatmap_height_", i)]])) input[[paste0("heatmap_height_", i)]] else 0.8,
+          row_height = if (!is.null(input[[paste0("heatmap_row_height_", i)]])) input[[paste0("heatmap_row_height_", i)]] else 1.0,
+          # Grid settings
+          show_grid = if (!is.null(input[[paste0("heatmap_show_grid_", i)]])) input[[paste0("heatmap_show_grid_", i)]] else FALSE,
+          grid_color = if (!is.null(input[[paste0("heatmap_grid_color_", i)]])) input[[paste0("heatmap_grid_color_", i)]] else "#000000",
+          grid_size = if (!is.null(input[[paste0("heatmap_grid_size_", i)]])) input[[paste0("heatmap_grid_size_", i)]] else 0.5,
+          # S1.62dev: Row line settings (horizontal lines only)
+          show_row_lines = if (!is.null(input[[paste0("heatmap_show_row_lines_", i)]])) input[[paste0("heatmap_show_row_lines_", i)]] else FALSE,
+          row_line_color = if (!is.null(input[[paste0("heatmap_row_line_color_", i)]])) input[[paste0("heatmap_row_line_color_", i)]] else "#000000",
+          row_line_size = if (!is.null(input[[paste0("heatmap_row_line_size_", i)]])) input[[paste0("heatmap_row_line_size_", i)]] else 0.5,
+          # S1.62dev: Column line settings (vertical lines)
+          show_col_lines = if (!is.null(input[[paste0("heatmap_show_col_lines_", i)]])) input[[paste0("heatmap_show_col_lines_", i)]] else FALSE,
+          col_line_color = if (!is.null(input[[paste0("heatmap_col_line_color_", i)]])) input[[paste0("heatmap_col_line_color_", i)]] else "#000000",
+          col_line_size = if (!is.null(input[[paste0("heatmap_col_line_size_", i)]])) input[[paste0("heatmap_col_line_size_", i)]] else 0.5,
+          # Guide lines (usually not useful for CNV with many columns)
+          show_guides = FALSE,
+          # Row labels
+          show_row_labels = if (!is.null(input[[paste0("heatmap_show_row_labels_", i)]])) input[[paste0("heatmap_show_row_labels_", i)]] else FALSE,
+          row_label_source = "colnames",
+          row_label_font_size = if (!is.null(input[[paste0("heatmap_row_label_font_size_", i)]])) input[[paste0("heatmap_row_label_font_size_", i)]] else 2.5,
+          row_label_offset = if (!is.null(input[[paste0("heatmap_row_label_offset_", i)]])) input[[paste0("heatmap_row_label_offset_", i)]] else 1.0,
+          row_label_align = if (!is.null(input[[paste0("heatmap_row_label_align_", i)]])) input[[paste0("heatmap_row_label_align_", i)]] else "left",
+          # S1.62dev: Color settings - red-white-blue for CNV (red=loss, blue=gain)
+          # Note: Both 'low'/'mid'/'high' (for rendering) and 'low_color'/'mid_color'/'high_color' (for UI) are set
+          low_color = if (!is.null(cfg$low_color)) cfg$low_color else "#FF0000",   # Red for deletion/loss
+          mid_color = if (!is.null(cfg$mid_color)) cfg$mid_color else "#FFFFFF",   # White for neutral
+          high_color = if (!is.null(cfg$high_color)) cfg$high_color else "#0000FF", # Blue for amplification/gain
+          low = if (!is.null(cfg$low_color)) cfg$low_color else "#FF0000",   # For rendering code
+          mid = if (!is.null(cfg$mid_color)) cfg$mid_color else "#FFFFFF",   # For rendering code
+          high = if (!is.null(cfg$high_color)) cfg$high_color else "#0000FF", # For rendering code
+          midpoint = if (!is.null(cfg$midpoint)) cfg$midpoint else 2,  # Center at diploid (2)
+          use_midpoint = TRUE,  # Always use midpoint for CNV
+          na_color = "grey90"
+        )
+
+        return(heatmap_entry)
+      }
+
+      # v56a: Read columns directly from input (fixes issue where ignoreInit=TRUE misses initial selection)
+      current_columns <- input[[paste0("heatmap_columns_", i)]]
+      if (is.null(current_columns) || length(current_columns) == 0) {
         return(NULL)
       }
-      
-      # Determine actual type based on first column
-      actual_type <- cfg$type
+
+      # Update config with current columns
+      cfg$columns <- current_columns
+      cfg$data_source <- "csv"  # Explicitly mark as CSV source
+
+      # v122: Read auto_type from current input (not from stale cfg)
+      current_auto_type <- input[[paste0("heatmap_auto_type_", i)]]
+      if (is.null(current_auto_type)) current_auto_type <- TRUE
+
+      # v122: Read forced type from current input
+      current_forced_type <- input[[paste0("heatmap_type_", i)]]
+      if (is.null(current_forced_type)) current_forced_type <- "discrete"
+
+      # v116: Improved auto-detect logic for discrete vs continuous
+      # Priority: decimals = continuous, non-numeric = discrete, then check unique values
+      actual_type <- current_forced_type  # v122: Default to forced type
       first_col <- cfg$columns[1]
-      if (cfg$auto_type && !is.null(values$csv_data) && first_col %in% names(values$csv_data)) {
+      debug_cat(paste0("  v22 AUTO-DETECT: auto_type=", current_auto_type,
+                                 ", forced_type=", current_forced_type, "\n"))
+      if (current_auto_type && !is.null(values$csv_data) && first_col %in% names(values$csv_data)) {
         col_data <- values$csv_data[[first_col]]
-        unique_vals <- length(unique(na.omit(col_data)))
+        col_data_clean <- na.omit(col_data)
+        unique_vals <- length(unique(col_data_clean))
         is_numeric <- is.numeric(col_data)
-        actual_type <- if (is_numeric && unique_vals > 10) "continuous" else "discrete"
+        converted_to_numeric <- FALSE
+        originally_numeric <- is_numeric
+
+        # v117: Check for decimal points in string representation FIRST
+        # This catches cases like "23.6" that might get converted to numeric
+        # Also check originally numeric data by converting to string
+        # IMPORTANT: Filter out "NA" strings which are not R's NA
+        has_decimal_in_string <- FALSE
+        if (is.character(col_data) || is.factor(col_data)) {
+          char_data <- as.character(na.omit(col_data))
+          # v117: Remove "NA" strings (case-insensitive) that are NOT R's NA
+          # v118: Added #N/A to the list of NA-like strings
+          char_data <- char_data[!toupper(trimws(char_data)) %in% c("NA", "N/A", "#N/A", "NULL", "")]
+          if (length(char_data) > 0) {
+            has_decimal_in_string <- any(grepl("\\.[0-9]+", char_data))
+          }
+        } else if (is.numeric(col_data)) {
+          # v116: For originally numeric data, convert to string and check for decimals
+          # This catches values like 15.7 that are already loaded as numeric
+          char_data <- as.character(na.omit(col_data))
+          has_decimal_in_string <- any(grepl("\\.[0-9]+", char_data))
+        }
+        debug_cat(paste0("  v17 AUTO-DETECT: has_decimal_in_string=", has_decimal_in_string, "\n"))
+
+        # v117: More aggressive conversion - try to convert any non-numeric column to numeric
+        # First clean up NA-like strings
+        if (!is_numeric) {
+          clean_col_data <- as.character(col_data)
+          # v117: Convert NA-like strings to actual NA
+          # v118: Added #N/A to the list of NA-like strings
+          clean_col_data[toupper(trimws(clean_col_data)) %in% c("NA", "N/A", "#N/A", "NULL", "")] <- NA
+          numeric_attempt <- suppressWarnings(as.numeric(clean_col_data))
+          non_na_original <- sum(!is.na(clean_col_data))  # v117: Count after cleaning NA strings
+          non_na_converted <- sum(!is.na(numeric_attempt))
+          # v115: Lower threshold to 50% for numeric detection (was 80%)
+          if (non_na_original > 0 && (non_na_converted / non_na_original) >= 0.5) {
+            is_numeric <- TRUE
+            converted_to_numeric <- TRUE
+            col_data_clean <- na.omit(numeric_attempt)
+            unique_vals <- length(unique(col_data_clean))
+          }
+        }
+
+        # v117: Debug output for auto-detect troubleshooting
+        debug_cat(paste0("  v17 AUTO-DETECT: column=", first_col,
+                                   ", is_numeric=", is_numeric,
+                                   ", originally_numeric=", originally_numeric,
+                                   ", converted=", converted_to_numeric,
+                                   ", unique_vals=", unique_vals, "\n"))
+
+        # v117: Better heuristic - decimals ALWAYS mean continuous
+        if (!is_numeric) {
+          # Non-numeric data is always discrete
+          actual_type <- "discrete"
+          debug_cat(paste0("  v17 AUTO-DETECT: Result=discrete (non-numeric)\n"))
+        } else {
+          # v117: Check for decimal values with tolerance for floating-point precision
+          epsilon <- 1e-6
+          has_decimals <- any(abs(col_data_clean - floor(col_data_clean)) > epsilon, na.rm = TRUE)
+
+          # v117: Also use the string-based detection result
+          if (!has_decimals && has_decimal_in_string) {
+            has_decimals <- TRUE
+            debug_cat(paste0("  v17 AUTO-DETECT: decimal detected via string check\n"))
+          }
+
+          debug_cat(paste0("  v20 AUTO-DETECT: has_decimals=", has_decimals, "\n"))
+
+          # v120: Harmonized logic with UI section for consistent detection
+          # Get value range for range-based checks
+          val_range <- if (length(col_data_clean) > 0) diff(range(col_data_clean, na.rm = TRUE)) else 0
+
+          # v120: Decimals ALWAYS mean continuous (measurements, percentages, etc.)
+          if (has_decimals) {
+            actual_type <- "continuous"
+            debug_cat(paste0("  v20 AUTO-DETECT: Result=continuous (has decimals)\n"))
+          } else if (originally_numeric) {
+            # v120: Originally numeric without decimals - match UI section logic
+            is_boolean_like <- unique_vals <= 2 && val_range <= 1
+            is_small_categorical <- unique_vals <= 3 && val_range <= 2
+            if (is_boolean_like || is_small_categorical) {
+              actual_type <- "discrete"
+              debug_cat(paste0("  v20 AUTO-DETECT: Result=discrete (boolean-like or small categorical)\n"))
+            } else {
+              actual_type <- "continuous"
+              debug_cat(paste0("  v20 AUTO-DETECT: Result=continuous (originally numeric, many values)\n"))
+            }
+          } else {
+            # v123: Converted from character without decimals - more lenient for numeric-like data
+            # If >=5 unique values OR range >=5 → treat as continuous
+            # This catches integer sequences like 1,2,3,4,5 which are typically counts/scores
+            if (unique_vals >= 5 || val_range >= 5) {
+              actual_type <- "continuous"
+              debug_cat(paste0("  v23 AUTO-DETECT: Result=continuous (>=5 unique or range>=5)\n"))
+            } else {
+              actual_type <- "discrete"
+              debug_cat(paste0("  v23 AUTO-DETECT: Result=discrete (few unique, narrow range)\n"))
+            }
+          }
+        }
       }
-      
+
+      # S1.62dev: Store the computed actual_type in config for export
+      if (i <= length(values$heatmap_configs)) {
+        values$heatmap_configs[[i]]$actual_type <- actual_type
+      }
+
+      # v105/v111: Read per-heatmap settings
+      current_distance <- input[[paste0("heatmap_distance_", i)]]
+      current_height <- input[[paste0("heatmap_height_", i)]]
+      current_row_height <- input[[paste0("heatmap_row_height_", i)]]  # v111: Add row_height
+      # v111: Grid settings
+      show_grid <- input[[paste0("heatmap_show_grid_", i)]]
+      grid_color <- input[[paste0("heatmap_grid_color_", i)]]
+      grid_size <- input[[paste0("heatmap_grid_size_", i)]]
+      # v116: Guide line settings
+      show_guides <- input[[paste0("heatmap_show_guides_", i)]]
+      guide_color1 <- input[[paste0("heatmap_guide_color1_", i)]]
+      guide_color2 <- input[[paste0("heatmap_guide_color2_", i)]]
+      guide_alpha <- input[[paste0("heatmap_guide_alpha_", i)]]
+      guide_width <- input[[paste0("heatmap_guide_width_", i)]]
+      guide_linetype <- input[[paste0("heatmap_guide_linetype_", i)]]
+      show_row_labels <- input[[paste0("heatmap_show_row_labels_", i)]]
+      row_label_source <- input[[paste0("heatmap_row_label_source_", i)]]
+      row_label_font_size <- input[[paste0("heatmap_row_label_font_size_", i)]]
+      row_label_offset <- input[[paste0("heatmap_row_label_offset_", i)]]  # v111: Label offset
+      row_label_align <- input[[paste0("heatmap_row_label_align_", i)]]  # v111: Label alignment
+      custom_row_labels <- input[[paste0("heatmap_custom_row_labels_", i)]]
+
+      # v108: Collect label mapping if using "mapping" source
+      label_mapping <- list()
+      if (!is.null(row_label_source) && row_label_source == "mapping" && length(cfg$columns) > 0) {
+        for (j in seq_along(cfg$columns)) {
+          mapped_label <- input[[paste0("heatmap_", i, "_label_", j)]]
+          if (!is.null(mapped_label) && nchar(trimws(mapped_label)) > 0) {
+            label_mapping[[cfg$columns[j]]] <- mapped_label
+          } else {
+            label_mapping[[cfg$columns[j]]] <- cfg$columns[j]  # Default to column name
+          }
+        }
+      }
+
       heatmap_entry <- list(
         title = cfg$title,
         is_discrete = (actual_type == "discrete"),
         columns = cfg$columns,  # v56: Now supports multiple columns
-        width = input$heatmap_global_width,
         show_colnames = cfg$show_colnames,
         colnames_angle = if (!is.null(cfg$colnames_angle)) cfg$colnames_angle else 45,
-        font_size = input$heatmap_global_font
+        font_size = input$heatmap_global_font,
+        distance = if (!is.null(current_distance)) current_distance else 0.02,
+        height = if (!is.null(current_height)) current_height else 0.8,  # v105: Per-heatmap height (column width)
+        row_height = if (!is.null(current_row_height)) current_row_height else 1.0,  # v111: Per-heatmap row height
+        show_grid = if (!is.null(show_grid)) show_grid else FALSE,  # v111: Grid around tiles
+        grid_color = if (!is.null(grid_color)) grid_color else "#000000",  # v111
+        grid_size = if (!is.null(grid_size)) grid_size else 0.5,  # v111
+        # S1.62dev: Row line settings (horizontal lines only)
+        show_row_lines = if (!is.null(input[[paste0("heatmap_show_row_lines_", i)]])) input[[paste0("heatmap_show_row_lines_", i)]] else FALSE,
+        row_line_color = if (!is.null(input[[paste0("heatmap_row_line_color_", i)]])) input[[paste0("heatmap_row_line_color_", i)]] else "#000000",
+        row_line_size = if (!is.null(input[[paste0("heatmap_row_line_size_", i)]])) input[[paste0("heatmap_row_line_size_", i)]] else 0.5,
+        # S1.62dev: Column line settings (vertical lines)
+        show_col_lines = if (!is.null(input[[paste0("heatmap_show_col_lines_", i)]])) input[[paste0("heatmap_show_col_lines_", i)]] else FALSE,
+        col_line_color = if (!is.null(input[[paste0("heatmap_col_line_color_", i)]])) input[[paste0("heatmap_col_line_color_", i)]] else "#000000",
+        col_line_size = if (!is.null(input[[paste0("heatmap_col_line_size_", i)]])) input[[paste0("heatmap_col_line_size_", i)]] else 0.5,
+        # v116: Guide lines
+        show_guides = if (!is.null(show_guides)) show_guides else FALSE,
+        guide_color1 = if (!is.null(guide_color1)) guide_color1 else "#CCCCCC",
+        guide_color2 = if (!is.null(guide_color2)) guide_color2 else "#EEEEEE",
+        guide_alpha = if (!is.null(guide_alpha)) guide_alpha else 0.3,
+        guide_width = if (!is.null(guide_width)) guide_width else 0.5,
+        guide_linetype = if (!is.null(guide_linetype)) guide_linetype else "solid",
+        show_row_labels = if (!is.null(show_row_labels)) show_row_labels else FALSE,
+        row_label_source = if (!is.null(row_label_source)) row_label_source else "colnames",
+        row_label_font_size = if (!is.null(row_label_font_size)) row_label_font_size else 2.5,
+        row_label_offset = if (!is.null(row_label_offset)) row_label_offset else 1.0,  # v111
+        row_label_align = if (!is.null(row_label_align)) row_label_align else "left",  # v111
+        custom_row_labels = if (!is.null(custom_row_labels)) custom_row_labels else "",
+        label_mapping = label_mapping  # v108: Per-column label mapping
       )
       
       if (actual_type == "discrete") {
-        heatmap_entry$color_scheme <- cfg$discrete_palette
-        # TODO: handle custom colors
+        # v69: Get palette from current input (not stale cfg)
+        # S1.62dev: Fall back to cfg$discrete_palette if input not available (e.g., after YAML import)
+        current_palette <- input[[paste0("heatmap_discrete_palette_", i)]]
+        heatmap_entry$color_scheme <- if (!is.null(current_palette)) {
+          current_palette
+        } else if (!is.null(cfg$discrete_palette)) {
+          cfg$discrete_palette
+        } else {
+          "Set1"
+        }
+
+        # v69: Collect custom colors if they've been set
+        if (!is.null(values$csv_data) && first_col %in% names(values$csv_data)) {
+          unique_vals <- sort(unique(na.omit(values$csv_data[[first_col]])))
+          n_vals <- length(unique_vals)
+
+          if (n_vals > 0 && n_vals <= 30) {
+            custom_colors <- c()
+            has_custom_colors <- FALSE
+            for (j in seq_along(unique_vals)) {
+              color_input <- input[[paste0("heatmap_", i, "_color_", j)]]
+              if (!is.null(color_input)) {
+                custom_colors[as.character(unique_vals[j])] <- color_input
+                has_custom_colors <- TRUE
+              }
+            }
+            if (has_custom_colors) {
+              heatmap_entry$custom_colors <- custom_colors
+              heatmap_entry$man_define_colors <- TRUE
+            }
+          }
+
+          # v70: Get NA color from input (default to white if not set)
+          na_color_input <- input[[paste0("heatmap_", i, "_na_color")]]
+          heatmap_entry$na_color <- if (!is.null(na_color_input)) na_color_input else "white"
+        }
       } else {
         heatmap_entry$low_color <- cfg$low_color
         heatmap_entry$high_color <- cfg$high_color
@@ -8675,8 +15329,11 @@ server <- function(input, output, session) {
           heatmap_entry$mid_color <- cfg$mid_color
           heatmap_entry$midpoint <- cfg$midpoint
         }
+        # v112: Get NA color for continuous heatmaps from input (default to grey90)
+        cont_na_color_input <- input[[paste0("heatmap_", i, "_cont_na_color")]]
+        heatmap_entry$na_color <- if (!is.null(cont_na_color_input)) cont_na_color_input else "grey90"
       }
-      
+
       heatmap_entry
     })
     
@@ -8689,17 +15346,152 @@ server <- function(input, output, session) {
     }
     
     values$heatmaps <- heatmaps_list
-    
+
+    # v125: Store global gap setting for use in plotting
+    values$heatmap_global_gap <- if (!is.null(input$heatmap_global_gap)) input$heatmap_global_gap else 0.05
+
+    # v56c: DEBUG - Print heatmap structure being applied
+    debug_cat("\n=== v56c HEATMAP APPLY DEBUG ===\n")
+    debug_cat("Number of heatmaps:", length(heatmaps_list), "\n")
+    for (h_idx in seq_along(heatmaps_list)) {
+      hm <- heatmaps_list[[h_idx]]
+      debug_cat(paste0("  Heatmap ", h_idx, ":\n"))
+      debug_cat(paste0("    Title: ", hm$title, "\n"))
+      debug_cat(paste0("    Columns: ", paste(hm$columns, collapse=", "), "\n"))
+      debug_cat(paste0("    Is discrete: ", hm$is_discrete, "\n"))
+      # S1.62dev: Add data_source debug
+      debug_cat(paste0("    S1.62dev data_source: ", if (!is.null(hm$data_source)) hm$data_source else "NULL", "\n"))
+      debug_cat(paste0("    S1.62dev all fields: ", paste(names(hm), collapse=", "), "\n"))
+    }
+    debug_cat("================================\n\n")
+
     # Generate plot
     generate_plot()
-    
+
     showNotification(paste(length(heatmaps_list), "heatmap(s) applied"), type = "message")
   })
   
   # ============================================
   # END v55: NEW MULTI-HEATMAP SYSTEM
   # ============================================
-  
+
+  # ============================================
+  # v121: LEGEND SETTINGS SYSTEM
+  # ============================================
+
+  # Observer for Apply Legend Settings button
+  # v180: Updated with new controls (key width/height, byrow, box background, margin)
+  observeEvent(input$apply_legend_settings, {
+    debug_cat("\n=== v180: APPLYING LEGEND SETTINGS ===\n")
+
+    # Update legend settings in reactive values
+    values$legend_settings <- list(
+      position = input$legend_position,
+      # Visibility controls
+      show_classification = input$legend_show_classification,
+      show_highlight = input$legend_show_highlight,
+      show_bootstrap = input$legend_show_bootstrap,
+      show_pvalue = input$legend_show_pvalue,
+      show_heatmap = input$legend_show_heatmap,  # v180: Simplified to single checkbox
+      # Font sizes
+      title_size = input$legend_title_size,
+      text_size = input$legend_text_size,
+      key_size = input$legend_key_size,
+      # v180: Key dimensions
+      key_width = input$legend_key_width,
+      key_height = input$legend_key_height,
+      # Spacing controls
+      spacing = input$legend_spacing,
+      spacing_vertical = input$legend_spacing_vertical,
+      title_key_spacing = input$legend_title_key_spacing,  # v180: Title to keys spacing
+      key_spacing = input$legend_key_spacing,              # v180: Between keys spacing
+      # Layout controls
+      reverse_order = input$legend_reverse_order,
+      # v180: Background controls
+      box_background = input$legend_box_background,
+      margin = input$legend_margin
+    )
+
+    debug_cat(paste0("  Position: ", input$legend_position, "\n"))
+    debug_cat(paste0("  Show classification: ", input$legend_show_classification, "\n"))
+    debug_cat(paste0("  Show highlight: ", input$legend_show_highlight, "\n"))
+    debug_cat(paste0("  Show bootstrap: ", input$legend_show_bootstrap, "\n"))
+    debug_cat(paste0("  Show P value: ", input$legend_show_pvalue, "\n"))
+    debug_cat(paste0("  Show heatmap: ", input$legend_show_heatmap, "\n"))
+    debug_cat(paste0("  v80: Key width: ", input$legend_key_width, ", height: ", input$legend_key_height, "\n"))
+    debug_cat(paste0("  v80: Title-key spacing: ", input$legend_title_key_spacing, "\n"))
+    debug_cat(paste0("  v80: Between keys spacing: ", input$legend_key_spacing, "\n"))
+    debug_cat(paste0("  v80: Reverse order: ", input$legend_reverse_order, "\n"))
+    debug_cat(paste0("  v80: Box background: ", input$legend_box_background, ", Margin: ", input$legend_margin, "\n"))
+    debug_cat("======================================\n\n")
+
+    # Regenerate plot with new legend settings
+    generate_plot()
+
+    showNotification("Legend settings applied", type = "message")
+  })
+
+  # ============================================
+  # END v121: LEGEND SETTINGS SYSTEM
+  # ============================================
+
+  # v139: Observer to swap width/height when page orientation changes
+  # Changed to always swap dimensions when orientation changes (not just when they don't match)
+  # v141: Also regenerate plot to show the orientation change visually
+  # v180: Fixed "keep_proportions" - always swap PAGE dimensions, but plot stays proportional
+  observeEvent(input$page_orientation, {
+    current_width <- isolate(input$output_width)
+    current_height <- isolate(input$output_height)
+    keep_proportions <- isolate(input$keep_proportions)
+
+    debug_cat(paste0("\n=== v180: PAGE ORIENTATION CHANGED ===\n"))
+    debug_cat(paste0("  Orientation: ", input$page_orientation, "\n"))
+    debug_cat(paste0("  Keep proportions: ", keep_proportions, "\n"))
+    debug_cat(paste0("  Current width: ", current_width, ", height: ", current_height, "\n"))
+
+    # v180: ALWAYS swap page dimensions when orientation changes
+    # The keep_proportions option controls whether the PLOT stretches to fill the new page
+    # (handled separately in the rendering code with cowplot positioning)
+    if (!is.null(current_width) && !is.null(current_height)) {
+      if (input$page_orientation == "landscape") {
+        # Landscape: width should be > height
+        if (current_width < current_height) {
+          debug_cat(paste0("  Swapping to landscape: width=", current_height, ", height=", current_width, "\n"))
+          updateNumericInput(session, "output_width", value = current_height)
+          updateNumericInput(session, "output_height", value = current_width)
+        } else {
+          debug_cat("  Already in landscape orientation (width >= height)\n")
+        }
+      } else {
+        # Portrait: height should be > width
+        if (current_width > current_height) {
+          debug_cat(paste0("  Swapping to portrait: width=", current_height, ", height=", current_width, "\n"))
+          updateNumericInput(session, "output_width", value = current_height)
+          updateNumericInput(session, "output_height", value = current_width)
+        } else {
+          debug_cat("  Already in portrait orientation (height >= width)\n")
+        }
+      }
+    } else {
+      debug_cat("  WARNING: width or height is NULL, cannot swap\n")
+    }
+
+    # v180: Log the effect of keep_proportions
+    if (isTRUE(keep_proportions)) {
+      debug_cat("  v180: Plot proportions preserved - plot won't stretch to fill new page\n")
+    }
+    debug_cat("=== END PAGE ORIENTATION ===\n")
+
+    # v143: Regenerate plot after a small delay to ensure new dimensions are available
+    # updateNumericInput doesn't update input$ values immediately - they need a flush cycle
+    if (!is.null(values$tree_data)) {
+      shinyjs::delay(100, {
+        generate_plot()
+        debug_cat("  v143: Plot regenerated for orientation preview (after delay)\n")
+      })
+    }
+  }, ignoreInit = TRUE)
+
   # Update Preview (without saving)
   observeEvent(input$update_classification_preview, {
     classification_loading(TRUE)
@@ -8867,9 +15659,17 @@ server <- function(input, output, session) {
   
   # Add highlight
   observeEvent(input$add_highlight, {
-    req(input$enable_highlight, input$highlight_column, input$highlight_values, 
+    cat(file=stderr(), paste0("\n[DEBUG-2ND-HIGHLIGHT] *** ADD_HIGHLIGHT OBSERVER TRIGGERED at ", format(Sys.time(), "%H:%M:%OS3"), " ***\n"))
+    cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT]   input$enable_highlight=", input$enable_highlight, "\n"))
+    cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT]   input$highlight_column=", input$highlight_column, "\n"))
+    cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT]   input$highlight_values=", paste(input$highlight_values, collapse=", "), "\n"))
+    cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT]   num_classifications=", length(values$classifications), "\n"))
+
+    req(input$enable_highlight, input$highlight_column, input$highlight_values,
         length(values$classifications) > 0)
-    
+
+    cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT]   req() passed, proceeding...\n"))
+
     # Get selected values and their colors
     selected_values <- input$highlight_values
     
@@ -8941,56 +15741,47 @@ server <- function(input, output, session) {
   # })
   
   # These trigger plot regeneration when user changes display settings
-  
+
   # Tip font size
-  observeEvent(input$tip_font_size, {
-    # v53: cat(file=stderr(), "\n===observeEvent tip_font_size FIRED===\n")
-    # v53: cat(file=stderr(), "New value:", input$tip_font_size, "\n")
-    # v53: cat(file=stderr(), "plot_ready:", values$plot_ready, "\n")
+  # S1.4-PERF: Using debounced input + request_plot_update() for batched updates
+  observeEvent(tip_font_size_d(), {
     req(values$plot_ready)  # Only if plot has been generated at least once
-    # v53: cat(file=stderr(), "Calling generate_plot()...\n")
-    generate_plot()
-    # v53: cat(file=stderr(), "===observer complete===\n\n")
+    request_plot_update()
   }, ignoreInit = TRUE)
-  
+
   # Edge width
-  observeEvent(input$edge_width, {
-    # v53: cat(file=stderr(), "\n===observeEvent edge_width FIRED===\n")
-    # v53: cat(file=stderr(), "New value:", input$edge_width, "\n")
+  # S1.4-PERF: Using debounced input + request_plot_update() for batched updates
+  observeEvent(edge_width_d(), {
     req(values$plot_ready)
-    generate_plot()
+    request_plot_update()
   }, ignoreInit = TRUE)
-  
+
   # Tip length
-  observeEvent(input$tip_length, {
-    # v53: cat(file=stderr(), "\n===observeEvent tip_length FIRED===\n")
-    # v53: cat(file=stderr(), "New value:", input$tip_length, "\n")
+  # S1.4-PERF: Using debounced input + request_plot_update() for batched updates
+  observeEvent(tip_length_d(), {
     req(values$plot_ready)
-    generate_plot()
+    request_plot_update()
   }, ignoreInit = TRUE)
   
   # Trim tips checkbox
+  # S1.4-PERF: Using request_plot_update() for batched updates
   observeEvent(input$trim_tips, {
-    # v53: cat(file=stderr(), "\n===observeEvent trim_tips FIRED===\n")
-    # v53: cat(file=stderr(), "New value:", input$trim_tips, "\n")
     req(values$plot_ready)
-    generate_plot()
+    request_plot_update()
   }, ignoreInit = TRUE)
-  
+
   # Display node numbers
+  # S1.4-PERF: Using request_plot_update() for batched updates
   observeEvent(input$display_node_numbers, {
-    # v53: cat(file=stderr(), "\n===observeEvent display_node_numbers FIRED===\n")
-    # v53: cat(file=stderr(), "New value:", input$display_node_numbers, "\n")
     req(values$plot_ready)
-    generate_plot()
+    request_plot_update()
   }, ignoreInit = TRUE)
-  
+
   # Ladderize
+  # S1.4-PERF: Using request_plot_update() for batched updates
   observeEvent(input$ladderize, {
-    # v53: cat(file=stderr(), "\n===observeEvent ladderize FIRED===\n")
-    # v53: cat(file=stderr(), "New value:", input$ladderize, "\n")
     req(values$plot_ready)
-    generate_plot()
+    request_plot_update()
   }, ignoreInit = TRUE)
   
   validate_rotation <- function(num_groups, rotation_prefix) {
@@ -9104,35 +15895,21 @@ server <- function(input, output, session) {
   })
   
   # === NEW: Reactive observer for node number font size ===
-  observeEvent(input$node_number_font_size, {
+  # S1.4-PERF: Using debounced input + request_plot_update() for batched updates
+  observeEvent(node_number_font_size_d(), {
     req(values$plot_ready)
     req(input$display_node_numbers == TRUE)  # Only regenerate if node numbers are displayed
-    
-    # v53: cat(file=stderr(), "\nÃ°Å¸â€Â§ Font size slider changed to:", input$node_number_font_size, "\n")
-    # v53: cat(file=stderr(), "Ã°Å¸â€Â§ Regenerating plot...\n")
-    
-    generate_plot()
-  }, ignoreInit = TRUE)  # Don't trigger on initialization
-  
-  # === NEW: Reactive observer for display node numbers checkbox ===
-  observeEvent(input$display_node_numbers, {
-    req(values$plot_ready)
-    
-    # v53: cat(file=stderr(), "\nÃ°Å¸â€Â§ Display node numbers changed to:", input$display_node_numbers, "\n")
-    # v53: cat(file=stderr(), "Ã°Å¸â€Â§ Regenerating plot...\n")
-    
-    generate_plot()
+    request_plot_update()
   }, ignoreInit = TRUE)
   
-  # === NEW: Reactive observer for highlight checkbox ===
+  # S1.4-PERF: Removed duplicate display_node_numbers observer (already handled earlier)
+  
+  # === Reactive observer for highlight checkbox ===
+  # S1.4-PERF: Using request_plot_update() for batched updates
   observeEvent(input$highlight_selected_nodes, {
     req(values$plot_ready)
     req(input$nodes_to_rotate)  # Only if nodes are selected
-    
-    # v53: cat(file=stderr(), "\nÃ°Å¸â€Â§ Highlight checkbox changed to:", input$highlight_selected_nodes, "\n")
-    # v53: cat(file=stderr(), "Ã°Å¸â€Â§ Regenerating plot...\n")
-    
-    generate_plot()
+    request_plot_update()
   }, ignoreInit = TRUE)
   
   # ============================================================================
@@ -9140,103 +15917,51 @@ server <- function(input, output, session) {
   # Make sure font_size section has all required fields
   update_font_sizes <- function() {
     # Ensure these values exist and are properly set
+    # v128: Use Legend tab font size settings for legend_title and legend_text
+    # This ensures bootstrap legend matches other legends' font sizes
     values$yaml_data$`visual definitions`$font_size <- list(
       tips = if(!is.null(input$tip_font_size)) input$tip_font_size else 3,
-      legend_title = 30,  # Fixed value
-      legend_text = 20,   # Fixed value
+      legend_title = if(!is.null(input$legend_title_size)) input$legend_title_size else 12,
+      legend_text = if(!is.null(input$legend_text_size)) input$legend_text_size else 10,
       legend_box = 15,    # Fixed value
       heat_map_title = 25, # Fixed value
       heat_map_legend = if(!is.null(input$heatmap_font_size)) input$heatmap_font_size else 3.8
     )
   }
-  
-  # Generate plot based on current settings
-  # Generate plot based on current settings
+
   # Generate plot based on current settings
   generate_plot <- function() {
-    
-    # v53: cat(file=stderr(), "\nÃ°Å¸â€Âµ === generate_plot() ENTRY POINT ===\n")
-    # v53: cat(file=stderr(), "Ã°Å¸â€Âµ classification_loading():", classification_loading(), "\n")
-    # v53: cat(file=stderr(), "Ã°Å¸â€Âµ values$plot_generating:", values$plot_generating, "\n")
-    # v53: cat(file=stderr(), "Ã°Å¸â€Âµ values$tree is NULL:", is.null(values$tree), "\n")
-    # v53: cat(file=stderr(), "Ã°Å¸â€Âµ values$csv_data is NULL:", is.null(values$csv_data), "\n")
-    # v53: cat(file=stderr(), "Ã°Å¸â€Âµ values$temp_csv_path:", values$temp_csv_path, "\n")
-    # v53: cat(file=stderr(), "Ã°Å¸â€Âµ File exists:", file.exists(values$temp_csv_path), "\n\n")
-    
-    
-    # v53: cat(file=stderr(), "ðŸ”µ TRACE ID:", if (!is.null(values$debug_trace_id)) values$debug_trace_id else "UNKNOWN", "\n")
-    # v53: cat(file=stderr(), "\nÃ°Å¸â€Âµ === generate_plot() ENTRY ===\n")
-    # v53: cat(file=stderr(), "Ã°Å¸â€Âµ temp_highlight_preview is NULL:", is.null(values$temp_highlight_preview), "\n")
-    if (!is.null(values$temp_highlight_preview)) {
-      # v53: cat(file=stderr(), "Ã°Å¸â€Âµ temp_highlight_preview has", length(values$temp_highlight_preview$items), "items\n")
-    }
-    # v53: cat(file=stderr(), "\n")
-    
+    # S1.4-PERF: Simplified entry logging (reduced from verbose DEBUG-2ND-HIGHLIGHT)
+    cat(file=stderr(), "[PERF] generate_plot() called\n")
+
+    # === GUARD CHECKS (S1.4-PERF: consolidated - removed duplicate guards) ===
     if (classification_loading()) {
-      # v53: cat(file=stderr(), "Ã¢ÂÂ¸Ã¯Â¸Â Skipping plot generation - classification UI loading\n")
+      cat(file=stderr(), "[PERF] Skipping - classification UI loading\n")
       return(NULL)
     }
-    
-    # Don't generate if already generating (recursion guard)
+
+    # Dont generate if already generating (recursion guard)
     if (!is.null(values$plot_generating) && values$plot_generating) {
-      # v53: cat(file=stderr(), "Ã¢Å¡Â Ã¯Â¸Â WARNING: Plot already generating. Preventing recursion.\n")
+      cat(file=stderr(), "[PERF] Skipping - plot already generating\n")
       return(NULL)
     }
-    
-    #if (classification_loading()) {
-    #  cat(file=stderr(), "Ã¢ÂÂ¸Ã¯Â¸Â Skipping plot generation - classification UI loading\n")
-    #  return(NULL)
-    #}
-    
-    if (classification_loading()) {
-      # v53: cat(file=stderr(), "Ã¢ÂÂ¸Ã¯Â¸Â Skipping plot generation - classification UI loading\n")
-      return(NULL)
-    }
-    
-    # Don't generate if already generating (recursion guard)
-    if (!is.null(values$plot_generating) && values$plot_generating) {
-      # v53: cat(file=stderr(), "Ã¢Å¡Â Ã¯Â¸Â WARNING: Plot already generating. Preventing recursion.\n")
-      return(NULL)
-    }
-    
-    
-    # v53: cat(file=stderr(), "\n=== generate_plot() called ===\n")
-    
+    # === END GUARD CHECKS ===
+
+    # v57: Show processing status IMMEDIATELY via shinyjs (before R blocks)
+    show_status_processing()
+
     # Set generating flag for status indicator
     values$plot_generating <- TRUE
-    #values$progress_message <- "🎨 Generating your beautiful plot..."
-    #values$progress_visible <- TRUE
-    
     values$plot_ready <- FALSE  # Mark as not ready while generating
-    
-    # CRITICAL: Return control to Shiny to update UI, then continue
-    #shiny::invalidateLater(100, session, function() {
-    #  # This ensures UI updates before continuing
-    #  NULL
-    #})
-    
-    # Force Shiny to update the UI by flushing reactive context
-    shiny::invalidateLater(0, session)
-    
-    
-    # Show progress - use isolate to force immediate update
-    #isolate({
-    #  values$progress_message <- "🎨 Generating your beautiful plot..."
-    #  values$progress_visible <- TRUE
-    #})
-    # Force reactive flush
     #shiny::invalidateLater(0, session)
-    
-    # Small delay to ensure progress shows
-    # Give UI time to update
-    Sys.sleep(0.3)
-    
+
+    # S1-PERF: Removed Sys.sleep(0.3) - unnecessary delay
+
     values$progress_message <- "🎨 Generating your beautiful plot..."
     values$progress_visible <- TRUE
-    
-    # Another small delay to ensure progress bar shows
-    Sys.sleep(0.2)
-    
+
+    # S1-PERF: Removed Sys.sleep(0.2) - unnecessary delay
+
     # Check if we have the necessary data
     if (is.null(values$tree) || is.null(values$csv_data)) {
       # v53: cat(file=stderr(), "Missing required data (tree or csv_data)\n")
@@ -9274,12 +15999,8 @@ server <- function(input, output, session) {
       # v53: cat(file=stderr(), "No mappings found\n")
     }
     
-    # Filter CSV to only include matched rows
-    matched_ids <- c()
-    for (mapping in values$id_match$mapping) {
-      matched_ids <- c(matched_ids, mapping)
-    }
-    matched_ids <- unique(matched_ids)
+    # S1-PERF: Filter CSV to only include matched rows - use unlist instead of loop
+    matched_ids <- unique(unlist(values$id_match$mapping, use.names = FALSE))
     
     values$filtered_csv <- values$csv_data[values$csv_data[[input$id_column]] %in% matched_ids, ]
     # v53: print("Filtered CSV rows:")
@@ -9367,6 +16088,12 @@ server <- function(input, output, session) {
     # Update YAML to point to this temp CSV
     yaml_data_modified <- values$yaml_data
     yaml_data_modified$`Individual general definitions`$`mapping csv file` <- values$temp_csv_path
+
+    # S1.62dev: ALWAYS use PDF for internal file operations
+    # The user's selected format (JPEG/PNG/etc.) is only used for final download.
+    # JPEG/PNG are much slower to render than PDF for complex plots, causing crashes
+    # when combined with portrait orientation and other intensive operations.
+    yaml_data_modified$`Individual general definitions`$out_file$file_type <- "pdf"
     
     # DEBUG: Print classification structure
     if (!is.null(values$yaml_data$`visual definitions`$classification)) {
@@ -9374,7 +16101,7 @@ server <- function(input, output, session) {
       # v53: cat(file=stderr(), "Number of classifications:", length(values$yaml_data$`visual definitions`$classification), "\n")
       for (i in seq_along(values$yaml_data$`visual definitions`$classification)) {
         class_item <- values$yaml_data$`visual definitions`$classification[[i]]
-        # v53: cat(file=stderr(), paste0("Classification ", i, ":\n"))
+        # v53: debug_cat(paste0("Classification ", i, ":\n"))
         # v53: cat(file=stderr(), "  Title:", class_item[[as.character(i)]]$title, "\n")
         if (!is.null(class_item[[as.character(i)]]$according)) {
           # v53: cat(file=stderr(), "  Number of classes:", length(class_item[[as.character(i)]]$according), "\n")
@@ -9387,7 +16114,7 @@ server <- function(input, output, session) {
           }
         }
       }
-      # v53: cat(file=stderr(), "=====================================\n\n")
+      # v53: debug_cat("=====================================\n\n")
     }
     
     # DEBUG: Show trimming params before writing YAML
@@ -9400,12 +16127,45 @@ server <- function(input, output, session) {
     
     # Write modified YAML to temporary file
     writeLines(yaml::as.yaml(yaml_data_modified, indent.mapping.sequence = TRUE), temp_yaml_file)
-    
+
+    # v57: DEBUG - Show heatmap structure in YAML
+    if (!is.null(yaml_data_modified$`visual definitions`$classification)) {
+      debug_cat("\n=== v57 HEATMAP YAML DEBUG ===\n")
+      for (ci in seq_along(yaml_data_modified$`visual definitions`$classification)) {
+        class_entry <- yaml_data_modified$`visual definitions`$classification[[ci]]
+        class_key <- names(class_entry)[1]
+        debug_cat(paste0("Classification ", ci, " (key=", class_key, "):\n"))
+        debug_cat(paste0("  Has heatmap_display: ", !is.null(class_entry[[class_key]]$heatmap_display), "\n"))
+        if (!is.null(class_entry[[class_key]]$heatmap_display)) {
+          debug_cat(paste0("  Number of heatmaps: ", length(class_entry[[class_key]]$heatmap_display), "\n"))
+          for (hi in seq_along(class_entry[[class_key]]$heatmap_display)) {
+            hm <- class_entry[[class_key]]$heatmap_display[[hi]]
+            hm_key <- names(hm)[1]
+            debug_cat(paste0("    Heatmap ", hi, " (key=", hm_key, "):\n"))
+            debug_cat(paste0("      Title: ", hm[[hm_key]]$title, "\n"))
+            debug_cat(paste0("      Display: ", hm[[hm_key]]$display, "\n"))
+            # S1.62dev: Add data_source debug
+            debug_cat(paste0("      S1.62dev data_source: ", if (!is.null(hm[[hm_key]]$data_source)) hm[[hm_key]]$data_source else "NULL", "\n"))
+            debug_cat(paste0("      S1.62dev all fields: ", paste(names(hm[[hm_key]]), collapse=", "), "\n"))
+            debug_cat(paste0("      According length: ", length(hm[[hm_key]]$according), "\n"))
+            if (length(hm[[hm_key]]$according) > 0) {
+              for (ai in seq_along(hm[[hm_key]]$according)) {
+                acc <- hm[[hm_key]]$according[[ai]]
+                acc_key <- names(acc)[1]
+                debug_cat(paste0("        Column ", ai, ": ", acc[[acc_key]], "\n"))
+              }
+            }
+          }
+        }
+      }
+      debug_cat("==============================\n\n")
+    }
+
     # DEBUG: Also print part of the YAML file
     # v53: cat(file=stderr(), "\n=== YAML FILE CONTENT (first 50 lines) ===\n")
     yaml_lines <- readLines(temp_yaml_file, n = 50)
     # v53: cat(file=stderr(), paste(yaml_lines, collapse = "\n"), "\n")
-    # v53: cat(file=stderr(), "==========================================\n\n")
+    # v53: debug_cat("==========================================\n\n")
     
     # Define viridis_option_list
     viridis_option_list <- c("A", "B", "C", "D", "E")
@@ -9460,10 +16220,11 @@ server <- function(input, output, session) {
       # v53: cat(file=stderr(), "Ã°Å¸â€Â display_nodes_to_pass:", display_nodes_to_pass, "\n")
       # v53: cat(file=stderr(), "Ã°Å¸â€Â highlight_flag_to_pass:", highlight_flag_to_pass, "\n")
       # v53: cat(file=stderr(), "Ã°Å¸â€Â nodes_to_highlight_to_pass:", paste(nodes_to_highlight_to_pass, collapse=", "), "\n")
-      # v53: cat(file=stderr(), "================================================\n\n")
+      # v53: debug_cat("================================================\n\n")
       
       # Call func.print.lineage.tree with the temp YAML file
       # v54: Wrap in suppressWarnings to suppress -Inf and other harmless warnings
+      cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] CALLING func.print.lineage.tree at ", format(Sys.time(), "%H:%M:%OS3"), "\n"))
       tree_result <- suppressWarnings(func.print.lineage.tree(
         conf_yaml_path = temp_yaml_file,
         width = width_val,
@@ -9486,9 +16247,32 @@ server <- function(input, output, session) {
           input$bootstrap_label_size
         } else {
           3.5
-        }
+        },
+        # v111: Pass bootstrap position offset slider value
+        man_boot_x_offset = if (!is.null(input$man_boot_x_offset)) {
+          input$man_boot_x_offset
+        } else {
+          0
+        },
+        # v103: Pass heatmap tree distance slider value
+        heatmap_tree_distance = if (!is.null(input$heatmap_tree_distance)) {
+          input$heatmap_tree_distance
+        } else {
+          0.02
+        },
+        # v125: Pass global gap between heatmaps
+        heatmap_global_gap = if (!is.null(values$heatmap_global_gap)) {
+          values$heatmap_global_gap
+        } else {
+          0.05
+        },
+        # v135: Pass legend settings for highlight/bootstrap legends
+        legend_settings = values$legend_settings,
+        # S1.62dev: Pass RData CNV matrix for heatmaps with data_source="rdata"
+        rdata_cnv_matrix = values$rdata_cnv_matrix
       ))
-      
+      cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] RETURNED from func.print.lineage.tree at ", format(Sys.time(), "%H:%M:%OS3"), "\n"))
+
       # Debug output
       # v53: cat(file=stderr(), "\n=== AFTER func.print.lineage.tree ===\n")
       # v53: cat(file=stderr(), "tree_result is NULL:", is.null(tree_result), "\n")
@@ -9503,7 +16287,7 @@ server <- function(input, output, session) {
           }
         }
       }
-      # v53: cat(file=stderr(), "====================================\n\n")
+      # v53: debug_cat("====================================\n\n")
       
       # Extract the plot from out_trees list
       # The function returns out_trees which is a list indexed by numbers like "1", "2", etc.
@@ -9546,21 +16330,19 @@ server <- function(input, output, session) {
       built_plot  # This will be the return value of tryCatch
       
     }, error = function(e) {
-      # Print full error details to console for debugging
-      # v53: cat(file=stderr(), "\n=== ERROR in generate_plot ===\n")
-      # v53: cat(file=stderr(), "Error message:", e$message, "\n")
-      # v53: cat(file=stderr(), "Full error:\n")
-      # v53: print(e)
-      # v53: cat(file=stderr(), "================================\n\n")
-      
+      # S1.62dev: Print full error details to console for debugging
+      cat(file=stderr(), "\n=== ERROR in generate_plot tryCatch ===\n")
+      cat(file=stderr(), paste0("Error message: ", e$message, "\n"))
+      cat(file=stderr(), paste0("Error call: ", deparse(e$call), "\n"))
+
       # IMPORTANT: Hide progress bar when error occurs
       values$progress_visible <- FALSE
       values$progress_message <- ""
       values$plot_generating <- FALSE
-      
+
       # Show user-friendly notification
       showNotification(
-        paste("Plot generation failed:", e$message), 
+        paste("Plot generation failed:", e$message),
         type = "error",
         duration = 10
       )
@@ -9583,17 +16365,395 @@ server <- function(input, output, session) {
       # v53: cat(file=stderr(), "result class:", class(result), "\n")
       # v53: cat(file=stderr(), "result inherits ggplot:", inherits(result, "ggplot"), "\n")
     }
-    # v53: cat(file=stderr(), "==============================\n\n")
+    # v53: debug_cat("==============================\n\n")
     
     # If we got a valid result
     # If we got a valid result
     # If we got a valid result
     if (!is.null(result)) {
       # v53: cat(file=stderr(), "=== Attempting to save plot ===\n")
-      
-      # Store the original plot
+
+      # v121: Apply legend settings from the Legend tab
+      # v180: Enhanced with key dimensions, byrow, box background, margin controls
+      legend_settings <- values$legend_settings
+      if (!is.null(legend_settings)) {
+        debug_cat(paste0("\n=== v180: Applying legend settings to plot ===\n"))
+        debug_cat(paste0("  Position: ", legend_settings$position, "\n"))
+
+        # v125: Determine legend layout based on position
+        # For top/bottom: legends arranged horizontally, but each legend has title above values
+        # For left/right: legends arranged vertically, with title next to values
+        is_horizontal_position <- legend_settings$position %in% c("top", "bottom")
+
+        # v180: Get spacing values (use defaults if not set)
+        h_spacing <- if (!is.null(legend_settings$spacing)) legend_settings$spacing else 0.3
+        v_spacing <- if (!is.null(legend_settings$spacing_vertical)) legend_settings$spacing_vertical else 1
+        title_key_spacing <- if (!is.null(legend_settings$title_key_spacing)) legend_settings$title_key_spacing else 0.2
+        key_spacing <- if (!is.null(legend_settings$key_spacing)) legend_settings$key_spacing else 0.2
+
+        # v180: Get key dimensions (use defaults if not set)
+        key_width <- if (!is.null(legend_settings$key_width)) legend_settings$key_width else 1
+        key_height <- if (!is.null(legend_settings$key_height)) legend_settings$key_height else 1
+
+        # v180: Get background settings
+        # S1.5: Fix RGBA colors from colourpicker - extract RGB portion if 8-char hex
+        # colourpicker with allowTransparent=TRUE returns #RRGGBBAA format
+        # where AA is alpha (00=transparent, FF=opaque). We convert to #RRGGBB for ggplot2.
+        # S1.62dev: Fixed - check if alpha is 00 (fully transparent) and use "transparent" string
+        box_bg_raw <- if (!is.null(legend_settings$box_background)) legend_settings$box_background else "transparent"
+        if (!is.null(box_bg_raw) && nchar(box_bg_raw) == 9 && substr(box_bg_raw, 1, 1) == "#") {
+          # 8-char hex with # prefix = #RRGGBBAA
+          alpha_hex <- substr(box_bg_raw, 8, 9)
+          if (alpha_hex == "00") {
+            # S1.62dev: Fully transparent - use "transparent" string instead of stripping to black
+            box_bg <- "transparent"
+          } else {
+            # Has some opacity - extract just #RRGGBB
+            box_bg <- substr(box_bg_raw, 1, 7)
+          }
+        } else {
+          box_bg <- box_bg_raw
+        }
+        legend_margin_val <- if (!is.null(legend_settings$margin)) legend_settings$margin else 0.2
+
+        # v179: Use horizontal spacing for top/bottom, vertical spacing for left/right
+        spacing_val <- if (is_horizontal_position) h_spacing else v_spacing
+
+        # Build theme modifications for legend
+        # v180: Added key width/height, title-key spacing, box background, margin
+        # S1.5: Fixed - added legend.background and legend.key for proper background coloring
+        legend_theme <- theme(
+          legend.position = legend_settings$position,
+          legend.title = element_text(size = legend_settings$title_size, face = "bold"),
+          legend.text = element_text(size = legend_settings$text_size),
+          legend.key.size = unit(legend_settings$key_size, "lines"),
+          legend.key.width = unit(key_width, "lines"),    # v180: Custom key width
+          legend.key.height = unit(key_height, "lines"),  # v180: Custom key height
+          legend.key = element_rect(fill = box_bg, colour = NA),  # S1.5: Key backgrounds match legend bg
+          legend.spacing = unit(spacing_val, "cm"),
+          legend.spacing.x = unit(h_spacing, "cm"),
+          legend.spacing.y = unit(v_spacing, "cm"),
+          legend.key.spacing = unit(key_spacing, "cm"),           # v180: Between keys spacing
+          legend.key.spacing.y = unit(key_spacing, "cm"),         # v180: Vertical between keys
+          legend.title.position = "top",                           # v180: Title above keys
+          legend.background = element_rect(fill = box_bg, colour = NA),      # S1.5: Individual legend backgrounds
+          legend.box.background = element_rect(fill = box_bg, colour = NA),  # v180: Outer box background
+          legend.margin = margin(legend_margin_val, legend_margin_val, legend_margin_val, legend_margin_val, "cm"),  # v180
+          # v125: For top/bottom, arrange legends horizontally but stack items vertically
+          legend.box = if (is_horizontal_position) "horizontal" else "vertical",
+          legend.direction = if (is_horizontal_position) "vertical" else "vertical"
+        )
+
+        # Apply the legend theme
+        result <- result + legend_theme
+
+        debug_cat(paste0("  v80: Legend box=", if (is_horizontal_position) "horizontal" else "vertical",
+                                   ", direction=vertical\n"))
+        debug_cat(paste0("  v80: Key dims: ", key_width, "x", key_height, " lines\n"))
+        debug_cat(paste0("  v80: Spacings - H:", h_spacing, ", V:", v_spacing,
+                                   ", Title-key:", title_key_spacing, ", Key:", key_spacing, "\n"))
+        debug_cat(paste0("  v80: Box bg:", box_bg, ", Margin:", legend_margin_val, "\n"))
+
+        # v180: Apply visibility controls using guides()
+        # Also apply reverse order if requested
+        guides_list <- list()
+        reverse_order <- isTRUE(legend_settings$reverse_order)
+
+        # Hide specific legends based on visibility settings
+        if (!isTRUE(legend_settings$show_classification)) {
+          guides_list$colour <- "none"
+        } else {
+          guides_list$colour <- guide_legend(reverse = reverse_order)
+        }
+
+        # v180: P value uses size aesthetic
+        if (!isTRUE(legend_settings$show_pvalue)) {
+          guides_list$size <- "none"
+        } else {
+          guides_list$size <- guide_legend(reverse = reverse_order)
+        }
+
+        # v180: Heatmaps use fill aesthetic
+        # NOTE: With ggnewscale, each heatmap has its own fill scale.
+        # Using guides(fill = ...) only affects the LAST fill scale, which can break
+        # earlier heatmaps. Only hide ALL fill legends if explicitly requested.
+        # When show_heatmap is TRUE, we don't override - let each scale keep its own guide.
+        if (!isTRUE(legend_settings$show_heatmap)) {
+          # v180: To hide all fill legends with ggnewscale, we set fill to "none"
+          # This will hide the last scale's legend; earlier scales need their guides
+          # set to "none" when created. For now, this is a partial solution.
+          guides_list$fill <- "none"
+        }
+        # v180: When show_heatmap is TRUE, we DON'T add fill to guides_list
+        # This prevents overriding individual heatmap scale guides
+
+        if (length(guides_list) > 0) {
+          result <- result + do.call(guides, guides_list)
+        }
+
+        debug_cat(paste0("  v80: Reverse order=", reverse_order, "\n"))
+        debug_cat(paste0("  Legend settings applied successfully\n"))
+      }
+
+      # v130: Apply Extra tab settings (page title, custom texts, images)
+      # These are applied AFTER legend settings so they appear on top
+      tryCatch({
+        # v144: Plot position offsets are now applied AFTER all modifications
+        # using cowplot's draw_plot for true translation (no squeezing)
+        # Store offsets for later use during rendering
+        plot_off_x <- if (!is.null(values$plot_offset_x)) values$plot_offset_x else 0
+        plot_off_y <- if (!is.null(values$plot_offset_y)) values$plot_offset_y else 0
+        # v146: Get scale percentage
+        plot_scale <- if (!is.null(values$plot_scale_percent)) values$plot_scale_percent else 100
+        # v179: Get tree stretch values
+        tree_stretch_x <- if (!is.null(values$tree_stretch_x)) values$tree_stretch_x else 1
+        tree_stretch_y <- if (!is.null(values$tree_stretch_y)) values$tree_stretch_y else 1
+        # v179: Get background color
+        bg_color <- if (!is.null(values$background_color)) values$background_color else "#FFFFFF"
+
+        # v144: Store the offsets in result for later extraction
+        # We'll apply them during the final rendering step
+        attr(result, "plot_offset_x") <- plot_off_x
+        attr(result, "plot_offset_y") <- plot_off_y
+        attr(result, "plot_scale_percent") <- plot_scale
+        # v179: Store tree stretch values
+        attr(result, "tree_stretch_x") <- tree_stretch_x
+        attr(result, "tree_stretch_y") <- tree_stretch_y
+        attr(result, "background_color") <- bg_color
+        # v180: Store keep_proportions setting for plot proportions preservation
+        keep_proportions <- if (!is.null(input$keep_proportions)) input$keep_proportions else FALSE
+        attr(result, "keep_proportions") <- keep_proportions
+
+        if (plot_off_x != 0 || plot_off_y != 0 || plot_scale != 100) {
+          debug_cat(paste0("\n=== v146: STORING PLOT POSITION & SCALE ===\n"))
+          debug_cat(paste0("  X offset: ", plot_off_x, " (positive = right)\n"))
+          debug_cat(paste0("  Y offset: ", plot_off_y, " (positive = up)\n"))
+          debug_cat(paste0("  Scale: ", plot_scale, "%\n"))
+          debug_cat(paste0("  v46: Offsets and scale will be applied via cowplot draw_plot during rendering\n"))
+        }
+
+        # v179: Apply background color
+        if (bg_color != "#FFFFFF") {
+          debug_cat(paste0("\n=== v179: APPLYING BACKGROUND COLOR ===\n"))
+          debug_cat(paste0("  Background: ", bg_color, "\n"))
+          result <- result + theme(
+            plot.background = element_rect(fill = bg_color, colour = NA),
+            panel.background = element_rect(fill = bg_color, colour = NA)
+          )
+        }
+
+        # v179: Log tree stretch values (applied during rendering)
+        if (tree_stretch_x != 1 || tree_stretch_y != 1) {
+          debug_cat(paste0("\n=== v179: TREE STRETCH VALUES ===\n"))
+          debug_cat(paste0("  X stretch (length): ", tree_stretch_x, "x\n"))
+          debug_cat(paste0("  Y stretch (width): ", tree_stretch_y, "x\n"))
+          debug_cat(paste0("  v79: Stretch will be applied via coord transformation\n"))
+        }
+
+        # Apply page title
+        page_title_settings <- values$page_title
+
+        # v131: DEBUG - trace page title settings
+        debug_cat(paste0("\n=== v131: PAGE TITLE CHECK ===\n"))
+        debug_cat(paste0("  page_title_settings is NULL: ", is.null(page_title_settings), "\n"))
+        if (!is.null(page_title_settings)) {
+          debug_cat(paste0("  enabled: ", page_title_settings$enabled, "\n"))
+          debug_cat(paste0("  text: '", page_title_settings$text, "'\n"))
+          debug_cat(paste0("  text length: ", nchar(page_title_settings$text), "\n"))
+        }
+
+        if (!is.null(page_title_settings) && isTRUE(page_title_settings$enabled) &&
+            !is.null(page_title_settings$text) && nchar(page_title_settings$text) > 0) {
+          debug_cat(paste0("\n=== v131: Applying page title ===\n"))
+          debug_cat(paste0("  Title: ", page_title_settings$text, "\n"))
+          debug_cat(paste0("  Size: ", page_title_settings$size, "\n"))
+          debug_cat(paste0("  Color: ", page_title_settings$color, "\n"))
+
+          fontface <- if (page_title_settings$bold) "bold" else "plain"
+          hjust_val <- page_title_settings$hjust
+
+          result <- result + labs(title = page_title_settings$text) +
+            theme(
+              plot.title = element_text(
+                size = page_title_settings$size,
+                colour = page_title_settings$color,
+                face = fontface,
+                hjust = hjust_val
+              )
+            )
+
+          # Add underline if requested (using geom_segment as underline)
+          if (isTRUE(page_title_settings$underline)) {
+            debug_cat(paste0("  Adding underline\n"))
+            # Note: Underline in ggplot title is complex, would need grid manipulation
+            # For now, we document that underline is not fully supported
+          }
+          debug_cat(paste0("  Page title applied successfully\n"))
+        } else {
+          debug_cat(paste0("  Page title NOT applied (condition not met)\n"))
+        }
+
+        # v143: Apply custom text annotations as TRUE overlays using annotation_custom
+        # annotation_custom with grid::textGrob is a true overlay that never affects plot limits
+        # Unlike annotate() + coord_cartesian which can override ggtree's coordinate system
+        custom_texts <- values$custom_texts
+        if (!is.null(custom_texts) && length(custom_texts) > 0) {
+          debug_cat(paste0("\n=== v143: Applying ", length(custom_texts), " custom text(s) as TRUE OVERLAY ===\n"))
+          debug_cat(paste0("  Using annotation_custom with grid::textGrob (never affects plot limits)\n"))
+
+          for (i in seq_along(custom_texts)) {
+            txt <- custom_texts[[i]]
+
+            debug_cat(paste0("  Text ", i, ": \"", substr(txt$content, 1, 20), "...\" at normalized (",
+                                       round(txt$x, 2), ", ", round(txt$y, 2), ")\n"))
+
+            # Create a text grob with proper formatting
+            fontface_val <- switch(txt$fontface,
+              "plain" = 1,
+              "bold" = 2,
+              "italic" = 3,
+              "bold.italic" = 4,
+              1  # default to plain
+            )
+
+            text_grob <- grid::textGrob(
+              label = txt$content,
+              x = grid::unit(txt$x, "npc"),
+              y = grid::unit(txt$y, "npc"),
+              gp = grid::gpar(
+                fontsize = txt$size,
+                col = txt$color,
+                fontface = fontface_val
+              ),
+              hjust = txt$hjust,
+              vjust = txt$vjust,
+              rot = txt$angle
+            )
+
+            # annotation_custom with -Inf/Inf places in normalized page coordinates
+            # The grob's own x/y units (npc) handle the actual positioning
+            result <- result + annotation_custom(
+              grob = text_grob,
+              xmin = -Inf, xmax = Inf,
+              ymin = -Inf, ymax = Inf
+            )
+          }
+
+          debug_cat(paste0("  v43: Text overlays applied - plot coordinates unchanged\n"))
+        }
+
+        # v145: Store custom images for later application (after cowplot wrapping)
+        # This ensures images are drawn on TOP of everything including cowplot canvas
+        custom_images <- values$custom_images
+        attr(result, "custom_images") <- custom_images
+        if (!is.null(custom_images) && length(custom_images) > 0) {
+          debug_cat(paste0("\n=== v145: ", length(custom_images), " custom image(s) queued for overlay ===\n"))
+        }
+      }, error = function(e) {
+        debug_cat(paste0("  v30 Extra tab ERROR: ", e$message, "\n"))
+      })
+
+      # S1.3-PERF: This is now the ONLY call to func.move.tiplabels.to.front()
+      # Layer reordering happens once here after all layers are added, not after each step
+      # This reduces redundant calls from 3+ per render to just 1
+      result <- func.move.tiplabels.to.front(result)
+
+      # Store the plot with legend settings applied
+      cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] generate_plot: storing plot in values$current_plot at ", format(Sys.time(), "%H:%M:%OS3"), "\n"))
       values$current_plot <- result
-      
+
+      cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] CHECKPOINT A: After storing plot, before legend coord extraction\n"))
+
+      # v148: Extract and output all legend coordinates with coordinate system explanations
+      tryCatch({
+        debug_cat(paste0("\n=== v148: LEGEND COORDINATE SYSTEMS EXPLAINED ===\n"))
+        debug_cat(paste0("\n"))
+        debug_cat(paste0("NOTE: There are TWO different coordinate systems:\n"))
+        debug_cat(paste0("\n"))
+        debug_cat(paste0("1) PLOT COORDINATES (used by Highlight & Bootstrap legends):\n"))
+        debug_cat(paste0("   - These are DATA coordinates within the plot area\n"))
+        debug_cat(paste0("   - x = tree depth direction (after coord_flip: vertical position)\n"))
+        debug_cat(paste0("   - y = tip position direction (after coord_flip: horizontal position)\n"))
+        debug_cat(paste0("   - Negative x values place items below the tree baseline\n"))
+        debug_cat(paste0("   - Controlled via: highlight_x_offset, highlight_y_offset,\n"))
+        debug_cat(paste0("                     bootstrap_x_offset, bootstrap_y_offset in Legend tab\n"))
+        debug_cat(paste0("\n"))
+        debug_cat(paste0("2) GRID COORDINATES (used by Classification/Heatmap/P-value legends):\n"))
+        debug_cat(paste0("   - These are LAYOUT CELL positions in the rendered gtable\n"))
+        debug_cat(paste0("   - Not directly comparable to plot coordinates\n"))
+        debug_cat(paste0("   - Positioned by ggplot's legend.position theme setting\n"))
+        debug_cat(paste0("\n"))
+        debug_cat(paste0("To ALIGN legends: Use the Legend tab offset controls to move\n"))
+        debug_cat(paste0("Highlight/Bootstrap legends up/down/left/right until visually aligned.\n"))
+        debug_cat(paste0("\n"))
+
+        # Build the plot to extract grob information
+        plot_build <- ggplot2::ggplot_build(result)
+        plot_gtable <- ggplot2::ggplot_gtable(plot_build)
+
+        # Get plot data range to help understand coordinate scale
+        if (!is.null(plot_build$layout$panel_params) && length(plot_build$layout$panel_params) > 0) {
+          pp <- plot_build$layout$panel_params[[1]]
+          debug_cat(paste0("PLOT DATA RANGE (for reference):\n"))
+          if (!is.null(pp$x.range)) {
+            debug_cat(paste0("  x-axis range: ", round(pp$x.range[1], 2), " to ", round(pp$x.range[2], 2), "\n"))
+          }
+          if (!is.null(pp$y.range)) {
+            debug_cat(paste0("  y-axis range: ", round(pp$y.range[1], 2), " to ", round(pp$y.range[2], 2), "\n"))
+          }
+          debug_cat(paste0("\n"))
+        }
+
+        debug_cat(paste0("GGPLOT LEGENDS (Grid Coordinates):\n"))
+        # Find all legend grobs
+        # S1.62dev: Added safer NA handling to prevent "missing value where TRUE/FALSE needed"
+        layout_names <- plot_gtable$layout$name
+        if (!is.null(layout_names) && length(layout_names) > 0) {
+          # Use na.rm-safe grep that treats NA as FALSE
+          legend_grobs <- which(sapply(layout_names, function(x) {
+            !is.na(x) && grepl("guide-box", x)
+          }))
+        } else {
+          legend_grobs <- integer(0)
+        }
+        if (length(legend_grobs) > 0) {
+          for (leg_i in seq_along(legend_grobs)) {
+            leg_idx <- legend_grobs[leg_i]
+            leg_name <- plot_gtable$layout$name[leg_idx]
+            leg_l <- plot_gtable$layout$l[leg_idx]
+            leg_r <- plot_gtable$layout$r[leg_idx]
+            leg_t <- plot_gtable$layout$t[leg_idx]
+            leg_b <- plot_gtable$layout$b[leg_idx]
+            debug_cat(paste0("  Legend Box ", leg_i, " ('", leg_name, "'):\n"))
+            debug_cat(paste0("    Grid cell: column ", leg_l, "-", leg_r, ", row ", leg_t, "-", leg_b, "\n"))
+          }
+        } else {
+          debug_cat(paste0("  No legend guide-boxes found in gtable\n"))
+        }
+
+        # Also extract legend titles from the built plot scales
+        scales_info <- plot_build$plot$scales$scales
+        if (!is.null(scales_info) && length(scales_info) > 0) {
+          debug_cat(paste0("\n  Active Scales with Legends:\n"))
+          for (scale_i in seq_along(scales_info)) {
+            scale_obj <- scales_info[[scale_i]]
+            # S1.62dev: Safer check for scale name - handle NA and NULL
+            scale_name <- tryCatch(scale_obj$name, error = function(e) NULL)
+            if (!is.null(scale_name) && !is.na(scale_name) && nchar(as.character(scale_name)) > 0) {
+              aesthetics_str <- tryCatch(paste(scale_obj$aesthetics, collapse=", "), error = function(e) "unknown")
+              debug_cat(paste0("    - '", scale_name, "' (", aesthetics_str, ")\n"))
+            }
+          }
+        }
+
+        debug_cat(paste0("\n=================================================\n"))
+      }, error = function(e) {
+        cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] ERROR in legend coord extraction: ", e$message, "\n"))
+        debug_cat(paste0("  v48: Error extracting legend coords: ", e$message, "\n"))
+      })
+
+      cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] CHECKPOINT B: After legend coord extraction, before temp file creation\n"))
+
       # Create a unique temp file with timestamp to force browser refresh
       temp_plot_file <- file.path(tempdir(), paste0("shiny_plot_", Sys.getpid(), "_", 
                                                     format(Sys.time(), "%Y%m%d_%H%M%S_%OS3"), ".png"))
@@ -9606,20 +16766,245 @@ server <- function(input, output, session) {
         files_to_delete <- old_files_sorted[1:(length(old_files_sorted) - 5)]
         sapply(files_to_delete, unlink)
       }
-      
+
+      cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] CHECKPOINT C: Before ggsave tryCatch, temp_plot_file=", temp_plot_file, "\n"))
+
       tryCatch({
+        cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] CHECKPOINT D: Inside ggsave tryCatch\n"))
         # Save the plot as PNG
+        # v145: Use the SAME proportions as the download tab settings
+        # This ensures consistent appearance across all tabs (tree, bootstrap, heatmap, extra, download)
+        # Get user's output dimensions and convert to inches for ggsave
+        user_width <- if (!is.null(input$output_width) && !is.na(input$output_width)) input$output_width else 29.7
+        user_height <- if (!is.null(input$output_height) && !is.na(input$output_height)) input$output_height else 21
+        user_units <- if (!is.null(input$output_units)) input$output_units else "cm"
+
+        # Convert to inches for ggsave
+        if (user_units == "cm") {
+          preview_width <- user_width / 2.54
+          preview_height <- user_height / 2.54
+        } else if (user_units == "mm") {
+          preview_width <- user_width / 25.4
+          preview_height <- user_height / 25.4
+        } else {
+          preview_width <- user_width
+          preview_height <- user_height
+        }
+
+        # Cap preview size to reasonable limits while maintaining aspect ratio
+        max_preview_dim <- 25  # Max 25 inches
+        if (preview_width > max_preview_dim || preview_height > max_preview_dim) {
+          scale_factor <- max_preview_dim / max(preview_width, preview_height)
+          preview_width <- preview_width * scale_factor
+          preview_height <- preview_height * scale_factor
+        }
+
+        debug_cat(paste0("  v45: Preview using DOWNLOAD TAB proportions\n"))
+        debug_cat(paste0("  v45: User dimensions: ", user_width, " x ", user_height, " ", user_units, "\n"))
+        debug_cat(paste0("  v45: Preview dimensions: ", round(preview_width, 2), " x ", round(preview_height, 2), " in\n"))
+
+        # v146: Apply plot position offsets AND scale using cowplot for true transformation
+        # v179: Also apply tree stretch (different x/y scaling)
+        # This moves and scales the plot without squeezing/distorting proportions
+        plot_to_save <- result
+        offset_x <- attr(result, "plot_offset_x")
+        offset_y <- attr(result, "plot_offset_y")
+        scale_pct <- attr(result, "plot_scale_percent")
+        if (is.null(scale_pct)) scale_pct <- 100
+        # v179: Get tree stretch values
+        tree_stretch_x <- attr(result, "tree_stretch_x")
+        tree_stretch_y <- attr(result, "tree_stretch_y")
+        if (is.null(tree_stretch_x)) tree_stretch_x <- 1
+        if (is.null(tree_stretch_y)) tree_stretch_y <- 1
+
+        # v180: Get keep_proportions setting
+        keep_proportions <- attr(result, "keep_proportions")
+        if (is.null(keep_proportions)) keep_proportions <- FALSE
+
+        # v180: Calculate proportions adjustment when switching orientation
+        # Default page is landscape (width > height, aspect ratio ~1.414)
+        current_aspect <- preview_width / preview_height
+        landscape_aspect <- 29.7 / 21  # A4 landscape ratio (~1.414)
+
+        # v180: Check if we need proportions adjustment (portrait page with proportions preserved)
+        proportion_adj_w <- 1
+        proportion_adj_h <- 1
+        if (isTRUE(keep_proportions) && current_aspect < 1) {
+          # Portrait page - need to scale plot to fit landscape-shaped plot in portrait page
+          # The plot should maintain landscape proportions (wider than tall)
+          # Scale down to fit: width fits fully, height is proportionally smaller
+          proportion_adj_w <- 1  # Plot spans full width
+          proportion_adj_h <- current_aspect / landscape_aspect  # Scale height to maintain aspect ratio
+          debug_cat(paste0("\n=== v180: PRESERVING PLOT PROPORTIONS ===\n"))
+          debug_cat(paste0("  Current aspect: ", round(current_aspect, 3), " (portrait)\n"))
+          debug_cat(paste0("  Landscape aspect: ", round(landscape_aspect, 3), "\n"))
+          debug_cat(paste0("  Proportion adjustment: w=", round(proportion_adj_w, 3), ", h=", round(proportion_adj_h, 3), "\n"))
+        }
+
+        # Check if we need to apply any transformation
+        needs_transform <- (!is.null(offset_x) && !is.null(offset_y) && (offset_x != 0 || offset_y != 0)) ||
+                          scale_pct != 100 || tree_stretch_x != 1 || tree_stretch_y != 1 ||
+                          proportion_adj_w != 1 || proportion_adj_h != 1
+
+        cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] CHECKPOINT E: needs_transform=", needs_transform, "\n"))
+
+        if (needs_transform) {
+          debug_cat(paste0("\n=== v180: APPLYING PLOT POSITION, SCALE, STRETCH AND PROPORTIONS WITH COWPLOT ===\n"))
+
+          # Convert slider values to position offsets
+          # X slider: -5 to 5 -> position offset of -0.25 to 0.25 (50% of canvas width total)
+          # Y slider: -10 to 5 -> position offset of -0.5 to 0.25 (move down more than up)
+          x_pos_offset <- if (!is.null(offset_x)) offset_x * 0.05 else 0  # Each unit moves 5% of canvas
+          y_pos_offset <- if (!is.null(offset_y)) offset_y * 0.05 else 0  # Each unit moves 5% of canvas
+
+          # v146: Convert scale percentage to draw_plot dimensions
+          # 100% = width/height of 1 (full canvas)
+          # 50% = width/height of 0.5 (half size, centered)
+          # 200% = width/height of 2 (double size, centered)
+          scale_factor <- scale_pct / 100
+
+          # v179: Apply tree stretch to width and height separately
+          # This allows stretching the tree longer (x) or wider (y) independently
+          # v180: Also apply proportions adjustment
+          final_width <- scale_factor * tree_stretch_x * proportion_adj_w
+          final_height <- scale_factor * tree_stretch_y * proportion_adj_h
+
+          # Calculate position to center the scaled plot
+          # When scale_factor = 1, x = 0 + x_offset, y = 0 + y_offset (top-left)
+          # When scale_factor = 0.5, x = 0.25 + x_offset (centered at 0.5)
+          # Formula: x = (1 - width) / 2 + x_offset
+          center_x <- (1 - final_width) / 2 + x_pos_offset
+          center_y <- (1 - final_height) / 2 + y_pos_offset
+
+          debug_cat(paste0("  Scale: ", scale_pct, "% (factor: ", round(scale_factor, 3), ")\n"))
+          debug_cat(paste0("  v79: Tree stretch X: ", tree_stretch_x, "x, Y: ", tree_stretch_y, "x\n"))
+          debug_cat(paste0("  v80: Proportion adj W: ", round(proportion_adj_w, 3), ", H: ", round(proportion_adj_h, 3), "\n"))
+          debug_cat(paste0("  v80: Final dimensions: width=", round(final_width, 3), ", height=", round(final_height, 3), "\n"))
+          debug_cat(paste0("  X position offset: ", round(x_pos_offset, 3), "\n"))
+          debug_cat(paste0("  Y position offset: ", round(y_pos_offset, 3), "\n"))
+          debug_cat(paste0("  Final position: (", round(center_x, 3), ", ", round(center_y, 3), ")\n"))
+
+          # S1.62dev: Validate cowplot parameters to prevent potential crashes
+          # Ensure dimensions are within reasonable bounds
+          if (final_width < 0.01) {
+            cat(file=stderr(), paste0("[WARN] final_width too small (", final_width, "), clamping to 0.01\n"))
+            final_width <- 0.01
+          }
+          if (final_height < 0.01) {
+            cat(file=stderr(), paste0("[WARN] final_height too small (", final_height, "), clamping to 0.01\n"))
+            final_height <- 0.01
+          }
+          if (final_width > 3) {
+            cat(file=stderr(), paste0("[WARN] final_width too large (", final_width, "), clamping to 3\n"))
+            final_width <- 3
+          }
+          if (final_height > 3) {
+            cat(file=stderr(), paste0("[WARN] final_height too large (", final_height, "), clamping to 3\n"))
+            final_height <- 3
+          }
+          # Recalculate center after clamping
+          center_x <- (1 - final_width) / 2 + x_pos_offset
+          center_y <- (1 - final_height) / 2 + y_pos_offset
+
+          # Use ggdraw to create a canvas and draw_plot to position and scale the plot
+          # v180: Now includes proportions preservation for orientation changes
+          cat(file=stderr(), paste0("[DEBUG] Creating cowplot canvas: x=", round(center_x,3), ", y=", round(center_y,3),
+                                   ", w=", round(final_width,3), ", h=", round(final_height,3), "\n"))
+          plot_to_save <- cowplot::ggdraw() +
+            cowplot::draw_plot(result, x = center_x, y = center_y,
+                              width = final_width, height = final_height)
+
+          debug_cat(paste0("  v80: Plot wrapped in cowplot canvas with scale, stretch, proportions and offset positioning\n"))
+        }
+
+        cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] CHECKPOINT F: After cowplot transformation\n"))
+
+        # v145: Apply custom images as TRUE overlays using cowplot::draw_image
+        # This is done AFTER cowplot wrapping to ensure images are on top
+        custom_images <- attr(result, "custom_images")
+        if (!is.null(custom_images) && length(custom_images) > 0) {
+          debug_cat(paste0("\n=== v145: Applying ", length(custom_images), " custom image(s) as TRUE OVERLAY ===\n"))
+
+          # Ensure we have a cowplot canvas
+          if (!inherits(plot_to_save, "ggdraw")) {
+            plot_to_save <- cowplot::ggdraw(plot_to_save)
+          }
+
+          for (i in seq_along(custom_images)) {
+            img <- custom_images[[i]]
+            if (file.exists(img$path)) {
+              tryCatch({
+                debug_cat(paste0("  Image ", i, ": ", img$name, "\n"))
+                debug_cat(paste0("    Position: (", round(img$x, 2), ", ", round(img$y, 2), ")\n"))
+                debug_cat(paste0("    Width: ", round(img$width, 3), "\n"))
+
+                # Calculate height maintaining aspect ratio if not specified
+                img_height <- img$height
+                if (is.null(img_height) || img_height <= 0) {
+                  # Read image to get aspect ratio
+                  file_ext <- tolower(tools::file_ext(img$path))
+                  if (file_ext %in% c("png")) {
+                    img_data <- png::readPNG(img$path)
+                  } else if (file_ext %in% c("jpg", "jpeg")) {
+                    img_data <- jpeg::readJPEG(img$path)
+                  } else {
+                    img_data <- NULL
+                  }
+                  if (!is.null(img_data)) {
+                    img_aspect <- dim(img_data)[1] / dim(img_data)[2]
+                    img_height <- img$width * img_aspect
+                    debug_cat(paste0("    Auto height: ", round(img_height, 3), " (aspect: ", round(img_aspect, 2), ")\n"))
+                  } else {
+                    img_height <- img$width  # Default to square if can't determine
+                  }
+                }
+
+                # Use cowplot::draw_image for proper overlay
+                plot_to_save <- plot_to_save +
+                  cowplot::draw_image(img$path,
+                                     x = img$x - img$width/2,  # Center horizontally
+                                     y = img$y - img_height/2,  # Center vertically
+                                     width = img$width,
+                                     height = img_height)
+                debug_cat(paste0("    Image added as overlay using cowplot::draw_image\n"))
+              }, error = function(e) {
+                debug_cat(paste0("  ERROR loading image ", i, ": ", e$message, "\n"))
+              })
+            } else {
+              debug_cat(paste0("  Image ", i, ": File not found - ", img$path, "\n"))
+            }
+          }
+          debug_cat(paste0("  v45: Custom images applied as overlays\n"))
+        }
+
+        cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] CHECKPOINT G: After custom images, about to call ggsave\n"))
+
         # v53: cat(file=stderr(), "Calling ggsave...\n")
         # v54: Wrap in suppressWarnings to suppress scale warnings
+        # S1.62dev: Added dimension logging for crash diagnosis
+        cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] About to call ggsave at ", format(Sys.time(), "%H:%M:%OS3"), "\n"))
+        cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT]   temp_plot_file=", temp_plot_file, "\n"))
+        cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT]   preview dimensions: ", round(preview_width, 2), "x", round(preview_height, 2), " in\n"))
+
+        # S1.62dev: Validate preview dimensions before ggsave
+        if (is.na(preview_width) || is.na(preview_height) ||
+            preview_width <= 0 || preview_height <= 0 ||
+            preview_width > 100 || preview_height > 100) {
+          cat(file=stderr(), paste0("[ERROR] Invalid preview dimensions! Using defaults.\n"))
+          preview_width <- if (is.na(preview_width) || preview_width <= 0 || preview_width > 100) 11.69 else preview_width
+          preview_height <- if (is.na(preview_height) || preview_height <= 0 || preview_height > 100) 8.27 else preview_height
+        }
+
         suppressWarnings(ggsave(
-          filename = temp_plot_file, 
-          plot = result, 
-          width = 20, 
-          height = 10, 
-          units = "in", 
-          dpi = 150, 
+          filename = temp_plot_file,
+          plot = plot_to_save,
+          width = preview_width,
+          height = preview_height,
+          units = "in",
+          dpi = 150,
           limitsize = FALSE
         ))
+        cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] ggsave completed at ", format(Sys.time(), "%H:%M:%OS3"), "\n"))
         
         # v53: cat(file=stderr(), "ggsave completed\n")
         
@@ -9628,30 +17013,41 @@ server <- function(input, output, session) {
         
         # v53: cat(file=stderr(), "File exists after ggsave:", file.exists(temp_plot_file), "\n")
         
+        cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] Checking if file exists: ", temp_plot_file, "\n"))
         if (file.exists(temp_plot_file)) {
+          cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] SUCCESS: File exists! Size=", file.info(temp_plot_file)$size, " bytes\n"))
           # v53: cat(file=stderr(), "File size:", file.info(temp_plot_file)$size, "bytes\n")
-          
+
           # Store the file path - this will trigger renderImage
           values$temp_plot_file <- temp_plot_file
           values$plot_ready <- TRUE
           values$plot_counter <- values$plot_counter + 1  # Increment to force reactive update
-          
+          cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] plot_counter incremented to ", values$plot_counter, "\n"))
+
           # Hide progress - plot is ready!
           values$progress_visible <- FALSE
           values$progress_message <- ""
           values$plot_generating <- FALSE  # Turn off generating indicator
-          
+
+          # v57: Show Ready status via shinyjs
+          cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] Calling show_status_ready()\n"))
+          show_status_ready()
+
           # v53: cat(file=stderr(), "Plot saved successfully and path stored\n")
           # v53: cat(file=stderr(), "Plot counter now:", values$plot_counter, "\n")
         } else {
+          cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] ERROR: File does NOT exist after ggsave!\n"))
           # v53: cat(file=stderr(), "ERROR: File does not exist after ggsave\n")
           values$temp_plot_file <- NULL
           values$plot_ready <- FALSE
           values$progress_visible <- FALSE
           values$plot_generating <- FALSE
+          # v57: Show click to generate on error
+          show_status_click_to_generate()
         }
-        
+
       }, error = function(e) {
+        cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] ERROR in tryCatch: ", e$message, "\n"))
         # v53: cat(file=stderr(), "ERROR saving plot:", e$message, "\n")
         # v53: cat(file=stderr(), "Full error:\n")
         # v53: print(e)
@@ -9659,9 +17055,11 @@ server <- function(input, output, session) {
         values$plot_ready <- FALSE
         values$progress_visible <- FALSE
         values$plot_generating <- FALSE
+        # v57: Show click to generate on error
+        show_status_click_to_generate()
       })
       
-      # v53: cat(file=stderr(), "==============================\n\n")
+      # v53: debug_cat("==============================\n\n")
     }
     
     # Ensure plot_generating is always reset
@@ -9673,60 +17071,51 @@ server <- function(input, output, session) {
     # FAILSAFE: Always ensure plot_generating is reset
     values$plot_generating <- FALSE
     values$progress_visible <- FALSE
-    
+
+    # S1.62dev: Force garbage collection to prevent memory accumulation
+    # This helps when many plot regenerations occur in sequence
+    gc_result <- gc(verbose = FALSE)
+
+    # S1.62dev: Log memory usage for crash diagnosis
+    mem_used_mb <- sum(gc_result[, 2])  # Used memory in MB
+    cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] Memory after gc: ", round(mem_used_mb, 1), " MB\n"))
+
+    cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] EXIT generate_plot() at ", format(Sys.time(), "%H:%M:%OS3"), "\n"))
+    cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] ========================================\n\n"))
+
+    # S1.62dev: Flush stderr to ensure log messages are written before potential crash
+    flush(stderr())
+
     # v53: cat(file=stderr(), "Finished generate_plot()\n")
   }  # End of generate_plot function
   
   
   
-  output$tree_status_indicator <- renderUI({
-    # v56: Three states - Waiting (initial), Processing (during generation), Ready (after generation)
-    plot_rdy <- values$plot_ready
-    plot_gen <- values$plot_generating
-    has_tree <- !is.null(values$tree)
-    
-    if (!has_tree) {
-      # No tree loaded yet
-      tags$span(
-        style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #f8f9fa; color: #6c757d; font-size: 12px;",
-        icon("clock"),
-        " Waiting for data"
-      )
-    } else if (isTRUE(plot_gen)) {
-      # Currently generating
-      tags$span(
-        style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #fff3cd; color: #856404; font-size: 12px; font-weight: bold;",
-        icon("spinner", class = "fa-spin"),
-        " Generating..."
-      )
-    } else if (isTRUE(plot_rdy)) {
-      # Plot is ready
-      tags$span(
-        style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #d4edda; color: #155724; font-size: 12px; font-weight: bold;",
-        icon("check-circle"),
-        " Ready"
-      )
-    } else {
-      # Tree loaded but plot not yet generated
-      tags$span(
-        style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #e9ecef; color: #6c757d; font-size: 12px;",
-        icon("hourglass-half"),
-        " Click to generate"
-      )
-    }
-  })
+  # v57: tree_status_indicator replaced with static HTML + shinyjs for immediate updates
+  # The status indicator is now controlled via show_status_waiting(), show_status_processing(),
+  # show_status_ready(), and show_status_click_to_generate() helper functions
   
   # Output renderers (outside of generate_plot function)
   output$tree_preview <- renderImage({
-    # v53: cat(file=stderr(), "\n=== renderImage called for tree_preview ===\n")
-    
+    # S1.62dev: Added logging for crash diagnosis
+    cat(file=stderr(), paste0("[RENDER] tree_preview renderImage called at ", format(Sys.time(), "%H:%M:%OS3"), "\n"))
+
     # Force reactive update by depending on plot_counter
     req(values$temp_plot_file, values$plot_counter)
+
+    cat(file=stderr(), paste0("[RENDER] tree_preview: file=", values$temp_plot_file, ", counter=", values$plot_counter, "\n"))
     
     # v53: cat(file=stderr(), "Temp file:", values$temp_plot_file, "\n")
     # v53: cat(file=stderr(), "File exists:", file.exists(values$temp_plot_file), "\n")
     # v53: cat(file=stderr(), "Plot counter:", values$plot_counter, "\n")
-    
+
+    # S1.62dev: Added file existence check for crash diagnosis
+    if (!file.exists(values$temp_plot_file)) {
+      cat(file=stderr(), paste0("[RENDER] ERROR: temp_plot_file does not exist!\n"))
+      return(NULL)
+    }
+
+    cat(file=stderr(), paste0("[RENDER] tree_preview returning image list\n"))
     list(
       src = values$temp_plot_file,
       contentType = "image/png",
@@ -9735,139 +17124,10 @@ server <- function(input, output, session) {
     )
   }, deleteFile = FALSE)
   
-  # Status indicator for classification preview
-  output$classification_status_indicator <- renderUI({
-    # v56: Three states
-    plot_rdy <- values$plot_ready
-    plot_gen <- values$plot_generating
-    has_tree <- !is.null(values$tree)
-    
-    if (!has_tree) {
-      tags$span(
-        style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #f8f9fa; color: #6c757d; font-size: 12px;",
-        icon("clock"),
-        " Waiting for data"
-      )
-    } else if (isTRUE(plot_gen)) {
-      tags$span(
-        style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #fff3cd; color: #856404; font-size: 12px; font-weight: bold;",
-        icon("spinner", class = "fa-spin"),
-        " Generating..."
-      )
-    } else if (isTRUE(plot_rdy)) {
-      tags$span(
-        style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #d4edda; color: #155724; font-size: 12px; font-weight: bold;",
-        icon("check-circle"),
-        " Ready"
-      )
-    } else {
-      tags$span(
-        style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #e9ecef; color: #6c757d; font-size: 12px;",
-        icon("hourglass-half"),
-        " Click to generate"
-      )
-    }
-  })
-  
-  output$bootstrap_status_indicator <- renderUI({
-    # v56: Three states
-    plot_rdy <- values$plot_ready
-    plot_gen <- values$plot_generating
-    has_tree <- !is.null(values$tree)
-    
-    if (!has_tree) {
-      tags$span(
-        style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #f8f9fa; color: #6c757d; font-size: 12px;",
-        icon("clock"),
-        " Waiting for data"
-      )
-    } else if (isTRUE(plot_gen)) {
-      tags$span(
-        style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #fff3cd; color: #856404; font-size: 12px; font-weight: bold;",
-        icon("spinner", class = "fa-spin"),
-        " Generating..."
-      )
-    } else if (isTRUE(plot_rdy)) {
-      tags$span(
-        style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #d4edda; color: #155724; font-size: 12px; font-weight: bold;",
-        icon("check-circle"),
-        " Ready"
-      )
-    } else {
-      tags$span(
-        style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #e9ecef; color: #6c757d; font-size: 12px;",
-        icon("hourglass-half"),
-        " Click to generate"
-      )
-    }
-  })
-  
-  output$highlight_status_indicator <- renderUI({
-    # v56: Three states
-    plot_rdy <- values$plot_ready
-    plot_gen <- values$plot_generating
-    has_tree <- !is.null(values$tree)
-    
-    if (!has_tree) {
-      tags$span(
-        style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #f8f9fa; color: #6c757d; font-size: 12px;",
-        icon("clock"),
-        " Waiting for data"
-      )
-    } else if (isTRUE(plot_gen)) {
-      tags$span(
-        style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #fff3cd; color: #856404; font-size: 12px; font-weight: bold;",
-        icon("spinner", class = "fa-spin"),
-        " Generating..."
-      )
-    } else if (isTRUE(plot_rdy)) {
-      tags$span(
-        style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #d4edda; color: #155724; font-size: 12px; font-weight: bold;",
-        icon("check-circle"),
-        " Ready"
-      )
-    } else {
-      tags$span(
-        style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #e9ecef; color: #6c757d; font-size: 12px;",
-        icon("hourglass-half"),
-        " Click to generate"
-      )
-    }
-  })
-  
-  output$heatmap_status_indicator <- renderUI({
-    # v56: Three states
-    plot_rdy <- values$plot_ready
-    plot_gen <- values$plot_generating
-    has_tree <- !is.null(values$tree)
-    
-    if (!has_tree) {
-      tags$span(
-        style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #f8f9fa; color: #6c757d; font-size: 12px;",
-        icon("clock"),
-        " Waiting for data"
-      )
-    } else if (isTRUE(plot_gen)) {
-      tags$span(
-        style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #fff3cd; color: #856404; font-size: 12px; font-weight: bold;",
-        icon("spinner", class = "fa-spin"),
-        " Generating..."
-      )
-    } else if (isTRUE(plot_rdy)) {
-      tags$span(
-        style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #d4edda; color: #155724; font-size: 12px; font-weight: bold;",
-        icon("check-circle"),
-        " Ready"
-      )
-    } else {
-      tags$span(
-        style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #e9ecef; color: #6c757d; font-size: 12px;",
-        icon("hourglass-half"),
-        " Click to generate"
-      )
-    }
-  })
-  
+  # v59: Removed renderUI status indicators for classification, bootstrap, highlight, and heatmap tabs
+  # Status indicators are now static HTML elements toggled via shinyjs helper functions
+  # (show_status_waiting, show_status_processing, show_status_ready, show_status_click_to_generate)
+
   output$classification_preview <- renderImage({
     # Force reactive update by depending on plot_counter
     # v53: cat(file=stderr(), "\n=== renderImage called for classification_preview ===\n")
@@ -9940,57 +17200,530 @@ server <- function(input, output, session) {
     )
   }, deleteFile = FALSE)
   
-  output$final_preview <- renderPlot({
-    req(values$current_plot)
-    tryCatch({
-      values$current_plot
-    }, error = function(e) {
-      # v53: cat(file=stderr(), "Error rendering final preview:", e$message, "\n")
-      plot(c(0,1), c(0,1), type="n", xlab="", ylab="", 
-           main="Preview Error", axes=FALSE)
-      text(0.5, 0.5, "Failed to render plot.\nCheck console for details.", cex=1.2)
-    })
-  }, height = 600)
-  
-  # Update YAML output
-  output$yaml_output <- renderText({
-    yaml::as.yaml(values$yaml_data, indent.mapping.sequence = TRUE)
+  # v125: Final preview - using renderImage like other tabs for consistent aspect ratio
+  output$final_preview <- renderImage({
+    # Force reactive update by depending on plot_counter
+    req(values$temp_plot_file, values$plot_counter)
+
+    list(
+      src = values$temp_plot_file,
+      contentType = "image/png",
+      width = "100%",
+      alt = "Final preview"
+    )
+  }, deleteFile = FALSE)
+
+  # v124: Legend preview - using renderImage like other tabs for consistent aspect ratio
+  output$legend_preview <- renderImage({
+    # Force reactive update by depending on plot_counter
+    req(values$temp_plot_file, values$plot_counter)
+
+    list(
+      src = values$temp_plot_file,
+      contentType = "image/png",
+      width = "100%",
+      alt = "Legend preview"
+    )
+  }, deleteFile = FALSE)
+
+  # v130: Extra tab preview
+  output$extra_preview <- renderImage({
+    # Force reactive update by depending on plot_counter
+    req(values$temp_plot_file, values$plot_counter)
+
+    list(
+      src = values$temp_plot_file,
+      contentType = "image/png",
+      width = "100%",
+      alt = "Extra preview"
+    )
+  }, deleteFile = FALSE)
+
+  # v130: Extra tab status updates when data is loaded
+  observe({
+    if (!is.null(values$tree) && !is.null(values$csv_data)) {
+      shinyjs::hide("extra_status_waiting")
+      shinyjs::hide("extra_status_processing")
+      shinyjs::show("extra_status_ready")
+    } else {
+      shinyjs::show("extra_status_waiting")
+      shinyjs::hide("extra_status_processing")
+      shinyjs::hide("extra_status_ready")
+    }
   })
-  
+
+  # v130: Observer for page title settings
+  observeEvent({
+    input$enable_page_title
+    input$page_title_text
+    input$page_title_x
+    input$page_title_y
+    input$page_title_size
+    input$page_title_color
+    input$page_title_bold
+    input$page_title_underline
+    input$page_title_hjust
+  }, {
+    values$page_title <- list(
+      enabled = isTRUE(input$enable_page_title),
+      text = if(!is.null(input$page_title_text)) input$page_title_text else "",
+      x = if(!is.null(input$page_title_x)) input$page_title_x else 0.5,
+      y = if(!is.null(input$page_title_y)) input$page_title_y else 0.95,
+      size = if(!is.null(input$page_title_size)) input$page_title_size else 18,
+      color = if(!is.null(input$page_title_color)) input$page_title_color else "#000000",
+      bold = isTRUE(input$page_title_bold),
+      underline = isTRUE(input$page_title_underline),
+      hjust = if(!is.null(input$page_title_hjust)) as.numeric(input$page_title_hjust) else 0.5
+    )
+  }, ignoreInit = TRUE)
+
+  # v130: Add custom text annotation
+  observeEvent(input$add_custom_text, {
+    req(input$custom_text_content)
+    if (nchar(trimws(input$custom_text_content)) > 0) {
+      new_text <- list(
+        id = paste0("text_", length(values$custom_texts) + 1, "_", Sys.time()),
+        content = input$custom_text_content,
+        x = if(!is.null(input$custom_text_x)) input$custom_text_x else 0.5,
+        y = if(!is.null(input$custom_text_y)) input$custom_text_y else 0.5,
+        size = if(!is.null(input$custom_text_size)) input$custom_text_size else 12,
+        color = if(!is.null(input$custom_text_color)) input$custom_text_color else "#000000",
+        fontface = if(!is.null(input$custom_text_fontface)) input$custom_text_fontface else "plain",
+        hjust = if(!is.null(input$custom_text_hjust)) as.numeric(input$custom_text_hjust) else 0.5,
+        vjust = if(!is.null(input$custom_text_vjust)) as.numeric(input$custom_text_vjust) else 0.5,
+        angle = if(!is.null(input$custom_text_angle)) input$custom_text_angle else 0
+      )
+      values$custom_texts <- c(values$custom_texts, list(new_text))
+      # Clear the text input
+      updateTextInput(session, "custom_text_content", value = "")
+    }
+  })
+
+  # v130: Clear all custom texts
+  observeEvent(input$clear_custom_texts, {
+    values$custom_texts <- list()
+  })
+
+  # v130: Render list of custom texts
+  output$custom_texts_list <- renderUI({
+    if (length(values$custom_texts) == 0) {
+      return(tags$p(class = "text-muted", "No custom texts added yet."))
+    }
+
+    text_items <- lapply(seq_along(values$custom_texts), function(i) {
+      txt <- values$custom_texts[[i]]
+      tags$div(
+        style = "padding: 5px; margin: 5px 0; border: 1px solid #ddd; border-radius: 4px; background-color: #f9f9f9;",
+        tags$span(style = paste0("color: ", txt$color, "; font-weight: ",
+                                  if(txt$fontface == "bold" || txt$fontface == "bold.italic") "bold" else "normal", ";"),
+                  paste0(i, ". \"", substr(txt$content, 1, 30), if(nchar(txt$content) > 30) "..." else "", "\"")),
+        tags$span(class = "text-muted",
+                  paste0(" (x:", round(txt$x, 2), ", y:", round(txt$y, 2), ", size:", txt$size, ")")),
+        actionButton(paste0("delete_text_", i), "", icon = icon("times"),
+                     class = "btn-xs btn-danger", style = "float: right; padding: 2px 6px;")
+      )
+    })
+
+    do.call(tagList, text_items)
+  })
+
+  # v130: Delete individual custom text (dynamic observers)
+  observe({
+    lapply(seq_along(values$custom_texts), function(i) {
+      observeEvent(input[[paste0("delete_text_", i)]], {
+        if (i <= length(values$custom_texts)) {
+          values$custom_texts <- values$custom_texts[-i]
+        }
+      }, ignoreInit = TRUE, once = TRUE)
+    })
+  })
+
+  # v130: Add custom image
+  observeEvent(input$add_custom_image, {
+    req(input$custom_image_file)
+
+    # Copy file to temp location to persist it
+    temp_path <- file.path(tempdir(), paste0("custom_img_", length(values$custom_images) + 1, "_",
+                                              basename(input$custom_image_file$name)))
+    file.copy(input$custom_image_file$datapath, temp_path, overwrite = TRUE)
+
+    new_image <- list(
+      id = paste0("img_", length(values$custom_images) + 1, "_", Sys.time()),
+      path = temp_path,
+      name = input$custom_image_file$name,
+      x = if(!is.null(input$custom_image_x)) input$custom_image_x else 0.5,
+      y = if(!is.null(input$custom_image_y)) input$custom_image_y else 0.5,
+      width = if(!is.null(input$custom_image_width)) input$custom_image_width else 0.2,
+      height = if(!is.null(input$custom_image_height) && input$custom_image_height > 0) input$custom_image_height else NULL
+    )
+    values$custom_images <- c(values$custom_images, list(new_image))
+  })
+
+  # v130: Clear all custom images
+  observeEvent(input$clear_custom_images, {
+    values$custom_images <- list()
+  })
+
+  # v130: Render list of custom images
+  output$custom_images_list <- renderUI({
+    if (length(values$custom_images) == 0) {
+      return(tags$p(class = "text-muted", "No custom images added yet."))
+    }
+
+    img_items <- lapply(seq_along(values$custom_images), function(i) {
+      img <- values$custom_images[[i]]
+      tags$div(
+        style = "padding: 5px; margin: 5px 0; border: 1px solid #ddd; border-radius: 4px; background-color: #f9f9f9;",
+        tags$span(icon("image"), paste0(i, ". ", img$name)),
+        tags$span(class = "text-muted",
+                  paste0(" (x:", round(img$x, 2), ", y:", round(img$y, 2),
+                         ", w:", round(img$width, 2),
+                         if(!is.null(img$height)) paste0(", h:", round(img$height, 2)) else "", ")")),
+        actionButton(paste0("delete_image_", i), "", icon = icon("times"),
+                     class = "btn-xs btn-danger", style = "float: right; padding: 2px 6px;")
+      )
+    })
+
+    do.call(tagList, img_items)
+  })
+
+  # v130: Delete individual custom image (dynamic observers)
+  observe({
+    lapply(seq_along(values$custom_images), function(i) {
+      observeEvent(input[[paste0("delete_image_", i)]], {
+        if (i <= length(values$custom_images)) {
+          values$custom_images <- values$custom_images[-i]
+        }
+      }, ignoreInit = TRUE, once = TRUE)
+    })
+  })
+
+  # v141: Observer for plot position X slider
+  # S1-PERF: Using debounced version to prevent rapid updates
+  observeEvent(plot_offset_x_d(), {
+    values$plot_offset_x <- plot_offset_x_d()
+  }, ignoreInit = TRUE)
+
+  # v141: Observer for plot position Y slider
+  # S1-PERF: Using debounced version to prevent rapid updates
+  observeEvent(plot_offset_y_d(), {
+    values$plot_offset_y <- plot_offset_y_d()
+  }, ignoreInit = TRUE)
+
+  # v141: Reset plot position button
+  observeEvent(input$reset_plot_position, {
+    updateSliderInput(session, "plot_offset_x", value = 0)
+    updateSliderInput(session, "plot_offset_y", value = 0)
+    values$plot_offset_x <- 0
+    values$plot_offset_y <- 0
+  })
+
+  # v146: Observer for plot scale slider
+  # S1-PERF: Using debounced version to prevent rapid updates
+  observeEvent(plot_scale_percent_d(), {
+    values$plot_scale_percent <- plot_scale_percent_d()
+  }, ignoreInit = TRUE)
+
+  # v146: Reset plot scale button
+  observeEvent(input$reset_plot_scale, {
+    updateSliderInput(session, "plot_scale_percent", value = 100)
+    values$plot_scale_percent <- 100
+  })
+
+  # v179: Observer for tree stretch X slider (horizontal length)
+  # S1-PERF: Using debounced version to prevent rapid updates
+  observeEvent(tree_stretch_x_d(), {
+    values$tree_stretch_x <- tree_stretch_x_d()
+  }, ignoreInit = TRUE)
+
+  # v179: Observer for tree stretch Y slider (vertical width)
+  # S1-PERF: Using debounced version to prevent rapid updates
+  observeEvent(tree_stretch_y_d(), {
+    values$tree_stretch_y <- tree_stretch_y_d()
+  }, ignoreInit = TRUE)
+
+  # v179: Reset tree stretch button
+  observeEvent(input$reset_tree_stretch, {
+    updateSliderInput(session, "tree_stretch_x", value = 1)
+    updateSliderInput(session, "tree_stretch_y", value = 1)
+    values$tree_stretch_x <- 1
+    values$tree_stretch_y <- 1
+  })
+
+  # v179: Observer for background color
+  # S1.62dev: Use debounced version to prevent lag from rapid color picker changes
+  # Also trigger automatic plot regeneration so users don't need to click Apply
+  observeEvent(background_color_d(), {
+    values$background_color <- background_color_d()
+    # S1.62dev: Auto-regenerate plot when background color changes
+    if (isTRUE(values$plot_ready)) {
+      request_plot_update()
+    }
+  }, ignoreInit = TRUE)
+
+  # v179: Reset background color button
+  observeEvent(input$reset_background, {
+    colourpicker::updateColourInput(session, "background_color", value = "#FFFFFF")
+    values$background_color <- "#FFFFFF"
+  })
+
+  # v130: Apply Extra settings to plot
+  # v139: Added processing indicator
+  observeEvent(input$extra_apply, {
+    req(values$plot_ready)
+
+    # Show processing indicator
+    shinyjs::hide("extra_status_waiting")
+    shinyjs::show("extra_status_processing")
+    shinyjs::hide("extra_status_ready")
+
+    # Use a slight delay to ensure UI updates before plot generation
+    shinyjs::delay(50, {
+      generate_plot()
+
+      # Show ready indicator after plot generation
+      shinyjs::hide("extra_status_waiting")
+      shinyjs::hide("extra_status_processing")
+      shinyjs::show("extra_status_ready")
+    })
+  })
+
   ###################
-  
-  # Define YAML content reactive
-  # Define YAML content reactive
+
+  # S1.62dev: Define YAML content reactive - COMPLETE export of all visual settings
   yaml_content <- reactive({
     # Check if we have the necessary data
     req(values$tree, values$csv_data)
-    
-    
+
+    # S1.62dev: Build classification list from values$classifications
+    classification_list <- list()
+    if (!is.null(values$classifications) && length(values$classifications) > 0) {
+      for (i in seq_along(values$classifications)) {
+        class_def <- values$classifications[[i]]
+
+        # Build the "according" list for this classification
+        according_list <- list()
+        if (!is.null(class_def$classes) && length(class_def$classes) > 0) {
+          for (j in seq_along(class_def$classes)) {
+            cls <- class_def$classes[[j]]
+            according_list[[j]] <- list()
+            according_list[[j]][[as.character(j)]] <- list(
+              title1 = if (!is.null(cls$column)) cls$column else "",
+              value1 = if (!is.null(cls$value)) cls$value else "",
+              display_name = if (!is.null(cls$display_name)) cls$display_name else "",
+              color = if (!is.null(cls$color)) cls$color else "#000000"
+            )
+          }
+        }
+
+        # Build highlight settings for this classification
+        highlight_list <- list(display = "no")
+        if (!is.null(class_def$highlight) && isTRUE(class_def$highlight$enabled)) {
+          highlight_list$display <- "yes"
+          highlight_list$according <- list()
+          if (!is.null(class_def$highlight$items) && length(class_def$highlight$items) > 0) {
+            for (j in seq_along(class_def$highlight$items)) {
+              hi <- class_def$highlight$items[[j]]
+              highlight_list$according[[j]] <- list()
+              highlight_list$according[[j]][[as.character(j)]] <- list(
+                title1 = if (!is.null(hi$column)) hi$column else "",
+                value1 = if (!is.null(hi$value)) hi$value else "",
+                display_name = if (!is.null(hi$display_name)) hi$display_name else "",
+                color = if (!is.null(hi$color)) hi$color else "#FF0000"
+              )
+            }
+          }
+        }
+
+        classification_list[[i]] <- list()
+        classification_list[[i]][[as.character(i)]] <- list(
+          title = if (!is.null(class_def$title)) class_def$title else "Classification",
+          column = if (!is.null(class_def$column)) class_def$column else "",
+          FDR_perc = if (!is.null(class_def$fdr)) class_def$fdr else 0.1,
+          non_cluster_title = if (!is.null(class_def$no_cluster_title)) class_def$no_cluster_title else "No cluster",
+          non_cluster_color = if (!is.null(class_def$no_cluster_color)) class_def$no_cluster_color else "gray",
+          according = according_list,
+          highlight = highlight_list
+        )
+      }
+    }
+
+    # S1.62dev: Build heatmap list from values$heatmap_configs
+    heatmap_list <- list()
+    if (!is.null(values$heatmap_configs) && length(values$heatmap_configs) > 0) {
+      for (i in seq_along(values$heatmap_configs)) {
+        cfg <- values$heatmap_configs[[i]]
+
+        heatmap_list[[i]] <- list(
+          display = "yes",
+          title = if (!is.null(cfg$title)) cfg$title else paste0("Heatmap ", i),
+          # S1.62dev: Use actual_type (computed from auto-detect) if available
+          # If auto_type is TRUE but actual_type not computed yet, default to "no" (continuous)
+          # Only use cfg$type when auto_type is FALSE (user explicitly set the type)
+          is_discrete = if (!is.null(cfg$actual_type)) {
+            if (cfg$actual_type == "discrete") "yes" else "no"
+          } else if (is.null(cfg$auto_type) || cfg$auto_type == TRUE) {
+            # auto_type is enabled but actual_type not computed - can't reliably determine
+            # Default to "no" (continuous) as safer fallback
+            "no"
+          } else if (!is.null(cfg$type) && cfg$type == "discrete") {
+            "yes"
+          } else {
+            "no"
+          },
+          # S1.62dev: Export auto_type flag so import knows whether to re-detect
+          auto_type = if (!is.null(cfg$auto_type) && cfg$auto_type) "yes" else "no",
+          columns = if (!is.null(cfg$columns)) as.list(cfg$columns) else list(),
+          distance = if (!is.null(cfg$distance)) cfg$distance else 0.02,
+          height = if (!is.null(cfg$height)) cfg$height else 0.8,
+          show_colnames = if (!is.null(cfg$show_colnames) && cfg$show_colnames) "yes" else "no",
+          colnames_angle = if (!is.null(cfg$colnames_angle)) cfg$colnames_angle else 45,
+          discrete_palette = if (!is.null(cfg$discrete_palette)) cfg$discrete_palette else "Set1",
+          cont_palette = if (!is.null(cfg$cont_palette)) cfg$cont_palette else "Blues",
+          low_color = if (!is.null(cfg$low_color)) cfg$low_color else "#FFFFCC",
+          high_color = if (!is.null(cfg$high_color)) cfg$high_color else "#006837",
+          use_midpoint = if (!is.null(cfg$use_midpoint) && cfg$use_midpoint) "yes" else "no",
+          mid_color = if (!is.null(cfg$mid_color)) cfg$mid_color else "#FFFF99",
+          midpoint = if (!is.null(cfg$midpoint)) cfg$midpoint else 0,
+          # S1.61dev: Guide line settings
+          show_guide_lines = if (!is.null(cfg$show_guide_lines) && cfg$show_guide_lines) "yes" else "no",
+          guide_color1 = if (!is.null(cfg$guide_color1)) cfg$guide_color1 else "#CCCCCC",
+          guide_color2 = if (!is.null(cfg$guide_color2)) cfg$guide_color2 else "#EEEEEE",
+          guide_alpha = if (!is.null(cfg$guide_alpha)) cfg$guide_alpha else 0.3,
+          guide_width = if (!is.null(cfg$guide_width)) cfg$guide_width else 0.5,
+          guide_linetype = if (!is.null(cfg$guide_linetype)) cfg$guide_linetype else "solid",
+          # S1.62dev: Row label settings (were missing from export)
+          show_row_labels = if (!is.null(cfg$show_row_labels) && cfg$show_row_labels) "yes" else "no",
+          row_label_source = if (!is.null(cfg$row_label_source)) cfg$row_label_source else "colnames",
+          row_label_font_size = if (!is.null(cfg$row_label_font_size)) cfg$row_label_font_size else 2.5,
+          row_label_offset = if (!is.null(cfg$row_label_offset)) cfg$row_label_offset else 1.0,
+          row_label_align = if (!is.null(cfg$row_label_align)) cfg$row_label_align else "left",
+          custom_row_labels = if (!is.null(cfg$custom_row_labels)) cfg$custom_row_labels else "",
+          label_mapping = if (!is.null(cfg$label_mapping)) cfg$label_mapping else list(),
+          # S1.62dev: Grid settings (were missing from export)
+          show_grid = if (!is.null(cfg$show_grid) && cfg$show_grid) "yes" else "no",
+          grid_color = if (!is.null(cfg$grid_color)) cfg$grid_color else "#000000",
+          grid_size = if (!is.null(cfg$grid_size)) cfg$grid_size else 0.5,
+          # S1.62dev: Discrete custom color settings (were missing from export)
+          custom_discrete = if (!is.null(cfg$custom_discrete) && cfg$custom_discrete) "yes" else "no",
+          custom_colors = if (!is.null(cfg$custom_colors) && length(cfg$custom_colors) > 0) cfg$custom_colors else list()
+        )
+      }
+    }
+
+    # S1.62dev: Build highlights list from values$highlights
+    # Also include temp_highlight_preview if it exists (unsaved preview)
+    highlights_list <- list()
+
+    # First add saved highlights
+    if (!is.null(values$highlights) && length(values$highlights) > 0) {
+      for (i in seq_along(values$highlights)) {
+        hi <- values$highlights[[i]]
+
+        # Build items list
+        items_list <- list()
+        if (!is.null(hi$items) && length(hi$items) > 0) {
+          for (j in seq_along(hi$items)) {
+            item <- hi$items[[j]]
+            items_list[[j]] <- list(
+              column = if (!is.null(item$column)) item$column else "",
+              value = if (!is.null(item$value)) item$value else "",
+              display_name = if (!is.null(item$display_name)) item$display_name else "",
+              color = if (!is.null(item$color)) item$color else "#FF0000",
+              transparency = if (!is.null(item$transparency)) item$transparency else 0.5
+            )
+          }
+        }
+
+        highlights_list[[i]] <- list(
+          enabled = if (!is.null(hi$enabled) && hi$enabled) "yes" else "no",
+          title = if (!is.null(hi$title)) hi$title else "Highlight",
+          column = if (!is.null(hi$column)) hi$column else "",
+          offset = if (!is.null(hi$offset)) hi$offset else 0,
+          vertical_offset = if (!is.null(hi$vertical_offset)) hi$vertical_offset else 0,
+          adjust_height = if (!is.null(hi$adjust_height)) hi$adjust_height else 1,
+          adjust_width = if (!is.null(hi$adjust_width)) hi$adjust_width else 1,
+          items = items_list
+        )
+      }
+    }
+
+    # S1.62dev: Also include temp_highlight_preview if it exists (unsaved preview work)
+    if (!is.null(values$temp_highlight_preview) &&
+        !is.null(values$temp_highlight_preview$items) &&
+        length(values$temp_highlight_preview$items) > 0) {
+      hi <- values$temp_highlight_preview
+
+      # Build items list for preview
+      items_list <- list()
+      for (j in seq_along(hi$items)) {
+        item <- hi$items[[j]]
+        items_list[[j]] <- list(
+          column = if (!is.null(item$column)) item$column else "",
+          value = if (!is.null(item$value)) item$value else "",
+          display_name = if (!is.null(item$display_name)) item$display_name else "",
+          color = if (!is.null(item$color)) item$color else "#FF0000",
+          transparency = if (!is.null(item$transparency)) item$transparency else 0.5
+        )
+      }
+
+      # Add preview as a highlight (marked with title suffix if not already saved)
+      preview_entry <- list(
+        enabled = "yes",
+        title = if (!is.null(hi$title)) hi$title else "Highlight (Unsaved)",
+        column = if (!is.null(hi$column)) hi$column else "",
+        offset = if (!is.null(hi$offset)) hi$offset else 0,
+        vertical_offset = if (!is.null(hi$vertical_offset)) hi$vertical_offset else 0,
+        adjust_height = if (!is.null(hi$adjust_height)) hi$adjust_height else 1,
+        adjust_width = if (!is.null(hi$adjust_width)) hi$adjust_width else 1,
+        items = items_list
+      )
+      highlights_list <- c(highlights_list, list(preview_entry))
+    }
+
+    # S1.62dev: Build legend settings from values$legend_settings
+    legend_settings_yaml <- list(
+      position = if (!is.null(values$legend_settings$position)) values$legend_settings$position else "right",
+      show_classification = if (!is.null(values$legend_settings$show_classification) && values$legend_settings$show_classification) "yes" else "no",
+      show_highlight = if (!is.null(values$legend_settings$show_highlight) && values$legend_settings$show_highlight) "yes" else "no",
+      show_bootstrap = if (!is.null(values$legend_settings$show_bootstrap) && values$legend_settings$show_bootstrap) "yes" else "no",
+      # S1.62dev: Added show_pvalue to export
+      show_pvalue = if (!is.null(values$legend_settings$show_pvalue) && values$legend_settings$show_pvalue) "yes" else "no",
+      show_heatmap = if (!is.null(values$legend_settings$show_heatmap) && values$legend_settings$show_heatmap) "yes" else "no",
+      title_size = if (!is.null(values$legend_settings$title_size)) values$legend_settings$title_size else 12,
+      text_size = if (!is.null(values$legend_settings$text_size)) values$legend_settings$text_size else 10,
+      box_background = if (!is.null(values$legend_settings$box_background)) values$legend_settings$box_background else "transparent",
+      margin = if (!is.null(values$legend_settings$margin)) values$legend_settings$margin else 0.2
+    )
+
     # Create the YAML structure based on current settings
     yaml_data <- list(
       "Individual general definitions" = list(
         Individual = input$individual_name,
+        "individual column" = input$individual_column,
         "tree path" = if (!is.null(input$tree_file)) {
           list(input$tree_file$datapath)
         } else {
           list(NULL)
-        },  # Added missing comma here
+        },
         "mapping csv file" = if (!is.null(input$csv_file)) {
           input$csv_file$datapath
         } else {
           NULL
-        },  # Added missing comma here
+        },
         "out_file" = list(
           "base_path" = input$output_path,
           "file_type" = input$output_format,
+          # S1.62dev: Export page orientation and dimensions
+          "page_orientation" = if (!is.null(input$page_orientation)) input$page_orientation else "landscape",
+          "output_width" = if (!is.null(input$output_width)) input$output_width else 29.7,
+          "output_height" = if (!is.null(input$output_height)) input$output_height else 21,
+          "output_units" = if (!is.null(input$output_units)) input$output_units else "cm",
+          "keep_proportions" = if (!is.null(input$keep_proportions) && input$keep_proportions) "yes" else "no",
           "optional text at beggining" = input$prefix_text,
           "optional text at end" = input$suffix_text,
           "replace name" = list(
-            flag = if (input$replace_name) {
-              "yes"
-            } else {
-              "no"
-            },
+            flag = if (input$replace_name) "yes" else "no",
             name = input$custom_name
           )
         )
@@ -9999,39 +17732,37 @@ server <- function(input, output, session) {
         "ID column" = input$id_column
       ),
       "visual definitions" = list(
-        "classification" = list(),
+        "classification" = classification_list,
+        "heatmaps" = heatmap_list,
+        "highlights" = highlights_list,
+        "legend" = legend_settings_yaml,
         "Bootstrap" = list(
-          display = if (input$show_bootstrap) {
-            "yes"
-          } else {
-            "no"
-          },
+          display = if (input$show_bootstrap) "yes" else "no",
           format = input$bootstrap_format,
-          param = as.character(input$bootstrap_param)
+          param = as.character(input$bootstrap_param),
+          label_size = if (!is.null(input$bootstrap_label_size)) input$bootstrap_label_size else 1.5
+        ),
+        "node_numbers" = list(
+          display = if (!is.null(input$display_node_numbers) && input$display_node_numbers) "yes" else "no",
+          font_size = if (!is.null(input$node_number_font_size)) input$node_number_font_size else 3.5
         ),
         "rotation1" = list(
-          display = if (input$enable_rotation && 
-                        (input$rotation_type == "primary" || input$rotation_type == "manual")) {
-            "yes"
-          } else {
-            "no"
-          },
-          according = list()
+          display = if (input$enable_rotation &&
+                        (input$rotation_type == "primary" || input$rotation_type == "manual")) "yes" else "no",
+          # S1.62dev: Fixed - read from rotation1_config instead of rotation_settings$primary
+          according = if (!is.null(values$rotation1_config) && length(values$rotation1_config) > 0) {
+            lapply(values$rotation1_config, function(r) list(col = r$col, val = r$val))
+          } else list()
         ),
         "rotation2" = list(
-          display = if (input$enable_rotation && input$rotation_type == "secondary") {
-            "yes"
-          } else {
-            "no"
-          },
-          according = list()
+          display = if (input$enable_rotation && input$rotation_type == "secondary") "yes" else "no",
+          # S1.62dev: Fixed - read from rotation2_config instead of rotation_settings$secondary
+          according = if (!is.null(values$rotation2_config) && length(values$rotation2_config) > 0) {
+            lapply(values$rotation2_config, function(r) list(col = r$col, val = r$val))
+          } else list()
         ),
         "trim tips" = list(
-          display = if (input$trim_tips) {
-            "yes"
-          } else {
-            "no"
-          },
+          display = if (input$trim_tips) "yes" else "no",
           length = input$tip_length
         ),
         "edge_width_multiplier" = list(
@@ -10039,15 +17770,22 @@ server <- function(input, output, session) {
         ),
         "font_size" = list(
           tips = input$tip_font_size,
-          legend_title = 13,
-          legend_text = 10,
-          legend_box = 10,
-          heat_map_title = 137,
+          legend_title = if (!is.null(values$legend_settings$title_size)) values$legend_settings$title_size else 13,
+          legend_text = if (!is.null(values$legend_settings$text_size)) values$legend_settings$text_size else 10,
           heat_map_legend = input$heatmap_font_size
+        ),
+        # S1.62dev: Extra tab settings (plot position, scale, stretch)
+        "extra_settings" = list(
+          plot_offset_x = if (!is.null(values$plot_offset_x)) values$plot_offset_x else 0,
+          plot_offset_y = if (!is.null(values$plot_offset_y)) values$plot_offset_y else 0,
+          plot_scale = if (!is.null(input$plot_scale)) input$plot_scale else 100,
+          tree_stretch_x = if (!is.null(input$tree_stretch_x)) input$tree_stretch_x else 1,
+          tree_stretch_y = if (!is.null(input$tree_stretch_y)) input$tree_stretch_y else 1,
+          background_color = if (!is.null(input$background_color)) input$background_color else "white"
         )
       )
     )
-    
+
     # Convert to YAML text
     settings_to_yaml(yaml_data)
   })
@@ -10079,7 +17817,7 @@ server <- function(input, output, session) {
     }
   )
   
-  # Download plot
+  # Download plot - v134: Use the actual generated plot (with heatmaps) instead of basic tree
   output$download_plot <- downloadHandler(
     filename = function() {
       if (input$replace_name) {
@@ -10089,123 +17827,125 @@ server <- function(input, output, session) {
       }
     },
     content = function(file) {
-      # Here we would generate the plot and save it to the file
-      # For now, just create a simple plot
-      if (input$output_format %in% c("pdf", "svg")) {
-        pdf(file, width = input$output_width/2.54, height = input$output_height/2.54)
+      # v134: Use the actual generated plot stored in values$current_plot
+      # This includes all layers: tree, heatmaps, highlights, bootstrap, etc.
+
+      # Check if we have a valid generated plot
+      if (!is.null(values$current_plot)) {
+        # Use ggsave for ggplot objects - handles all formats correctly
+
+        # Determine width/height - convert to inches based on units
+        width_val <- input$output_width
+        height_val <- input$output_height
+
+        # Convert to inches if needed (ggsave needs consistent units)
+        if (input$output_units == "cm") {
+          width_in <- width_val / 2.54
+          height_in <- height_val / 2.54
+        } else if (input$output_units == "mm") {
+          width_in <- width_val / 25.4
+          height_in <- height_val / 25.4
+        } else {
+          width_in <- width_val
+          height_in <- height_val
+        }
+
+        # Set DPI based on format
+        dpi_val <- if (input$output_format %in% c("pdf", "svg")) 300 else 300
+
+        # v146: Apply cowplot positioning AND scale for downloads too
+        # v180: Also apply tree stretch and proportions preservation
+        plot_to_download <- values$current_plot
+        offset_x <- attr(values$current_plot, "plot_offset_x")
+        offset_y <- attr(values$current_plot, "plot_offset_y")
+        scale_pct <- attr(values$current_plot, "plot_scale_percent")
+        if (is.null(scale_pct)) scale_pct <- 100
+        # v179: Get tree stretch values
+        tree_stretch_x <- attr(values$current_plot, "tree_stretch_x")
+        tree_stretch_y <- attr(values$current_plot, "tree_stretch_y")
+        if (is.null(tree_stretch_x)) tree_stretch_x <- 1
+        if (is.null(tree_stretch_y)) tree_stretch_y <- 1
+        # v180: Get keep_proportions setting
+        keep_proportions <- attr(values$current_plot, "keep_proportions")
+        if (is.null(keep_proportions)) keep_proportions <- FALSE
+
+        # v180: Calculate proportions adjustment for portrait pages
+        current_aspect <- width_in / height_in
+        landscape_aspect <- 29.7 / 21
+        proportion_adj_w <- 1
+        proportion_adj_h <- 1
+        if (isTRUE(keep_proportions) && current_aspect < 1) {
+          proportion_adj_w <- 1
+          proportion_adj_h <- current_aspect / landscape_aspect
+          debug_cat(paste0("v180: Download - preserving proportions, adj_h=", round(proportion_adj_h, 3), "\n"))
+        }
+
+        needs_transform <- (!is.null(offset_x) && !is.null(offset_y) && (offset_x != 0 || offset_y != 0)) ||
+                          scale_pct != 100 || tree_stretch_x != 1 || tree_stretch_y != 1 ||
+                          proportion_adj_w != 1 || proportion_adj_h != 1
+
+        if (needs_transform) {
+          x_pos_offset <- if (!is.null(offset_x)) offset_x * 0.05 else 0
+          y_pos_offset <- if (!is.null(offset_y)) offset_y * 0.05 else 0
+          scale_factor <- scale_pct / 100
+
+          # v180: Apply tree stretch and proportions preservation
+          final_width <- scale_factor * tree_stretch_x * proportion_adj_w
+          final_height <- scale_factor * tree_stretch_y * proportion_adj_h
+
+          # Calculate position to center the scaled plot
+          center_x <- (1 - final_width) / 2 + x_pos_offset
+          center_y <- (1 - final_height) / 2 + y_pos_offset
+
+          plot_to_download <- cowplot::ggdraw() +
+            cowplot::draw_plot(values$current_plot, x = center_x, y = center_y,
+                              width = final_width, height = final_height)
+          debug_cat(paste0("v180: Download plot with scale: ", scale_pct, "%, stretch: x=", tree_stretch_x, ", y=", tree_stretch_y, ", proportions adj: ", round(proportion_adj_h, 3), "\n"))
+        }
+
+        tryCatch({
+          suppressWarnings(ggsave(
+            filename = file,
+            plot = plot_to_download,
+            width = width_in,
+            height = height_in,
+            units = "in",
+            dpi = dpi_val,
+            device = input$output_format,
+            limitsize = FALSE
+          ))
+          debug_cat(paste0("v134: Download saved successfully: ", file, "\n"))
+        }, error = function(e) {
+          debug_cat(paste0("v134: Error saving download: ", e$message, "\n"))
+          # Fallback to basic plot if ggsave fails
+          if (input$output_format %in% c("pdf", "svg")) {
+            pdf(file, width = width_in, height = height_in)
+          } else {
+            png(file, width = width_val, height = height_val, units = input$output_units, res = 300)
+          }
+          plot(values$tree, main = "Tree Visualization")
+          dev.off()
+        })
       } else {
-        png(file, width = input$output_width, height = input$output_height, units = input$output_units, res = 300)
+        # Fallback if no generated plot available
+        debug_cat("v134: No current_plot available, using basic tree plot\n")
+        if (input$output_format %in% c("pdf", "svg")) {
+          pdf(file, width = input$output_width/2.54, height = input$output_height/2.54)
+        } else {
+          png(file, width = input$output_width, height = input$output_height, units = input$output_units, res = 300)
+        }
+        plot(values$tree, main = "Tree Visualization")
+        dev.off()
       }
-      
-      plot(values$tree, main = "Tree Visualization")
-      
-      dev.off()
     }
   )
   
-  # Convert Shiny app settings to YAML format
-  # Convert Shiny app settings to YAML format
+  # S1.62dev: Convert settings to YAML - simply converts the input structure to YAML text
+  # The actual YAML structure is built in yaml_content() reactive
   settings_to_yaml <- function(settings) {
-    # Create basic structure with required fields
-    yaml_structure <- list(
-      "Individual general definitions" = list(
-        Individual = input$individual_name,
-        "tree path" = if (!is.null(input$tree_file)) {
-          list(input$tree_file$datapath)
-        } else {
-          list(NA)
-        },  # Added missing comma
-        "mapping csv file" = if (!is.null(input$csv_file)) {
-          input$csv_file$datapath
-        } else {
-          NA
-        },  # Added missing comma
-        "out_file" = list(
-          "base_path" = input$output_path,
-          "file_type" = input$output_format,
-          "optional text at beggining" = input$prefix_text,
-          "optional text at end" = input$suffix_text,
-          "replace name" = list(
-            flag = if (input$replace_name) {
-              "yes"
-            } else {
-              "no"
-            },
-            name = input$custom_name
-          )
-        )
-      ),
-      "Mapping exl renaming titles" = list(
-        "ID column" = input$id_column
-      ),
-      "visual definitions" = list(
-        "font_size" = list(
-          tips = 3,
-          legend_title = 30,
-          legend_text = 20,
-          legend_box = 15,
-          heat_map_title = 25,
-          heat_map_legend = 3.8
-        ),
-        "compare_two_trees" = "no"
-      )
-    )
-    
-    # Add visual definitions
-    yaml_structure$`visual definitions` <- list(
-      "classification" = list(),
-      "Bootstrap" = list(
-        display = if (input$show_bootstrap) {
-          "yes"
-        } else {
-          "no"
-        },
-        format = input$bootstrap_format,
-        param = as.character(input$bootstrap_param)
-      ),
-      "rotation1" = list(
-        display = if (input$enable_rotation && 
-                      (input$rotation_type == "primary" || input$rotation_type == "manual")) {
-          "yes"
-        } else {
-          "no"
-        },
-        according = list()
-      ),
-      "rotation2" = list(
-        display = if (input$enable_rotation && input$rotation_type == "secondary") {
-          "yes"
-        } else {
-          "no"
-        },
-        according = list()
-      ),
-      "trim tips" = list(
-        display = if (input$trim_tips) {
-          "yes"
-        } else {
-          "no"
-        },
-        length = input$tip_length
-      ),
-      "edge_width_multiplier" = list(
-        size = input$edge_width
-      ),
-      "font_size" = list(
-        tips = input$tip_font_size,
-        legend_title = 30,
-        legend_text = 20,
-        legend_box = 15,
-        heat_map_title = 25,
-        heat_map_legend = input$heatmap_font_size
-      )
-    )
-    
-    # Create YAML text from the structure
-    yaml_text <- yaml::as.yaml(yaml_structure, indent.mapping.sequence = TRUE)
-    return(yaml_text)
+    yaml::as.yaml(settings, indent.mapping.sequence = TRUE)
   }
-  
+
 } # End of server function
 
 # Run the application
