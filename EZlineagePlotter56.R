@@ -3646,6 +3646,12 @@ func.print.lineage.tree <- function(conf_yaml_path,
               
               #print("param is")
               #print(param)
+              # S1.62dev: Debug - show heat_map_i_def color values
+              cat(file=stderr(), paste0("[DEBUG-COLOR-PARAM] heat_map_i_def names: ", paste(names(heat_map_i_def), collapse=", "), "\n"))
+              cat(file=stderr(), paste0("[DEBUG-COLOR-PARAM] heat_map_i_def$low = ", ifelse('low' %in% names(heat_map_i_def), heat_map_i_def$low, "NOT FOUND"), "\n"))
+              cat(file=stderr(), paste0("[DEBUG-COLOR-PARAM] heat_map_i_def$mid = ", ifelse('mid' %in% names(heat_map_i_def), heat_map_i_def$mid, "NOT FOUND"), "\n"))
+              cat(file=stderr(), paste0("[DEBUG-COLOR-PARAM] heat_map_i_def$high = ", ifelse('high' %in% names(heat_map_i_def), heat_map_i_def$high, "NOT FOUND"), "\n"))
+              cat(file=stderr(), paste0("[DEBUG-COLOR-PARAM] heat_map_i_def$show_col_lines = ", ifelse('show_col_lines' %in% names(heat_map_i_def), heat_map_i_def$show_col_lines, "NOT FOUND"), "\n"))
               if ('low' %in% names(heat_map_i_def)) {
                 param['low'] <-heat_map_i_def$low
               }
@@ -6130,8 +6136,11 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
           }
 
           # S1.62dev: Add vertical column lines (separate from grid - only vertical lines)
+          cat(file=stderr(), paste0("[DEBUG-COLLINES-RENDER] heat_param[['show_col_lines']] = ", ifelse(is.null(heat_param[['show_col_lines']]), "NULL", heat_param[['show_col_lines']]), "\n"))
+          cat(file=stderr(), paste0("[DEBUG-COLLINES-RENDER] 'show_col_lines' in names: ", 'show_col_lines' %in% names(heat_param), "\n"))
           show_col_lines_bool <- !is.null(heat_param[['show_col_lines']]) &&
                                   isTRUE(heat_param[['show_col_lines']])
+          cat(file=stderr(), paste0("[DEBUG-COLLINES-RENDER] show_col_lines_bool = ", show_col_lines_bool, "\n"))
           if (show_col_lines_bool) {
             col_line_color <- if (!is.null(heat_param[['col_line_color']])) heat_param[['col_line_color']] else "#000000"
             col_line_size <- if (!is.null(heat_param[['col_line_size']])) as.numeric(heat_param[['col_line_size']]) else 0.5
@@ -6327,14 +6336,22 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
           } else {
             debug_cat(paste0("  Adding continuous color scale\n"))
 
+            # S1.62dev: Debug - show what heat_param contains for colors
+            cat(file=stderr(), paste0("[DEBUG-COLOR-RENDER] heat_param['low'] = ", ifelse(is.null(heat_param['low']), "NULL", paste0("'", heat_param['low'], "'")), "\n"))
+            cat(file=stderr(), paste0("[DEBUG-COLOR-RENDER] heat_param[['low']] = ", ifelse(is.null(heat_param[['low']]), "NULL", paste0("'", heat_param[['low']], "'")), "\n"))
+            cat(file=stderr(), paste0("[DEBUG-COLOR-RENDER] heat_param names: ", paste(names(heat_param), collapse=", "), "\n"))
+            cat(file=stderr(), paste0("[DEBUG-COLOR-RENDER] 'low' in names: ", 'low' %in% names(heat_param), "\n"))
+
             # v100: Get continuous scale colors from parameters
-            low_color <- if (!is.null(heat_param['low']) && !is.na(heat_param['low'])) heat_param['low'] else "beige"
-            mid_color <- if (!is.null(heat_param['mid']) && !is.na(heat_param['mid'])) heat_param['mid'] else "seashell2"
-            high_color <- if (!is.null(heat_param['high']) && !is.na(heat_param['high'])) heat_param['high'] else "firebrick4"
-            midpoint <- if (!is.null(heat_param['midpoint']) && !is.na(heat_param['midpoint'])) as.numeric(heat_param['midpoint']) else 0.02
+            # S1.62dev: Use double brackets for proper value extraction
+            low_color <- if (!is.null(heat_param[['low']]) && !is.na(heat_param[['low']])) heat_param[['low']] else "beige"
+            mid_color <- if (!is.null(heat_param[['mid']]) && !is.na(heat_param[['mid']])) heat_param[['mid']] else "seashell2"
+            high_color <- if (!is.null(heat_param[['high']]) && !is.na(heat_param[['high']])) heat_param[['high']] else "firebrick4"
+            midpoint <- if (!is.null(heat_param[['midpoint']]) && !is.na(heat_param[['midpoint']])) as.numeric(heat_param[['midpoint']]) else 0.02
             limits <- heat_param[['limits']]
 
             # v113: Debug output for continuous scale colors including NA color
+            cat(file=stderr(), paste0("[DEBUG-COLOR-RENDER] Final colors: low=", low_color, ", mid=", mid_color, ", high=", high_color, ", midpoint=", midpoint, "\n"))
             debug_cat(paste0("  Colors: low=", low_color, ", mid=", mid_color, ", high=", high_color, "\n"))
             debug_cat(paste0("  Midpoint: ", midpoint, "\n"))
             debug_cat(paste0("  v13: na_color for continuous: ", na_color, "\n"))
@@ -13667,6 +13684,7 @@ server <- function(input, output, session) {
           values$heatmap_configs[[i]]$data_source <- input[[paste0("heatmap_data_source_", i)]]
           # If switching to RData, set type to continuous and appropriate colors
           if (input[[paste0("heatmap_data_source_", i)]] == "rdata") {
+            cat(file=stderr(), paste0("\n[DEBUG-COLOR] Data source changed to 'rdata' for heatmap ", i, "\n"))
             values$heatmap_configs[[i]]$type <- "continuous"
             values$heatmap_configs[[i]]$auto_type <- FALSE
             # S1.62dev: Set red-white-blue color scheme for CNV (red=loss, blue=gain)
@@ -13675,12 +13693,14 @@ server <- function(input, output, session) {
             values$heatmap_configs[[i]]$high_color <- "#0000FF"  # Blue for amplification/gain
             values$heatmap_configs[[i]]$use_midpoint <- TRUE
             values$heatmap_configs[[i]]$midpoint <- 2  # Diploid baseline
+            cat(file=stderr(), paste0("[DEBUG-COLOR] Set config colors: low=#FF0000, mid=#FFFFFF, high=#0000FF\n"))
             # S1.62dev: Update UI color pickers to reflect the new colors
             updateColourInput(session, paste0("heatmap_low_color_", i), value = "#FF0000")
             updateColourInput(session, paste0("heatmap_mid_color_", i), value = "#FFFFFF")
             updateColourInput(session, paste0("heatmap_high_color_", i), value = "#0000FF")
             updateCheckboxInput(session, paste0("heatmap_use_midpoint_", i), value = TRUE)
             updateNumericInput(session, paste0("heatmap_midpoint_", i), value = 2)
+            cat(file=stderr(), "[DEBUG-COLOR] Called updateColourInput for low/mid/high colors\n")
           }
         }
       }, ignoreInit = TRUE)
@@ -14977,6 +14997,11 @@ server <- function(input, output, session) {
         # Build heatmap entry for RData CNV
         # Note: cnv_matrix is NOT stored here - it's passed as a parameter to func.print.lineage.tree
         # because large matrices don't serialize properly to YAML
+        cat(file=stderr(), paste0("[DEBUG-COLOR] Building RData heatmap entry for heatmap ", i, "\n"))
+        cat(file=stderr(), paste0("[DEBUG-COLOR] cfg$low_color = ", ifelse(is.null(cfg$low_color), "NULL", cfg$low_color), "\n"))
+        cat(file=stderr(), paste0("[DEBUG-COLOR] cfg$mid_color = ", ifelse(is.null(cfg$mid_color), "NULL", cfg$mid_color), "\n"))
+        cat(file=stderr(), paste0("[DEBUG-COLOR] cfg$high_color = ", ifelse(is.null(cfg$high_color), "NULL", cfg$high_color), "\n"))
+        cat(file=stderr(), paste0("[DEBUG-COLLINES] show_col_lines input = ", ifelse(is.null(input[[paste0("heatmap_show_col_lines_", i)]]), "NULL", input[[paste0("heatmap_show_col_lines_", i)]]), "\n"))
         heatmap_entry <- list(
           title = cfg$title,
           is_discrete = FALSE,  # CNV data is always continuous
