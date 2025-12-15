@@ -3462,6 +3462,22 @@ func.print.lineage.tree <- function(conf_yaml_path,
               } else {
                 param[['row_line_size']] <- 0.5
               }
+              # S1.62dev: Get column line settings (vertical lines)
+              if ('show_col_lines' %in% names(heat_map_i_def)) {
+                param[['show_col_lines']] <- func.check.bin.val.from.conf(heat_map_i_def[['show_col_lines']])
+              } else {
+                param[['show_col_lines']] <- FALSE
+              }
+              if ('col_line_color' %in% names(heat_map_i_def)) {
+                param[['col_line_color']] <- heat_map_i_def[['col_line_color']]
+              } else {
+                param[['col_line_color']] <- "#000000"
+              }
+              if ('col_line_size' %in% names(heat_map_i_def)) {
+                param[['col_line_size']] <- as.numeric(heat_map_i_def[['col_line_size']])
+              } else {
+                param[['col_line_size']] <- 0.5
+              }
 
               # S1.62dev: Get vertical text labels settings
               if ('show_vertical_text' %in% names(heat_map_i_def)) {
@@ -3709,6 +3725,22 @@ func.print.lineage.tree <- function(conf_yaml_path,
                 param[['row_line_size']] <- as.numeric(heat_map_i_def[['row_line_size']])
               } else {
                 param[['row_line_size']] <- 0.5
+              }
+              # S1.62dev: Get column line settings for continuous heatmaps too
+              if ('show_col_lines' %in% names(heat_map_i_def)) {
+                param[['show_col_lines']] <- func.check.bin.val.from.conf(heat_map_i_def[['show_col_lines']])
+              } else {
+                param[['show_col_lines']] <- FALSE
+              }
+              if ('col_line_color' %in% names(heat_map_i_def)) {
+                param[['col_line_color']] <- heat_map_i_def[['col_line_color']]
+              } else {
+                param[['col_line_color']] <- "#000000"
+              }
+              if ('col_line_size' %in% names(heat_map_i_def)) {
+                param[['col_line_size']] <- as.numeric(heat_map_i_def[['col_line_size']])
+              } else {
+                param[['col_line_size']] <- 0.5
               }
 
               # S1.62dev: Get vertical text labels settings for continuous heatmaps too
@@ -6097,6 +6129,45 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             debug_cat(paste0("  S1.62dev: Added ", nrow(row_lines_df), " horizontal row lines\n"))
           }
 
+          # S1.62dev: Add vertical column lines (separate from grid - only vertical lines)
+          show_col_lines_bool <- !is.null(heat_param[['show_col_lines']]) &&
+                                  isTRUE(heat_param[['show_col_lines']])
+          if (show_col_lines_bool) {
+            col_line_color <- if (!is.null(heat_param[['col_line_color']])) heat_param[['col_line_color']] else "#000000"
+            col_line_size <- if (!is.null(heat_param[['col_line_size']])) as.numeric(heat_param[['col_line_size']]) else 0.5
+
+            debug_cat(paste0("  S1.62dev: Adding vertical column lines (color: ", col_line_color, ", size: ", col_line_size, ")\n"))
+
+            # Build vertical column lines (left and right of each column)
+            col_x_values <- sort(unique(tile_df$x))
+            col_lines_x <- c()
+            for (j in seq_along(col_x_values)) {
+              # Left and right edge of each column
+              col_lines_x <- c(col_lines_x, col_x_values[j] - tile_width / 2)
+              col_lines_x <- c(col_lines_x, col_x_values[j] + tile_width / 2)
+            }
+            col_lines_x <- unique(col_lines_x)
+
+            # Calculate y-range for vertical lines
+            col_y_min <- min(tile_df$y) - tile_height / 2
+            col_y_max <- max(tile_df$y) + tile_height / 2
+
+            # Create vertical line data (NO horizontal lines)
+            col_lines_df <- data.frame(
+              x = rep(col_lines_x, each = 1),
+              xend = rep(col_lines_x, each = 1),
+              y = col_y_min,
+              yend = col_y_max
+            )
+
+            # Add column lines as geom_segment layer
+            p_with_tiles <- p_with_tiles +
+              geom_segment(data = col_lines_df, aes(x = x, xend = xend, y = y, yend = yend),
+                           color = col_line_color, linewidth = col_line_size, inherit.aes = FALSE)
+
+            debug_cat(paste0("  S1.62dev: Added ", nrow(col_lines_df), " vertical column lines\n"))
+          }
+
           # S1.62dev: Add vertical text labels below heatmap
           show_vertical_text_bool <- !is.null(heat_param[['show_vertical_text']]) &&
                                       isTRUE(heat_param[['show_vertical_text']])
@@ -8071,7 +8142,7 @@ ui <- dashboardPage(
             status = "primary",
             solidHeader = TRUE,
             width = 4,
-            checkboxInput("trim_tips", "Trim Tips", value = TRUE),
+            checkboxInput("trim_tips", "Trim Tips", value = FALSE),
             conditionalPanel(
               condition = "input.trim_tips == true",
               sliderInput("tip_length", "Tip Length", min = 0.01, max = 0.2, value = 0.05, step = 0.01)
@@ -13327,6 +13398,24 @@ server <- function(input, output, session) {
                              step = 0.1)
           )
         ),
+        # S1.62dev: Vertical column lines option
+        fluidRow(
+          column(4,
+                 checkboxInput(paste0("heatmap_show_col_lines_", i), "Show vertical column lines",
+                               value = if (!is.null(cfg$show_col_lines)) cfg$show_col_lines else FALSE)
+          ),
+          column(4,
+                 colourInput(paste0("heatmap_col_line_color_", i), "Column line color",
+                             value = if (!is.null(cfg$col_line_color)) cfg$col_line_color else "#000000",
+                             showColour = "background")
+          ),
+          column(4,
+                 sliderInput(paste0("heatmap_col_line_size_", i), "Column line width",
+                             min = 0.1, max = 2.0,
+                             value = if (!is.null(cfg$col_line_size)) cfg$col_line_size else 0.5,
+                             step = 0.1)
+          )
+        ),
 
         # S1.62dev: Vertical text labels below heatmap
         tags$div(
@@ -13586,6 +13675,12 @@ server <- function(input, output, session) {
             values$heatmap_configs[[i]]$high_color <- "#0000FF"  # Blue for amplification/gain
             values$heatmap_configs[[i]]$use_midpoint <- TRUE
             values$heatmap_configs[[i]]$midpoint <- 2  # Diploid baseline
+            # S1.62dev: Update UI color pickers to reflect the new colors
+            updateColourInput(session, paste0("heatmap_low_color_", i), value = "#FF0000")
+            updateColourInput(session, paste0("heatmap_mid_color_", i), value = "#FFFFFF")
+            updateColourInput(session, paste0("heatmap_high_color_", i), value = "#0000FF")
+            updateCheckboxInput(session, paste0("heatmap_use_midpoint_", i), value = TRUE)
+            updateNumericInput(session, paste0("heatmap_midpoint_", i), value = 2)
           }
         }
       }, ignoreInit = TRUE)
@@ -13714,6 +13809,37 @@ server <- function(input, output, session) {
           current_val <- values$heatmap_configs[[i]]$row_line_size
           if (is.null(current_val) || !identical(new_val, current_val)) {
             values$heatmap_configs[[i]]$row_line_size <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      # S1.62dev: Vertical column lines observers
+      observeEvent(input[[paste0("heatmap_show_col_lines_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_show_col_lines_", i)]]
+          current_val <- values$heatmap_configs[[i]]$show_col_lines
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$show_col_lines <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      observeEvent(input[[paste0("heatmap_col_line_color_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_col_line_color_", i)]]
+          current_val <- values$heatmap_configs[[i]]$col_line_color
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$col_line_color <- new_val
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      observeEvent(input[[paste0("heatmap_col_line_size_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_col_line_size_", i)]]
+          current_val <- values$heatmap_configs[[i]]$col_line_size
+          if (is.null(current_val) || !identical(new_val, current_val)) {
+            values$heatmap_configs[[i]]$col_line_size <- new_val
           }
         }
       }, ignoreInit = TRUE)
@@ -14874,6 +15000,10 @@ server <- function(input, output, session) {
           show_row_lines = if (!is.null(input[[paste0("heatmap_show_row_lines_", i)]])) input[[paste0("heatmap_show_row_lines_", i)]] else FALSE,
           row_line_color = if (!is.null(input[[paste0("heatmap_row_line_color_", i)]])) input[[paste0("heatmap_row_line_color_", i)]] else "#000000",
           row_line_size = if (!is.null(input[[paste0("heatmap_row_line_size_", i)]])) input[[paste0("heatmap_row_line_size_", i)]] else 0.5,
+          # S1.62dev: Column line settings (vertical lines)
+          show_col_lines = if (!is.null(input[[paste0("heatmap_show_col_lines_", i)]])) input[[paste0("heatmap_show_col_lines_", i)]] else FALSE,
+          col_line_color = if (!is.null(input[[paste0("heatmap_col_line_color_", i)]])) input[[paste0("heatmap_col_line_color_", i)]] else "#000000",
+          col_line_size = if (!is.null(input[[paste0("heatmap_col_line_size_", i)]])) input[[paste0("heatmap_col_line_size_", i)]] else 0.5,
           # Guide lines (usually not useful for CNV with many columns)
           show_guides = FALSE,
           # Row labels
@@ -15086,6 +15216,10 @@ server <- function(input, output, session) {
         show_row_lines = if (!is.null(input[[paste0("heatmap_show_row_lines_", i)]])) input[[paste0("heatmap_show_row_lines_", i)]] else FALSE,
         row_line_color = if (!is.null(input[[paste0("heatmap_row_line_color_", i)]])) input[[paste0("heatmap_row_line_color_", i)]] else "#000000",
         row_line_size = if (!is.null(input[[paste0("heatmap_row_line_size_", i)]])) input[[paste0("heatmap_row_line_size_", i)]] else 0.5,
+        # S1.62dev: Column line settings (vertical lines)
+        show_col_lines = if (!is.null(input[[paste0("heatmap_show_col_lines_", i)]])) input[[paste0("heatmap_show_col_lines_", i)]] else FALSE,
+        col_line_color = if (!is.null(input[[paste0("heatmap_col_line_color_", i)]])) input[[paste0("heatmap_col_line_color_", i)]] else "#000000",
+        col_line_size = if (!is.null(input[[paste0("heatmap_col_line_size_", i)]])) input[[paste0("heatmap_col_line_size_", i)]] else 0.5,
         # v116: Guide lines
         show_guides = if (!is.null(show_guides)) show_guides else FALSE,
         guide_color1 = if (!is.null(guide_color1)) guide_color1 else "#CCCCCC",
