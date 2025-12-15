@@ -11045,6 +11045,11 @@ server <- function(input, output, session) {
             heatmap_item[[as.character(j)]]$row_line_color <- if (!is.null(heatmap_entry$row_line_color)) heatmap_entry$row_line_color else "#000000"
             heatmap_item[[as.character(j)]]$row_line_size <- if (!is.null(heatmap_entry$row_line_size)) heatmap_entry$row_line_size else 0.5
 
+            # S1.62dev: Add column line settings (vertical lines)
+            heatmap_item[[as.character(j)]]$show_col_lines <- if (!is.null(heatmap_entry$show_col_lines) && heatmap_entry$show_col_lines) "yes" else "no"
+            heatmap_item[[as.character(j)]]$col_line_color <- if (!is.null(heatmap_entry$col_line_color)) heatmap_entry$col_line_color else "#000000"
+            heatmap_item[[as.character(j)]]$col_line_size <- if (!is.null(heatmap_entry$col_line_size)) heatmap_entry$col_line_size else 0.5
+
             # S1.62dev: Add vertical text labels settings
             heatmap_item[[as.character(j)]]$show_vertical_text <- if (!is.null(heatmap_entry$show_vertical_text) && heatmap_entry$show_vertical_text) "yes" else "no"
             heatmap_item[[as.character(j)]]$vertical_text_column <- if (!is.null(heatmap_entry$vertical_text_column)) heatmap_entry$vertical_text_column else ""
@@ -11267,6 +11272,11 @@ server <- function(input, output, session) {
           heatmap_item[[as.character(j)]]$show_row_lines <- if (!is.null(heatmap_entry$show_row_lines) && heatmap_entry$show_row_lines) "yes" else "no"
           heatmap_item[[as.character(j)]]$row_line_color <- if (!is.null(heatmap_entry$row_line_color)) heatmap_entry$row_line_color else "#000000"
           heatmap_item[[as.character(j)]]$row_line_size <- if (!is.null(heatmap_entry$row_line_size)) heatmap_entry$row_line_size else 0.5
+
+          # S1.62dev: Add column line settings (vertical lines)
+          heatmap_item[[as.character(j)]]$show_col_lines <- if (!is.null(heatmap_entry$show_col_lines) && heatmap_entry$show_col_lines) "yes" else "no"
+          heatmap_item[[as.character(j)]]$col_line_color <- if (!is.null(heatmap_entry$col_line_color)) heatmap_entry$col_line_color else "#000000"
+          heatmap_item[[as.character(j)]]$col_line_size <- if (!is.null(heatmap_entry$col_line_size)) heatmap_entry$col_line_size else 0.5
 
           # S1.62dev: Add vertical text labels settings
           heatmap_item[[as.character(j)]]$show_vertical_text <- if (!is.null(heatmap_entry$show_vertical_text) && heatmap_entry$show_vertical_text) "yes" else "no"
@@ -14053,6 +14063,13 @@ server <- function(input, output, session) {
         if (i <= length(values$heatmap_configs)) {
           palette_name <- input[[paste0("heatmap_cont_palette_", i)]]
           values$heatmap_configs[[i]]$cont_palette <- palette_name
+
+          # S1.62dev: Don't override colors for RData heatmaps - they use red-white-blue by default
+          current_data_source <- input[[paste0("heatmap_data_source_", i)]]
+          if (!is.null(current_data_source) && current_data_source == "rdata") {
+            cat(file=stderr(), paste0("[DEBUG-COLOR] Skipping palette color update for RData heatmap ", i, "\n"))
+            return()  # Don't change colors for RData - user can manually change if needed
+          }
 
           # S1.62dev: Define color mappings for each palette
           palette_colors <- list(
