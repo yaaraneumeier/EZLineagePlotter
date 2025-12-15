@@ -78,12 +78,15 @@ options(shiny.maxRequestSize = 100*1024^2)
 #       - All v180 features included and tested
 
 # ============================================================================
-# VERSION S1.62dev (Development)
+# VERSION S2.0 (Stable)
 # ============================================================================
-# S1.61dev: Added guide line type option for heatmap tip guide lines
-# S1.62dev: YAML import moved to Data Upload tab, settings-only mode (applies visual settings to current data)
-#       - New "Line type" dropdown in Heatmap tab > Tip Guide Lines section
-#       - Options: solid, dashed, dotted, dotdash, longdash, twodash
+# S2.0: Major stable release with RData CNV heatmap support
+#       - RData CNV file import for heatmaps (from QDNAseq/scIMPACT pipelines)
+#       - Automatic sample matching via CSV lookup columns
+#       - Red-white-blue default color scheme for CNV data
+#       - Vertical column lines option for heatmaps
+#       - Horizontal row lines option for heatmaps
+#       - Fixed multiple heatmap support (CSV + RData together)
 # S1.6: Stable release with performance optimizations and bug fixes
 #       - All S1.x improvements consolidated and tested
 # S1.5: Fixed Legend Background not working
@@ -101,7 +104,7 @@ options(shiny.maxRequestSize = 100*1024^2)
 #       - Layer reordering now happens ONCE at the end in generate_plot()
 # S1.2: Fixed undefined x_range_min in func_highlight causing "Problem while
 #       computing aesthetics" error when adding 2+ highlights with a heatmap.
-VERSION <- "S1.62dev"
+VERSION <- "S2.0"
 
 # Debug output control - set to TRUE to enable verbose console logging
 # For production/stable use, keep this FALSE for better performance
@@ -7972,28 +7975,32 @@ ui <- dashboardPage(
         tabName = "data_upload",
         fluidRow(
           box(
-            title = "EZLineagePlotter - Development",
-            status = "info",
+            title = "EZLineagePlotter - Stable Release",
+            status = "success",
             solidHeader = TRUE,
             width = 12,
             collapsible = TRUE,
-            tags$div(style = "background: #cce5ff; padding: 15px; border-radius: 5px; border: 2px solid #004085;",
-                     tags$h4(style = "color: #004085; margin: 0;", "Version S1.62dev (Development)"),
-                     tags$p(style = "margin: 10px 0 0 0; color: #004085;",
-                            "Development version - new features being tested.",
+            tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #155724;",
+                     tags$h4(style = "color: #155724; margin: 0;", "Version S2.0 (Stable)"),
+                     tags$p(style = "margin: 10px 0 0 0; color: #155724;",
+                            "Stable release with RData CNV heatmap support.",
                             tags$br(), tags$br(),
-                            tags$strong("New in S1.62dev:"),
+                            tags$strong("New in S2.0:"),
                             tags$ul(
-                              tags$li("YAML Import: Moved to Data Upload tab, applies settings to current data"),
-                              tags$li("Tip Guide Lines: Added line type option (solid, dashed, dotted, etc.)")
+                              tags$li("RData CNV heatmaps: Import CNV data from QDNAseq/scIMPACT pipelines"),
+                              tags$li("Automatic sample matching via CSV lookup columns"),
+                              tags$li("Red-white-blue color scheme for CNV (red=loss, blue=gain)"),
+                              tags$li("Vertical column lines option for heatmaps"),
+                              tags$li("Horizontal row lines option for heatmaps"),
+                              tags$li("Multiple heatmap support (CSV + RData together)")
                             ),
-                            tags$strong("From S1.6 (Stable):"),
+                            tags$strong("From S1.6:"),
                             tags$ul(
                               tags$li("Performance optimizations - faster rendering"),
                               tags$li("Legend Background color fix"),
                               tags$li("Multiple highlights with heatmap fix")
                             ),
-                            tags$strong("Base Features (from S1):"),
+                            tags$strong("Core Features:"),
                             tags$ul(
                               tags$li("Tree visualization with classification coloring"),
                               tags$li("Multiple heatmaps with discrete/continuous color scales"),
