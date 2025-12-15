@@ -14879,9 +14879,13 @@ server <- function(input, output, session) {
           row_label_offset = if (!is.null(input[[paste0("heatmap_row_label_offset_", i)]])) input[[paste0("heatmap_row_label_offset_", i)]] else 1.0,
           row_label_align = if (!is.null(input[[paste0("heatmap_row_label_align_", i)]])) input[[paste0("heatmap_row_label_align_", i)]] else "left",
           # S1.62dev: Color settings - red-white-blue for CNV (red=loss, blue=gain)
+          # Note: Both 'low'/'mid'/'high' (for rendering) and 'low_color'/'mid_color'/'high_color' (for UI) are set
           low_color = if (!is.null(cfg$low_color)) cfg$low_color else "#FF0000",   # Red for deletion/loss
           mid_color = if (!is.null(cfg$mid_color)) cfg$mid_color else "#FFFFFF",   # White for neutral
           high_color = if (!is.null(cfg$high_color)) cfg$high_color else "#0000FF", # Blue for amplification/gain
+          low = if (!is.null(cfg$low_color)) cfg$low_color else "#FF0000",   # For rendering code
+          mid = if (!is.null(cfg$mid_color)) cfg$mid_color else "#FFFFFF",   # For rendering code
+          high = if (!is.null(cfg$high_color)) cfg$high_color else "#0000FF", # For rendering code
           midpoint = if (!is.null(cfg$midpoint)) cfg$midpoint else 2,  # Center at diploid (2)
           use_midpoint = TRUE,  # Always use midpoint for CNV
           na_color = "grey90"
