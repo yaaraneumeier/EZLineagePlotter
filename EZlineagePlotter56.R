@@ -27,6 +27,7 @@ library(stats)
 library(gridExtra)
 library(cowplot)  # v144: For proper plot positioning using draw_plot
 library(jpeg)     # v144: For JPEG image overlay support
+library(data.table)  # S2.0-PERF: For fast CSV reading with fread()
 library(combinat)
 library(infotheo)
 library(aricode)
@@ -10444,22 +10445,38 @@ server <- function(input, output, session) {
     
     # Read CSV file
     tryCatch({
-      csv_data <- read.csv(csv_file$datapath)
+      # S2.0-PERF: Use data.table::fread() for 10-100x faster CSV reading
+      # fread() automatically handles various CSV formats and is highly optimized
+      start_time <- Sys.time()
 
-      # S1-PERF: Filter out columns with empty/auto-generated names IMMEDIATELY
-      # This fixes the "large number of options" warnings and speeds up all processing
-      # Patterns: "...XXXX" (readr), "X", "X.1", "X.2" (base R), empty names
-      col_names <- names(csv_data)
-      is_auto_named <- grepl("^\\.\\.\\.", col_names) |  # readr pattern: ...15372
-                       grepl("^X(\\.\\d+)?$", col_names) |  # base R pattern: X, X.1, X.2
-                       col_names == "" | is.na(col_names)
-      valid_cols <- !is_auto_named
-      if (sum(!valid_cols) > 0) {
-        removed_count <- sum(!valid_cols)
-        cat(file=stderr(), sprintf("[PERF] Removed %d empty/auto-named columns on CSV load (keeping %d)\n",
+      # Read with fread - much faster than read.csv
+      # drop = NULL reads all columns initially, we filter after
+      dt <- data.table::fread(csv_file$datapath, data.table = FALSE)
+
+      read_time <- as.numeric(difftime(Sys.time(), start_time, units = "secs"))
+      cat(file=stderr(), sprintf("[PERF] CSV read with fread(): %.3f sec (%d rows x %d cols)\n",
+          read_time, nrow(dt), ncol(dt)))
+
+      # S2.0-PERF: Filter out columns with empty/auto-generated names
+      # This is now faster because we identify columns to KEEP and subset once
+      # Patterns: "V1", "V2" (fread), "...XXXX" (readr), "X", "X.1" (base R), empty names
+      col_names <- names(dt)
+      valid_cols <- !grepl("^V\\d+$", col_names) &           # fread pattern: V1, V2, V3
+                    !grepl("^\\.\\.\\.", col_names) &        # readr pattern: ...15372
+                    !grepl("^X(\\.\\d+)?$", col_names) &     # base R pattern: X, X.1, X.2
+                    col_names != "" & !is.na(col_names)
+
+      removed_count <- sum(!valid_cols)
+      if (removed_count > 0) {
+        cat(file=stderr(), sprintf("[PERF] Removed %d empty/auto-named columns (keeping %d)\n",
             removed_count, sum(valid_cols)))
-        csv_data <- csv_data[, valid_cols, drop = FALSE]
+        csv_data <- dt[, valid_cols, drop = FALSE]
+      } else {
+        csv_data <- dt
       }
+
+      total_time <- as.numeric(difftime(Sys.time(), start_time, units = "secs"))
+      cat(file=stderr(), sprintf("[PERF] CSV load complete: %.3f sec total\n", total_time))
 
       values$csv_data <- csv_data
       # v107: Trigger heatmap UI regeneration when CSV data changes (new column choices)
