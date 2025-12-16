@@ -16843,8 +16843,9 @@ server <- function(input, output, session) {
 
         debug_cat(paste0("\n=================================================\n"))
       }, error = function(e) {
-        cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] ERROR in legend coord extraction: ", e$message, "\n"))
-        debug_cat(paste0("  v48: Error extracting legend coords: ", e$message, "\n"))
+        # S2.0-PERF: Suppress legend coord extraction errors - this is optional debug info
+        # and the error "missing value where TRUE/FALSE needed" is common with some scale types
+        # debug_cat(paste0("  v48: Error extracting legend coords: ", e$message, "\n"))
       })
 
       cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] CHECKPOINT B: After legend coord extraction, before temp file creation\n"))
