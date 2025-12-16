@@ -2726,17 +2726,16 @@ func.rotate.tree.based.on.weights <- function(tree_TRY, list_weight_dx.rx, list_
         cat(file=stderr(), paste0("\n[DEBUG-WEIGHT-ROT] Multifurcating node ", nod, " with ", length(children), " children\n"))
         cat(file=stderr(), paste0("[DEBUG-WEIGHT-ROT] Children indices: ", paste(children, collapse=", "), "\n"))
 
-        flag_need_to_fix <- TRUE
-        ix <- 1
-
         children_weights <- func.make.children.weight.list(children, nod, list_weights_for_nodes_dx.rx)
         children_weights_SECOND <- func.make.children.weight.list(children, nod, list_weights_for_nodes_frac)
 
         cat(file=stderr(), paste0("[DEBUG-WEIGHT-ROT] Children weights: ", paste(children_weights, collapse=", "), "\n"))
 
-        children_weights_ordered <- sort(children_weights)
-        cat(file=stderr(), paste0("[DEBUG-WEIGHT-ROT] Sorted weights (ascending): ", paste(children_weights_ordered, collapse=", "), "\n"))
+        # Sort DESCENDING to match binary node behavior (higher weight = left/top)
+        children_weights_ordered <- sort(children_weights, decreasing = TRUE)
+        cat(file=stderr(), paste0("[DEBUG-WEIGHT-ROT] Sorted weights (DESCENDING - high to low): ", paste(children_weights_ordered, collapse=", "), "\n"))
 
+        # Build destination mapping: dest[i] = which original position should go to position i
         dest <- c()
         for (i in 1:length(children)) {
           wh <- which(children_weights == children_weights_ordered[i])
@@ -2750,16 +2749,40 @@ func.rotate.tree.based.on.weights <- function(tree_TRY, list_weight_dx.rx, list_
         }
 
         cat(file=stderr(), paste0("[DEBUG-WEIGHT-ROT] Destination mapping (dest): ", paste(dest, collapse=", "), "\n"))
-        cat(file=stderr(), paste0("[DEBUG-WEIGHT-ROT] This means: position 1 gets child ", dest[1], ", position 2 gets child ", dest[2], ", etc.\n"))
+        cat(file=stderr(), paste0("[DEBUG-WEIGHT-ROT] This means: position 1 should have child from orig pos ", dest[1], ", pos 2 from orig pos ", dest[2], ", etc.\n"))
+
+        # Track which positions have been processed to avoid undoing swaps
+        processed <- rep(FALSE, length(children))
 
         for (i in 1:length(children)) {
-          cat(file=stderr(), paste0("[DEBUG-WEIGHT-ROT] Loop i=", i, ": children[", i, "]=", children[i], " vs children[dest[", i, "]]=children[", dest[i], "]=", children[dest[i]], "\n"))
-          if (children[i] == children[dest[i]]) {
-            cat(file=stderr(), paste0("[DEBUG-WEIGHT-ROT]   -> Same, no flip\n"))
-            # Don't flip
+          # Skip if this position was already processed (as part of a previous swap)
+          if (processed[i]) {
+            cat(file=stderr(), paste0("[DEBUG-WEIGHT-ROT] Loop i=", i, ": Already processed, skipping\n"))
+            next
+          }
+
+          target_pos <- dest[i]
+
+          if (i == target_pos) {
+            # Child is already in correct position
+            cat(file=stderr(), paste0("[DEBUG-WEIGHT-ROT] Loop i=", i, ": Child ", children[i], " already in correct position\n"))
+            processed[i] <- TRUE
           } else {
-            cat(file=stderr(), paste0("[DEBUG-WEIGHT-ROT]   -> Different, flipping ", children[i], " <-> ", children[dest[i]], "\n"))
-            tree_return <- flip(tree_return, children[i], children[dest[i]])
+            # Need to swap position i with position target_pos
+            cat(file=stderr(), paste0("[DEBUG-WEIGHT-ROT] Loop i=", i, ": Swapping children[", i, "]=", children[i], " <-> children[", target_pos, "]=", children[target_pos], "\n"))
+            tree_return <- flip(tree_return, children[i], children[target_pos])
+
+            # Mark both positions as processed
+            processed[i] <- TRUE
+            processed[target_pos] <- TRUE
+
+            # Update dest to reflect the swap (in case there are chained swaps)
+            # Find where target_pos was supposed to go and update it
+            for (j in (i+1):length(children)) {
+              if (j <= length(dest) && dest[j] == i) {
+                dest[j] <- target_pos
+              }
+            }
           }
         }
       }
