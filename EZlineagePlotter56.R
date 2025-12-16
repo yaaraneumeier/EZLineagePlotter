@@ -2722,18 +2722,25 @@ func.rotate.tree.based.on.weights <- function(tree_TRY, list_weight_dx.rx, list_
           tree_return <- flip(tree_return, children[1], children[2])
         }
       } else {
+        # Multifurcating node (more than 2 children)
+        cat(file=stderr(), paste0("\n[DEBUG-WEIGHT-ROT] Multifurcating node ", nod, " with ", length(children), " children\n"))
+        cat(file=stderr(), paste0("[DEBUG-WEIGHT-ROT] Children indices: ", paste(children, collapse=", "), "\n"))
+
         flag_need_to_fix <- TRUE
         ix <- 1
-        
+
         children_weights <- func.make.children.weight.list(children, nod, list_weights_for_nodes_dx.rx)
         children_weights_SECOND <- func.make.children.weight.list(children, nod, list_weights_for_nodes_frac)
-        
+
+        cat(file=stderr(), paste0("[DEBUG-WEIGHT-ROT] Children weights: ", paste(children_weights, collapse=", "), "\n"))
+
         children_weights_ordered <- sort(children_weights)
-        
+        cat(file=stderr(), paste0("[DEBUG-WEIGHT-ROT] Sorted weights (ascending): ", paste(children_weights_ordered, collapse=", "), "\n"))
+
         dest <- c()
         for (i in 1:length(children)) {
           wh <- which(children_weights == children_weights_ordered[i])
-          
+
           if (length(wh) > 1) {
             w <- wh[which(!wh %in% dest)[1]]
           } else {
@@ -2741,11 +2748,17 @@ func.rotate.tree.based.on.weights <- function(tree_TRY, list_weight_dx.rx, list_
           }
           dest <- c(dest, w)
         }
-        
+
+        cat(file=stderr(), paste0("[DEBUG-WEIGHT-ROT] Destination mapping (dest): ", paste(dest, collapse=", "), "\n"))
+        cat(file=stderr(), paste0("[DEBUG-WEIGHT-ROT] This means: position 1 gets child ", dest[1], ", position 2 gets child ", dest[2], ", etc.\n"))
+
         for (i in 1:length(children)) {
+          cat(file=stderr(), paste0("[DEBUG-WEIGHT-ROT] Loop i=", i, ": children[", i, "]=", children[i], " vs children[dest[", i, "]]=children[", dest[i], "]=", children[dest[i]], "\n"))
           if (children[i] == children[dest[i]]) {
+            cat(file=stderr(), paste0("[DEBUG-WEIGHT-ROT]   -> Same, no flip\n"))
             # Don't flip
           } else {
+            cat(file=stderr(), paste0("[DEBUG-WEIGHT-ROT]   -> Different, flipping ", children[i], " <-> ", children[dest[i]], "\n"))
             tree_return <- flip(tree_return, children[i], children[dest[i]])
           }
         }
