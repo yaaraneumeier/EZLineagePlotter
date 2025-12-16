@@ -12373,6 +12373,14 @@ server <- function(input, output, session) {
   # Update Preview button - SIMPLIFIED DEBUGGING
   observeEvent(input$update_highlight_preview, {
     cat(file=stderr(), paste0("\n[DEBUG-2ND-HIGHLIGHT] *** UPDATE_HIGHLIGHT_PREVIEW CLICKED at ", format(Sys.time(), "%H:%M:%OS3"), " ***\n"))
+
+    # S2.0-PERF: Skip if a plot was generated too recently (prevents queued clicks from cascading)
+    time_since_last <- as.numeric(Sys.time()) * 1000 - last_plot_time()
+    if (time_since_last < PLOT_COOLDOWN_MS) {
+      cat(file=stderr(), sprintf("[DEBUG-2ND-HIGHLIGHT]   Skipped - cooldown active (%.0fms since last plot)\n", time_since_last))
+      return(NULL)
+    }
+
     cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT]   enable_highlight=", input$enable_highlight, "\n"))
     cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT]   highlight_column=", input$highlight_column, "\n"))
     cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT]   highlight_values=", paste(input$highlight_values, collapse=", "), "\n"))
@@ -12835,27 +12843,34 @@ server <- function(input, output, session) {
   # v54: Auto-preview when settings change (if checkbox is enabled)
   # Use a reactive timer to debounce rapid changes
   auto_preview_timer <- reactiveVal(NULL)
-  
+
   observe({
     # Watch these inputs
     input$highlight_offset
     input$highlight_vertical_offset
     input$highlight_adjust_height
     input$highlight_adjust_width
-    
+
     # Only auto-update if checkbox is checked and we have highlight values
-    if (isTRUE(input$auto_preview_highlight) && 
-        !is.null(input$highlight_values) && 
+    if (isTRUE(input$auto_preview_highlight) &&
+        !is.null(input$highlight_values) &&
         length(input$highlight_values) > 0 &&
         !is.null(values$temp_highlight_preview)) {
-      
+
+      # S2.0-PERF: Skip if a plot was generated too recently (prevents cascading regeneration)
+      time_since_last <- as.numeric(Sys.time()) * 1000 - isolate(last_plot_time())
+      if (time_since_last < PLOT_COOLDOWN_MS) {
+        cat(file=stderr(), sprintf("[PERF] Auto-preview skipped - cooldown active (%.0fms since last plot)\n", time_since_last))
+        return()
+      }
+
       # Trigger preview update (same logic as update_highlight_preview button)
       isolate({
         values$temp_highlight_preview$offset <- input$highlight_offset
         values$temp_highlight_preview$vertical_offset <- input$highlight_vertical_offset
         values$temp_highlight_preview$adjust_height <- input$highlight_adjust_height
         values$temp_highlight_preview$adjust_width <- input$highlight_adjust_width
-        
+
         generate_plot()
       })
     }
@@ -16028,6 +16043,15 @@ server <- function(input, output, session) {
     cat(file=stderr(), "[PERF] generate_plot() called\n")
 
     # === GUARD CHECKS (S1.4-PERF: consolidated - removed duplicate guards) ===
+
+    # S2.0-PERF: Quick cooldown to prevent rapid consecutive calls (500ms)
+    # This catches cascading calls from multiple observers
+    time_since_last <- as.numeric(Sys.time()) * 1000 - last_plot_time()
+    if (time_since_last < 500 && time_since_last > 0) {  # >0 to allow first call
+      cat(file=stderr(), sprintf("[PERF] Skipping - rapid call (%.0fms since last plot)\n", time_since_last))
+      return(NULL)
+    }
+
     if (classification_loading()) {
       cat(file=stderr(), "[PERF] Skipping - classification UI loading\n")
       return(NULL)
