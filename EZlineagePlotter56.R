@@ -2773,23 +2773,34 @@ func.make.children.weight.list <- function(children, nod, tips_weight_list) {
 
 # Function to rotate specific nodes
 func.rotate.specific.nodes <- function(tree_TRY1, list_nodes_to_rotate) {
+  cat(file=stderr(), paste0("[DEBUG-ROTATION] func.rotate.specific.nodes called\n"))
+  cat(file=stderr(), paste0("[DEBUG-ROTATION] list_nodes_to_rotate = ", paste(list_nodes_to_rotate, collapse=", "), "\n"))
+  cat(file=stderr(), paste0("[DEBUG-ROTATION] is.null = ", is.null(list_nodes_to_rotate), ", length = ", length(list_nodes_to_rotate), "\n"))
+
   # Check if list_nodes_to_rotate is valid (not NA and has length > 0)
   if (!is.null(list_nodes_to_rotate) && length(list_nodes_to_rotate) > 0 && !all(is.na(list_nodes_to_rotate))) {
-    # v53: print("rotate specific nodes")
-    # v53: print(list_nodes_to_rotate)
+    cat(file=stderr(), paste0("[DEBUG-ROTATION] Entering rotation loop for nodes: ", paste(list_nodes_to_rotate, collapse=", "), "\n"))
     for (nod in list_nodes_to_rotate) {
       children <- which(tree_TRY1$data$parent == nod & tree_TRY1$data$node != nod)
-      # v53: print(children)
-      
+      cat(file=stderr(), paste0("[DEBUG-ROTATION] Node ", nod, " has ", length(children), " children: ", paste(children, collapse=", "), "\n"))
+
       if (length(children) < 2) {
-        tree_TRY1 <- flip(tree_TRY1, children[1], children[3]) # 321
-        tree_TRY1 <- flip(tree_TRY1, children[2], children[3])
-      } else {
+        cat(file=stderr(), paste0("[DEBUG-ROTATION] Skipping node ", nod, " - less than 2 children\n"))
+        # Cannot flip with less than 2 children - skip this node
+        next
+      } else if (length(children) == 2) {
+        cat(file=stderr(), paste0("[DEBUG-ROTATION] Flipping node ", nod, " children: ", children[1], " <-> ", children[2], "\n"))
         tree_TRY1 <- flip(tree_TRY1, children[1], children[2])
+      } else {
+        # Multifurcating node - flip first and last children
+        cat(file=stderr(), paste0("[DEBUG-ROTATION] Multifurcating node ", nod, " - flipping: ", children[1], " <-> ", children[length(children)], "\n"))
+        tree_TRY1 <- flip(tree_TRY1, children[1], children[length(children)])
       }
     }
+  } else {
+    cat(file=stderr(), paste0("[DEBUG-ROTATION] No valid nodes to rotate\n"))
   }
-  
+
   return(tree_TRY1)
 }
 
@@ -15869,6 +15880,9 @@ server <- function(input, output, session) {
   
   # Manual rotation apply button
   observeEvent(input$apply_manual_rotation, {
+    cat(file=stderr(), "\n[DEBUG-ROTATION] apply_manual_rotation button clicked\n")
+    cat(file=stderr(), paste0("[DEBUG-ROTATION] values$plot_ready = ", values$plot_ready, "\n"))
+    cat(file=stderr(), paste0("[DEBUG-ROTATION] input$nodes_to_rotate = ", paste(input$nodes_to_rotate, collapse=", "), "\n"))
     req(values$plot_ready, input$nodes_to_rotate)
     
     if (is.null(input$nodes_to_rotate) || length(input$nodes_to_rotate) == 0) {
@@ -16225,6 +16239,8 @@ server <- function(input, output, session) {
       # Call func.print.lineage.tree with the temp YAML file
       # v54: Wrap in suppressWarnings to suppress -Inf and other harmless warnings
       cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] CALLING func.print.lineage.tree at ", format(Sys.time(), "%H:%M:%OS3"), "\n"))
+      cat(file=stderr(), paste0("[DEBUG-ROTATION] values$manual_rotation_config = ", paste(values$manual_rotation_config, collapse=", "), "\n"))
+      cat(file=stderr(), paste0("[DEBUG-ROTATION] length(manual_rotation_config) = ", length(values$manual_rotation_config), "\n"))
       tree_result <- suppressWarnings(func.print.lineage.tree(
         conf_yaml_path = temp_yaml_file,
         width = width_val,
