@@ -9227,8 +9227,13 @@ server <- function(input, output, session) {
   # This prevents redundant recalculations when multiple inputs change rapidly.
   plot_trigger <- reactiveVal(0)
 
-  # S1.4-PERF: Debounced version of plot_trigger - batches rapid updates
-  plot_trigger_debounced <- debounce(reactive(plot_trigger()), 100)  # 100ms debounce
+  # S2.0-PERF: Increased debounce from 100ms to 500ms to better batch rapid changes
+  # and prevent cascading plot regenerations that can freeze the UI
+  plot_trigger_debounced <- debounce(reactive(plot_trigger()), 500)  # 500ms debounce
+
+  # S2.0-PERF: Cooldown mechanism - track when last plot finished to prevent rapid re-triggering
+  last_plot_time <- reactiveVal(0)
+  PLOT_COOLDOWN_MS <- 1000  # 1 second cooldown after plot generation
 
   # S1.4-PERF: Helper function to request plot regeneration (use instead of direct generate_plot())
   request_plot_update <- function() {
@@ -9307,6 +9312,14 @@ server <- function(input, output, session) {
   observeEvent(plot_trigger_debounced(), {
     req(values$plot_ready)  # Only regenerate if a plot exists
     req(plot_trigger() > 0)  # Ignore initial value
+
+    # S2.0-PERF: Cooldown check - skip if a plot was generated too recently
+    time_since_last <- as.numeric(Sys.time()) * 1000 - last_plot_time()
+    if (time_since_last < PLOT_COOLDOWN_MS) {
+      cat(file=stderr(), sprintf("[PERF] Debounced trigger skipped - cooldown active (%.0fms since last plot)\n", time_since_last))
+      return()
+    }
+
     cat(file=stderr(), "[PERF] Debounced plot trigger fired - regenerating plot\n")
     generate_plot()
   }, ignoreInit = TRUE)
@@ -17105,6 +17118,9 @@ server <- function(input, output, session) {
           values$plot_ready <- TRUE
           values$plot_counter <- values$plot_counter + 1  # Increment to force reactive update
           cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] plot_counter incremented to ", values$plot_counter, "\n"))
+
+          # S2.0-PERF: Set cooldown timer to prevent rapid re-triggering
+          last_plot_time(as.numeric(Sys.time()) * 1000)
 
           # Hide progress - plot is ready!
           values$progress_visible <- FALSE
