@@ -27,7 +27,7 @@ library(stats)
 library(gridExtra)
 library(cowplot)  # v144: For proper plot positioning using draw_plot
 library(jpeg)     # v144: For JPEG image overlay support
-library(data.table)  # S2.0-PERF: For fast CSV reading with fread()
+# Note: data.table removed due to function masking issues with dplyr
 library(combinat)
 library(infotheo)
 library(aricode)
@@ -10445,24 +10445,23 @@ server <- function(input, output, session) {
     
     # Read CSV file
     tryCatch({
-      # S2.0-PERF: Use data.table::fread() for 10-100x faster CSV reading
-      # fread() automatically handles various CSV formats and is highly optimized
+      # S2.0-PERF: Use readr::read_csv() for faster CSV reading (part of tidyverse)
+      # This is 5-10x faster than base read.csv() without the dplyr masking issues of data.table
       start_time <- Sys.time()
 
-      # Read with fread - much faster than read.csv
-      # drop = NULL reads all columns initially, we filter after
-      dt <- data.table::fread(csv_file$datapath, data.table = FALSE)
+      # Read with readr - faster than base R, no masking issues
+      # show_col_types = FALSE suppresses column type messages
+      csv_data_raw <- suppressMessages(readr::read_csv(csv_file$datapath, show_col_types = FALSE))
+      csv_data_raw <- as.data.frame(csv_data_raw)  # Convert tibble to data.frame for compatibility
 
       read_time <- as.numeric(difftime(Sys.time(), start_time, units = "secs"))
-      cat(file=stderr(), sprintf("[PERF] CSV read with fread(): %.3f sec (%d rows x %d cols)\n",
-          read_time, nrow(dt), ncol(dt)))
+      cat(file=stderr(), sprintf("[PERF] CSV read with readr: %.3f sec (%d rows x %d cols)\n",
+          read_time, nrow(csv_data_raw), ncol(csv_data_raw)))
 
       # S2.0-PERF: Filter out columns with empty/auto-generated names
-      # This is now faster because we identify columns to KEEP and subset once
-      # Patterns: "V1", "V2" (fread), "...XXXX" (readr), "X", "X.1" (base R), empty names
-      col_names <- names(dt)
-      valid_cols <- !grepl("^V\\d+$", col_names) &           # fread pattern: V1, V2, V3
-                    !grepl("^\\.\\.\\.", col_names) &        # readr pattern: ...15372
+      # Patterns: "...XXXX" (readr), "X", "X.1", "X.2" (base R), empty names
+      col_names <- names(csv_data_raw)
+      valid_cols <- !grepl("^\\.\\.\\.", col_names) &        # readr pattern: ...15372
                     !grepl("^X(\\.\\d+)?$", col_names) &     # base R pattern: X, X.1, X.2
                     col_names != "" & !is.na(col_names)
 
@@ -10470,9 +10469,9 @@ server <- function(input, output, session) {
       if (removed_count > 0) {
         cat(file=stderr(), sprintf("[PERF] Removed %d empty/auto-named columns (keeping %d)\n",
             removed_count, sum(valid_cols)))
-        csv_data <- dt[, valid_cols, drop = FALSE]
+        csv_data <- csv_data_raw[, valid_cols, drop = FALSE]
       } else {
-        csv_data <- dt
+        csv_data <- csv_data_raw
       }
 
       total_time <- as.numeric(difftime(Sys.time(), start_time, units = "secs"))
