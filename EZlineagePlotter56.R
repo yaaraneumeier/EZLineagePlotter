@@ -10445,23 +10445,23 @@ server <- function(input, output, session) {
     
     # Read CSV file
     tryCatch({
-      # S2.0-PERF: Use readr::read_csv() for faster CSV reading (part of tidyverse)
-      # This is 5-10x faster than base read.csv() without the dplyr masking issues of data.table
+      # S2.0-PERF: Use data.table::fread() for fast CSV reading
+      # We call it with :: to avoid loading the library and masking dplyr functions
       start_time <- Sys.time()
 
-      # Read with readr - faster than base R, no masking issues
-      # show_col_types = FALSE suppresses column type messages
-      csv_data_raw <- suppressMessages(readr::read_csv(csv_file$datapath, show_col_types = FALSE))
-      csv_data_raw <- as.data.frame(csv_data_raw)  # Convert tibble to data.frame for compatibility
+      # Read with fread - much faster than read.csv or readr
+      # data.table = FALSE returns a data.frame instead of data.table
+      csv_data_raw <- data.table::fread(csv_file$datapath, data.table = FALSE)
 
       read_time <- as.numeric(difftime(Sys.time(), start_time, units = "secs"))
-      cat(file=stderr(), sprintf("[PERF] CSV read with readr: %.3f sec (%d rows x %d cols)\n",
+      cat(file=stderr(), sprintf("[PERF] CSV read with fread(): %.3f sec (%d rows x %d cols)\n",
           read_time, nrow(csv_data_raw), ncol(csv_data_raw)))
 
       # S2.0-PERF: Filter out columns with empty/auto-generated names
-      # Patterns: "...XXXX" (readr), "X", "X.1", "X.2" (base R), empty names
+      # Patterns: "V1", "V2" (fread), "...XXXX" (readr), "X", "X.1", "X.2" (base R), empty names
       col_names <- names(csv_data_raw)
-      valid_cols <- !grepl("^\\.\\.\\.", col_names) &        # readr pattern: ...15372
+      valid_cols <- !grepl("^V\\d+$", col_names) &           # fread pattern: V1, V2, V3
+                    !grepl("^\\.\\.\\.", col_names) &        # readr pattern: ...15372
                     !grepl("^X(\\.\\d+)?$", col_names) &     # base R pattern: X, X.1, X.2
                     col_names != "" & !is.na(col_names)
 
