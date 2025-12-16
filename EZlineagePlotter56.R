@@ -10435,10 +10435,12 @@ server <- function(input, output, session) {
   
   # When CSV file is uploaded
   observeEvent(input$csv_file, {
+    cat(file=stderr(), "[DEBUG-CSV] CSV file observer triggered\n")
     req(input$csv_file)
-    
+
     csv_file <- input$csv_file
-    
+    cat(file=stderr(), sprintf("[DEBUG-CSV] File path: %s\n", csv_file$datapath))
+
     # Show progress
     values$progress_message <- "[FILE]  Loading CSV file..."
     values$progress_visible <- TRUE
@@ -10448,11 +10450,18 @@ server <- function(input, output, session) {
       # S2.0-PERF: Use data.table::fread() for fast CSV reading
       # We call it with :: to avoid loading the library and masking dplyr functions
       start_time <- Sys.time()
+      cat(file=stderr(), "[DEBUG-CSV] About to call fread()\n")
 
       # Read with fread - much faster than read.csv or readr
       # data.table = FALSE returns a data.frame instead of data.table
-      # check.names = TRUE matches read.csv() behavior (makes names syntactically valid)
-      csv_data_raw <- data.table::fread(csv_file$datapath, data.table = FALSE, check.names = TRUE)
+      # Note: We avoid check.names parameter for compatibility, then manually fix names
+      csv_data_raw <- data.table::fread(csv_file$datapath, data.table = FALSE)
+      cat(file=stderr(), "[DEBUG-CSV] fread() completed\n")
+
+      # Manually make names syntactically valid (like read.csv does with check.names=TRUE)
+      # This ensures column names work properly for classification coloring
+      names(csv_data_raw) <- make.names(names(csv_data_raw), unique = TRUE)
+      cat(file=stderr(), "[DEBUG-CSV] Column names validated\n")
 
       read_time <- as.numeric(difftime(Sys.time(), start_time, units = "secs"))
       cat(file=stderr(), sprintf("[PERF] CSV read with fread(): %.3f sec (%d rows x %d cols)\n",
@@ -10595,17 +10604,21 @@ server <- function(input, output, session) {
   # When tree file is uploaded
   # When tree file is uploaded
   observeEvent(input$tree_file, {
+    cat(file=stderr(), "[DEBUG-TREE] Tree file observer triggered\n")
     req(input$tree_file)
-    
+
     tree_file <- input$tree_file
-    
+    cat(file=stderr(), sprintf("[DEBUG-TREE] File path: %s\n", tree_file$datapath))
+
     # Show progress
     values$progress_message <- "📂 Loading tree file..."
     values$progress_visible <- TRUE
-    
+
     # Read tree file
     tryCatch({
+      cat(file=stderr(), "[DEBUG-TREE] About to call read.tree()\n")
       tree <- read.tree(tree_file$datapath)
+      cat(file=stderr(), "[DEBUG-TREE] read.tree() completed\n")
       values$tree <- tree
       # v56b: Suppress harmless fortify warnings
       values$tree_data <- suppressWarnings(ggtree(tree))$data
