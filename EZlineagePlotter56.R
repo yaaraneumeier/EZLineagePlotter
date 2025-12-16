@@ -10451,7 +10451,8 @@ server <- function(input, output, session) {
 
       # Read with fread - much faster than read.csv or readr
       # data.table = FALSE returns a data.frame instead of data.table
-      csv_data_raw <- data.table::fread(csv_file$datapath, data.table = FALSE)
+      # check.names = TRUE matches read.csv() behavior (makes names syntactically valid)
+      csv_data_raw <- data.table::fread(csv_file$datapath, data.table = FALSE, check.names = TRUE)
 
       read_time <- as.numeric(difftime(Sys.time(), start_time, units = "secs"))
       cat(file=stderr(), sprintf("[PERF] CSV read with fread(): %.3f sec (%d rows x %d cols)\n",
