@@ -17175,8 +17175,9 @@ server <- function(input, output, session) {
       cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] CHECKPOINT B: After legend coord extraction, before temp file creation\n"))
 
       # Create a unique temp file with timestamp to force browser refresh
-      temp_plot_file <- file.path(tempdir(), paste0("shiny_plot_", Sys.getpid(), "_", 
-                                                    format(Sys.time(), "%Y%m%d_%H%M%S_%OS3"), ".png"))
+      # S2.0-PERF: Use SVG for faster preview rendering
+      temp_plot_file <- file.path(tempdir(), paste0("shiny_plot_", Sys.getpid(), "_",
+                                                    format(Sys.time(), "%Y%m%d_%H%M%S_%OS3"), ".svg"))
       # v53: cat(file=stderr(), "Temp file path:", temp_plot_file, "\n")
       
       # Clean up old plot files to avoid accumulation
@@ -17541,7 +17542,7 @@ server <- function(input, output, session) {
     cat(file=stderr(), paste0("[RENDER] tree_preview returning image list\n"))
     list(
       src = values$temp_plot_file,
-      contentType = "image/png",
+      contentType = "image/svg+xml",
       width = "100%",
       alt = "Tree plot preview"
     )
@@ -17563,7 +17564,7 @@ server <- function(input, output, session) {
     
     list(
       src = values$temp_plot_file,
-      contentType = "image/png",
+      contentType = "image/svg+xml",
       width = "100%",
       alt = "Classification preview"
     )
@@ -17581,7 +17582,7 @@ server <- function(input, output, session) {
     
     list(
       src = values$temp_plot_file,
-      contentType = "image/png",
+      contentType = "image/svg+xml",
       width = "100%",
       alt = "Bootstrap preview"
     )
@@ -17599,7 +17600,7 @@ server <- function(input, output, session) {
     
     list(
       src = values$temp_plot_file,
-      contentType = "image/png",
+      contentType = "image/svg+xml",
       width = "100%",
       alt = "Highlight preview"
     )
@@ -17617,7 +17618,7 @@ server <- function(input, output, session) {
     
     list(
       src = values$temp_plot_file,
-      contentType = "image/png",
+      contentType = "image/svg+xml",
       width = "100%",
       alt = "Heatmap preview"
     )
@@ -17630,7 +17631,7 @@ server <- function(input, output, session) {
 
     list(
       src = values$temp_plot_file,
-      contentType = "image/png",
+      contentType = "image/svg+xml",
       width = "100%",
       alt = "Final preview"
     )
@@ -17643,7 +17644,7 @@ server <- function(input, output, session) {
 
     list(
       src = values$temp_plot_file,
-      contentType = "image/png",
+      contentType = "image/svg+xml",
       width = "100%",
       alt = "Legend preview"
     )
@@ -17656,7 +17657,7 @@ server <- function(input, output, session) {
 
     list(
       src = values$temp_plot_file,
-      contentType = "image/png",
+      contentType = "image/svg+xml",
       width = "100%",
       alt = "Extra preview"
     )
