@@ -12096,7 +12096,7 @@ server <- function(input, output, session) {
     })
     
     update_classification_values()
-  })
+  }, ignoreInit = TRUE)  # S2.0-PERF: Prevent firing on tab switch
   #}
   
   # Observer for Apply Palette button
@@ -12268,13 +12268,8 @@ server <- function(input, output, session) {
         tags$p(style = "color: #666;", "After selecting, you can customize color and settings for each value below.")
       )
     })
-  })
-  
-  
-  
-  
-  
-  
+  }, ignoreInit = TRUE)  # S2.0-PERF: Prevent firing on tab switch
+
   # Update when transparency changes
   observeEvent(input$highlight_transparency, {
     req(input$highlight_values)
@@ -12617,12 +12612,12 @@ server <- function(input, output, session) {
       tags$div(
         tags$p(tags$strong(paste("Available values:", length(unique_values)))),
         tags$p("Select values from the dropdown above to highlight them on the tree."),
-        tags$p(style = "color: #666; font-size: 0.9em;", 
+        tags$p(style = "color: #666; font-size: 0.9em;",
                "All selected values will use the color specified in the 'Highlight Color' picker on the left.")
       )
     })
-  })
-  
+  }, ignoreInit = TRUE)  # S2.0-PERF: Prevent firing on tab switch
+
   # Update highlight values settings when values are selected
   observeEvent(input$highlight_values, {
     req(input$highlight_column)
