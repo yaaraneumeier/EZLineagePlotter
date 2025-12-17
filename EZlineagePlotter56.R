@@ -8084,9 +8084,11 @@ ui <- dashboardPage(
                         choices = NULL),
             conditionalPanel(
               condition = "input.individual_column != null && input.individual_column != ''",
-              selectInput("individual_value", "Select Individual", 
-                          choices = NULL, 
-                          selected = NULL)
+              # S2.0-PERF: Use selectizeInput for server-side rendering with large option lists
+              selectizeInput("individual_value", "Select Individual",
+                          choices = NULL,
+                          selected = NULL,
+                          options = list(placeholder = "Select an individual..."))
             ),
             
             # Checkbox to ignore individual filtering
@@ -10567,7 +10569,7 @@ server <- function(input, output, session) {
     
     if (is.null(input$individual_column) || input$individual_column == "") {
       # v53: cat(file=stderr(), "No individual column selected\n")
-      updateSelectInput(session, "individual_value", choices = NULL, selected = NULL)
+      updateSelectizeInput(session, "individual_value", choices = NULL, selected = NULL, server = TRUE)
       return()
     }
     
@@ -10575,7 +10577,7 @@ server <- function(input, output, session) {
     if (!(input$individual_column %in% names(values$csv_data))) {
       # v53: cat(file=stderr(), paste("Column", input$individual_column, "not found in CSV\n"))
       showNotification(paste("Column not found:", input$individual_column), type = "warning")
-      updateSelectInput(session, "individual_value", choices = NULL, selected = NULL)
+      updateSelectizeInput(session, "individual_value", choices = NULL, selected = NULL, server = TRUE)
       return()
     }
     
@@ -10587,10 +10589,11 @@ server <- function(input, output, session) {
       # v53: cat(file=stderr(), paste("Found", length(unique_values), "unique values\n"))
       # v53: cat(file=stderr(), "Unique values:", paste(head(unique_values, 10), collapse=", "), "\n")
       
-      # Update individual value dropdown with these unique values
-      updateSelectInput(session, "individual_value", 
+      # S2.0-PERF: Use server-side selectize for large option lists (eliminates browser lag)
+      updateSelectizeInput(session, "individual_value",
                         choices = unique_values,
-                        selected = if(length(unique_values) > 0) unique_values[1] else NULL)
+                        selected = if(length(unique_values) > 0) unique_values[1] else NULL,
+                        server = TRUE)
       
       # Store the individual column name in the YAML structure
       if (!is.null(values$yaml_data)) {
