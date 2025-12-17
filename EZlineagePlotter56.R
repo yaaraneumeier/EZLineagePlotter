@@ -12374,12 +12374,8 @@ server <- function(input, output, session) {
   observeEvent(input$update_highlight_preview, {
     cat(file=stderr(), paste0("\n[DEBUG-2ND-HIGHLIGHT] *** UPDATE_HIGHLIGHT_PREVIEW CLICKED at ", format(Sys.time(), "%H:%M:%OS3"), " ***\n"))
 
-    # S2.0-PERF: Skip if a plot was generated too recently (prevents queued clicks from cascading)
-    time_since_last <- as.numeric(Sys.time()) * 1000 - last_plot_time()
-    if (time_since_last < PLOT_COOLDOWN_MS) {
-      cat(file=stderr(), sprintf("[DEBUG-2ND-HIGHLIGHT]   Skipped - cooldown active (%.0fms since last plot)\n", time_since_last))
-      return(NULL)
-    }
+    # NOTE: No cooldown check here - user button clicks should never be blocked
+    # Cooldown only applies to automatic/cascading triggers
 
     cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT]   enable_highlight=", input$enable_highlight, "\n"))
     cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT]   highlight_column=", input$highlight_column, "\n"))
