@@ -11184,13 +11184,25 @@ server <- function(input, output, session) {
               heatmap_item[[as.character(j)]]$label_mapping <- heatmap_entry$label_mapping
             }
 
-            # Add columns - format must match expected YAML structure
-            # Each column entry needs to be a named list like list("1" = "column_name")
-            if (!is.null(heatmap_entry$columns)) {
-              for (k in seq_along(heatmap_entry$columns)) {
-                column_entry <- list()
-                column_entry[[as.character(k)]] <- heatmap_entry$columns[k]
-                heatmap_item[[as.character(j)]]$according[[k]] <- column_entry
+            # S2.0-RDATA: Add data source for RData heatmaps (was missing - caused RData heatmaps to fail in custom classification path!)
+            # Note: cnv_matrix is NOT serialized to YAML - it's passed as a parameter to func.print.lineage.tree
+            if (!is.null(heatmap_entry$data_source) && heatmap_entry$data_source == "rdata") {
+              heatmap_item[[as.character(j)]]$data_source <- "rdata"
+              heatmap_item[[as.character(j)]]$use_midpoint <- "yes"  # Always use midpoint for CNV
+              # Store CNV settings (but NOT the matrix itself - that's passed separately)
+              heatmap_item[[as.character(j)]]$cnv_downsample <- if (!is.null(heatmap_entry$cnv_downsample)) heatmap_entry$cnv_downsample else 10
+              heatmap_item[[as.character(j)]]$cnv_wgd_norm <- if (!is.null(heatmap_entry$cnv_wgd_norm) && heatmap_entry$cnv_wgd_norm) "yes" else "no"
+              debug_cat(paste0("    S2.0-RDATA: RData heatmap (CNV matrix passed via parameter)\n"))
+            } else {
+              heatmap_item[[as.character(j)]]$data_source <- "csv"
+              # Add columns - format must match expected YAML structure
+              # Each column entry needs to be a named list like list("1" = "column_name")
+              if (!is.null(heatmap_entry$columns)) {
+                for (k in seq_along(heatmap_entry$columns)) {
+                  column_entry <- list()
+                  column_entry[[as.character(k)]] <- heatmap_entry$columns[k]
+                  heatmap_item[[as.character(j)]]$according[[k]] <- column_entry
+                }
               }
             }
 
