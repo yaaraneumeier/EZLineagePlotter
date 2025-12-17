@@ -3992,10 +3992,12 @@ func.print.lineage.tree <- function(conf_yaml_path,
                 cnv_samples <- rownames(cnv_data)
                 cat(file=stderr(), paste0("[HEATMAP-RENDER] CNV samples (first 5): ", paste(head(cnv_samples, 5), collapse=", "), "\n"))
 
-                # S1.62dev: Improved matching - try multiple strategies
-                # Strategy 1: Direct match (tree tip == CNV sample name)
-                # Strategy 2: Use CSV data to create a mapping (tree tip ID -> sample name column)
+                # S2.0-RDATA: Enhanced matching with multiple strategies
+                # Strategy 1: Use CSV data to create a mapping (tree tip ID -> sample name column)
+                # Strategy 2: Direct match (tree tip == CNV sample name)
                 # Strategy 3: Partial matching (CNV sample contains tree tip or vice versa)
+                # Strategy 4: Numeric extraction - extract numbers from CNV samples and try to match
+                # Strategy 5: Flexible partial matching with cleaned identifiers
 
                 # Create mapping: find which CNV samples match which tree tips
                 matched_cnv <- data.frame(matrix(NA, nrow = length(tree_tips), ncol = ncol(cnv_data)))
@@ -4008,17 +4010,42 @@ func.print.lineage.tree <- function(conf_yaml_path,
                 csv_mapping <- NULL
                 if (exists("readfile440") && !is.null(readfile440) && nrow(readfile440) > 0) {
                   cat(file=stderr(), "[HEATMAP-RENDER] Searching CSV for mapping column...\n")
-                  cat(file=stderr(), paste0("[HEATMAP-RENDER] CSV columns: ", paste(head(names(readfile440), 10), collapse=", "), "...\n"))
+                  cat(file=stderr(), paste0("[HEATMAP-RENDER] CSV columns (all): ", paste(names(readfile440), collapse=", "), "\n"))
+                  cat(file=stderr(), paste0("[HEATMAP-RENDER] ID column '", title.id, "' values (first 5): ", paste(head(as.character(readfile440[[title.id]]), 5), collapse=", "), "\n"))
 
                   # Look for a column that contains values matching CNV sample names
                   for (col_name in names(readfile440)) {
                     col_vals <- as.character(readfile440[[col_name]])
-                    # Check if any CNV sample names appear in this column
+                    # Check if any CNV sample names appear in this column (exact match)
                     matches_in_col <- sum(cnv_samples %in% col_vals)
                     if (matches_in_col > 0) {
-                      cat(file=stderr(), paste0("[HEATMAP-RENDER] Found potential mapping column '", col_name, "' with ", matches_in_col, " matches\n"))
+                      cat(file=stderr(), paste0("[HEATMAP-RENDER] Found potential mapping column '", col_name, "' with ", matches_in_col, " exact matches\n"))
                       if (is.null(csv_mapping) || matches_in_col > csv_mapping$count) {
                         csv_mapping <- list(column = col_name, count = matches_in_col)
+                      }
+                    }
+                    # S2.0-RDATA: Also check for partial matches (column values contained in CNV sample names)
+                    if (matches_in_col == 0 && col_name != title.id) {
+                      partial_matches <- 0
+                      unique_vals <- unique(col_vals[!is.na(col_vals) & col_vals != ""])
+                      if (length(unique_vals) > 0 && length(unique_vals) < 500) {  # Only check if reasonable number of unique values
+                        for (val in unique_vals) {
+                          if (nchar(val) >= 3) {  # Only match if value is at least 3 chars
+                            for (cnv_s in cnv_samples) {
+                              if (grepl(val, cnv_s, fixed = TRUE)) {
+                                partial_matches <- partial_matches + 1
+                                break
+                              }
+                            }
+                          }
+                        }
+                      }
+                      if (partial_matches > 0) {
+                        cat(file=stderr(), paste0("[HEATMAP-RENDER] Column '", col_name, "' has ", partial_matches, " values that appear as substrings in CNV sample names\n"))
+                        cat(file=stderr(), paste0("[HEATMAP-RENDER]   Column sample values: ", paste(head(unique_vals, 5), collapse=", "), "\n"))
+                        if (partial_matches > 5 && (is.null(csv_mapping) || partial_matches > csv_mapping$count)) {
+                          csv_mapping <- list(column = col_name, count = partial_matches, partial = TRUE)
+                        }
                       }
                     }
                   }
@@ -4034,17 +4061,31 @@ func.print.lineage.tree <- function(conf_yaml_path,
                     cat(file=stderr(), paste0("[HEATMAP-RENDER] ID column '", title.id, "' values (first 5): ", paste(head(id_col_vals, 5), collapse=", "), "\n"))
                     cat(file=stderr(), paste0("[HEATMAP-RENDER] Sample column '", csv_mapping$column, "' values (first 5): ", paste(head(sample_col_vals, 5), collapse=", "), "\n"))
 
+                    is_partial <- !is.null(csv_mapping$partial) && csv_mapping$partial
+
                     for (i in seq_along(tree_tips)) {
                       tip <- tree_tips[i]
                       # Find this tree tip in the CSV ID column
                       csv_row <- which(id_col_vals == tip)
                       if (length(csv_row) > 0) {
                         # Get the corresponding sample name from the mapping column
-                        sample_name <- sample_col_vals[csv_row[1]]
-                        # Look up this sample name in the CNV data
-                        if (sample_name %in% cnv_samples) {
-                          matched_cnv[tip, ] <- as.numeric(cnv_data[sample_name, ])
-                          matches_found <- matches_found + 1
+                        sample_val <- sample_col_vals[csv_row[1]]
+
+                        if (is_partial) {
+                          # For partial matches, find the CNV sample that contains this value
+                          for (cnv_s in cnv_samples) {
+                            if (grepl(sample_val, cnv_s, fixed = TRUE)) {
+                              matched_cnv[tip, ] <- as.numeric(cnv_data[cnv_s, ])
+                              matches_found <- matches_found + 1
+                              break
+                            }
+                          }
+                        } else {
+                          # Exact match
+                          if (sample_val %in% cnv_samples) {
+                            matched_cnv[tip, ] <- as.numeric(cnv_data[sample_val, ])
+                            matches_found <- matches_found + 1
+                          }
                         }
                       }
                     }
@@ -4054,6 +4095,7 @@ func.print.lineage.tree <- function(conf_yaml_path,
 
                 # If CSV mapping didn't find everything, try direct matching
                 if (matches_found < length(tree_tips)) {
+                  cat(file=stderr(), "[HEATMAP-RENDER] Trying direct and partial matching...\n")
                   for (tip in tree_tips) {
                     if (all(is.na(matched_cnv[tip, ]))) {  # Only if not already matched
                       # Try exact match
@@ -4061,7 +4103,7 @@ func.print.lineage.tree <- function(conf_yaml_path,
                         matched_cnv[tip, ] <- as.numeric(cnv_data[tip, ])
                         matches_found <- matches_found + 1
                       } else {
-                        # Try partial matching - CNV sample contains tree tip
+                        # Try partial matching - CNV sample contains tree tip or vice versa
                         for (cnv_s in cnv_samples) {
                           if (grepl(tip, cnv_s, fixed = TRUE) || grepl(cnv_s, tip, fixed = TRUE)) {
                             matched_cnv[tip, ] <- as.numeric(cnv_data[cnv_s, ])
@@ -4072,6 +4114,16 @@ func.print.lineage.tree <- function(conf_yaml_path,
                       }
                     }
                   }
+                }
+
+                # S2.0-RDATA: If still no matches, show diagnostic info to help user
+                if (matches_found == 0) {
+                  cat(file=stderr(), "\n[HEATMAP-RENDER] *** WARNING: NO MATCHES FOUND ***\n")
+                  cat(file=stderr(), "[HEATMAP-RENDER] This means the CNV sample names don't match tree tip labels.\n")
+                  cat(file=stderr(), "[HEATMAP-RENDER] To fix this, your CSV needs a column that maps tree tip IDs to CNV sample names.\n")
+                  cat(file=stderr(), "[HEATMAP-RENDER] Tree tip labels (samples): ", paste(head(tree_tips, 10), collapse=", "), "...\n")
+                  cat(file=stderr(), "[HEATMAP-RENDER] CNV sample names: ", paste(head(cnv_samples, 10), collapse=", "), "...\n")
+                  cat(file=stderr(), "[HEATMAP-RENDER] Add a column to your CSV that contains the CNV sample names, with rows matching your ID column.\n\n")
                 }
 
                 cat(file=stderr(), paste0("[HEATMAP-RENDER] Matched ", matches_found, " out of ", length(tree_tips), " tree tips to CNV data\n"))
