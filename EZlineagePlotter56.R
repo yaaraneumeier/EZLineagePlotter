@@ -3993,6 +3993,7 @@ func.print.lineage.tree <- function(conf_yaml_path,
                 cat(file=stderr(), paste0("[HEATMAP-RENDER] CNV samples (first 5): ", paste(head(cnv_samples, 5), collapse=", "), "\n"))
 
                 # S2.0-RDATA: Enhanced matching with multiple strategies
+                # Strategy 0: Use user-selected mapping column (if specified)
                 # Strategy 1: Use CSV data to create a mapping (tree tip ID -> sample name column)
                 # Strategy 2: Direct match (tree tip == CNV sample name)
                 # Strategy 3: Partial matching (CNV sample contains tree tip or vice versa)
@@ -4006,10 +4007,89 @@ func.print.lineage.tree <- function(conf_yaml_path,
 
                 matches_found <- 0
 
-                # First, try to find a mapping column in the CSV data
+                # S2.0-RDATA: Smart normalization function for comparing sample names
+                # Handles common differences like "-" vs ".", leading "X", case differences
+                smart_normalize <- function(x) {
+                  x <- as.character(x)
+                  x <- gsub("[._-]", "", x)   # Remove common separators
+                  x <- gsub("^X", "", x)       # Remove leading X (R adds this to numeric column names)
+                  tolower(x)
+                }
+
+                # S2.0-RDATA: Check if user specified a mapping column
+                user_mapping_column <- NULL
+                if ('rdata_mapping_column' %in% names(heat_map_i_def) &&
+                    !is.null(heat_map_i_def$rdata_mapping_column) &&
+                    heat_map_i_def$rdata_mapping_column != "") {
+                  user_mapping_column <- heat_map_i_def$rdata_mapping_column
+                  cat(file=stderr(), paste0("[HEATMAP-RENDER] User specified mapping column: '", user_mapping_column, "'\n"))
+                }
+
+                # First, try user-specified mapping column with smart matching
                 csv_mapping <- NULL
-                if (exists("readfile440") && !is.null(readfile440) && nrow(readfile440) > 0) {
-                  cat(file=stderr(), "[HEATMAP-RENDER] Searching CSV for mapping column...\n")
+                if (!is.null(user_mapping_column) && exists("readfile440") && !is.null(readfile440) && nrow(readfile440) > 0) {
+                  cat(file=stderr(), paste0("[HEATMAP-RENDER] Using user-specified mapping column '", user_mapping_column, "' with smart matching\n"))
+
+                  if (user_mapping_column %in% names(readfile440)) {
+                    id_col_vals <- as.character(readfile440[[title.id]])
+                    sample_col_vals <- as.character(readfile440[[user_mapping_column]])
+
+                    cat(file=stderr(), paste0("[HEATMAP-RENDER] ID column '", title.id, "' values (first 5): ", paste(head(id_col_vals, 5), collapse=", "), "\n"))
+                    cat(file=stderr(), paste0("[HEATMAP-RENDER] Mapping column '", user_mapping_column, "' values (first 5): ", paste(head(sample_col_vals, 5), collapse=", "), "\n"))
+
+                    # Pre-normalize CNV sample names for smart matching
+                    cnv_samples_normalized <- smart_normalize(cnv_samples)
+                    names(cnv_samples_normalized) <- cnv_samples  # Keep original names as names
+
+                    for (i in seq_along(tree_tips)) {
+                      tip <- tree_tips[i]
+                      # Find this tree tip in the CSV ID column
+                      csv_row <- which(id_col_vals == tip)
+                      if (length(csv_row) > 0) {
+                        # Get the corresponding sample name from the mapping column
+                        sample_val <- sample_col_vals[csv_row[1]]
+                        if (!is.na(sample_val) && sample_val != "") {
+                          sample_val_normalized <- smart_normalize(sample_val)
+
+                          # Try exact match first
+                          if (sample_val %in% cnv_samples) {
+                            matched_cnv[tip, ] <- as.numeric(cnv_data[sample_val, ])
+                            matches_found <- matches_found + 1
+                          } else {
+                            # Try smart normalized match
+                            match_idx <- which(cnv_samples_normalized == sample_val_normalized)
+                            if (length(match_idx) > 0) {
+                              matched_sample <- cnv_samples[match_idx[1]]
+                              matched_cnv[tip, ] <- as.numeric(cnv_data[matched_sample, ])
+                              matches_found <- matches_found + 1
+                            } else {
+                              # Try partial match - CNV sample contains the mapping value or vice versa
+                              for (j in seq_along(cnv_samples)) {
+                                cnv_s <- cnv_samples[j]
+                                cnv_s_norm <- cnv_samples_normalized[j]
+                                if (grepl(sample_val_normalized, cnv_s_norm, fixed = TRUE) ||
+                                    grepl(cnv_s_norm, sample_val_normalized, fixed = TRUE)) {
+                                  matched_cnv[tip, ] <- as.numeric(cnv_data[cnv_s, ])
+                                  matches_found <- matches_found + 1
+                                  break
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                    cat(file=stderr(), paste0("[HEATMAP-RENDER] After user-specified mapping (smart match): ", matches_found, " matches\n"))
+                    csv_mapping <- list(column = user_mapping_column, count = matches_found, user_specified = TRUE)
+                  } else {
+                    cat(file=stderr(), paste0("[HEATMAP-RENDER] WARNING: User-specified column '", user_mapping_column, "' not found in CSV\n"))
+                    cat(file=stderr(), paste0("[HEATMAP-RENDER] Available columns: ", paste(names(readfile440), collapse=", "), "\n"))
+                  }
+                }
+
+                # If no user-specified column or it didn't work, try auto-detection
+                if (is.null(csv_mapping) && exists("readfile440") && !is.null(readfile440) && nrow(readfile440) > 0) {
+                  cat(file=stderr(), "[HEATMAP-RENDER] Auto-detecting mapping column in CSV...\n")
                   cat(file=stderr(), paste0("[HEATMAP-RENDER] CSV columns (all): ", paste(names(readfile440), collapse=", "), "\n"))
                   cat(file=stderr(), paste0("[HEATMAP-RENDER] ID column '", title.id, "' values (first 5): ", paste(head(as.character(readfile440[[title.id]]), 5), collapse=", "), "\n"))
 
@@ -4050,9 +4130,9 @@ func.print.lineage.tree <- function(conf_yaml_path,
                     }
                   }
 
-                  # Use the best mapping column if found
+                  # Use the best auto-detected mapping column if found
                   if (!is.null(csv_mapping) && csv_mapping$count > 0) {
-                    cat(file=stderr(), paste0("[HEATMAP-RENDER] Using CSV column '", csv_mapping$column, "' for mapping\n"))
+                    cat(file=stderr(), paste0("[HEATMAP-RENDER] Using auto-detected CSV column '", csv_mapping$column, "' for mapping\n"))
 
                     # Create a mapping from tree tip (ID column) to sample name
                     id_col_vals <- as.character(readfile440[[title.id]])
@@ -4089,7 +4169,7 @@ func.print.lineage.tree <- function(conf_yaml_path,
                         }
                       }
                     }
-                    cat(file=stderr(), paste0("[HEATMAP-RENDER] After CSV mapping: ", matches_found, " matches\n"))
+                    cat(file=stderr(), paste0("[HEATMAP-RENDER] After auto-detected CSV mapping: ", matches_found, " matches\n"))
                   }
                 }
 
@@ -9225,6 +9305,8 @@ server <- function(input, output, session) {
     rdata_cnv_matrix = NULL,    # Processed CNV matrix (rows=positions, cols=samples)
     rdata_import_status = NULL, # Status message for RData import
     rdata_sample_names = NULL,  # Sample names from RData (column names)
+    rdata_auto_match = FALSE,   # S2.0: Whether RData samples auto-match tree tips
+    rdata_mapping_column = NULL, # S2.0: User-selected CSV column for RData sample mapping
     # v121: Legend settings
     # S1.5: Added all missing defaults for proper legend styling
     legend_settings = list(
@@ -9697,7 +9779,46 @@ server <- function(input, output, session) {
     cat(file=stderr(), "[RDATA-IMPORT] Sample names:", paste(head(result$sample_names, 5), collapse=", "),
         if(length(result$sample_names) > 5) "..." else "", "\n")
 
-    # S1.62dev: Build status message including chromosome info
+    # S2.0: Check auto-match - do RData sample names match tree tip labels?
+    tree_tips <- values$tree$tip.label
+    rdata_samples <- result$sample_names
+
+    # Smart match function - normalizes strings for comparison
+    smart_normalize <- function(x) {
+      x <- gsub("[._-]", "", x)  # Remove common separators
+      x <- gsub("^X", "", x)      # Remove leading X (R adds this to numeric column names)
+      tolower(x)
+    }
+
+    # Try different matching strategies
+    auto_match_count <- 0
+    tree_tips_norm <- smart_normalize(tree_tips)
+    rdata_samples_norm <- smart_normalize(rdata_samples)
+
+    # Strategy 1: Exact match after normalization
+    auto_match_count <- sum(tree_tips_norm %in% rdata_samples_norm)
+
+    # Strategy 2: Substring match (RData sample contains tree tip or vice versa)
+    if (auto_match_count < length(tree_tips) * 0.5) {
+      for (tip in tree_tips_norm) {
+        for (rs in rdata_samples_norm) {
+          if (grepl(tip, rs, fixed = TRUE) || grepl(rs, tip, fixed = TRUE)) {
+            auto_match_count <- auto_match_count + 1
+            break
+          }
+        }
+      }
+    }
+
+    auto_match_success <- auto_match_count >= length(tree_tips) * 0.5  # At least 50% match
+    values$rdata_auto_match <- auto_match_success
+    values$rdata_mapping_column <- NULL  # Reset mapping column
+
+    cat(file=stderr(), paste0("[RDATA-IMPORT] Auto-match check: ", auto_match_count, "/", length(tree_tips),
+                              " tips match (", round(auto_match_count/length(tree_tips)*100, 1), "%)\n"))
+    cat(file=stderr(), paste0("[RDATA-IMPORT] Auto-match success: ", auto_match_success, "\n"))
+
+    # S2.0: Build enhanced status message with sample names
     status_msg <- paste0(
       "✅ CNV data loaded successfully!\n",
       "Samples: ", result$n_samples, "\n",
@@ -9707,8 +9828,21 @@ server <- function(input, output, session) {
       unique_chrs <- unique(result$chr_info)
       status_msg <- paste0(status_msg, "\nChromosomes: ", paste(unique_chrs, collapse=", "))
     } else {
-      status_msg <- paste0(status_msg, "\nChromosome info: Not available in this RData file")
+      status_msg <- paste0(status_msg, "\nChromosome info: Not available")
     }
+
+    # Add sample names preview
+    sample_preview <- paste(head(result$sample_names, 5), collapse=", ")
+    if (length(result$sample_names) > 5) sample_preview <- paste0(sample_preview, ", ...")
+    status_msg <- paste0(status_msg, "\n\n📋 Sample names (first 5):\n", sample_preview)
+
+    # Add auto-match status
+    if (auto_match_success) {
+      status_msg <- paste0(status_msg, "\n\n✅ AUTO-MATCH SUCCESS!\nRData samples match tree tips - ready to use!")
+    } else {
+      status_msg <- paste0(status_msg, "\n\n⚠️ MANUAL MAPPING NEEDED\nRData samples don't match tree tips.\nSelect a mapping column in the Heatmap settings.")
+    }
+
     values$rdata_import_status <- status_msg
 
     values$progress_visible <- FALSE
@@ -11244,7 +11378,9 @@ server <- function(input, output, session) {
               # Store CNV settings (but NOT the matrix itself - that's passed separately)
               heatmap_item[[as.character(j)]]$cnv_downsample <- if (!is.null(heatmap_entry$cnv_downsample)) heatmap_entry$cnv_downsample else 10
               heatmap_item[[as.character(j)]]$cnv_wgd_norm <- if (!is.null(heatmap_entry$cnv_wgd_norm) && heatmap_entry$cnv_wgd_norm) "yes" else "no"
-              debug_cat(paste0("    S2.0-RDATA: RData heatmap (CNV matrix passed via parameter)\n"))
+              # S2.0: Store mapping column for sample name matching
+              heatmap_item[[as.character(j)]]$rdata_mapping_column <- heatmap_entry$rdata_mapping_column
+              debug_cat(paste0("    S2.0-RDATA: RData heatmap, mapping_column=", heatmap_entry$rdata_mapping_column, "\n"))
             } else {
               heatmap_item[[as.character(j)]]$data_source <- "csv"
               # Add columns - format must match expected YAML structure
@@ -11484,7 +11620,9 @@ server <- function(input, output, session) {
             # Store CNV settings (but NOT the matrix itself - that's passed separately)
             heatmap_item[[as.character(j)]]$cnv_downsample <- if (!is.null(heatmap_entry$cnv_downsample)) heatmap_entry$cnv_downsample else 10
             heatmap_item[[as.character(j)]]$cnv_wgd_norm <- if (!is.null(heatmap_entry$cnv_wgd_norm) && heatmap_entry$cnv_wgd_norm) "yes" else "no"
-            debug_cat(paste0("    S1.62dev: RData heatmap (CNV matrix passed via parameter)\n"))
+            # S2.0: Store mapping column for sample name matching
+            heatmap_item[[as.character(j)]]$rdata_mapping_column <- heatmap_entry$rdata_mapping_column
+            debug_cat(paste0("    S2.0: RData heatmap, mapping_column=", heatmap_entry$rdata_mapping_column, "\n"))
           } else {
             heatmap_item[[as.character(j)]]$data_source <- "csv"
             # Add columns - format must match expected YAML structure
@@ -13456,6 +13594,12 @@ server <- function(input, output, session) {
                                  value = if (!is.null(cfg$cnv_wgd_norm)) cfg$cnv_wgd_norm else FALSE)
             )
           ),
+          # S2.0: Sample mapping column selector (shown when auto-match fails)
+          fluidRow(
+            column(12,
+                   uiOutput(paste0("heatmap_rdata_mapping_ui_", i))
+            )
+          ),
           fluidRow(
             column(12,
                    tags$div(
@@ -13463,7 +13607,7 @@ server <- function(input, output, session) {
                      tags$small(
                        icon("info-circle"),
                        " CNV data will be displayed from the loaded RData file. ",
-                       "Default color scale: Blue (loss) - White (neutral) - Red (gain)."
+                       "Default color scale: Red (loss) - White (neutral) - Blue (gain)."
                      )
                    )
             )
@@ -14939,6 +15083,93 @@ server <- function(input, output, session) {
     })
   })
 
+  # S2.0: Render RData sample mapping column selector
+  # Shows when auto-match fails and user needs to select which CSV column has the sample names
+  observe({
+    lapply(1:6, function(i) {
+      output[[paste0("heatmap_rdata_mapping_ui_", i)]] <- renderUI({
+        # Only show for RData data source
+        data_source <- input[[paste0("heatmap_data_source_", i)]]
+        if (is.null(data_source) || data_source != "rdata") {
+          return(NULL)
+        }
+
+        # Check if RData is loaded
+        if (is.null(values$rdata_cnv_matrix)) {
+          return(tags$div(
+            style = "background: #fff3cd; padding: 10px; border-radius: 5px; margin-bottom: 10px;",
+            icon("exclamation-triangle"),
+            " Please load an RData CNV file first (Data Import tab)"
+          ))
+        }
+
+        # Check auto-match status
+        if (isTRUE(values$rdata_auto_match)) {
+          # Auto-match succeeded - show success message
+          return(tags$div(
+            style = "background: #d4edda; padding: 10px; border-radius: 5px; margin-bottom: 10px;",
+            icon("check-circle"),
+            " RData samples auto-matched to tree tips - ready to use!"
+          ))
+        }
+
+        # Auto-match failed - show dropdown for manual mapping
+        # Get CSV column names
+        csv_cols <- if (!is.null(values$csv_data)) names(values$csv_data) else character(0)
+
+        # Show RData sample names preview and mapping dropdown
+        sample_preview <- paste(head(values$rdata_sample_names, 3), collapse=", ")
+        if (length(values$rdata_sample_names) > 3) {
+          sample_preview <- paste0(sample_preview, ", ...")
+        }
+
+        tags$div(
+          style = "background: #fff3cd; padding: 10px; border-radius: 5px; margin-bottom: 10px;",
+          tags$div(
+            style = "margin-bottom: 8px;",
+            icon("exclamation-triangle"),
+            tags$strong(" Manual mapping needed"),
+            tags$br(),
+            tags$small(
+              style = "color: #856404;",
+              "RData sample names (", sample_preview, ") don't match tree tip labels."
+            )
+          ),
+          fluidRow(
+            column(8,
+                   selectInput(paste0("heatmap_rdata_mapping_col_", i),
+                               "Select CSV column with sample names:",
+                               choices = c("-- Select a column --" = "", csv_cols),
+                               selected = if (!is.null(values$rdata_mapping_column)) values$rdata_mapping_column else "")
+            ),
+            column(4,
+                   tags$div(
+                     style = "padding-top: 25px;",
+                     tags$small(
+                       class = "text-muted",
+                       "Choose the column that maps tree IDs to RData sample names"
+                     )
+                   )
+            )
+          )
+        )
+      })
+    })
+  })
+
+  # S2.0: Observer to update rdata_mapping_column when user selects a column
+  observe({
+    lapply(1:6, function(i) {
+      observeEvent(input[[paste0("heatmap_rdata_mapping_col_", i)]], {
+        selected_col <- input[[paste0("heatmap_rdata_mapping_col_", i)]]
+        if (!is.null(selected_col) && selected_col != "") {
+          values$rdata_mapping_column <- selected_col
+          cat(file=stderr(), paste0("[RDATA-MAPPING] User selected mapping column: '", selected_col, "'\n"))
+        }
+      }, ignoreInit = TRUE, ignoreNULL = TRUE)
+    })
+  })
+
   # v70: Render discrete color pickers for each heatmap - with NA color and dropdown menus
   observe({
     lapply(1:6, function(i) {
@@ -15189,6 +15420,15 @@ server <- function(input, output, session) {
         cat(file=stderr(), paste0("[DEBUG-COLOR] cfg$mid_color = ", ifelse(is.null(cfg$mid_color), "NULL", cfg$mid_color), "\n"))
         cat(file=stderr(), paste0("[DEBUG-COLOR] cfg$high_color = ", ifelse(is.null(cfg$high_color), "NULL", cfg$high_color), "\n"))
         cat(file=stderr(), paste0("[DEBUG-COLLINES] show_col_lines input = ", ifelse(is.null(input[[paste0("heatmap_show_col_lines_", i)]]), "NULL", input[[paste0("heatmap_show_col_lines_", i)]]), "\n"))
+        # S2.0: Get the mapping column (user-selected CSV column for sample name mapping)
+        mapping_column <- input[[paste0("heatmap_rdata_mapping_col_", i)]]
+        if (is.null(mapping_column) || mapping_column == "") {
+          # Fall back to values$rdata_mapping_column if not set for this heatmap
+          mapping_column <- values$rdata_mapping_column
+        }
+        cat(file=stderr(), paste0("[DEBUG-RDATA] Mapping column for heatmap ", i, ": '",
+                                  ifelse(is.null(mapping_column), "NULL", mapping_column), "'\n"))
+
         heatmap_entry <- list(
           title = cfg$title,
           is_discrete = FALSE,  # CNV data is always continuous
@@ -15196,6 +15436,8 @@ server <- function(input, output, session) {
           # Store CNV settings (processing happens in func.print.lineage.tree)
           cnv_downsample = cnv_downsample,
           cnv_wgd_norm = cnv_wgd_norm,
+          # S2.0: Store mapping column for sample name matching
+          rdata_mapping_column = mapping_column,
           columns = character(0),  # No columns for RData - data comes from parameter
           show_colnames = if (!is.null(cfg$show_colnames)) cfg$show_colnames else FALSE,  # Usually too many columns
           colnames_angle = if (!is.null(cfg$colnames_angle)) cfg$colnames_angle else 90,
