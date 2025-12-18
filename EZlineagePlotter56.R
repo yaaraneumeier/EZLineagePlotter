@@ -1276,6 +1276,36 @@ func.create.new_colors_list <- function(FDR_perc, tree_TRY, tree_with_group, no_
 }
 
 
+# S2.0-PERF: Create hash for p_list_of_pairs caching (Option 3A)
+# This hash is used to determine if expensive p-value calculations can be skipped.
+# Inputs that affect p-values: tree structure, classification mapping, FDR, simulate.p.value
+# IMPORTANT: Classification column changes MUST invalidate cache (user requirement)
+func.create.p_list_cache_hash <- function(tree440, list_id_by_class, dx_rx_types1_short,
+                                           FDR_perc, simulate.p.value) {
+  # Create a hash from the key inputs that affect p_list_of_pairs calculation
+  # Using digest package for consistent hashing
+
+  # Build a list of all cache-relevant data
+  cache_data <- list(
+    # Tree structure - use tip labels and edge structure
+    tree_tips = sort(tree440$tip.label),
+    tree_Nnode = tree440$Nnode,
+    tree_edge = tree440$edge,
+    # Classification data - this is CRITICAL for cache invalidation
+    classification_types = sort(dx_rx_types1_short),
+    classification_mapping = lapply(list_id_by_class, function(x) sort(x)),
+    # Statistical parameters
+    FDR_perc = FDR_perc,
+    simulate_p_value = simulate.p.value
+  )
+
+  # Use digest for reliable hashing
+  hash_value <- digest::digest(cache_data, algo = "md5")
+
+  return(hash_value)
+}
+
+
 # Create list of p-values for each pair of nodes
 func.create.p_list_of_pairs <- function(list_node_by_class, d440, dx_rx_types1_short,
                                         cc_nodss, tree_with_group, FDR_perc, tree, cc_tipss,
@@ -2900,7 +2930,9 @@ func.print.lineage.tree <- function(conf_yaml_path,
                                     heatmap_tree_distance= 0.02,
                                     heatmap_global_gap = 0.05,  # v125: Gap between multiple heatmaps
                                     legend_settings = NULL,  # v135: Legend settings for highlight/bootstrap legends
-                                    rdata_cnv_matrix = NULL) {  # S1.62dev: CNV matrix from RData file
+                                    rdata_cnv_matrix = NULL,  # S1.62dev: CNV matrix from RData file
+                                    cached_p_list_of_pairs = NULL,  # S2.0-PERF: Cached p-values (Option 3A)
+                                    cached_p_list_hash = NULL) {    # S2.0-PERF: Hash for cache validation
 
   # === DEBUG CHECKPOINT 2: FUNCTION ENTRY ===
   # v53: cat(file=stderr(), "\nÃ°Å¸â€Â DEBUG CHECKPOINT 2: func.print.lineage.tree ENTRY\n")
@@ -5069,21 +5101,29 @@ func.print.lineage.tree <- function(conf_yaml_path,
         bootstrap_label_size =bootstrap_label_size,
         heatmap_tree_distance = heatmap_tree_distance,
         heatmap_global_gap = heatmap_global_gap,  # v125: Gap between multiple heatmaps
-        legend_settings = legend_settings  # v136: Pass legend settings for highlight/bootstrap legends
+        legend_settings = legend_settings,  # v136: Pass legend settings for highlight/bootstrap legends
+        cached_p_list_of_pairs = cached_p_list_of_pairs,  # S2.0-PERF: Pass cached p-values
+        cached_p_list_hash = cached_p_list_hash  # S2.0-PERF: Pass cache hash for validation
       )
       # }
+
+      # S2.0-PERF: Extract plot and cache data from new return structure (Option 3A)
+      # func.make.plot.tree.heat.NEW now returns list(plot=..., cache_data=...)
+      ou_result <- ou
+      ou <- ou_result$plot  # Extract the plot object
+      cache_data <- ou_result$cache_data  # Store cache data to return
 
       #print("ou is")
       #print(class(ou))
       #print(ou)
-      
-      
+
+
       out_list[[out_index]] <- out_file_path
-      
+
       #a<- grid.arrange(ou,ou,ou)
-      
+
       #ggsave("/home/dcsoft/s/yaara/chec/compare_trees_klein.pdf", plot=a, width = width, height = height*3, units = units_out, limitsize = FALSE)
-      
+
       # v53: print("ou is")
       # v53: print(levels(ou$data$new_class))
       levels_base= levels(ou$data$new_class)
@@ -5171,8 +5211,19 @@ func.print.lineage.tree <- function(conf_yaml_path,
   
   
   out_file_path <- out_trees
-  
-  #close func  
+
+  # S2.0-PERF: Return both plots and cache data for two-tier caching (Option 3A)
+  # cache_data is set when func.make.plot.tree.heat.NEW is called above
+  # If cache_data was never set (e.g., error path), use NULL
+  if (!exists("cache_data") || is.null(cache_data)) {
+    cache_data <- NULL
+  }
+
+  return(list(
+    plots = out_trees,
+    cache_data = cache_data
+  ))
+  #close func
 }
 
 
@@ -5226,7 +5277,9 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
                                          bootstrap_label_size = 1.5,  # v129: Reduced from 3.5 for smaller default legend
                                          heatmap_tree_distance = 0.02,
                                          heatmap_global_gap = 0.05,  # v125: Gap between multiple heatmaps
-                                         legend_settings = NULL) {  # v136: Legend settings for highlight/bootstrap legends
+                                         legend_settings = NULL,  # v136: Legend settings for highlight/bootstrap legends
+                                         cached_p_list_of_pairs = NULL,  # S2.0-PERF: Cached p-values (Option 3A)
+                                         cached_p_list_hash = NULL) {    # S2.0-PERF: Hash for cache validation
 
   # === DEBUG CHECKPOINT 4: INNER FUNCTION ENTRY ===
   # v53: cat(file=stderr(), "\nÃ°Å¸â€Â DEBUG CHECKPOINT 4: func.make.plot.tree.heat.NEW ENTRY\n")
@@ -5355,14 +5408,39 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   
   #print("G")
 
-  # Calculate p-values
+  # S2.0-PERF: Two-tier caching for p_list_of_pairs (Option 3A)
+  # Compute current hash to check if cache is valid
   .prof_section_start <- Sys.time()
-  p_list_of_pairs <- func.create.p_list_of_pairs(
-    list_node_by_class, d440, dx_rx_types1_short,
-    cc_nodss, tree_with_group, FDR_perc, tree, cc_tipss,
-    tree_TRY, tree_size, no_name, simulate.p.value
+  current_p_list_hash <- func.create.p_list_cache_hash(
+    tree440, list_id_by_class, dx_rx_types1_short, FDR_perc, simulate.p.value
   )
-  cat(file=stderr(), sprintf("[PROF-TREE] p_list_of_pairs calc: %.3f sec\n", as.numeric(Sys.time() - .prof_section_start)))
+
+  # Check if cache is valid - hash must match AND cached data must exist
+  cache_is_valid <- !is.null(cached_p_list_hash) &&
+                    !is.null(cached_p_list_of_pairs) &&
+                    (cached_p_list_hash == current_p_list_hash)
+
+  if (cache_is_valid) {
+    # S2.0-PERF: Cache hit - use cached p-values
+    p_list_of_pairs <- cached_p_list_of_pairs
+    cat(file=stderr(), sprintf("[PERF-CACHE] Using cached p_list_of_pairs (hash: %s): %.3f sec\n",
+                               substr(current_p_list_hash, 1, 8), as.numeric(Sys.time() - .prof_section_start)))
+  } else {
+    # S2.0-PERF: Cache miss - need to recalculate
+    if (!is.null(cached_p_list_hash)) {
+      cat(file=stderr(), sprintf("[PERF-CACHE] Cache INVALIDATED - hash changed from %s to %s\n",
+                                 substr(cached_p_list_hash, 1, 8), substr(current_p_list_hash, 1, 8)))
+    } else {
+      cat(file=stderr(), "[PERF-CACHE] No cache available - computing p_list_of_pairs\n")
+    }
+    p_list_of_pairs <- func.create.p_list_of_pairs(
+      list_node_by_class, d440, dx_rx_types1_short,
+      cc_nodss, tree_with_group, FDR_perc, tree, cc_tipss,
+      tree_TRY, tree_size, no_name, simulate.p.value
+    )
+    cat(file=stderr(), sprintf("[PERF-CACHE] Computed p_list_of_pairs (new hash: %s): %.3f sec\n",
+                               substr(current_p_list_hash, 1, 8), as.numeric(Sys.time() - .prof_section_start)))
+  }
 
   .prof_section_start <- Sys.time()
   p_PAIRS_pval_list <- func.create.p_val_list_FROM_LIST(FDR_perc, tree_TRY, p_list_of_pairs, op_list)
@@ -8125,7 +8203,16 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   }
 
   cat(file=stderr(), sprintf("[PROF-TREE] === TOTAL func.make.plot.tree.heat.NEW: %.3f sec ===\n", as.numeric(Sys.time() - .prof_func_start)))
-  return(p)
+
+  # S2.0-PERF: Return both the plot and cache data for two-tier caching (Option 3A)
+  # The cache data allows generate_plot() to store and reuse p_list_of_pairs
+  return(list(
+    plot = p,
+    cache_data = list(
+      p_list_of_pairs = p_list_of_pairs,
+      p_list_hash = current_p_list_hash
+    )
+  ))
 }
 
 
@@ -9393,9 +9480,16 @@ server <- function(input, output, session) {
     tree_stretch_x = 1,  # Horizontal stretch (tree length)
     tree_stretch_y = 1,  # Vertical stretch (tree width)
     # v179: Background color control
-    background_color = "#FFFFFF"
+    background_color = "#FFFFFF",
+    # S2.0-PERF: Two-tier caching for p_list_of_pairs (Option 3A)
+    # These cache the expensive Fisher test calculations - only recalculate when
+    # tree structure, classification, FDR, or simulate.p.value change.
+    # Visual-only changes (legend sizes, colors, fonts) skip recalculation.
+    cached_p_list_hash = NULL,        # Hash of inputs that affect p-values
+    cached_p_list_of_pairs = NULL,    # The cached p-value list
+    cached_classification_column = NULL  # The classification column that was used
   )
-  
+
   classification_loading <- reactiveVal(FALSE)
 
   # S1.4-PERF: Plot trigger mechanism to batch multiple rapid updates
@@ -16729,41 +16823,68 @@ server <- function(input, output, session) {
         # v135: Pass legend settings for highlight/bootstrap legends
         legend_settings = values$legend_settings,
         # S1.62dev: Pass RData CNV matrix for heatmaps with data_source="rdata"
-        rdata_cnv_matrix = values$rdata_cnv_matrix
+        rdata_cnv_matrix = values$rdata_cnv_matrix,
+        # S2.0-PERF: Two-tier caching - pass cached p-values (Option 3A)
+        cached_p_list_of_pairs = values$cached_p_list_of_pairs,
+        cached_p_list_hash = values$cached_p_list_hash
       ))
       cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] RETURNED from func.print.lineage.tree at ", format(Sys.time(), "%H:%M:%OS3"), "\n"))
+
+      # S2.0-PERF: Extract plots and cache data from new return structure (Option 3A)
+      # tree_result now has structure: list(plots = out_trees, cache_data = cache_data)
+      plots_result <- NULL
+      if (!is.null(tree_result) && is.list(tree_result)) {
+        if (!is.null(tree_result$plots)) {
+          plots_result <- tree_result$plots
+          cat(file=stderr(), "[PERF-CACHE] Extracted plots from tree_result$plots\n")
+        } else {
+          # Fallback for backward compatibility if structure is different
+          plots_result <- tree_result
+          cat(file=stderr(), "[PERF-CACHE] Using tree_result directly (legacy format)\n")
+        }
+
+        # Store cache data for future use
+        if (!is.null(tree_result$cache_data)) {
+          values$cached_p_list_of_pairs <- tree_result$cache_data$p_list_of_pairs
+          values$cached_p_list_hash <- tree_result$cache_data$p_list_hash
+          values$cached_classification_column <- input$classification_column
+          cat(file=stderr(), sprintf("[PERF-CACHE] Stored cache (hash: %s, classification: %s)\n",
+                                     substr(values$cached_p_list_hash, 1, 8),
+                                     values$cached_classification_column))
+        }
+      }
 
       # Debug output
       # v53: cat(file=stderr(), "\n=== AFTER func.print.lineage.tree ===\n")
       # v53: cat(file=stderr(), "tree_result is NULL:", is.null(tree_result), "\n")
-      if (!is.null(tree_result) && is.list(tree_result)) {
-        # v53: cat(file=stderr(), "tree_result is a list with", length(tree_result), "element(s)\n")
-        # v53: cat(file=stderr(), "List names:", paste(names(tree_result), collapse=", "), "\n")
-        if (length(tree_result) > 0) {
-          # v53: cat(file=stderr(), "First element class:", class(tree_result[[1]]), "\n")
-          # v53: cat(file=stderr(), "First element inherits ggplot:", inherits(tree_result[[1]], "ggplot"), "\n")
-          if (length(tree_result) > 1) {
-            # v53: cat(file=stderr(), "NOTE: Multiple plots returned (", length(tree_result), "). Using the last one.\n")
+      if (!is.null(plots_result) && is.list(plots_result)) {
+        # v53: cat(file=stderr(), "plots_result is a list with", length(plots_result), "element(s)\n")
+        # v53: cat(file=stderr(), "List names:", paste(names(plots_result), collapse=", "), "\n")
+        if (length(plots_result) > 0) {
+          # v53: cat(file=stderr(), "First element class:", class(plots_result[[1]]), "\n")
+          # v53: cat(file=stderr(), "First element inherits ggplot:", inherits(plots_result[[1]], "ggplot"), "\n")
+          if (length(plots_result) > 1) {
+            # v53: cat(file=stderr(), "NOTE: Multiple plots returned (", length(plots_result), "). Using the last one.\n")
           }
         }
       }
       # v53: debug_cat("====================================\n\n")
-      
+
       # Extract the plot from out_trees list
       # The function returns out_trees which is a list indexed by numbers like "1", "2", etc.
       # When multiple classifications exist, use the LAST plot (most complete)
       tree_plot <- NULL
-      if (!is.null(tree_result) && is.list(tree_result) && length(tree_result) > 0) {
+      if (!is.null(plots_result) && is.list(plots_result) && length(plots_result) > 0) {
         # Extract the LAST plot from the list (most recent classification)
-        plot_index <- length(tree_result)
-        tree_plot <- tree_result[[plot_index]]
-        # v53: cat(file=stderr(), "Successfully extracted plot from tree_result[[", plot_index, "]]\n")
+        plot_index <- length(plots_result)
+        tree_plot <- plots_result[[plot_index]]
+        # v53: cat(file=stderr(), "Successfully extracted plot from plots_result[[", plot_index, "]]\n")
         # v53: cat(file=stderr(), "Plot class:", class(tree_plot), "\n")
         # v53: cat(file=stderr(), "Plot inherits ggplot:", inherits(tree_plot, "ggplot"), "\n")
       } else {
-        # v53: cat(file=stderr(), "ERROR: Could not extract plot from tree_result\n")
-        # v53: cat(file=stderr(), "tree_result structure:\n")
-        # v54: str(tree_result)
+        # v53: cat(file=stderr(), "ERROR: Could not extract plot from plots_result\n")
+        # v53: cat(file=stderr(), "plots_result structure:\n")
+        # v54: str(plots_result)
       }
       
       # Check if we got a valid plot object

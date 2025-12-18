@@ -141,16 +141,65 @@ Changes fall into two categories:
 | Option | Status | Date | Notes |
 |--------|--------|------|-------|
 | 4A+4B: Async conditional gc() | **IMPLEMENTED** | Dec 2024 | gc() runs every 3 plots, async via `later::later()` |
+| 3A: Two-tier caching | **IMPLEMENTED** | Dec 2024 | Caches `p_list_of_pairs` with hash-based invalidation |
 | 2A: Cache tree data | Pending | | |
 | 2B: Optimize levels extraction | Pending | | |
-| 1A: Cache p_list_of_pairs | Pending | | |
-| 3A: Two-tier caching | Pending | | |
+| 1A: Cache p_list_of_pairs | **SUPERSEDED** | Dec 2024 | Covered by 3A implementation |
+
+---
+
+## Implementation Details
+
+### Option 3A: Two-tier Caching (IMPLEMENTED)
+
+**What was implemented:**
+1. **Cache storage** in `values$`:
+   - `values$cached_p_list_of_pairs` - The cached Fisher test p-values
+   - `values$cached_p_list_hash` - MD5 hash for cache validation
+   - `values$cached_classification_column` - The classification column used (for debugging)
+
+2. **Hash function** `func.create.p_list_cache_hash()`:
+   - Computes MD5 hash from: tree structure (tips, edges), classification mapping, FDR threshold, simulate.p.value
+   - **CRITICAL**: Classification changes invalidate the cache (as requested)
+
+3. **Cache check** in `func.make.plot.tree.heat.NEW()`:
+   - Computes current hash from inputs
+   - If hash matches cached hash AND cached data exists → use cached p_list_of_pairs
+   - If mismatch → recalculate and return new cache data
+
+4. **Cache flow** through functions:
+   - `generate_plot()` passes cached data to `func.print.lineage.tree()`
+   - `func.print.lineage.tree()` passes to `func.make.plot.tree.heat.NEW()`
+   - New cache data is returned and stored in `values$`
+
+**Log messages to look for:**
+- `[PERF-CACHE] Using cached p_list_of_pairs (hash: XXXXXXXX)` - Cache hit
+- `[PERF-CACHE] Cache INVALIDATED - hash changed from XXXXXXXX to YYYYYYYY` - Cache miss (data changed)
+- `[PERF-CACHE] No cache available - computing p_list_of_pairs` - First run
+- `[PERF-CACHE] Stored cache (hash: XXXXXXXX, classification: column_name)` - Cache stored
+
+**Cache invalidation triggers:**
+- Tree file change
+- Classification column change (column name or values)
+- FDR threshold change
+- simulate.p.value toggle
+
+**Visual-only changes that use cache:**
+- Legend font sizes
+- Legend colors
+- Output dimensions
+- Bootstrap display settings
+- Heatmap visual settings
+- Node number display
 
 ---
 
 ## Code References
 
-- `func.create.p_list_of_pairs()`: lines 1280-1344
-- `func.make.plot.tree.heat.NEW()`: lines ~5240-5700
-- `generate_plot()`: lines 16382-17555
-- gc() call location: line ~17544
+- `func.create.p_list_cache_hash()`: lines ~1283-1306
+- `func.create.p_list_of_pairs()`: lines ~1310-1375
+- `func.make.plot.tree.heat.NEW()`: lines ~5230-8200 (cache check at ~5394-5426)
+- `func.print.lineage.tree()`: lines ~2877-5227
+- `generate_plot()`: lines ~16382-17600
+- Cache storage in values$: line ~9397-9403
+- gc() call location: line ~17640
