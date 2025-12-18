@@ -17542,13 +17542,20 @@ server <- function(input, output, session) {
     # - Run asynchronously via later::later() to not block UI response
     # This saves ~0.1-0.3 sec per plot while still preventing memory accumulation
     # NOTE: Capture plot_counter in local var since later() callback runs outside reactive context
+    # Use force() to ensure immediate evaluation before the closure is created
     current_plot_num <- values$plot_counter
+    force(current_plot_num)  # Force immediate evaluation
     if (current_plot_num %% 3 == 0) {
-      later::later(function() {
-        gc_result <- gc(verbose = FALSE)
-        mem_used_mb <- sum(gc_result[, 2])  # Used memory in MB
-        cat(file=stderr(), paste0("[PERF-GC] Async gc() completed. Memory: ", round(mem_used_mb, 1), " MB (plot #", current_plot_num, ")\n"))
-      }, delay = 0.1)  # 100ms delay to let UI update first
+      # Create callback with explicit local binding to avoid closure issues
+      gc_callback <- local({
+        plot_num <- current_plot_num  # Explicit local copy
+        function() {
+          gc_result <- gc(verbose = FALSE)
+          mem_used_mb <- sum(gc_result[, 2])  # Used memory in MB
+          cat(file=stderr(), paste0("[PERF-GC] Async gc() completed. Memory: ", round(mem_used_mb, 1), " MB (plot #", plot_num, ")\n"))
+        }
+      })
+      later::later(gc_callback, delay = 0.1)  # 100ms delay to let UI update first
       cat(file=stderr(), "[PERF-GC] Scheduled async gc() (every 3rd plot)\n")
     } else {
       cat(file=stderr(), paste0("[PERF-GC] Skipped gc() (plot #", current_plot_num, ", runs every 3rd)\n"))
