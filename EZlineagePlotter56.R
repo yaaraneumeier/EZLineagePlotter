@@ -17537,13 +17537,20 @@ server <- function(input, output, session) {
     values$plot_generating <- FALSE
     values$progress_visible <- FALSE
 
-    # S1.62dev: Force garbage collection to prevent memory accumulation
-    # This helps when many plot regenerations occur in sequence
-    gc_result <- gc(verbose = FALSE)
-
-    # S1.62dev: Log memory usage for crash diagnosis
-    mem_used_mb <- sum(gc_result[, 2])  # Used memory in MB
-    cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] Memory after gc: ", round(mem_used_mb, 1), " MB\n"))
+    # S2.0-PERF: Async conditional garbage collection (options 4A+4B)
+    # - Only run gc() every 3 plots to reduce overhead
+    # - Run asynchronously via later::later() to not block UI response
+    # This saves ~0.1-0.3 sec per plot while still preventing memory accumulation
+    if (values$plot_counter %% 3 == 0) {
+      later::later(function() {
+        gc_result <- gc(verbose = FALSE)
+        mem_used_mb <- sum(gc_result[, 2])  # Used memory in MB
+        cat(file=stderr(), paste0("[PERF-GC] Async gc() completed. Memory: ", round(mem_used_mb, 1), " MB (plot #", values$plot_counter, ")\n"))
+      }, delay = 0.1)  # 100ms delay to let UI update first
+      cat(file=stderr(), "[PERF-GC] Scheduled async gc() (every 3rd plot)\n")
+    } else {
+      cat(file=stderr(), paste0("[PERF-GC] Skipped gc() (plot #", values$plot_counter, ", runs every 3rd)\n"))
+    }
 
     cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] EXIT generate_plot() at ", format(Sys.time(), "%H:%M:%OS3"), "\n"))
     cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] ========================================\n\n"))
