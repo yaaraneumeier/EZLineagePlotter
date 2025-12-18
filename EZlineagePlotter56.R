@@ -8301,11 +8301,17 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #155724;",
-                     tags$h4(style = "color: #155724; margin: 0;", "Version S2.0 (Stable)"),
+                     tags$h4(style = "color: #155724; margin: 0;", "Version S2.1 (Stable)"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
-                            "Stable release with RData CNV heatmap support.",
+                            "Stable release with performance optimizations.",
                             tags$br(), tags$br(),
-                            tags$strong("New in S2.0:"),
+                            tags$strong("New in S2.1:"),
+                            tags$ul(
+                              tags$li("Two-tier caching for faster plot generation"),
+                              tags$li("Async garbage collection for faster UI response"),
+                              tags$li("Improved memory management during plot rendering")
+                            ),
+                            tags$strong("From S2.0:"),
                             tags$ul(
                               tags$li("RData CNV heatmaps: Import CNV data from QDNAseq/scIMPACT pipelines"),
                               tags$li("Automatic sample matching via CSV lookup columns"),
