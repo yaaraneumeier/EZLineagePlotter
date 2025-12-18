@@ -5236,10 +5236,13 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   # v53: cat(file=stderr(), "Ã°Å¸â€Â manual_nodes_to_highlight:", paste(manual_nodes_to_highlight, collapse=", "), "\n")
   # v53: debug_cat("================================================\n\n")
   
+  # === PROFILING: func.make.plot.tree.heat.NEW ===
+  .prof_func_start <- Sys.time()
+
   if (debug_mode == TRUE) {
     # v53: print("In func.make.plot.tree.HEAT")
   }
-  
+
   # Prepare data structures
   dx_rx_types1 <- dx_rx_types1_short
   # v53: print("A")
@@ -8121,7 +8124,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     stop("Could not save plot after multiple attempts")
   }
 
-  cat(file=stderr(), sprintf("[PROF-TREE] === TOTAL func.print.lineage.tree: %.3f sec ===\n", as.numeric(Sys.time() - .prof_func_start)))
+  cat(file=stderr(), sprintf("[PROF-TREE] === TOTAL func.make.plot.tree.heat.NEW: %.3f sec ===\n", as.numeric(Sys.time() - .prof_func_start)))
   return(p)
 }
 
