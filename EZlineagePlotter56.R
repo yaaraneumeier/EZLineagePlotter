@@ -27,6 +27,7 @@ library(stats)
 library(gridExtra)
 library(cowplot)  # v144: For proper plot positioning using draw_plot
 library(jpeg)     # v144: For JPEG image overlay support
+# Note: data.table removed due to function masking issues with dplyr
 library(combinat)
 library(infotheo)
 library(aricode)
@@ -78,8 +79,20 @@ options(shiny.maxRequestSize = 100*1024^2)
 #       - All v180 features included and tested
 
 # ============================================================================
-# VERSION S2.0 (Stable)
+# VERSION S2.1 (Stable)
 # ============================================================================
+# S2.1: Performance & stability improvements
+#       - Two-tier caching system for faster plot updates
+#       - Async garbage collection for responsive UI
+#       - SVG preview rendering (faster than PNG)
+#       - Server-side selectize for large datasets
+#       - Fix cascading plot regeneration that freezes UI
+#       - Tab switch optimization with ignoreInit
+#       - RData heatmap fix for custom classification path
+#       - Improved CNV sample matching with better diagnostics
+#       - Dropdown for RData sample name mapping column
+#       - CSV loading fixes for classification coloring
+#       - Manual rotation and multifurcating node rotation fixes
 # S2.0: Major stable release with RData CNV heatmap support
 #       - RData CNV file import for heatmaps (from QDNAseq/scIMPACT pipelines)
 #       - Automatic sample matching via CSV lookup columns
@@ -104,7 +117,7 @@ options(shiny.maxRequestSize = 100*1024^2)
 #       - Layer reordering now happens ONCE at the end in generate_plot()
 # S1.2: Fixed undefined x_range_min in func_highlight causing "Problem while
 #       computing aesthetics" error when adding 2+ highlights with a heatmap.
-VERSION <- "S2.0"
+VERSION <- "S2.1"
 
 # Debug output control - set to TRUE to enable verbose console logging
 # For production/stable use, keep this FALSE for better performance
@@ -1272,6 +1285,36 @@ func.create.new_colors_list <- function(FDR_perc, tree_TRY, tree_with_group, no_
   }
   
   return(new_colors_list)
+}
+
+
+# S2.0-PERF: Create hash for p_list_of_pairs caching (Option 3A)
+# This hash is used to determine if expensive p-value calculations can be skipped.
+# Inputs that affect p-values: tree structure, classification mapping, FDR, simulate.p.value
+# IMPORTANT: Classification column changes MUST invalidate cache (user requirement)
+func.create.p_list_cache_hash <- function(tree440, list_id_by_class, dx_rx_types1_short,
+                                           FDR_perc, simulate.p.value) {
+  # Create a hash from the key inputs that affect p_list_of_pairs calculation
+  # Using digest package for consistent hashing
+
+  # Build a list of all cache-relevant data
+  cache_data <- list(
+    # Tree structure - use tip labels and edge structure
+    tree_tips = sort(tree440$tip.label),
+    tree_Nnode = tree440$Nnode,
+    tree_edge = tree440$edge,
+    # Classification data - this is CRITICAL for cache invalidation
+    classification_types = sort(dx_rx_types1_short),
+    classification_mapping = lapply(list_id_by_class, function(x) sort(x)),
+    # Statistical parameters
+    FDR_perc = FDR_perc,
+    simulate_p_value = simulate.p.value
+  )
+
+  # Use digest for reliable hashing
+  hash_value <- digest::digest(cache_data, algo = "md5")
+
+  return(hash_value)
 }
 
 
@@ -2722,18 +2765,24 @@ func.rotate.tree.based.on.weights <- function(tree_TRY, list_weight_dx.rx, list_
           tree_return <- flip(tree_return, children[1], children[2])
         }
       } else {
-        flag_need_to_fix <- TRUE
-        ix <- 1
-        
+        # Multifurcating node (more than 2 children)
+        cat(file=stderr(), paste0("\n[DEBUG-WEIGHT-ROT] Multifurcating node ", nod, " with ", length(children), " children\n"))
+        cat(file=stderr(), paste0("[DEBUG-WEIGHT-ROT] Children indices: ", paste(children, collapse=", "), "\n"))
+
         children_weights <- func.make.children.weight.list(children, nod, list_weights_for_nodes_dx.rx)
         children_weights_SECOND <- func.make.children.weight.list(children, nod, list_weights_for_nodes_frac)
-        
-        children_weights_ordered <- sort(children_weights)
-        
+
+        cat(file=stderr(), paste0("[DEBUG-WEIGHT-ROT] Children weights: ", paste(children_weights, collapse=", "), "\n"))
+
+        # Sort DESCENDING to match binary node behavior (higher weight = left/top)
+        children_weights_ordered <- sort(children_weights, decreasing = TRUE)
+        cat(file=stderr(), paste0("[DEBUG-WEIGHT-ROT] Sorted weights (DESCENDING - high to low): ", paste(children_weights_ordered, collapse=", "), "\n"))
+
+        # Build destination mapping: dest[i] = which original position should go to position i
         dest <- c()
         for (i in 1:length(children)) {
           wh <- which(children_weights == children_weights_ordered[i])
-          
+
           if (length(wh) > 1) {
             w <- wh[which(!wh %in% dest)[1]]
           } else {
@@ -2741,12 +2790,42 @@ func.rotate.tree.based.on.weights <- function(tree_TRY, list_weight_dx.rx, list_
           }
           dest <- c(dest, w)
         }
-        
+
+        cat(file=stderr(), paste0("[DEBUG-WEIGHT-ROT] Destination mapping (dest): ", paste(dest, collapse=", "), "\n"))
+        cat(file=stderr(), paste0("[DEBUG-WEIGHT-ROT] This means: position 1 should have child from orig pos ", dest[1], ", pos 2 from orig pos ", dest[2], ", etc.\n"))
+
+        # Track which positions have been processed to avoid undoing swaps
+        processed <- rep(FALSE, length(children))
+
         for (i in 1:length(children)) {
-          if (children[i] == children[dest[i]]) {
-            # Don't flip
+          # Skip if this position was already processed (as part of a previous swap)
+          if (processed[i]) {
+            cat(file=stderr(), paste0("[DEBUG-WEIGHT-ROT] Loop i=", i, ": Already processed, skipping\n"))
+            next
+          }
+
+          target_pos <- dest[i]
+
+          if (i == target_pos) {
+            # Child is already in correct position
+            cat(file=stderr(), paste0("[DEBUG-WEIGHT-ROT] Loop i=", i, ": Child ", children[i], " already in correct position\n"))
+            processed[i] <- TRUE
           } else {
-            tree_return <- flip(tree_return, children[i], children[dest[i]])
+            # Need to swap position i with position target_pos
+            cat(file=stderr(), paste0("[DEBUG-WEIGHT-ROT] Loop i=", i, ": Swapping children[", i, "]=", children[i], " <-> children[", target_pos, "]=", children[target_pos], "\n"))
+            tree_return <- flip(tree_return, children[i], children[target_pos])
+
+            # Mark both positions as processed
+            processed[i] <- TRUE
+            processed[target_pos] <- TRUE
+
+            # Update dest to reflect the swap (in case there are chained swaps)
+            # Find where target_pos was supposed to go and update it
+            for (j in (i+1):length(children)) {
+              if (j <= length(dest) && dest[j] == i) {
+                dest[j] <- target_pos
+              }
+            }
           }
         }
       }
@@ -2773,23 +2852,34 @@ func.make.children.weight.list <- function(children, nod, tips_weight_list) {
 
 # Function to rotate specific nodes
 func.rotate.specific.nodes <- function(tree_TRY1, list_nodes_to_rotate) {
+  cat(file=stderr(), paste0("[DEBUG-ROTATION] func.rotate.specific.nodes called\n"))
+  cat(file=stderr(), paste0("[DEBUG-ROTATION] list_nodes_to_rotate = ", paste(list_nodes_to_rotate, collapse=", "), "\n"))
+  cat(file=stderr(), paste0("[DEBUG-ROTATION] is.null = ", is.null(list_nodes_to_rotate), ", length = ", length(list_nodes_to_rotate), "\n"))
+
   # Check if list_nodes_to_rotate is valid (not NA and has length > 0)
   if (!is.null(list_nodes_to_rotate) && length(list_nodes_to_rotate) > 0 && !all(is.na(list_nodes_to_rotate))) {
-    # v53: print("rotate specific nodes")
-    # v53: print(list_nodes_to_rotate)
+    cat(file=stderr(), paste0("[DEBUG-ROTATION] Entering rotation loop for nodes: ", paste(list_nodes_to_rotate, collapse=", "), "\n"))
     for (nod in list_nodes_to_rotate) {
       children <- which(tree_TRY1$data$parent == nod & tree_TRY1$data$node != nod)
-      # v53: print(children)
-      
+      cat(file=stderr(), paste0("[DEBUG-ROTATION] Node ", nod, " has ", length(children), " children: ", paste(children, collapse=", "), "\n"))
+
       if (length(children) < 2) {
-        tree_TRY1 <- flip(tree_TRY1, children[1], children[3]) # 321
-        tree_TRY1 <- flip(tree_TRY1, children[2], children[3])
-      } else {
+        cat(file=stderr(), paste0("[DEBUG-ROTATION] Skipping node ", nod, " - less than 2 children\n"))
+        # Cannot flip with less than 2 children - skip this node
+        next
+      } else if (length(children) == 2) {
+        cat(file=stderr(), paste0("[DEBUG-ROTATION] Flipping node ", nod, " children: ", children[1], " <-> ", children[2], "\n"))
         tree_TRY1 <- flip(tree_TRY1, children[1], children[2])
+      } else {
+        # Multifurcating node - flip first and last children
+        cat(file=stderr(), paste0("[DEBUG-ROTATION] Multifurcating node ", nod, " - flipping: ", children[1], " <-> ", children[length(children)], "\n"))
+        tree_TRY1 <- flip(tree_TRY1, children[1], children[length(children)])
       }
     }
+  } else {
+    cat(file=stderr(), paste0("[DEBUG-ROTATION] No valid nodes to rotate\n"))
   }
-  
+
   return(tree_TRY1)
 }
 
@@ -2852,7 +2942,9 @@ func.print.lineage.tree <- function(conf_yaml_path,
                                     heatmap_tree_distance= 0.02,
                                     heatmap_global_gap = 0.05,  # v125: Gap between multiple heatmaps
                                     legend_settings = NULL,  # v135: Legend settings for highlight/bootstrap legends
-                                    rdata_cnv_matrix = NULL) {  # S1.62dev: CNV matrix from RData file
+                                    rdata_cnv_matrix = NULL,  # S1.62dev: CNV matrix from RData file
+                                    cached_p_list_of_pairs = NULL,  # S2.0-PERF: Cached p-values (Option 3A)
+                                    cached_p_list_hash = NULL) {    # S2.0-PERF: Hash for cache validation
 
   # === DEBUG CHECKPOINT 2: FUNCTION ENTRY ===
   # v53: cat(file=stderr(), "\nÃ°Å¸â€Â DEBUG CHECKPOINT 2: func.print.lineage.tree ENTRY\n")
@@ -2861,9 +2953,14 @@ func.print.lineage.tree <- function(conf_yaml_path,
   # v53: cat(file=stderr(), "Ã°Å¸â€Â highlight_manual_nodes received:", highlight_manual_nodes, "\n")
   # v53: cat(file=stderr(), "Ã°Å¸â€Â manual_nodes_to_highlight received:", paste(manual_nodes_to_highlight, collapse=", "), "\n")
   # v53: debug_cat("================================================\n\n")
-  
+
+  # === PROFILING: func.print.lineage.tree ===
+  .prof_func_start <- Sys.time()
+  .prof_section_start <- Sys.time()
+
   yaml_file<- func.read_yaml(conf_yaml_path)
-  
+  cat(file=stderr(), sprintf("[PROF-TREE] YAML read: %.3f sec\n", as.numeric(Sys.time() - .prof_section_start)))
+
   #get configuration from yaml file
   
   # v53: print(paste0("Configuration file: ",conf_yaml_path))
@@ -2907,11 +3004,13 @@ func.print.lineage.tree <- function(conf_yaml_path,
   
   #get csv file for mapping subgroups
   # v53: print(paste0("Get mapping csv from: ",csv_path))
+  .prof_section_start <- Sys.time()
   if (flag_csv_read_func=="fread"){
     fread_rownames(csv_path, row.var = rowname_param)
   } else {
     readfile <- read.csv(csv_path)
   }
+  cat(file=stderr(), sprintf("[PROF-TREE] CSV read (in func): %.3f sec\n", as.numeric(Sys.time() - .prof_section_start)))
   #print("readfile is")
   #print(readfile)
   #print("####")
@@ -3082,15 +3181,19 @@ func.print.lineage.tree <- function(conf_yaml_path,
   for (tree_index in 1:trees_number) {
     # v53: print(paste0('Tree number ',tree_index))
     tree_path <- tree_path_list[tree_index]
-    
+
     ###get newick file and create tree
     # v53: print(paste0("Get tree from: ",tree_path))
+    .prof_section_start <- Sys.time()
     tree440 <- read.tree(tree_path)
-    
+    cat(file=stderr(), sprintf("[PROF-TREE] read.tree(): %.3f sec\n", as.numeric(Sys.time() - .prof_section_start)))
+
     # Apply ladderize if flag is TRUE
     if (laderize_flag == TRUE) {
       # v53: print("Ladderizing tree...")
+      .prof_section_start <- Sys.time()
       tree440 <- ape::ladderize(tree440, right = TRUE)
+      cat(file=stderr(), sprintf("[PROF-TREE] ladderize(): %.3f sec\n", as.numeric(Sys.time() - .prof_section_start)))
       # v53: print("Tree ladderized")
     }
     
@@ -3944,10 +4047,13 @@ func.print.lineage.tree <- function(conf_yaml_path,
                 cnv_samples <- rownames(cnv_data)
                 cat(file=stderr(), paste0("[HEATMAP-RENDER] CNV samples (first 5): ", paste(head(cnv_samples, 5), collapse=", "), "\n"))
 
-                # S1.62dev: Improved matching - try multiple strategies
-                # Strategy 1: Direct match (tree tip == CNV sample name)
-                # Strategy 2: Use CSV data to create a mapping (tree tip ID -> sample name column)
+                # S2.0-RDATA: Enhanced matching with multiple strategies
+                # Strategy 0: Use user-selected mapping column (if specified)
+                # Strategy 1: Use CSV data to create a mapping (tree tip ID -> sample name column)
+                # Strategy 2: Direct match (tree tip == CNV sample name)
                 # Strategy 3: Partial matching (CNV sample contains tree tip or vice versa)
+                # Strategy 4: Numeric extraction - extract numbers from CNV samples and try to match
+                # Strategy 5: Flexible partial matching with cleaned identifiers
 
                 # Create mapping: find which CNV samples match which tree tips
                 matched_cnv <- data.frame(matrix(NA, nrow = length(tree_tips), ncol = ncol(cnv_data)))
@@ -3956,28 +4062,132 @@ func.print.lineage.tree <- function(conf_yaml_path,
 
                 matches_found <- 0
 
-                # First, try to find a mapping column in the CSV data
+                # S2.0-RDATA: Smart normalization function for comparing sample names
+                # Handles common differences like "-" vs ".", leading "X", case differences
+                smart_normalize <- function(x) {
+                  x <- as.character(x)
+                  x <- gsub("[._-]", "", x)   # Remove common separators
+                  x <- gsub("^X", "", x)       # Remove leading X (R adds this to numeric column names)
+                  tolower(x)
+                }
+
+                # S2.0-RDATA: Check if user specified a mapping column
+                user_mapping_column <- NULL
+                if ('rdata_mapping_column' %in% names(heat_map_i_def) &&
+                    !is.null(heat_map_i_def$rdata_mapping_column) &&
+                    heat_map_i_def$rdata_mapping_column != "") {
+                  user_mapping_column <- heat_map_i_def$rdata_mapping_column
+                  cat(file=stderr(), paste0("[HEATMAP-RENDER] User specified mapping column: '", user_mapping_column, "'\n"))
+                }
+
+                # First, try user-specified mapping column with smart matching
                 csv_mapping <- NULL
-                if (exists("readfile440") && !is.null(readfile440) && nrow(readfile440) > 0) {
-                  cat(file=stderr(), "[HEATMAP-RENDER] Searching CSV for mapping column...\n")
-                  cat(file=stderr(), paste0("[HEATMAP-RENDER] CSV columns: ", paste(head(names(readfile440), 10), collapse=", "), "...\n"))
+                if (!is.null(user_mapping_column) && exists("readfile440") && !is.null(readfile440) && nrow(readfile440) > 0) {
+                  cat(file=stderr(), paste0("[HEATMAP-RENDER] Using user-specified mapping column '", user_mapping_column, "' with smart matching\n"))
+
+                  if (user_mapping_column %in% names(readfile440)) {
+                    id_col_vals <- as.character(readfile440[[title.id]])
+                    sample_col_vals <- as.character(readfile440[[user_mapping_column]])
+
+                    cat(file=stderr(), paste0("[HEATMAP-RENDER] ID column '", title.id, "' values (first 5): ", paste(head(id_col_vals, 5), collapse=", "), "\n"))
+                    cat(file=stderr(), paste0("[HEATMAP-RENDER] Mapping column '", user_mapping_column, "' values (first 5): ", paste(head(sample_col_vals, 5), collapse=", "), "\n"))
+
+                    # Pre-normalize CNV sample names for smart matching
+                    cnv_samples_normalized <- smart_normalize(cnv_samples)
+                    names(cnv_samples_normalized) <- cnv_samples  # Keep original names as names
+
+                    for (i in seq_along(tree_tips)) {
+                      tip <- tree_tips[i]
+                      # Find this tree tip in the CSV ID column
+                      csv_row <- which(id_col_vals == tip)
+                      if (length(csv_row) > 0) {
+                        # Get the corresponding sample name from the mapping column
+                        sample_val <- sample_col_vals[csv_row[1]]
+                        if (!is.na(sample_val) && sample_val != "") {
+                          sample_val_normalized <- smart_normalize(sample_val)
+
+                          # Try exact match first
+                          if (sample_val %in% cnv_samples) {
+                            matched_cnv[tip, ] <- as.numeric(cnv_data[sample_val, ])
+                            matches_found <- matches_found + 1
+                          } else {
+                            # Try smart normalized match
+                            match_idx <- which(cnv_samples_normalized == sample_val_normalized)
+                            if (length(match_idx) > 0) {
+                              matched_sample <- cnv_samples[match_idx[1]]
+                              matched_cnv[tip, ] <- as.numeric(cnv_data[matched_sample, ])
+                              matches_found <- matches_found + 1
+                            } else {
+                              # Try partial match - CNV sample contains the mapping value or vice versa
+                              for (j in seq_along(cnv_samples)) {
+                                cnv_s <- cnv_samples[j]
+                                cnv_s_norm <- cnv_samples_normalized[j]
+                                if (grepl(sample_val_normalized, cnv_s_norm, fixed = TRUE) ||
+                                    grepl(cnv_s_norm, sample_val_normalized, fixed = TRUE)) {
+                                  matched_cnv[tip, ] <- as.numeric(cnv_data[cnv_s, ])
+                                  matches_found <- matches_found + 1
+                                  break
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                    cat(file=stderr(), paste0("[HEATMAP-RENDER] After user-specified mapping (smart match): ", matches_found, " matches\n"))
+                    csv_mapping <- list(column = user_mapping_column, count = matches_found, user_specified = TRUE)
+                  } else {
+                    cat(file=stderr(), paste0("[HEATMAP-RENDER] WARNING: User-specified column '", user_mapping_column, "' not found in CSV\n"))
+                    cat(file=stderr(), paste0("[HEATMAP-RENDER] Available columns: ", paste(names(readfile440), collapse=", "), "\n"))
+                  }
+                }
+
+                # If no user-specified column or it didn't work, try auto-detection
+                if (is.null(csv_mapping) && exists("readfile440") && !is.null(readfile440) && nrow(readfile440) > 0) {
+                  cat(file=stderr(), "[HEATMAP-RENDER] Auto-detecting mapping column in CSV...\n")
+                  cat(file=stderr(), paste0("[HEATMAP-RENDER] CSV columns (all): ", paste(names(readfile440), collapse=", "), "\n"))
+                  cat(file=stderr(), paste0("[HEATMAP-RENDER] ID column '", title.id, "' values (first 5): ", paste(head(as.character(readfile440[[title.id]]), 5), collapse=", "), "\n"))
 
                   # Look for a column that contains values matching CNV sample names
                   for (col_name in names(readfile440)) {
                     col_vals <- as.character(readfile440[[col_name]])
-                    # Check if any CNV sample names appear in this column
+                    # Check if any CNV sample names appear in this column (exact match)
                     matches_in_col <- sum(cnv_samples %in% col_vals)
                     if (matches_in_col > 0) {
-                      cat(file=stderr(), paste0("[HEATMAP-RENDER] Found potential mapping column '", col_name, "' with ", matches_in_col, " matches\n"))
+                      cat(file=stderr(), paste0("[HEATMAP-RENDER] Found potential mapping column '", col_name, "' with ", matches_in_col, " exact matches\n"))
                       if (is.null(csv_mapping) || matches_in_col > csv_mapping$count) {
                         csv_mapping <- list(column = col_name, count = matches_in_col)
                       }
                     }
+                    # S2.0-RDATA: Also check for partial matches (column values contained in CNV sample names)
+                    if (matches_in_col == 0 && col_name != title.id) {
+                      partial_matches <- 0
+                      unique_vals <- unique(col_vals[!is.na(col_vals) & col_vals != ""])
+                      if (length(unique_vals) > 0 && length(unique_vals) < 500) {  # Only check if reasonable number of unique values
+                        for (val in unique_vals) {
+                          if (nchar(val) >= 3) {  # Only match if value is at least 3 chars
+                            for (cnv_s in cnv_samples) {
+                              if (grepl(val, cnv_s, fixed = TRUE)) {
+                                partial_matches <- partial_matches + 1
+                                break
+                              }
+                            }
+                          }
+                        }
+                      }
+                      if (partial_matches > 0) {
+                        cat(file=stderr(), paste0("[HEATMAP-RENDER] Column '", col_name, "' has ", partial_matches, " values that appear as substrings in CNV sample names\n"))
+                        cat(file=stderr(), paste0("[HEATMAP-RENDER]   Column sample values: ", paste(head(unique_vals, 5), collapse=", "), "\n"))
+                        if (partial_matches > 5 && (is.null(csv_mapping) || partial_matches > csv_mapping$count)) {
+                          csv_mapping <- list(column = col_name, count = partial_matches, partial = TRUE)
+                        }
+                      }
+                    }
                   }
 
-                  # Use the best mapping column if found
+                  # Use the best auto-detected mapping column if found
                   if (!is.null(csv_mapping) && csv_mapping$count > 0) {
-                    cat(file=stderr(), paste0("[HEATMAP-RENDER] Using CSV column '", csv_mapping$column, "' for mapping\n"))
+                    cat(file=stderr(), paste0("[HEATMAP-RENDER] Using auto-detected CSV column '", csv_mapping$column, "' for mapping\n"))
 
                     # Create a mapping from tree tip (ID column) to sample name
                     id_col_vals <- as.character(readfile440[[title.id]])
@@ -3986,26 +4196,41 @@ func.print.lineage.tree <- function(conf_yaml_path,
                     cat(file=stderr(), paste0("[HEATMAP-RENDER] ID column '", title.id, "' values (first 5): ", paste(head(id_col_vals, 5), collapse=", "), "\n"))
                     cat(file=stderr(), paste0("[HEATMAP-RENDER] Sample column '", csv_mapping$column, "' values (first 5): ", paste(head(sample_col_vals, 5), collapse=", "), "\n"))
 
+                    is_partial <- !is.null(csv_mapping$partial) && csv_mapping$partial
+
                     for (i in seq_along(tree_tips)) {
                       tip <- tree_tips[i]
                       # Find this tree tip in the CSV ID column
                       csv_row <- which(id_col_vals == tip)
                       if (length(csv_row) > 0) {
                         # Get the corresponding sample name from the mapping column
-                        sample_name <- sample_col_vals[csv_row[1]]
-                        # Look up this sample name in the CNV data
-                        if (sample_name %in% cnv_samples) {
-                          matched_cnv[tip, ] <- as.numeric(cnv_data[sample_name, ])
-                          matches_found <- matches_found + 1
+                        sample_val <- sample_col_vals[csv_row[1]]
+
+                        if (is_partial) {
+                          # For partial matches, find the CNV sample that contains this value
+                          for (cnv_s in cnv_samples) {
+                            if (grepl(sample_val, cnv_s, fixed = TRUE)) {
+                              matched_cnv[tip, ] <- as.numeric(cnv_data[cnv_s, ])
+                              matches_found <- matches_found + 1
+                              break
+                            }
+                          }
+                        } else {
+                          # Exact match
+                          if (sample_val %in% cnv_samples) {
+                            matched_cnv[tip, ] <- as.numeric(cnv_data[sample_val, ])
+                            matches_found <- matches_found + 1
+                          }
                         }
                       }
                     }
-                    cat(file=stderr(), paste0("[HEATMAP-RENDER] After CSV mapping: ", matches_found, " matches\n"))
+                    cat(file=stderr(), paste0("[HEATMAP-RENDER] After auto-detected CSV mapping: ", matches_found, " matches\n"))
                   }
                 }
 
                 # If CSV mapping didn't find everything, try direct matching
                 if (matches_found < length(tree_tips)) {
+                  cat(file=stderr(), "[HEATMAP-RENDER] Trying direct and partial matching...\n")
                   for (tip in tree_tips) {
                     if (all(is.na(matched_cnv[tip, ]))) {  # Only if not already matched
                       # Try exact match
@@ -4013,7 +4238,7 @@ func.print.lineage.tree <- function(conf_yaml_path,
                         matched_cnv[tip, ] <- as.numeric(cnv_data[tip, ])
                         matches_found <- matches_found + 1
                       } else {
-                        # Try partial matching - CNV sample contains tree tip
+                        # Try partial matching - CNV sample contains tree tip or vice versa
                         for (cnv_s in cnv_samples) {
                           if (grepl(tip, cnv_s, fixed = TRUE) || grepl(cnv_s, tip, fixed = TRUE)) {
                             matched_cnv[tip, ] <- as.numeric(cnv_data[cnv_s, ])
@@ -4024,6 +4249,16 @@ func.print.lineage.tree <- function(conf_yaml_path,
                       }
                     }
                   }
+                }
+
+                # S2.0-RDATA: If still no matches, show diagnostic info to help user
+                if (matches_found == 0) {
+                  cat(file=stderr(), "\n[HEATMAP-RENDER] *** WARNING: NO MATCHES FOUND ***\n")
+                  cat(file=stderr(), "[HEATMAP-RENDER] This means the CNV sample names don't match tree tip labels.\n")
+                  cat(file=stderr(), "[HEATMAP-RENDER] To fix this, your CSV needs a column that maps tree tip IDs to CNV sample names.\n")
+                  cat(file=stderr(), "[HEATMAP-RENDER] Tree tip labels (samples): ", paste(head(tree_tips, 10), collapse=", "), "...\n")
+                  cat(file=stderr(), "[HEATMAP-RENDER] CNV sample names: ", paste(head(cnv_samples, 10), collapse=", "), "...\n")
+                  cat(file=stderr(), "[HEATMAP-RENDER] Add a column to your CSV that contains the CNV sample names, with rows matching your ID column.\n\n")
                 }
 
                 cat(file=stderr(), paste0("[HEATMAP-RENDER] Matched ", matches_found, " out of ", length(tree_tips), " tree tips to CNV data\n"))
@@ -4878,21 +5113,29 @@ func.print.lineage.tree <- function(conf_yaml_path,
         bootstrap_label_size =bootstrap_label_size,
         heatmap_tree_distance = heatmap_tree_distance,
         heatmap_global_gap = heatmap_global_gap,  # v125: Gap between multiple heatmaps
-        legend_settings = legend_settings  # v136: Pass legend settings for highlight/bootstrap legends
+        legend_settings = legend_settings,  # v136: Pass legend settings for highlight/bootstrap legends
+        cached_p_list_of_pairs = cached_p_list_of_pairs,  # S2.0-PERF: Pass cached p-values
+        cached_p_list_hash = cached_p_list_hash  # S2.0-PERF: Pass cache hash for validation
       )
       # }
+
+      # S2.0-PERF: Extract plot and cache data from new return structure (Option 3A)
+      # func.make.plot.tree.heat.NEW now returns list(plot=..., cache_data=...)
+      ou_result <- ou
+      ou <- ou_result$plot  # Extract the plot object
+      cache_data <- ou_result$cache_data  # Store cache data to return
 
       #print("ou is")
       #print(class(ou))
       #print(ou)
-      
-      
+
+
       out_list[[out_index]] <- out_file_path
-      
+
       #a<- grid.arrange(ou,ou,ou)
-      
+
       #ggsave("/home/dcsoft/s/yaara/chec/compare_trees_klein.pdf", plot=a, width = width, height = height*3, units = units_out, limitsize = FALSE)
-      
+
       # v53: print("ou is")
       # v53: print(levels(ou$data$new_class))
       levels_base= levels(ou$data$new_class)
@@ -4980,8 +5223,19 @@ func.print.lineage.tree <- function(conf_yaml_path,
   
   
   out_file_path <- out_trees
-  
-  #close func  
+
+  # S2.0-PERF: Return both plots and cache data for two-tier caching (Option 3A)
+  # cache_data is set when func.make.plot.tree.heat.NEW is called above
+  # If cache_data was never set (e.g., error path), use NULL
+  if (!exists("cache_data") || is.null(cache_data)) {
+    cache_data <- NULL
+  }
+
+  return(list(
+    plots = out_trees,
+    cache_data = cache_data
+  ))
+  #close func
 }
 
 
@@ -5035,7 +5289,9 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
                                          bootstrap_label_size = 1.5,  # v129: Reduced from 3.5 for smaller default legend
                                          heatmap_tree_distance = 0.02,
                                          heatmap_global_gap = 0.05,  # v125: Gap between multiple heatmaps
-                                         legend_settings = NULL) {  # v136: Legend settings for highlight/bootstrap legends
+                                         legend_settings = NULL,  # v136: Legend settings for highlight/bootstrap legends
+                                         cached_p_list_of_pairs = NULL,  # S2.0-PERF: Cached p-values (Option 3A)
+                                         cached_p_list_hash = NULL) {    # S2.0-PERF: Hash for cache validation
 
   # === DEBUG CHECKPOINT 4: INNER FUNCTION ENTRY ===
   # v53: cat(file=stderr(), "\nÃ°Å¸â€Â DEBUG CHECKPOINT 4: func.make.plot.tree.heat.NEW ENTRY\n")
@@ -5045,17 +5301,22 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   # v53: cat(file=stderr(), "Ã°Å¸â€Â manual_nodes_to_highlight:", paste(manual_nodes_to_highlight, collapse=", "), "\n")
   # v53: debug_cat("================================================\n\n")
   
+  # === PROFILING: func.make.plot.tree.heat.NEW ===
+  .prof_func_start <- Sys.time()
+
   if (debug_mode == TRUE) {
     # v53: print("In func.make.plot.tree.HEAT")
   }
-  
+
   # Prepare data structures
   dx_rx_types1 <- dx_rx_types1_short
   # v53: print("A")
   # v53: print(dx_rx_types1)
   
   # v56b: Wrap in suppressWarnings to suppress harmless ggtree/ggplot2 fortify warnings
+  .prof_section_start <- Sys.time()
   pr440 <- suppressWarnings(ggtree(tree440))
+  cat(file=stderr(), sprintf("[PROF-TREE] ggtree(tree440) #1: %.3f sec\n", as.numeric(Sys.time() - .prof_section_start)))
   d440 <- pr440$data
   cc_tipss <- func.create.cc_tipss(d440)
   cc_nodss <- func.create.cc_nodss(d440)
@@ -5094,7 +5355,9 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   yet_another_multiplier <- 0 
   
   # Create tree with group information
+  .prof_section_start <- Sys.time()
   tree_with_group <- ggtree::groupOTU(tree440, list_node_by_class)
+  cat(file=stderr(), sprintf("[PROF-TREE] groupOTU #1: %.3f sec\n", as.numeric(Sys.time() - .prof_section_start)))
   
   # Prepare subframes
   subframe_of_nodes <- d440[d440$isTip == "FALSE", ]
@@ -5118,15 +5381,21 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   }
   
   # Group tree by class
+  .prof_section_start <- Sys.time()
   tree_with_group_CPY <- ggtree::groupOTU(tree440, list_rename_by_class)
+  cat(file=stderr(), sprintf("[PROF-TREE] groupOTU #2: %.3f sec\n", as.numeric(Sys.time() - .prof_section_start)))
   # v56b: Wrap in suppressWarnings to suppress harmless fortify warnings
+  .prof_section_start <- Sys.time()
   levels_groups <- levels(suppressWarnings(ggtree(tree_with_group_CPY))$data$group)
+  cat(file=stderr(), sprintf("[PROF-TREE] ggtree for levels: %.3f sec\n", as.numeric(Sys.time() - .prof_section_start)))
   # v53: print("E")
 
   # Create tree with coloring
   # v56b: Wrap in suppressWarnings to suppress harmless fortify warnings
+  .prof_section_start <- Sys.time()
   tree_TRY <- suppressWarnings(ggtree(tree_with_group_CPY, aes(color = new_class, size = p_val_new),
                      ladderize = laderize_flag))
+  cat(file=stderr(), sprintf("[PROF-TREE] ggtree with aes: %.3f sec\n", as.numeric(Sys.time() - .prof_section_start)))
   
   test_fig <- tree_TRY
   
@@ -5150,15 +5419,44 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   )
   
   #print("G")
-  
-  # Calculate p-values
-  p_list_of_pairs <- func.create.p_list_of_pairs(
-    list_node_by_class, d440, dx_rx_types1_short,
-    cc_nodss, tree_with_group, FDR_perc, tree, cc_tipss,
-    tree_TRY, tree_size, no_name, simulate.p.value
+
+  # S2.0-PERF: Two-tier caching for p_list_of_pairs (Option 3A)
+  # Compute current hash to check if cache is valid
+  .prof_section_start <- Sys.time()
+  current_p_list_hash <- func.create.p_list_cache_hash(
+    tree440, list_id_by_class, dx_rx_types1_short, FDR_perc, simulate.p.value
   )
-  
+
+  # Check if cache is valid - hash must match AND cached data must exist
+  cache_is_valid <- !is.null(cached_p_list_hash) &&
+                    !is.null(cached_p_list_of_pairs) &&
+                    (cached_p_list_hash == current_p_list_hash)
+
+  if (cache_is_valid) {
+    # S2.0-PERF: Cache hit - use cached p-values
+    p_list_of_pairs <- cached_p_list_of_pairs
+    cat(file=stderr(), sprintf("[PERF-CACHE] Using cached p_list_of_pairs (hash: %s): %.3f sec\n",
+                               substr(current_p_list_hash, 1, 8), as.numeric(Sys.time() - .prof_section_start)))
+  } else {
+    # S2.0-PERF: Cache miss - need to recalculate
+    if (!is.null(cached_p_list_hash)) {
+      cat(file=stderr(), sprintf("[PERF-CACHE] Cache INVALIDATED - hash changed from %s to %s\n",
+                                 substr(cached_p_list_hash, 1, 8), substr(current_p_list_hash, 1, 8)))
+    } else {
+      cat(file=stderr(), "[PERF-CACHE] No cache available - computing p_list_of_pairs\n")
+    }
+    p_list_of_pairs <- func.create.p_list_of_pairs(
+      list_node_by_class, d440, dx_rx_types1_short,
+      cc_nodss, tree_with_group, FDR_perc, tree, cc_tipss,
+      tree_TRY, tree_size, no_name, simulate.p.value
+    )
+    cat(file=stderr(), sprintf("[PERF-CACHE] Computed p_list_of_pairs (new hash: %s): %.3f sec\n",
+                               substr(current_p_list_hash, 1, 8), as.numeric(Sys.time() - .prof_section_start)))
+  }
+
+  .prof_section_start <- Sys.time()
   p_PAIRS_pval_list <- func.create.p_val_list_FROM_LIST(FDR_perc, tree_TRY, p_list_of_pairs, op_list)
+  cat(file=stderr(), sprintf("[PROF-TREE] p_val_list creation: %.3f sec\n", as.numeric(Sys.time() - .prof_section_start)))
   
   # Calculate scores for tree if requested
   if (flag_calc_scores_for_tree == TRUE) {
@@ -5453,10 +5751,12 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   # v53: cat(file=stderr(), "[DEBUG] =====================================\n\n")
   
   # Apply colors and sizes to tree
-  pr440_short_tips_TRY_new <- pr440_short_tips_TRY + 
-    scale_color_manual(values = colors_scale2) + 
+  .prof_section_start <- Sys.time()
+  pr440_short_tips_TRY_new <- pr440_short_tips_TRY +
+    scale_color_manual(values = colors_scale2) +
     scale_size_manual(values = list_of_sizes)
-  
+  cat(file=stderr(), sprintf("[PROF-TREE] scale_color + scale_size: %.3f sec\n", as.numeric(Sys.time() - .prof_section_start)))
+
   levels_base <- levels(pr440_short_tips_TRY$data$new_class)
   
   # Store reference to original tree
@@ -5604,8 +5904,9 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   }
   mar <- round(width / 50)
   mar1 <- mar + 5
-  
-  pr440_short_tips_TRY_new_with_boot_more1 <- pr440_short_tips_TRY_new_with_boot + 
+
+  .prof_section_start <- Sys.time()
+  pr440_short_tips_TRY_new_with_boot_more1 <- pr440_short_tips_TRY_new_with_boot +
     layout_dendrogram() +
     guides(
       colour = guide_legend(
@@ -5635,7 +5936,8 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     ) +
     scale_y_reverse() +
     geom_rootedge()
-  
+  cat(file=stderr(), sprintf("[PROF-TREE] guides + theme + scale_y_reverse: %.3f sec\n", as.numeric(Sys.time() - .prof_section_start)))
+
   # Add node numbers if requested
   # v53: cat(file=stderr(), "\nÃ°Å¸â€Â DEBUG CHECKPOINT 5: NODE NUMBER RENDERING\n")
   # v53: cat(file=stderr(), "Ã°Å¸â€Â flag_display_nod_number_on_tree is:", flag_display_nod_number_on_tree, "\n")
@@ -5768,17 +6070,19 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     b <- base_b * adjust_width_eclipse    # Slider value is now a multiplier
 
     # v139: Pass high_alpha_list for transparency
+    .prof_section_start <- Sys.time()
     p <- func_highlight(
       p, how_many_hi, heat_flag, high_color_list, a, b, man_adjust_elipse,
       pr440_short_tips_TRY, boudariestt, debug_mode, high_offset, high_vertical_offset,
       high_alpha_list
     )
+    cat(file=stderr(), sprintf("[PROF-TREE] func_highlight #1 (pre-heatmap): %.3f sec\n", as.numeric(Sys.time() - .prof_section_start)))
   }
 
   if (length(b) == 0) {
     b <- 0.2
   }
-  
+
   # Add heatmap if requested
   # v99: MANUAL HEATMAP - Replaced gheatmap() with manual geom_tile() approach
   # because gheatmap was corrupting the plot's @mapping property
@@ -6830,6 +7134,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       # The user confirmed this pattern was in the original lineage plotter code and is required.
       # DO NOT REMOVE THIS DUPLICATE CALL - it is necessary for gheatmap to work correctly.
       # First gheatmap call creates the initial structure
+      .prof_gheatmap_start <- Sys.time()
       pr440_short_tips_TRY_heat <- gheatmap(
         tt,
         data = dxdf440_for_heat[[j1]],
@@ -6891,6 +7196,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
         # v83: IMMEDIATELY repair mapping after second gheatmap call
         pr440_short_tips_TRY_heat <- func.repair.ggtree.mapping(pr440_short_tips_TRY_heat, verbose = FALSE)
       }
+      cat(file=stderr(), sprintf("[PROF-TREE] gheatmap (heatmap %d): %.3f sec\n", j, as.numeric(Sys.time() - .prof_gheatmap_start)))
 
       # v85: REMOVED direct layer data modification - it corrupts ggplot2 internal state
       # gheatmap creates tile layers with character values, and scale_fill_manual can handle
@@ -7538,17 +7844,19 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     debug_cat(paste0("=============================================\n"))
 
     # v139: Pass high_alpha_list for transparency
+    .prof_section_start <- Sys.time()
     p <- func_highlight(
       p, how_many_hi, heat_flag, high_color_list, a, b, man_adjust_elipse,
       pr440_short_tips_TRY, boudariestt, debug_mode, high_offset, high_vertical_offset,
       high_alpha_list
     )
+    cat(file=stderr(), sprintf("[PROF-TREE] func_highlight #2 (post-heatmap): %.3f sec\n", as.numeric(Sys.time() - .prof_section_start)))
   }
-  
+
   if (length(b) == 0) {
     b <- 0.2
   }
-  
+
   # v94: DEBUG - track layers after if(FALSE) block
   debug_cat(paste0("\n=== v94: AFTER if(FALSE) block ===\n"))
   debug_cat(paste0("  p layers: ", length(p$layers), "\n"))
@@ -7605,6 +7913,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     debug_cat(paste0("  v51: y_off_base=", y_off_base, " (n_tips=", n_tips, ", max_y=", round(max_y_in_data, 2), ")\n"))
 
     # v95: Wrap in tryCatch to catch any errors
+    .prof_section_start <- Sys.time()
     p <- tryCatch({
       result <- func.make.second.legend(
         p,
@@ -7666,6 +7975,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       debug_cat(paste0("  Returning plot without second legend modifications\n"))
       p  # Return original plot on error
     })
+    cat(file=stderr(), sprintf("[PROF-TREE] func.make.second.legend: %.3f sec\n", as.numeric(Sys.time() - .prof_section_start)))
 
     debug_cat(paste0("=== v95: After func.make.second.legend ===\n"))
     debug_cat(paste0("  p layers: ", length(p$layers), "\n"))
@@ -7904,7 +8214,17 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     stop("Could not save plot after multiple attempts")
   }
 
-  return(p)
+  cat(file=stderr(), sprintf("[PROF-TREE] === TOTAL func.make.plot.tree.heat.NEW: %.3f sec ===\n", as.numeric(Sys.time() - .prof_func_start)))
+
+  # S2.0-PERF: Return both the plot and cache data for two-tier caching (Option 3A)
+  # The cache data allows generate_plot() to store and reuse p_list_of_pairs
+  return(list(
+    plot = p,
+    cache_data = list(
+      p_list_of_pairs = p_list_of_pairs,
+      p_list_hash = current_p_list_hash
+    )
+  ))
 }
 
 
@@ -7981,11 +8301,17 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #155724;",
-                     tags$h4(style = "color: #155724; margin: 0;", "Version S2.0 (Stable)"),
+                     tags$h4(style = "color: #155724; margin: 0;", "Version S2.1 (Stable)"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
-                            "Stable release with RData CNV heatmap support.",
+                            "Stable release with performance optimizations.",
                             tags$br(), tags$br(),
-                            tags$strong("New in S2.0:"),
+                            tags$strong("New in S2.1:"),
+                            tags$ul(
+                              tags$li("Two-tier caching for faster plot generation"),
+                              tags$li("Async garbage collection for faster UI response"),
+                              tags$li("Improved memory management during plot rendering")
+                            ),
+                            tags$strong("From S2.0:"),
                             tags$ul(
                               tags$li("RData CNV heatmaps: Import CNV data from QDNAseq/scIMPACT pipelines"),
                               tags$li("Automatic sample matching via CSV lookup columns"),
@@ -8036,9 +8362,11 @@ ui <- dashboardPage(
                         choices = NULL),
             conditionalPanel(
               condition = "input.individual_column != null && input.individual_column != ''",
-              selectInput("individual_value", "Select Individual", 
-                          choices = NULL, 
-                          selected = NULL)
+              # S2.0-PERF: Use selectizeInput for server-side rendering with large option lists
+              selectizeInput("individual_value", "Select Individual",
+                          choices = NULL,
+                          selected = NULL,
+                          options = list(placeholder = "Select an individual..."))
             ),
             
             # Checkbox to ignore individual filtering
@@ -9123,6 +9451,8 @@ server <- function(input, output, session) {
     rdata_cnv_matrix = NULL,    # Processed CNV matrix (rows=positions, cols=samples)
     rdata_import_status = NULL, # Status message for RData import
     rdata_sample_names = NULL,  # Sample names from RData (column names)
+    rdata_auto_match = FALSE,   # S2.0: Whether RData samples auto-match tree tips
+    rdata_mapping_column = NULL, # S2.0: User-selected CSV column for RData sample mapping
     # v121: Legend settings
     # S1.5: Added all missing defaults for proper legend styling
     legend_settings = list(
@@ -9168,9 +9498,16 @@ server <- function(input, output, session) {
     tree_stretch_x = 1,  # Horizontal stretch (tree length)
     tree_stretch_y = 1,  # Vertical stretch (tree width)
     # v179: Background color control
-    background_color = "#FFFFFF"
+    background_color = "#FFFFFF",
+    # S2.0-PERF: Two-tier caching for p_list_of_pairs (Option 3A)
+    # These cache the expensive Fisher test calculations - only recalculate when
+    # tree structure, classification, FDR, or simulate.p.value change.
+    # Visual-only changes (legend sizes, colors, fonts) skip recalculation.
+    cached_p_list_hash = NULL,        # Hash of inputs that affect p-values
+    cached_p_list_of_pairs = NULL,    # The cached p-value list
+    cached_classification_column = NULL  # The classification column that was used
   )
-  
+
   classification_loading <- reactiveVal(FALSE)
 
   # S1.4-PERF: Plot trigger mechanism to batch multiple rapid updates
@@ -9179,8 +9516,13 @@ server <- function(input, output, session) {
   # This prevents redundant recalculations when multiple inputs change rapidly.
   plot_trigger <- reactiveVal(0)
 
-  # S1.4-PERF: Debounced version of plot_trigger - batches rapid updates
-  plot_trigger_debounced <- debounce(reactive(plot_trigger()), 100)  # 100ms debounce
+  # S2.0-PERF: Increased debounce from 100ms to 500ms to better batch rapid changes
+  # and prevent cascading plot regenerations that can freeze the UI
+  plot_trigger_debounced <- debounce(reactive(plot_trigger()), 500)  # 500ms debounce
+
+  # S2.0-PERF: Cooldown mechanism - track when last plot finished to prevent rapid re-triggering
+  last_plot_time <- reactiveVal(0)
+  PLOT_COOLDOWN_MS <- 1000  # 1 second cooldown after plot generation
 
   # S1.4-PERF: Helper function to request plot regeneration (use instead of direct generate_plot())
   request_plot_update <- function() {
@@ -9259,6 +9601,14 @@ server <- function(input, output, session) {
   observeEvent(plot_trigger_debounced(), {
     req(values$plot_ready)  # Only regenerate if a plot exists
     req(plot_trigger() > 0)  # Ignore initial value
+
+    # S2.0-PERF: Cooldown check - skip if a plot was generated too recently
+    time_since_last <- as.numeric(Sys.time()) * 1000 - last_plot_time()
+    if (time_since_last < PLOT_COOLDOWN_MS) {
+      cat(file=stderr(), sprintf("[PERF] Debounced trigger skipped - cooldown active (%.0fms since last plot)\n", time_since_last))
+      return()
+    }
+
     cat(file=stderr(), "[PERF] Debounced plot trigger fired - regenerating plot\n")
     generate_plot()
   }, ignoreInit = TRUE)
@@ -9582,7 +9932,46 @@ server <- function(input, output, session) {
     cat(file=stderr(), "[RDATA-IMPORT] Sample names:", paste(head(result$sample_names, 5), collapse=", "),
         if(length(result$sample_names) > 5) "..." else "", "\n")
 
-    # S1.62dev: Build status message including chromosome info
+    # S2.0: Check auto-match - do RData sample names match tree tip labels?
+    tree_tips <- values$tree$tip.label
+    rdata_samples <- result$sample_names
+
+    # Smart match function - normalizes strings for comparison
+    smart_normalize <- function(x) {
+      x <- gsub("[._-]", "", x)  # Remove common separators
+      x <- gsub("^X", "", x)      # Remove leading X (R adds this to numeric column names)
+      tolower(x)
+    }
+
+    # Try different matching strategies
+    auto_match_count <- 0
+    tree_tips_norm <- smart_normalize(tree_tips)
+    rdata_samples_norm <- smart_normalize(rdata_samples)
+
+    # Strategy 1: Exact match after normalization
+    auto_match_count <- sum(tree_tips_norm %in% rdata_samples_norm)
+
+    # Strategy 2: Substring match (RData sample contains tree tip or vice versa)
+    if (auto_match_count < length(tree_tips) * 0.5) {
+      for (tip in tree_tips_norm) {
+        for (rs in rdata_samples_norm) {
+          if (grepl(tip, rs, fixed = TRUE) || grepl(rs, tip, fixed = TRUE)) {
+            auto_match_count <- auto_match_count + 1
+            break
+          }
+        }
+      }
+    }
+
+    auto_match_success <- auto_match_count >= length(tree_tips) * 0.5  # At least 50% match
+    values$rdata_auto_match <- auto_match_success
+    values$rdata_mapping_column <- NULL  # Reset mapping column
+
+    cat(file=stderr(), paste0("[RDATA-IMPORT] Auto-match check: ", auto_match_count, "/", length(tree_tips),
+                              " tips match (", round(auto_match_count/length(tree_tips)*100, 1), "%)\n"))
+    cat(file=stderr(), paste0("[RDATA-IMPORT] Auto-match success: ", auto_match_success, "\n"))
+
+    # S2.0: Build enhanced status message with sample names
     status_msg <- paste0(
       "✅ CNV data loaded successfully!\n",
       "Samples: ", result$n_samples, "\n",
@@ -9592,8 +9981,21 @@ server <- function(input, output, session) {
       unique_chrs <- unique(result$chr_info)
       status_msg <- paste0(status_msg, "\nChromosomes: ", paste(unique_chrs, collapse=", "))
     } else {
-      status_msg <- paste0(status_msg, "\nChromosome info: Not available in this RData file")
+      status_msg <- paste0(status_msg, "\nChromosome info: Not available")
     }
+
+    # Add sample names preview
+    sample_preview <- paste(head(result$sample_names, 5), collapse=", ")
+    if (length(result$sample_names) > 5) sample_preview <- paste0(sample_preview, ", ...")
+    status_msg <- paste0(status_msg, "\n\n📋 Sample names (first 5):\n", sample_preview)
+
+    # Add auto-match status
+    if (auto_match_success) {
+      status_msg <- paste0(status_msg, "\n\n✅ AUTO-MATCH SUCCESS!\nRData samples match tree tips - ready to use!")
+    } else {
+      status_msg <- paste0(status_msg, "\n\n⚠️ MANUAL MAPPING NEEDED\nRData samples don't match tree tips.\nSelect a mapping column in the Heatmap settings.")
+    }
+
     values$rdata_import_status <- status_msg
 
     values$progress_visible <- FALSE
@@ -10387,32 +10789,57 @@ server <- function(input, output, session) {
   
   # When CSV file is uploaded
   observeEvent(input$csv_file, {
+    cat(file=stderr(), "[DEBUG-CSV] CSV file observer triggered\n")
     req(input$csv_file)
-    
+
     csv_file <- input$csv_file
-    
+    cat(file=stderr(), sprintf("[DEBUG-CSV] File path: %s\n", csv_file$datapath))
+
     # Show progress
     values$progress_message <- "[FILE]  Loading CSV file..."
     values$progress_visible <- TRUE
     
     # Read CSV file
     tryCatch({
-      csv_data <- read.csv(csv_file$datapath)
+      # S2.0-PERF: Use data.table::fread() for fast CSV reading
+      # We call it with :: to avoid loading the library and masking dplyr functions
+      start_time <- Sys.time()
+      cat(file=stderr(), "[DEBUG-CSV] About to call fread()\n")
 
-      # S1-PERF: Filter out columns with empty/auto-generated names IMMEDIATELY
-      # This fixes the "large number of options" warnings and speeds up all processing
-      # Patterns: "...XXXX" (readr), "X", "X.1", "X.2" (base R), empty names
-      col_names <- names(csv_data)
-      is_auto_named <- grepl("^\\.\\.\\.", col_names) |  # readr pattern: ...15372
-                       grepl("^X(\\.\\d+)?$", col_names) |  # base R pattern: X, X.1, X.2
-                       col_names == "" | is.na(col_names)
-      valid_cols <- !is_auto_named
-      if (sum(!valid_cols) > 0) {
-        removed_count <- sum(!valid_cols)
-        cat(file=stderr(), sprintf("[PERF] Removed %d empty/auto-named columns on CSV load (keeping %d)\n",
+      # Read with fread - much faster than read.csv or readr
+      # data.table = FALSE returns a data.frame instead of data.table
+      # Note: We avoid check.names parameter for compatibility, then manually fix names
+      csv_data_raw <- data.table::fread(csv_file$datapath, data.table = FALSE)
+      cat(file=stderr(), "[DEBUG-CSV] fread() completed\n")
+
+      # Manually make names syntactically valid (like read.csv does with check.names=TRUE)
+      # This ensures column names work properly for classification coloring
+      names(csv_data_raw) <- make.names(names(csv_data_raw), unique = TRUE)
+      cat(file=stderr(), "[DEBUG-CSV] Column names validated\n")
+
+      read_time <- as.numeric(difftime(Sys.time(), start_time, units = "secs"))
+      cat(file=stderr(), sprintf("[PERF] CSV read with fread(): %.3f sec (%d rows x %d cols)\n",
+          read_time, nrow(csv_data_raw), ncol(csv_data_raw)))
+
+      # S2.0-PERF: Filter out columns with empty/auto-generated names
+      # Patterns: "V1", "V2" (fread), "...XXXX" (readr), "X", "X.1", "X.2" (base R), empty names
+      col_names <- names(csv_data_raw)
+      valid_cols <- !grepl("^V\\d+$", col_names) &           # fread pattern: V1, V2, V3
+                    !grepl("^\\.\\.\\.", col_names) &        # readr pattern: ...15372
+                    !grepl("^X(\\.\\d+)?$", col_names) &     # base R pattern: X, X.1, X.2
+                    col_names != "" & !is.na(col_names)
+
+      removed_count <- sum(!valid_cols)
+      if (removed_count > 0) {
+        cat(file=stderr(), sprintf("[PERF] Removed %d empty/auto-named columns (keeping %d)\n",
             removed_count, sum(valid_cols)))
-        csv_data <- csv_data[, valid_cols, drop = FALSE]
+        csv_data <- csv_data_raw[, valid_cols, drop = FALSE]
+      } else {
+        csv_data <- csv_data_raw
       }
+
+      total_time <- as.numeric(difftime(Sys.time(), start_time, units = "secs"))
+      cat(file=stderr(), sprintf("[PERF] CSV load complete: %.3f sec total\n", total_time))
 
       values$csv_data <- csv_data
       # v107: Trigger heatmap UI regeneration when CSV data changes (new column choices)
@@ -10481,7 +10908,7 @@ server <- function(input, output, session) {
     
     if (is.null(input$individual_column) || input$individual_column == "") {
       # v53: cat(file=stderr(), "No individual column selected\n")
-      updateSelectInput(session, "individual_value", choices = NULL, selected = NULL)
+      updateSelectizeInput(session, "individual_value", choices = NULL, selected = NULL, server = TRUE)
       return()
     }
     
@@ -10489,7 +10916,7 @@ server <- function(input, output, session) {
     if (!(input$individual_column %in% names(values$csv_data))) {
       # v53: cat(file=stderr(), paste("Column", input$individual_column, "not found in CSV\n"))
       showNotification(paste("Column not found:", input$individual_column), type = "warning")
-      updateSelectInput(session, "individual_value", choices = NULL, selected = NULL)
+      updateSelectizeInput(session, "individual_value", choices = NULL, selected = NULL, server = TRUE)
       return()
     }
     
@@ -10501,10 +10928,11 @@ server <- function(input, output, session) {
       # v53: cat(file=stderr(), paste("Found", length(unique_values), "unique values\n"))
       # v53: cat(file=stderr(), "Unique values:", paste(head(unique_values, 10), collapse=", "), "\n")
       
-      # Update individual value dropdown with these unique values
-      updateSelectInput(session, "individual_value", 
+      # S2.0-PERF: Use server-side selectize for large option lists (eliminates browser lag)
+      updateSelectizeInput(session, "individual_value",
                         choices = unique_values,
-                        selected = if(length(unique_values) > 0) unique_values[1] else NULL)
+                        selected = if(length(unique_values) > 0) unique_values[1] else NULL,
+                        server = TRUE)
       
       # Store the individual column name in the YAML structure
       if (!is.null(values$yaml_data)) {
@@ -10531,17 +10959,21 @@ server <- function(input, output, session) {
   # When tree file is uploaded
   # When tree file is uploaded
   observeEvent(input$tree_file, {
+    cat(file=stderr(), "[DEBUG-TREE] Tree file observer triggered\n")
     req(input$tree_file)
-    
+
     tree_file <- input$tree_file
-    
+    cat(file=stderr(), sprintf("[DEBUG-TREE] File path: %s\n", tree_file$datapath))
+
     # Show progress
     values$progress_message <- "📂 Loading tree file..."
     values$progress_visible <- TRUE
-    
+
     # Read tree file
     tryCatch({
+      cat(file=stderr(), "[DEBUG-TREE] About to call read.tree()\n")
       tree <- read.tree(tree_file$datapath)
+      cat(file=stderr(), "[DEBUG-TREE] read.tree() completed\n")
       values$tree <- tree
       # v56b: Suppress harmless fortify warnings
       values$tree_data <- suppressWarnings(ggtree(tree))$data
@@ -11091,13 +11523,27 @@ server <- function(input, output, session) {
               heatmap_item[[as.character(j)]]$label_mapping <- heatmap_entry$label_mapping
             }
 
-            # Add columns - format must match expected YAML structure
-            # Each column entry needs to be a named list like list("1" = "column_name")
-            if (!is.null(heatmap_entry$columns)) {
-              for (k in seq_along(heatmap_entry$columns)) {
-                column_entry <- list()
-                column_entry[[as.character(k)]] <- heatmap_entry$columns[k]
-                heatmap_item[[as.character(j)]]$according[[k]] <- column_entry
+            # S2.0-RDATA: Add data source for RData heatmaps (was missing - caused RData heatmaps to fail in custom classification path!)
+            # Note: cnv_matrix is NOT serialized to YAML - it's passed as a parameter to func.print.lineage.tree
+            if (!is.null(heatmap_entry$data_source) && heatmap_entry$data_source == "rdata") {
+              heatmap_item[[as.character(j)]]$data_source <- "rdata"
+              heatmap_item[[as.character(j)]]$use_midpoint <- "yes"  # Always use midpoint for CNV
+              # Store CNV settings (but NOT the matrix itself - that's passed separately)
+              heatmap_item[[as.character(j)]]$cnv_downsample <- if (!is.null(heatmap_entry$cnv_downsample)) heatmap_entry$cnv_downsample else 10
+              heatmap_item[[as.character(j)]]$cnv_wgd_norm <- if (!is.null(heatmap_entry$cnv_wgd_norm) && heatmap_entry$cnv_wgd_norm) "yes" else "no"
+              # S2.0: Store mapping column for sample name matching
+              heatmap_item[[as.character(j)]]$rdata_mapping_column <- heatmap_entry$rdata_mapping_column
+              debug_cat(paste0("    S2.0-RDATA: RData heatmap, mapping_column=", heatmap_entry$rdata_mapping_column, "\n"))
+            } else {
+              heatmap_item[[as.character(j)]]$data_source <- "csv"
+              # Add columns - format must match expected YAML structure
+              # Each column entry needs to be a named list like list("1" = "column_name")
+              if (!is.null(heatmap_entry$columns)) {
+                for (k in seq_along(heatmap_entry$columns)) {
+                  column_entry <- list()
+                  column_entry[[as.character(k)]] <- heatmap_entry$columns[k]
+                  heatmap_item[[as.character(j)]]$according[[k]] <- column_entry
+                }
               }
             }
 
@@ -11327,7 +11773,9 @@ server <- function(input, output, session) {
             # Store CNV settings (but NOT the matrix itself - that's passed separately)
             heatmap_item[[as.character(j)]]$cnv_downsample <- if (!is.null(heatmap_entry$cnv_downsample)) heatmap_entry$cnv_downsample else 10
             heatmap_item[[as.character(j)]]$cnv_wgd_norm <- if (!is.null(heatmap_entry$cnv_wgd_norm) && heatmap_entry$cnv_wgd_norm) "yes" else "no"
-            debug_cat(paste0("    S1.62dev: RData heatmap (CNV matrix passed via parameter)\n"))
+            # S2.0: Store mapping column for sample name matching
+            heatmap_item[[as.character(j)]]$rdata_mapping_column <- heatmap_entry$rdata_mapping_column
+            debug_cat(paste0("    S2.0: RData heatmap, mapping_column=", heatmap_entry$rdata_mapping_column, "\n"))
           } else {
             heatmap_item[[as.character(j)]]$data_source <- "csv"
             # Add columns - format must match expected YAML structure
@@ -12006,7 +12454,7 @@ server <- function(input, output, session) {
     })
     
     update_classification_values()
-  })
+  }, ignoreInit = TRUE)  # S2.0-PERF: Prevent firing on tab switch
   #}
   
   # Observer for Apply Palette button
@@ -12178,13 +12626,8 @@ server <- function(input, output, session) {
         tags$p(style = "color: #666;", "After selecting, you can customize color and settings for each value below.")
       )
     })
-  })
-  
-  
-  
-  
-  
-  
+  }, ignoreInit = TRUE)  # S2.0-PERF: Prevent firing on tab switch
+
   # Update when transparency changes
   observeEvent(input$highlight_transparency, {
     req(input$highlight_values)
@@ -12283,6 +12726,10 @@ server <- function(input, output, session) {
   # Update Preview button - SIMPLIFIED DEBUGGING
   observeEvent(input$update_highlight_preview, {
     cat(file=stderr(), paste0("\n[DEBUG-2ND-HIGHLIGHT] *** UPDATE_HIGHLIGHT_PREVIEW CLICKED at ", format(Sys.time(), "%H:%M:%OS3"), " ***\n"))
+
+    # NOTE: No cooldown check here - user button clicks should never be blocked
+    # Cooldown only applies to automatic/cascading triggers
+
     cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT]   enable_highlight=", input$enable_highlight, "\n"))
     cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT]   highlight_column=", input$highlight_column, "\n"))
     cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT]   highlight_values=", paste(input$highlight_values, collapse=", "), "\n"))
@@ -12523,12 +12970,12 @@ server <- function(input, output, session) {
       tags$div(
         tags$p(tags$strong(paste("Available values:", length(unique_values)))),
         tags$p("Select values from the dropdown above to highlight them on the tree."),
-        tags$p(style = "color: #666; font-size: 0.9em;", 
+        tags$p(style = "color: #666; font-size: 0.9em;",
                "All selected values will use the color specified in the 'Highlight Color' picker on the left.")
       )
     })
-  })
-  
+  }, ignoreInit = TRUE)  # S2.0-PERF: Prevent firing on tab switch
+
   # Update highlight values settings when values are selected
   observeEvent(input$highlight_values, {
     req(input$highlight_column)
@@ -12745,27 +13192,34 @@ server <- function(input, output, session) {
   # v54: Auto-preview when settings change (if checkbox is enabled)
   # Use a reactive timer to debounce rapid changes
   auto_preview_timer <- reactiveVal(NULL)
-  
+
   observe({
     # Watch these inputs
     input$highlight_offset
     input$highlight_vertical_offset
     input$highlight_adjust_height
     input$highlight_adjust_width
-    
+
     # Only auto-update if checkbox is checked and we have highlight values
-    if (isTRUE(input$auto_preview_highlight) && 
-        !is.null(input$highlight_values) && 
+    if (isTRUE(input$auto_preview_highlight) &&
+        !is.null(input$highlight_values) &&
         length(input$highlight_values) > 0 &&
         !is.null(values$temp_highlight_preview)) {
-      
+
+      # S2.0-PERF: Skip if a plot was generated too recently (prevents cascading regeneration)
+      time_since_last <- as.numeric(Sys.time()) * 1000 - isolate(last_plot_time())
+      if (time_since_last < PLOT_COOLDOWN_MS) {
+        cat(file=stderr(), sprintf("[PERF] Auto-preview skipped - cooldown active (%.0fms since last plot)\n", time_since_last))
+        return()
+      }
+
       # Trigger preview update (same logic as update_highlight_preview button)
       isolate({
         values$temp_highlight_preview$offset <- input$highlight_offset
         values$temp_highlight_preview$vertical_offset <- input$highlight_vertical_offset
         values$temp_highlight_preview$adjust_height <- input$highlight_adjust_height
         values$temp_highlight_preview$adjust_width <- input$highlight_adjust_width
-        
+
         generate_plot()
       })
     }
@@ -13293,6 +13747,12 @@ server <- function(input, output, session) {
                                  value = if (!is.null(cfg$cnv_wgd_norm)) cfg$cnv_wgd_norm else FALSE)
             )
           ),
+          # S2.0: Sample mapping column selector (shown when auto-match fails)
+          fluidRow(
+            column(12,
+                   uiOutput(paste0("heatmap_rdata_mapping_ui_", i))
+            )
+          ),
           fluidRow(
             column(12,
                    tags$div(
@@ -13300,7 +13760,7 @@ server <- function(input, output, session) {
                      tags$small(
                        icon("info-circle"),
                        " CNV data will be displayed from the loaded RData file. ",
-                       "Default color scale: Blue (loss) - White (neutral) - Red (gain)."
+                       "Default color scale: Red (loss) - White (neutral) - Blue (gain)."
                      )
                    )
             )
@@ -14776,6 +15236,93 @@ server <- function(input, output, session) {
     })
   })
 
+  # S2.0: Render RData sample mapping column selector
+  # Shows when auto-match fails and user needs to select which CSV column has the sample names
+  observe({
+    lapply(1:6, function(i) {
+      output[[paste0("heatmap_rdata_mapping_ui_", i)]] <- renderUI({
+        # Only show for RData data source
+        data_source <- input[[paste0("heatmap_data_source_", i)]]
+        if (is.null(data_source) || data_source != "rdata") {
+          return(NULL)
+        }
+
+        # Check if RData is loaded
+        if (is.null(values$rdata_cnv_matrix)) {
+          return(tags$div(
+            style = "background: #fff3cd; padding: 10px; border-radius: 5px; margin-bottom: 10px;",
+            icon("exclamation-triangle"),
+            " Please load an RData CNV file first (Data Import tab)"
+          ))
+        }
+
+        # Check auto-match status
+        if (isTRUE(values$rdata_auto_match)) {
+          # Auto-match succeeded - show success message
+          return(tags$div(
+            style = "background: #d4edda; padding: 10px; border-radius: 5px; margin-bottom: 10px;",
+            icon("check-circle"),
+            " RData samples auto-matched to tree tips - ready to use!"
+          ))
+        }
+
+        # Auto-match failed - show dropdown for manual mapping
+        # Get CSV column names
+        csv_cols <- if (!is.null(values$csv_data)) names(values$csv_data) else character(0)
+
+        # Show RData sample names preview and mapping dropdown
+        sample_preview <- paste(head(values$rdata_sample_names, 3), collapse=", ")
+        if (length(values$rdata_sample_names) > 3) {
+          sample_preview <- paste0(sample_preview, ", ...")
+        }
+
+        tags$div(
+          style = "background: #fff3cd; padding: 10px; border-radius: 5px; margin-bottom: 10px;",
+          tags$div(
+            style = "margin-bottom: 8px;",
+            icon("exclamation-triangle"),
+            tags$strong(" Manual mapping needed"),
+            tags$br(),
+            tags$small(
+              style = "color: #856404;",
+              "RData sample names (", sample_preview, ") don't match tree tip labels."
+            )
+          ),
+          fluidRow(
+            column(8,
+                   selectInput(paste0("heatmap_rdata_mapping_col_", i),
+                               "Select CSV column with sample names:",
+                               choices = c("-- Select a column --" = "", csv_cols),
+                               selected = if (!is.null(values$rdata_mapping_column)) values$rdata_mapping_column else "")
+            ),
+            column(4,
+                   tags$div(
+                     style = "padding-top: 25px;",
+                     tags$small(
+                       class = "text-muted",
+                       "Choose the column that maps tree IDs to RData sample names"
+                     )
+                   )
+            )
+          )
+        )
+      })
+    })
+  })
+
+  # S2.0: Observer to update rdata_mapping_column when user selects a column
+  observe({
+    lapply(1:6, function(i) {
+      observeEvent(input[[paste0("heatmap_rdata_mapping_col_", i)]], {
+        selected_col <- input[[paste0("heatmap_rdata_mapping_col_", i)]]
+        if (!is.null(selected_col) && selected_col != "") {
+          values$rdata_mapping_column <- selected_col
+          cat(file=stderr(), paste0("[RDATA-MAPPING] User selected mapping column: '", selected_col, "'\n"))
+        }
+      }, ignoreInit = TRUE, ignoreNULL = TRUE)
+    })
+  })
+
   # v70: Render discrete color pickers for each heatmap - with NA color and dropdown menus
   observe({
     lapply(1:6, function(i) {
@@ -15026,6 +15573,15 @@ server <- function(input, output, session) {
         cat(file=stderr(), paste0("[DEBUG-COLOR] cfg$mid_color = ", ifelse(is.null(cfg$mid_color), "NULL", cfg$mid_color), "\n"))
         cat(file=stderr(), paste0("[DEBUG-COLOR] cfg$high_color = ", ifelse(is.null(cfg$high_color), "NULL", cfg$high_color), "\n"))
         cat(file=stderr(), paste0("[DEBUG-COLLINES] show_col_lines input = ", ifelse(is.null(input[[paste0("heatmap_show_col_lines_", i)]]), "NULL", input[[paste0("heatmap_show_col_lines_", i)]]), "\n"))
+        # S2.0: Get the mapping column (user-selected CSV column for sample name mapping)
+        mapping_column <- input[[paste0("heatmap_rdata_mapping_col_", i)]]
+        if (is.null(mapping_column) || mapping_column == "") {
+          # Fall back to values$rdata_mapping_column if not set for this heatmap
+          mapping_column <- values$rdata_mapping_column
+        }
+        cat(file=stderr(), paste0("[DEBUG-RDATA] Mapping column for heatmap ", i, ": '",
+                                  ifelse(is.null(mapping_column), "NULL", mapping_column), "'\n"))
+
         heatmap_entry <- list(
           title = cfg$title,
           is_discrete = FALSE,  # CNV data is always continuous
@@ -15033,6 +15589,8 @@ server <- function(input, output, session) {
           # Store CNV settings (processing happens in func.print.lineage.tree)
           cnv_downsample = cnv_downsample,
           cnv_wgd_norm = cnv_wgd_norm,
+          # S2.0: Store mapping column for sample name matching
+          rdata_mapping_column = mapping_column,
           columns = character(0),  # No columns for RData - data comes from parameter
           show_colnames = if (!is.null(cfg$show_colnames)) cfg$show_colnames else FALSE,  # Usually too many columns
           colnames_angle = if (!is.null(cfg$colnames_angle)) cfg$colnames_angle else 90,
@@ -15869,6 +16427,9 @@ server <- function(input, output, session) {
   
   # Manual rotation apply button
   observeEvent(input$apply_manual_rotation, {
+    cat(file=stderr(), "\n[DEBUG-ROTATION] apply_manual_rotation button clicked\n")
+    cat(file=stderr(), paste0("[DEBUG-ROTATION] values$plot_ready = ", values$plot_ready, "\n"))
+    cat(file=stderr(), paste0("[DEBUG-ROTATION] input$nodes_to_rotate = ", paste(input$nodes_to_rotate, collapse=", "), "\n"))
     req(values$plot_ready, input$nodes_to_rotate)
     
     if (is.null(input$nodes_to_rotate) || length(input$nodes_to_rotate) == 0) {
@@ -15935,6 +16496,15 @@ server <- function(input, output, session) {
     cat(file=stderr(), "[PERF] generate_plot() called\n")
 
     # === GUARD CHECKS (S1.4-PERF: consolidated - removed duplicate guards) ===
+
+    # S2.0-PERF: Quick cooldown to prevent rapid consecutive calls (500ms)
+    # This catches cascading calls from multiple observers
+    time_since_last <- as.numeric(Sys.time()) * 1000 - last_plot_time()
+    if (time_since_last < 500 && time_since_last > 0) {  # >0 to allow first call
+      cat(file=stderr(), sprintf("[PERF] Skipping - rapid call (%.0fms since last plot)\n", time_since_last))
+      return(NULL)
+    }
+
     if (classification_loading()) {
       cat(file=stderr(), "[PERF] Skipping - classification UI loading\n")
       return(NULL)
@@ -16225,6 +16795,8 @@ server <- function(input, output, session) {
       # Call func.print.lineage.tree with the temp YAML file
       # v54: Wrap in suppressWarnings to suppress -Inf and other harmless warnings
       cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] CALLING func.print.lineage.tree at ", format(Sys.time(), "%H:%M:%OS3"), "\n"))
+      cat(file=stderr(), paste0("[DEBUG-ROTATION] values$manual_rotation_config = ", paste(values$manual_rotation_config, collapse=", "), "\n"))
+      cat(file=stderr(), paste0("[DEBUG-ROTATION] length(manual_rotation_config) = ", length(values$manual_rotation_config), "\n"))
       tree_result <- suppressWarnings(func.print.lineage.tree(
         conf_yaml_path = temp_yaml_file,
         width = width_val,
@@ -16269,41 +16841,68 @@ server <- function(input, output, session) {
         # v135: Pass legend settings for highlight/bootstrap legends
         legend_settings = values$legend_settings,
         # S1.62dev: Pass RData CNV matrix for heatmaps with data_source="rdata"
-        rdata_cnv_matrix = values$rdata_cnv_matrix
+        rdata_cnv_matrix = values$rdata_cnv_matrix,
+        # S2.0-PERF: Two-tier caching - pass cached p-values (Option 3A)
+        cached_p_list_of_pairs = values$cached_p_list_of_pairs,
+        cached_p_list_hash = values$cached_p_list_hash
       ))
       cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] RETURNED from func.print.lineage.tree at ", format(Sys.time(), "%H:%M:%OS3"), "\n"))
+
+      # S2.0-PERF: Extract plots and cache data from new return structure (Option 3A)
+      # tree_result now has structure: list(plots = out_trees, cache_data = cache_data)
+      plots_result <- NULL
+      if (!is.null(tree_result) && is.list(tree_result)) {
+        if (!is.null(tree_result$plots)) {
+          plots_result <- tree_result$plots
+          cat(file=stderr(), "[PERF-CACHE] Extracted plots from tree_result$plots\n")
+        } else {
+          # Fallback for backward compatibility if structure is different
+          plots_result <- tree_result
+          cat(file=stderr(), "[PERF-CACHE] Using tree_result directly (legacy format)\n")
+        }
+
+        # Store cache data for future use
+        if (!is.null(tree_result$cache_data)) {
+          values$cached_p_list_of_pairs <- tree_result$cache_data$p_list_of_pairs
+          values$cached_p_list_hash <- tree_result$cache_data$p_list_hash
+          values$cached_classification_column <- input$classification_column
+          cat(file=stderr(), sprintf("[PERF-CACHE] Stored cache (hash: %s, classification: %s)\n",
+                                     substr(values$cached_p_list_hash, 1, 8),
+                                     values$cached_classification_column))
+        }
+      }
 
       # Debug output
       # v53: cat(file=stderr(), "\n=== AFTER func.print.lineage.tree ===\n")
       # v53: cat(file=stderr(), "tree_result is NULL:", is.null(tree_result), "\n")
-      if (!is.null(tree_result) && is.list(tree_result)) {
-        # v53: cat(file=stderr(), "tree_result is a list with", length(tree_result), "element(s)\n")
-        # v53: cat(file=stderr(), "List names:", paste(names(tree_result), collapse=", "), "\n")
-        if (length(tree_result) > 0) {
-          # v53: cat(file=stderr(), "First element class:", class(tree_result[[1]]), "\n")
-          # v53: cat(file=stderr(), "First element inherits ggplot:", inherits(tree_result[[1]], "ggplot"), "\n")
-          if (length(tree_result) > 1) {
-            # v53: cat(file=stderr(), "NOTE: Multiple plots returned (", length(tree_result), "). Using the last one.\n")
+      if (!is.null(plots_result) && is.list(plots_result)) {
+        # v53: cat(file=stderr(), "plots_result is a list with", length(plots_result), "element(s)\n")
+        # v53: cat(file=stderr(), "List names:", paste(names(plots_result), collapse=", "), "\n")
+        if (length(plots_result) > 0) {
+          # v53: cat(file=stderr(), "First element class:", class(plots_result[[1]]), "\n")
+          # v53: cat(file=stderr(), "First element inherits ggplot:", inherits(plots_result[[1]], "ggplot"), "\n")
+          if (length(plots_result) > 1) {
+            # v53: cat(file=stderr(), "NOTE: Multiple plots returned (", length(plots_result), "). Using the last one.\n")
           }
         }
       }
       # v53: debug_cat("====================================\n\n")
-      
+
       # Extract the plot from out_trees list
       # The function returns out_trees which is a list indexed by numbers like "1", "2", etc.
       # When multiple classifications exist, use the LAST plot (most complete)
       tree_plot <- NULL
-      if (!is.null(tree_result) && is.list(tree_result) && length(tree_result) > 0) {
+      if (!is.null(plots_result) && is.list(plots_result) && length(plots_result) > 0) {
         # Extract the LAST plot from the list (most recent classification)
-        plot_index <- length(tree_result)
-        tree_plot <- tree_result[[plot_index]]
-        # v53: cat(file=stderr(), "Successfully extracted plot from tree_result[[", plot_index, "]]\n")
+        plot_index <- length(plots_result)
+        tree_plot <- plots_result[[plot_index]]
+        # v53: cat(file=stderr(), "Successfully extracted plot from plots_result[[", plot_index, "]]\n")
         # v53: cat(file=stderr(), "Plot class:", class(tree_plot), "\n")
         # v53: cat(file=stderr(), "Plot inherits ggplot:", inherits(tree_plot, "ggplot"), "\n")
       } else {
-        # v53: cat(file=stderr(), "ERROR: Could not extract plot from tree_result\n")
-        # v53: cat(file=stderr(), "tree_result structure:\n")
-        # v54: str(tree_result)
+        # v53: cat(file=stderr(), "ERROR: Could not extract plot from plots_result\n")
+        # v53: cat(file=stderr(), "plots_result structure:\n")
+        # v54: str(plots_result)
       }
       
       # Check if we got a valid plot object
@@ -16748,15 +17347,17 @@ server <- function(input, output, session) {
 
         debug_cat(paste0("\n=================================================\n"))
       }, error = function(e) {
-        cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] ERROR in legend coord extraction: ", e$message, "\n"))
-        debug_cat(paste0("  v48: Error extracting legend coords: ", e$message, "\n"))
+        # S2.0-PERF: Suppress legend coord extraction errors - this is optional debug info
+        # and the error "missing value where TRUE/FALSE needed" is common with some scale types
+        # debug_cat(paste0("  v48: Error extracting legend coords: ", e$message, "\n"))
       })
 
       cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] CHECKPOINT B: After legend coord extraction, before temp file creation\n"))
 
       # Create a unique temp file with timestamp to force browser refresh
-      temp_plot_file <- file.path(tempdir(), paste0("shiny_plot_", Sys.getpid(), "_", 
-                                                    format(Sys.time(), "%Y%m%d_%H%M%S_%OS3"), ".png"))
+      # S2.0-PERF: Use SVG for faster preview rendering
+      temp_plot_file <- file.path(tempdir(), paste0("shiny_plot_", Sys.getpid(), "_",
+                                                    format(Sys.time(), "%Y%m%d_%H%M%S_%OS3"), ".svg"))
       # v53: cat(file=stderr(), "Temp file path:", temp_plot_file, "\n")
       
       # Clean up old plot files to avoid accumulation
@@ -17024,6 +17625,9 @@ server <- function(input, output, session) {
           values$plot_counter <- values$plot_counter + 1  # Increment to force reactive update
           cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] plot_counter incremented to ", values$plot_counter, "\n"))
 
+          # S2.0-PERF: Set cooldown timer to prevent rapid re-triggering
+          last_plot_time(as.numeric(Sys.time()) * 1000)
+
           # Hide progress - plot is ready!
           values$progress_visible <- FALSE
           values$progress_message <- ""
@@ -17072,13 +17676,29 @@ server <- function(input, output, session) {
     values$plot_generating <- FALSE
     values$progress_visible <- FALSE
 
-    # S1.62dev: Force garbage collection to prevent memory accumulation
-    # This helps when many plot regenerations occur in sequence
-    gc_result <- gc(verbose = FALSE)
-
-    # S1.62dev: Log memory usage for crash diagnosis
-    mem_used_mb <- sum(gc_result[, 2])  # Used memory in MB
-    cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] Memory after gc: ", round(mem_used_mb, 1), " MB\n"))
+    # S2.0-PERF: Async conditional garbage collection (options 4A+4B)
+    # - Only run gc() every 3 plots to reduce overhead
+    # - Run asynchronously via later::later() to not block UI response
+    # This saves ~0.1-0.3 sec per plot while still preventing memory accumulation
+    # NOTE: Capture plot_counter in local var since later() callback runs outside reactive context
+    # Use force() to ensure immediate evaluation before the closure is created
+    current_plot_num <- values$plot_counter
+    force(current_plot_num)  # Force immediate evaluation
+    if (current_plot_num %% 3 == 0) {
+      # Create callback with explicit local binding to avoid closure issues
+      gc_callback <- local({
+        plot_num <- current_plot_num  # Explicit local copy
+        function() {
+          gc_result <- gc(verbose = FALSE)
+          mem_used_mb <- sum(gc_result[, 2])  # Used memory in MB
+          cat(file=stderr(), paste0("[PERF-GC] Async gc() completed. Memory: ", round(mem_used_mb, 1), " MB (plot #", plot_num, ")\n"))
+        }
+      })
+      later::later(gc_callback, delay = 0.1)  # 100ms delay to let UI update first
+      cat(file=stderr(), "[PERF-GC] Scheduled async gc() (every 3rd plot)\n")
+    } else {
+      cat(file=stderr(), paste0("[PERF-GC] Skipped gc() (plot #", current_plot_num, ", runs every 3rd)\n"))
+    }
 
     cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] EXIT generate_plot() at ", format(Sys.time(), "%H:%M:%OS3"), "\n"))
     cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] ========================================\n\n"))
@@ -17118,7 +17738,7 @@ server <- function(input, output, session) {
     cat(file=stderr(), paste0("[RENDER] tree_preview returning image list\n"))
     list(
       src = values$temp_plot_file,
-      contentType = "image/png",
+      contentType = "image/svg+xml",
       width = "100%",
       alt = "Tree plot preview"
     )
@@ -17140,7 +17760,7 @@ server <- function(input, output, session) {
     
     list(
       src = values$temp_plot_file,
-      contentType = "image/png",
+      contentType = "image/svg+xml",
       width = "100%",
       alt = "Classification preview"
     )
@@ -17158,7 +17778,7 @@ server <- function(input, output, session) {
     
     list(
       src = values$temp_plot_file,
-      contentType = "image/png",
+      contentType = "image/svg+xml",
       width = "100%",
       alt = "Bootstrap preview"
     )
@@ -17176,7 +17796,7 @@ server <- function(input, output, session) {
     
     list(
       src = values$temp_plot_file,
-      contentType = "image/png",
+      contentType = "image/svg+xml",
       width = "100%",
       alt = "Highlight preview"
     )
@@ -17194,7 +17814,7 @@ server <- function(input, output, session) {
     
     list(
       src = values$temp_plot_file,
-      contentType = "image/png",
+      contentType = "image/svg+xml",
       width = "100%",
       alt = "Heatmap preview"
     )
@@ -17207,7 +17827,7 @@ server <- function(input, output, session) {
 
     list(
       src = values$temp_plot_file,
-      contentType = "image/png",
+      contentType = "image/svg+xml",
       width = "100%",
       alt = "Final preview"
     )
@@ -17220,7 +17840,7 @@ server <- function(input, output, session) {
 
     list(
       src = values$temp_plot_file,
-      contentType = "image/png",
+      contentType = "image/svg+xml",
       width = "100%",
       alt = "Legend preview"
     )
@@ -17233,7 +17853,7 @@ server <- function(input, output, session) {
 
     list(
       src = values$temp_plot_file,
-      contentType = "image/png",
+      contentType = "image/svg+xml",
       width = "100%",
       alt = "Extra preview"
     )
