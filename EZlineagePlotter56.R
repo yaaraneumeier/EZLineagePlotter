@@ -79,8 +79,20 @@ options(shiny.maxRequestSize = 100*1024^2)
 #       - All v180 features included and tested
 
 # ============================================================================
-# VERSION S2.0 (Stable)
+# VERSION S2.1 (Stable)
 # ============================================================================
+# S2.1: Performance & stability improvements
+#       - Two-tier caching system for faster plot updates
+#       - Async garbage collection for responsive UI
+#       - SVG preview rendering (faster than PNG)
+#       - Server-side selectize for large datasets
+#       - Fix cascading plot regeneration that freezes UI
+#       - Tab switch optimization with ignoreInit
+#       - RData heatmap fix for custom classification path
+#       - Improved CNV sample matching with better diagnostics
+#       - Dropdown for RData sample name mapping column
+#       - CSV loading fixes for classification coloring
+#       - Manual rotation and multifurcating node rotation fixes
 # S2.0: Major stable release with RData CNV heatmap support
 #       - RData CNV file import for heatmaps (from QDNAseq/scIMPACT pipelines)
 #       - Automatic sample matching via CSV lookup columns
@@ -105,7 +117,7 @@ options(shiny.maxRequestSize = 100*1024^2)
 #       - Layer reordering now happens ONCE at the end in generate_plot()
 # S1.2: Fixed undefined x_range_min in func_highlight causing "Problem while
 #       computing aesthetics" error when adding 2+ highlights with a heatmap.
-VERSION <- "S2.0"
+VERSION <- "S2.1"
 
 # Debug output control - set to TRUE to enable verbose console logging
 # For production/stable use, keep this FALSE for better performance
