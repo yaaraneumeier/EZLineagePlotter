@@ -2909,9 +2909,14 @@ func.print.lineage.tree <- function(conf_yaml_path,
   # v53: cat(file=stderr(), "Ã°Å¸â€Â highlight_manual_nodes received:", highlight_manual_nodes, "\n")
   # v53: cat(file=stderr(), "Ã°Å¸â€Â manual_nodes_to_highlight received:", paste(manual_nodes_to_highlight, collapse=", "), "\n")
   # v53: debug_cat("================================================\n\n")
-  
+
+  # === PROFILING: func.print.lineage.tree ===
+  .prof_func_start <- Sys.time()
+  .prof_section_start <- Sys.time()
+
   yaml_file<- func.read_yaml(conf_yaml_path)
-  
+  cat(file=stderr(), sprintf("[PROF-TREE] YAML read: %.3f sec\n", as.numeric(Sys.time() - .prof_section_start)))
+
   #get configuration from yaml file
   
   # v53: print(paste0("Configuration file: ",conf_yaml_path))
@@ -2955,11 +2960,13 @@ func.print.lineage.tree <- function(conf_yaml_path,
   
   #get csv file for mapping subgroups
   # v53: print(paste0("Get mapping csv from: ",csv_path))
+  .prof_section_start <- Sys.time()
   if (flag_csv_read_func=="fread"){
     fread_rownames(csv_path, row.var = rowname_param)
   } else {
     readfile <- read.csv(csv_path)
   }
+  cat(file=stderr(), sprintf("[PROF-TREE] CSV read (in func): %.3f sec\n", as.numeric(Sys.time() - .prof_section_start)))
   #print("readfile is")
   #print(readfile)
   #print("####")
@@ -3130,15 +3137,19 @@ func.print.lineage.tree <- function(conf_yaml_path,
   for (tree_index in 1:trees_number) {
     # v53: print(paste0('Tree number ',tree_index))
     tree_path <- tree_path_list[tree_index]
-    
+
     ###get newick file and create tree
     # v53: print(paste0("Get tree from: ",tree_path))
+    .prof_section_start <- Sys.time()
     tree440 <- read.tree(tree_path)
-    
+    cat(file=stderr(), sprintf("[PROF-TREE] read.tree(): %.3f sec\n", as.numeric(Sys.time() - .prof_section_start)))
+
     # Apply ladderize if flag is TRUE
     if (laderize_flag == TRUE) {
       # v53: print("Ladderizing tree...")
+      .prof_section_start <- Sys.time()
       tree440 <- ape::ladderize(tree440, right = TRUE)
+      cat(file=stderr(), sprintf("[PROF-TREE] ladderize(): %.3f sec\n", as.numeric(Sys.time() - .prof_section_start)))
       # v53: print("Tree ladderized")
     }
     
@@ -5235,7 +5246,9 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   # v53: print(dx_rx_types1)
   
   # v56b: Wrap in suppressWarnings to suppress harmless ggtree/ggplot2 fortify warnings
+  .prof_section_start <- Sys.time()
   pr440 <- suppressWarnings(ggtree(tree440))
+  cat(file=stderr(), sprintf("[PROF-TREE] ggtree(tree440) #1: %.3f sec\n", as.numeric(Sys.time() - .prof_section_start)))
   d440 <- pr440$data
   cc_tipss <- func.create.cc_tipss(d440)
   cc_nodss <- func.create.cc_nodss(d440)
@@ -5274,7 +5287,9 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   yet_another_multiplier <- 0 
   
   # Create tree with group information
+  .prof_section_start <- Sys.time()
   tree_with_group <- ggtree::groupOTU(tree440, list_node_by_class)
+  cat(file=stderr(), sprintf("[PROF-TREE] groupOTU #1: %.3f sec\n", as.numeric(Sys.time() - .prof_section_start)))
   
   # Prepare subframes
   subframe_of_nodes <- d440[d440$isTip == "FALSE", ]
@@ -5298,15 +5313,21 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   }
   
   # Group tree by class
+  .prof_section_start <- Sys.time()
   tree_with_group_CPY <- ggtree::groupOTU(tree440, list_rename_by_class)
+  cat(file=stderr(), sprintf("[PROF-TREE] groupOTU #2: %.3f sec\n", as.numeric(Sys.time() - .prof_section_start)))
   # v56b: Wrap in suppressWarnings to suppress harmless fortify warnings
+  .prof_section_start <- Sys.time()
   levels_groups <- levels(suppressWarnings(ggtree(tree_with_group_CPY))$data$group)
+  cat(file=stderr(), sprintf("[PROF-TREE] ggtree for levels: %.3f sec\n", as.numeric(Sys.time() - .prof_section_start)))
   # v53: print("E")
 
   # Create tree with coloring
   # v56b: Wrap in suppressWarnings to suppress harmless fortify warnings
+  .prof_section_start <- Sys.time()
   tree_TRY <- suppressWarnings(ggtree(tree_with_group_CPY, aes(color = new_class, size = p_val_new),
                      ladderize = laderize_flag))
+  cat(file=stderr(), sprintf("[PROF-TREE] ggtree with aes: %.3f sec\n", as.numeric(Sys.time() - .prof_section_start)))
   
   test_fig <- tree_TRY
   
@@ -5330,15 +5351,19 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   )
   
   #print("G")
-  
+
   # Calculate p-values
+  .prof_section_start <- Sys.time()
   p_list_of_pairs <- func.create.p_list_of_pairs(
     list_node_by_class, d440, dx_rx_types1_short,
     cc_nodss, tree_with_group, FDR_perc, tree, cc_tipss,
     tree_TRY, tree_size, no_name, simulate.p.value
   )
-  
+  cat(file=stderr(), sprintf("[PROF-TREE] p_list_of_pairs calc: %.3f sec\n", as.numeric(Sys.time() - .prof_section_start)))
+
+  .prof_section_start <- Sys.time()
   p_PAIRS_pval_list <- func.create.p_val_list_FROM_LIST(FDR_perc, tree_TRY, p_list_of_pairs, op_list)
+  cat(file=stderr(), sprintf("[PROF-TREE] p_val_list creation: %.3f sec\n", as.numeric(Sys.time() - .prof_section_start)))
   
   # Calculate scores for tree if requested
   if (flag_calc_scores_for_tree == TRUE) {
@@ -5633,10 +5658,12 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   # v53: cat(file=stderr(), "[DEBUG] =====================================\n\n")
   
   # Apply colors and sizes to tree
-  pr440_short_tips_TRY_new <- pr440_short_tips_TRY + 
-    scale_color_manual(values = colors_scale2) + 
+  .prof_section_start <- Sys.time()
+  pr440_short_tips_TRY_new <- pr440_short_tips_TRY +
+    scale_color_manual(values = colors_scale2) +
     scale_size_manual(values = list_of_sizes)
-  
+  cat(file=stderr(), sprintf("[PROF-TREE] scale_color + scale_size: %.3f sec\n", as.numeric(Sys.time() - .prof_section_start)))
+
   levels_base <- levels(pr440_short_tips_TRY$data$new_class)
   
   # Store reference to original tree
@@ -5784,8 +5811,9 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   }
   mar <- round(width / 50)
   mar1 <- mar + 5
-  
-  pr440_short_tips_TRY_new_with_boot_more1 <- pr440_short_tips_TRY_new_with_boot + 
+
+  .prof_section_start <- Sys.time()
+  pr440_short_tips_TRY_new_with_boot_more1 <- pr440_short_tips_TRY_new_with_boot +
     layout_dendrogram() +
     guides(
       colour = guide_legend(
@@ -5815,7 +5843,8 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     ) +
     scale_y_reverse() +
     geom_rootedge()
-  
+  cat(file=stderr(), sprintf("[PROF-TREE] guides + theme + scale_y_reverse: %.3f sec\n", as.numeric(Sys.time() - .prof_section_start)))
+
   # Add node numbers if requested
   # v53: cat(file=stderr(), "\nÃ°Å¸â€Â DEBUG CHECKPOINT 5: NODE NUMBER RENDERING\n")
   # v53: cat(file=stderr(), "Ã°Å¸â€Â flag_display_nod_number_on_tree is:", flag_display_nod_number_on_tree, "\n")
@@ -5948,17 +5977,19 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     b <- base_b * adjust_width_eclipse    # Slider value is now a multiplier
 
     # v139: Pass high_alpha_list for transparency
+    .prof_section_start <- Sys.time()
     p <- func_highlight(
       p, how_many_hi, heat_flag, high_color_list, a, b, man_adjust_elipse,
       pr440_short_tips_TRY, boudariestt, debug_mode, high_offset, high_vertical_offset,
       high_alpha_list
     )
+    cat(file=stderr(), sprintf("[PROF-TREE] func_highlight #1 (pre-heatmap): %.3f sec\n", as.numeric(Sys.time() - .prof_section_start)))
   }
 
   if (length(b) == 0) {
     b <- 0.2
   }
-  
+
   # Add heatmap if requested
   # v99: MANUAL HEATMAP - Replaced gheatmap() with manual geom_tile() approach
   # because gheatmap was corrupting the plot's @mapping property
@@ -7010,6 +7041,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       # The user confirmed this pattern was in the original lineage plotter code and is required.
       # DO NOT REMOVE THIS DUPLICATE CALL - it is necessary for gheatmap to work correctly.
       # First gheatmap call creates the initial structure
+      .prof_gheatmap_start <- Sys.time()
       pr440_short_tips_TRY_heat <- gheatmap(
         tt,
         data = dxdf440_for_heat[[j1]],
@@ -7071,6 +7103,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
         # v83: IMMEDIATELY repair mapping after second gheatmap call
         pr440_short_tips_TRY_heat <- func.repair.ggtree.mapping(pr440_short_tips_TRY_heat, verbose = FALSE)
       }
+      cat(file=stderr(), sprintf("[PROF-TREE] gheatmap (heatmap %d): %.3f sec\n", j, as.numeric(Sys.time() - .prof_gheatmap_start)))
 
       # v85: REMOVED direct layer data modification - it corrupts ggplot2 internal state
       # gheatmap creates tile layers with character values, and scale_fill_manual can handle
@@ -7718,17 +7751,19 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     debug_cat(paste0("=============================================\n"))
 
     # v139: Pass high_alpha_list for transparency
+    .prof_section_start <- Sys.time()
     p <- func_highlight(
       p, how_many_hi, heat_flag, high_color_list, a, b, man_adjust_elipse,
       pr440_short_tips_TRY, boudariestt, debug_mode, high_offset, high_vertical_offset,
       high_alpha_list
     )
+    cat(file=stderr(), sprintf("[PROF-TREE] func_highlight #2 (post-heatmap): %.3f sec\n", as.numeric(Sys.time() - .prof_section_start)))
   }
-  
+
   if (length(b) == 0) {
     b <- 0.2
   }
-  
+
   # v94: DEBUG - track layers after if(FALSE) block
   debug_cat(paste0("\n=== v94: AFTER if(FALSE) block ===\n"))
   debug_cat(paste0("  p layers: ", length(p$layers), "\n"))
@@ -7785,6 +7820,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     debug_cat(paste0("  v51: y_off_base=", y_off_base, " (n_tips=", n_tips, ", max_y=", round(max_y_in_data, 2), ")\n"))
 
     # v95: Wrap in tryCatch to catch any errors
+    .prof_section_start <- Sys.time()
     p <- tryCatch({
       result <- func.make.second.legend(
         p,
@@ -7846,6 +7882,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       debug_cat(paste0("  Returning plot without second legend modifications\n"))
       p  # Return original plot on error
     })
+    cat(file=stderr(), sprintf("[PROF-TREE] func.make.second.legend: %.3f sec\n", as.numeric(Sys.time() - .prof_section_start)))
 
     debug_cat(paste0("=== v95: After func.make.second.legend ===\n"))
     debug_cat(paste0("  p layers: ", length(p$layers), "\n"))
@@ -8084,6 +8121,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     stop("Could not save plot after multiple attempts")
   }
 
+  cat(file=stderr(), sprintf("[PROF-TREE] === TOTAL func.print.lineage.tree: %.3f sec ===\n", as.numeric(Sys.time() - .prof_func_start)))
   return(p)
 }
 
