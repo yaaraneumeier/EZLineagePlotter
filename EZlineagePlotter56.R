@@ -79,8 +79,13 @@ options(shiny.maxRequestSize = 100*1024^2)
 #       - All v180 features included and tested
 
 # ============================================================================
-# VERSION S2.2 (Stable)
+# VERSION S2.3 (Debug)
 # ============================================================================
+# S2.3: Added debug output for multiple discrete heatmap column mapping investigation
+#       - Debug output shows column selections in apply handler
+#       - Debug output shows YAML according columns for each heatmap
+#       - Debug output shows column extraction during rendering
+#
 # S2.2: Bug fixes for discrete heatmap colors
 #       - Fixed discrete heatmap colors not changing when color pickers changed
 #       - Fixed heatmap legend colors not matching heatmap tile colors
@@ -123,7 +128,7 @@ options(shiny.maxRequestSize = 100*1024^2)
 #       - Layer reordering now happens ONCE at the end in generate_plot()
 # S1.2: Fixed undefined x_range_min in func_highlight causing "Problem while
 #       computing aesthetics" error when adding 2+ highlights with a heatmap.
-VERSION <- "S2.2"
+VERSION <- "S2.3"
 
 # Debug output control - set to TRUE to enable verbose console logging
 # For production/stable use, keep this FALSE for better performance
@@ -4317,9 +4322,12 @@ func.print.lineage.tree <- function(conf_yaml_path,
                 l_titles_for_heat <- c(l_titles_for_heat,j2)
               }
               debug_cat(paste0("  Final l_titles_for_heat: ", paste(l_titles_for_heat, collapse=", "), "\n"))
+              # S2.3-DEBUG: Always show column extraction for verification
+              cat(file=stderr(), paste0("[RENDER-DEBUG] Heatmap inx=", inx, " (indx_for_sav=", indx_for_sav,
+                                        ") extracting columns: ", paste(l_titles_for_heat, collapse=", "), "\n"))
             }
-            
-            
+
+
             #print("B14")
             #names(readfile440)
             
@@ -8307,7 +8315,7 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #155724;",
-                     tags$h4(style = "color: #155724; margin: 0;", "Version S2.2 (Stable)"),
+                     tags$h4(style = "color: #155724; margin: 0;", "Version S2.3 (Debug)"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "Stable release with bug fixes.",
                             tags$br(), tags$br(),
@@ -11559,9 +11567,21 @@ server <- function(input, output, session) {
             }
 
             class_item[[as.character(i)]]$heatmap_display[[j]] <- heatmap_item
+            # S2.3-DEBUG: Show according columns for verification (custom classification path)
+            cat(file=stderr(), paste0("[YAML-DEBUG-CUSTOM] Heatmap ", j, " YAML according columns: "))
+            if (!is.null(heatmap_item[[as.character(j)]]$according) && length(heatmap_item[[as.character(j)]]$according) > 0) {
+              for (k_debug in seq_along(heatmap_item[[as.character(j)]]$according)) {
+                acc_entry <- heatmap_item[[as.character(j)]]$according[[k_debug]]
+                acc_key <- names(acc_entry)[1]
+                cat(file=stderr(), paste0(acc_entry[[acc_key]], " "))
+              }
+              cat(file=stderr(), "\n")
+            } else {
+              cat(file=stderr(), "(none)\n")
+            }
           }
         }
-        
+
         # ========================================================
         # === ADD HIGHLIGHT TO THIS CLASSIFICATION ===
         # *** KEY FIX: MOVED HERE - BEFORE adding class_item to YAML ***
@@ -11805,6 +11825,18 @@ server <- function(input, output, session) {
                           paste(names(heatmap_item[[as.character(j)]]), collapse=", "), "\n"))
           debug_cat(paste0("    S1.62dev final data_source in heatmap_item: ",
                           if (!is.null(heatmap_item[[as.character(j)]]$data_source)) heatmap_item[[as.character(j)]]$data_source else "NULL", "\n"))
+          # S2.3-DEBUG: Show according columns for verification
+          cat(file=stderr(), paste0("[YAML-DEBUG] Heatmap ", j, " YAML according columns: "))
+          if (!is.null(heatmap_item[[as.character(j)]]$according) && length(heatmap_item[[as.character(j)]]$according) > 0) {
+            for (k_debug in seq_along(heatmap_item[[as.character(j)]]$according)) {
+              acc_entry <- heatmap_item[[as.character(j)]]$according[[k_debug]]
+              acc_key <- names(acc_entry)[1]
+              cat(file=stderr(), paste0(acc_entry[[acc_key]], " "))
+            }
+            cat(file=stderr(), "\n")
+          } else {
+            cat(file=stderr(), "(none)\n")
+          }
         }
       }
 
@@ -15547,6 +15579,16 @@ server <- function(input, output, session) {
     }
 
     cat(file=stderr(), paste0("[HEATMAP-APPLY] Processing ", length(values$heatmap_configs), " heatmap config(s)\n"))
+
+    # S2.3-DEBUG: Show all heatmap column selections upfront
+    cat(file=stderr(), "\n[HEATMAP-APPLY-DEBUG] === HEATMAP COLUMN MAPPING ===\n")
+    for (debug_i in seq_along(values$heatmap_configs)) {
+      debug_cols <- input[[paste0("heatmap_columns_", debug_i)]]
+      cat(file=stderr(), paste0("[HEATMAP-APPLY-DEBUG] Heatmap ", debug_i,
+                                 " columns from input: ",
+                                 if (is.null(debug_cols)) "NULL" else paste(debug_cols, collapse=", "), "\n"))
+    }
+    cat(file=stderr(), "[HEATMAP-APPLY-DEBUG] ==============================\n\n")
 
     # v56a: Build heatmaps list from configs with multiple column support
     # Read directly from inputs to ensure we get current values (fixes ignoreInit issue)
