@@ -79,8 +79,14 @@ options(shiny.maxRequestSize = 100*1024^2)
 #       - All v180 features included and tested
 
 # ============================================================================
-# VERSION S2.1 (Stable)
+# VERSION S2.2 (Stable)
 # ============================================================================
+# S2.2: Bug fixes for discrete heatmap colors
+#       - Fixed discrete heatmap colors not changing when color pickers changed
+#       - Fixed heatmap legend colors not matching heatmap tile colors
+#       - Root cause: Color picker values were collected using unfiltered data
+#         but color pickers were created using filtered data (tree tips only),
+#         causing wrong value-to-color mappings
 # S2.1: Performance & stability improvements
 #       - Two-tier caching system for faster plot updates
 #       - Async garbage collection for responsive UI
@@ -117,7 +123,7 @@ options(shiny.maxRequestSize = 100*1024^2)
 #       - Layer reordering now happens ONCE at the end in generate_plot()
 # S1.2: Fixed undefined x_range_min in func_highlight causing "Problem while
 #       computing aesthetics" error when adding 2+ highlights with a heatmap.
-VERSION <- "S2.1"
+VERSION <- "S2.2"
 
 # Debug output control - set to TRUE to enable verbose console logging
 # For production/stable use, keep this FALSE for better performance
@@ -8301,11 +8307,16 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #155724;",
-                     tags$h4(style = "color: #155724; margin: 0;", "Version S2.1 (Stable)"),
+                     tags$h4(style = "color: #155724; margin: 0;", "Version S2.2 (Stable)"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
-                            "Stable release with performance optimizations.",
+                            "Stable release with bug fixes.",
                             tags$br(), tags$br(),
-                            tags$strong("New in S2.1:"),
+                            tags$strong("New in S2.2:"),
+                            tags$ul(
+                              tags$li("Fixed discrete heatmap colors not changing when color pickers changed"),
+                              tags$li("Fixed heatmap legend colors not matching heatmap tile colors")
+                            ),
+                            tags$strong("From S2.1:"),
                             tags$ul(
                               tags$li("Two-tier caching for faster plot generation"),
                               tags$li("Async garbage collection for faster UI response"),
@@ -15856,8 +15867,23 @@ server <- function(input, output, session) {
         }
 
         # v69: Collect custom colors if they've been set
+        # S2.1-FIX: Use filtered data (matching tree tips) to match renderUI color picker creation
+        # Bug fix: Previously used unfiltered values$csv_data which caused wrong value-color mappings
         if (!is.null(values$csv_data) && first_col %in% names(values$csv_data)) {
-          unique_vals <- sort(unique(na.omit(values$csv_data[[first_col]])))
+          # S2.1-FIX: Filter to only patient-specific data (rows matching tree tips)
+          # This MUST match the filtering in heatmap_discrete_colors_ui renderUI (lines 15342-15353)
+          filtered_data <- values$csv_data
+          if (!is.null(values$tree) && !is.null(input$id_column) && input$id_column %in% names(values$csv_data)) {
+            tree_tips <- values$tree$tip.label
+            id_col_data <- as.character(values$csv_data[[input$id_column]])
+            matching_rows <- id_col_data %in% tree_tips
+            if (any(matching_rows)) {
+              filtered_data <- values$csv_data[matching_rows, , drop = FALSE]
+              debug_cat(paste0("S2.1-FIX: Filtered data for color collection from ", nrow(values$csv_data), " to ", nrow(filtered_data), " rows (tree tips)\n"))
+            }
+          }
+
+          unique_vals <- sort(unique(na.omit(filtered_data[[first_col]])))
           n_vals <- length(unique_vals)
 
           if (n_vals > 0 && n_vals <= 30) {
