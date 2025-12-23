@@ -79,8 +79,14 @@ options(shiny.maxRequestSize = 100*1024^2)
 #       - All v180 features included and tested
 
 # ============================================================================
-# VERSION S2.5 (Fix)
+# VERSION S2.6 (Debug)
 # ============================================================================
+# S2.6: Debug version for investigating discrete heatmap color reset issue
+#       - Added detailed debug logging for custom_colors storage and retrieval
+#       - Debug points: add_new_heatmap observer, discrete color picker observers,
+#         renderUI for discrete colors
+#       - This version helps diagnose why colors reset when adding second heatmap
+#
 # S2.5: Fix heatmap column order changing when adding second heatmap
 #       - BUG: Adding a second heatmap caused first heatmap's column order to change
 #         (e.g., NRAS,BRAF,MET became BRAF,NRAS,MET) which changed heatmap appearance
@@ -147,7 +153,7 @@ options(shiny.maxRequestSize = 100*1024^2)
 #       - Layer reordering now happens ONCE at the end in generate_plot()
 # S1.2: Fixed undefined x_range_min in func_highlight causing "Problem while
 #       computing aesthetics" error when adding 2+ highlights with a heatmap.
-VERSION <- "S2.5"
+VERSION <- "S2.6"
 
 # Debug output control - set to TRUE to enable verbose console logging
 # For production/stable use, keep this FALSE for better performance
@@ -8328,17 +8334,24 @@ ui <- dashboardPage(
         tabName = "data_upload",
         fluidRow(
           box(
-            title = "EZLineagePlotter - Stable Release",
-            status = "success",
+            title = "EZLineagePlotter - Debug Version",
+            status = "warning",
             solidHeader = TRUE,
             width = 12,
             collapsible = TRUE,
-            tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #155724;",
-                     tags$h4(style = "color: #155724; margin: 0;", "Version S2.5 (Fix)"),
-                     tags$p(style = "margin: 10px 0 0 0; color: #155724;",
-                            "Stable release with bug fixes.",
+            tags$div(style = "background: #fff3cd; padding: 15px; border-radius: 5px; border: 2px solid #856404;",
+                     tags$h4(style = "color: #856404; margin: 0;", "Version S2.6 (Debug)"),
+                     tags$p(style = "margin: 10px 0 0 0; color: #856404;",
+                            "Debug version: investigating discrete heatmap color reset issue.",
+                            tags$br(),
+                            "Please test: set custom colors for heatmap 1, add heatmap 2, check console for [S2.6-DEBUG] messages.",
                             tags$br(), tags$br(),
-                            tags$strong("New in S2.5:"),
+                            tags$strong("New in S2.6:"),
+                            tags$ul(
+                              tags$li("Added detailed debug logging for custom_colors storage and retrieval"),
+                              tags$li("Debug output when: adding heatmap, changing colors, rebuilding UI")
+                            ),
+                            tags$strong("From S2.5:"),
                             tags$ul(
                               tags$li("Fixed heatmap column order changing when adding a second heatmap")
                             ),
@@ -14135,7 +14148,22 @@ server <- function(input, output, session) {
       showNotification("Maximum 10 heatmaps allowed", type = "warning")
       return()
     }
-    
+
+    # S2.6-DEBUG: Log existing custom_colors BEFORE adding new heatmap
+    cat(file=stderr(), paste0("\n[S2.6-DEBUG] ===== ADD NEW HEATMAP CLICKED =====\n"))
+    cat(file=stderr(), paste0("[S2.6-DEBUG] Current number of heatmap_configs: ", length(values$heatmap_configs), "\n"))
+    for (debug_idx in seq_along(values$heatmap_configs)) {
+      cfg <- values$heatmap_configs[[debug_idx]]
+      cat(file=stderr(), paste0("[S2.6-DEBUG] Heatmap ", debug_idx, " custom_colors:\n"))
+      if (!is.null(cfg$custom_colors) && length(cfg$custom_colors) > 0) {
+        cat(file=stderr(), paste0("[S2.6-DEBUG]   keys: ", paste(names(cfg$custom_colors), collapse=", "), "\n"))
+        cat(file=stderr(), paste0("[S2.6-DEBUG]   values: ", paste(unlist(cfg$custom_colors), collapse=", "), "\n"))
+      } else {
+        cat(file=stderr(), paste0("[S2.6-DEBUG]   (no custom colors)\n"))
+      }
+    }
+    cat(file=stderr(), paste0("[S2.6-DEBUG] ================================\n"))
+
     # v56: Add new empty config with columns (plural) for multiple column support
     # v107: Added distance and height initialization to prevent reactive loops
     new_config <- list(
@@ -14168,6 +14196,20 @@ server <- function(input, output, session) {
     )
     
     values$heatmap_configs <- c(values$heatmap_configs, list(new_config))
+
+    # S2.6-DEBUG: Log existing custom_colors AFTER adding new heatmap
+    cat(file=stderr(), paste0("\n[S2.6-DEBUG] After adding heatmap, configs count: ", length(values$heatmap_configs), "\n"))
+    for (debug_idx in seq_along(values$heatmap_configs)) {
+      cfg <- values$heatmap_configs[[debug_idx]]
+      cat(file=stderr(), paste0("[S2.6-DEBUG] Heatmap ", debug_idx, " custom_colors AFTER:\n"))
+      if (!is.null(cfg$custom_colors) && length(cfg$custom_colors) > 0) {
+        cat(file=stderr(), paste0("[S2.6-DEBUG]   keys: ", paste(names(cfg$custom_colors), collapse=", "), "\n"))
+        cat(file=stderr(), paste0("[S2.6-DEBUG]   values: ", paste(unlist(cfg$custom_colors), collapse=", "), "\n"))
+      } else {
+        cat(file=stderr(), paste0("[S2.6-DEBUG]   (no custom colors)\n"))
+      }
+    }
+
     # v107: Trigger UI regeneration when heatmap is added
     heatmap_ui_trigger(heatmap_ui_trigger() + 1)
     showNotification(paste("Heatmap", length(values$heatmap_configs), "added"), type = "message")
@@ -15474,6 +15516,14 @@ server <- function(input, output, session) {
           }
         })
 
+        # S2.6-DEBUG: Log stored colors during UI rebuild
+        cat(file=stderr(), paste0("\n[S2.6-DEBUG] renderUI for discrete colors heatmap ", i, "\n"))
+        cat(file=stderr(), paste0("[S2.6-DEBUG] length(stored_colors) = ", length(stored_colors), "\n"))
+        if (length(stored_colors) > 0) {
+          cat(file=stderr(), paste0("[S2.6-DEBUG] stored_colors keys: ", paste(names(stored_colors), collapse=", "), "\n"))
+          cat(file=stderr(), paste0("[S2.6-DEBUG] stored_colors values: ", paste(unlist(stored_colors), collapse=", "), "\n"))
+        }
+
         # v70: Generate color pickers for each value WITH dropdown menu
         color_pickers <- lapply(seq_along(unique_vals), function(j) {
           val <- as.character(unique_vals[j])
@@ -15631,6 +15681,8 @@ server <- function(input, output, session) {
                   if (!is.null(color_value)) {
                     values$heatmap_configs[[i]]$custom_colors[[val_name]] <- color_value
                     values$heatmap_configs[[i]]$custom_discrete <- TRUE
+                    # S2.6-DEBUG: Log when color is saved
+                    cat(file=stderr(), paste0("[S2.6-DEBUG] SAVED color for heatmap ", i, " value '", val_name, "' = ", color_value, "\n"))
                   }
                 }
               }
