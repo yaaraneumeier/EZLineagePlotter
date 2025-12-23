@@ -79,8 +79,18 @@ options(shiny.maxRequestSize = 100*1024^2)
 #       - All v180 features included and tested
 
 # ============================================================================
-# VERSION S2.4 (Fix)
+# VERSION S2.5 (Fix)
 # ============================================================================
+# S2.5: Fix heatmap column order changing when adding second heatmap
+#       - BUG: Adding a second heatmap caused first heatmap's column order to change
+#         (e.g., NRAS,BRAF,MET became BRAF,NRAS,MET) which changed heatmap appearance
+#       - ROOT CAUSE: Shiny selectize reorders selected items to match the order
+#         they appear in 'choices' when the UI rebuilds. Since choices were alphabetical,
+#         the user's selection order was lost after clicking "Add Heatmap".
+#       - FIX: Reorder the 'choices' list to put already-selected columns first
+#         (in their original order) before remaining columns. This ensures selectize
+#         preserves the user's intended column order through UI rebuilds.
+#
 # S2.4: Fix discrete heatmap colors resetting when adding second heatmap
 #       - BUG: Adding a second discrete heatmap caused first heatmap colors to reset
 #       - ROOT CAUSE: Colors were only stored in Shiny inputs (not heatmap_configs).
@@ -137,7 +147,7 @@ options(shiny.maxRequestSize = 100*1024^2)
 #       - Layer reordering now happens ONCE at the end in generate_plot()
 # S1.2: Fixed undefined x_range_min in func_highlight causing "Problem while
 #       computing aesthetics" error when adding 2+ highlights with a heatmap.
-VERSION <- "S2.4"
+VERSION <- "S2.5"
 
 # Debug output control - set to TRUE to enable verbose console logging
 # For production/stable use, keep this FALSE for better performance
@@ -8324,11 +8334,15 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #155724;",
-                     tags$h4(style = "color: #155724; margin: 0;", "Version S2.4 (Fix)"),
+                     tags$h4(style = "color: #155724; margin: 0;", "Version S2.5 (Fix)"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "Stable release with bug fixes.",
                             tags$br(), tags$br(),
-                            tags$strong("New in S2.4:"),
+                            tags$strong("New in S2.5:"),
+                            tags$ul(
+                              tags$li("Fixed heatmap column order changing when adding a second heatmap")
+                            ),
+                            tags$strong("From S2.4:"),
                             tags$ul(
                               tags$li("Fixed discrete heatmap colors resetting when adding a second heatmap")
                             ),
@@ -13654,6 +13668,19 @@ server <- function(input, output, session) {
 
       # Get column choices from CSV (using isolated value)
       col_choices <- if (!is.null(csv_data_local)) names(csv_data_local) else character(0)
+
+      # S2.5-FIX: Reorder choices to put selected columns first (in their original order)
+      # This ensures selectize preserves the user's column selection order when UI rebuilds
+      # Without this, adding a second heatmap causes the first heatmap's columns to reorder
+      # (selectize displays items in the order they appear in choices)
+      if (!is.null(cfg$columns) && length(cfg$columns) > 0 && length(col_choices) > 0) {
+        # Get columns that are both selected AND exist in current choices
+        valid_selected <- cfg$columns[cfg$columns %in% col_choices]
+        # Get remaining columns not in selection
+        remaining_choices <- setdiff(col_choices, valid_selected)
+        # Put selected first (preserving their order), then remaining alphabetically
+        col_choices <- c(valid_selected, sort(remaining_choices))
+      }
       
       # v56/v110/v119: Determine detected type based on first column (if multiple, they should be same type)
       # v119: Improved detection - also try to convert string columns to numeric
