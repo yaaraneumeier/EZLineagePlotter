@@ -79,8 +79,21 @@ options(shiny.maxRequestSize = 100*1024^2)
 #       - All v180 features included and tested
 
 # ============================================================================
-# VERSION S2.6 (Debug)
+# VERSION S2.7
 # ============================================================================
+# S2.7: Fix discrete heatmap custom colors being reset when adding second heatmap
+#       - BUG: Adding a second discrete heatmap reset first heatmap's custom colors
+#         to default palette colors (e.g., user's custom pink became default red)
+#       - ROOT CAUSE: During UI rebuild, color picker inputs fire change events
+#         with default palette colors. The save observer was saving these defaults,
+#         overwriting the user's custom colors stored in heatmap_configs.
+#       - FIX (two-part):
+#         1. Save observer now detects when incoming color is a default palette
+#            color that would overwrite an existing custom color, and skips saving
+#         2. renderUI now prioritizes stored_color (from heatmap_configs) over
+#            existing_color (from input), making heatmap_configs the source of truth
+#       - Debug logging retained from S2.6 for future troubleshooting
+#
 # S2.6: Debug version for investigating discrete heatmap color reset issue
 #       - Added detailed debug logging for custom_colors storage and retrieval
 #       - Debug points: add_new_heatmap observer, discrete color picker observers,
@@ -153,7 +166,7 @@ options(shiny.maxRequestSize = 100*1024^2)
 #       - Layer reordering now happens ONCE at the end in generate_plot()
 # S1.2: Fixed undefined x_range_min in func_highlight causing "Problem while
 #       computing aesthetics" error when adding 2+ highlights with a heatmap.
-VERSION <- "S2.6"
+VERSION <- "S2.7"
 
 # Debug output control - set to TRUE to enable verbose console logging
 # For production/stable use, keep this FALSE for better performance
@@ -15530,12 +15543,15 @@ server <- function(input, output, session) {
 
           # v69: Check if there's an existing custom color for this value
           # S2.4-FIX: Also check stored colors in heatmap_configs as fallback
+          # S2.7-FIX: Prioritize stored_color over existing_color
+          # stored_color is the source of truth (persisted in heatmap_configs)
+          # This prevents UI rebuild from showing stale/default colors
           existing_color <- isolate(input[[paste0("heatmap_", i, "_color_", j)]])
           stored_color <- stored_colors[[val]]
-          color_to_use <- if (!is.null(existing_color)) {
-            existing_color
-          } else if (!is.null(stored_color)) {
-            stored_color  # Use stored color when input doesn't exist (UI rebuild)
+          color_to_use <- if (!is.null(stored_color)) {
+            stored_color  # S2.7-FIX: Always use stored color if available (source of truth)
+          } else if (!is.null(existing_color)) {
+            existing_color  # Fall back to existing input value
           } else {
             default_colors[j]
           }
@@ -15556,6 +15572,7 @@ server <- function(input, output, session) {
 
         # v70: NA color picker (always shown at the end)
         # S2.4-FIX: Also check stored NA color in heatmap_configs as fallback
+        # S2.7-FIX: Prioritize stored_na_color over existing_na_color (same pattern as value colors)
         existing_na_color <- isolate(input[[paste0("heatmap_", i, "_na_color")]])
         stored_na_color <- isolate({
           if (i <= length(values$heatmap_configs) && !is.null(values$heatmap_configs[[i]]$na_color)) {
@@ -15564,10 +15581,10 @@ server <- function(input, output, session) {
             NULL
           }
         })
-        na_color_to_use <- if (!is.null(existing_na_color)) {
+        na_color_to_use <- if (!is.null(stored_na_color)) {
+          stored_na_color  # S2.7-FIX: Stored color takes priority
+        } else if (!is.null(existing_na_color)) {
           existing_na_color
-        } else if (!is.null(stored_na_color)) {
-          stored_na_color
         } else {
           "white"
         }
@@ -15648,6 +15665,10 @@ server <- function(input, output, session) {
   # This fixes the bug where adding a second heatmap resets the first heatmap's colors
   # The issue was that colors were only stored in Shiny inputs, which get destroyed/recreated
   # when the UI rebuilds. Now we persist them in heatmap_configs.
+  # S2.7-FIX: Added protection against UI rebuild overwriting custom colors with defaults.
+  # When UI rebuilds, color pickers may fire change events with default palette colors.
+  # We now detect when incoming color is a default palette color that would overwrite
+  # an existing custom color, and skip saving in that case.
   observe({
     lapply(1:6, function(i) {
       lapply(1:30, function(j) {
@@ -15678,11 +15699,49 @@ server <- function(input, output, session) {
                   # Store the color with the value name as key
                   val_name <- as.character(unique_vals[j])
                   color_value <- input[[paste0("heatmap_", i, "_color_", j)]]
+
                   if (!is.null(color_value)) {
-                    values$heatmap_configs[[i]]$custom_colors[[val_name]] <- color_value
-                    values$heatmap_configs[[i]]$custom_discrete <- TRUE
-                    # S2.6-DEBUG: Log when color is saved
-                    cat(file=stderr(), paste0("[S2.6-DEBUG] SAVED color for heatmap ", i, " value '", val_name, "' = ", color_value, "\n"))
+                    # S2.7-FIX: Check if this is a default palette color that would overwrite a custom color
+                    # Get current palette to compute default colors
+                    current_palette <- isolate(input[[paste0("heatmap_discrete_palette_", i)]])
+                    if (is.null(current_palette)) current_palette <- "Set1"
+
+                    # Generate default colors for comparison
+                    n_vals <- length(unique_vals)
+                    default_colors <- tryCatch({
+                      max_colors <- RColorBrewer::brewer.pal.info[current_palette, "maxcolors"]
+                      if (n_vals <= max_colors) {
+                        RColorBrewer::brewer.pal(max(3, n_vals), current_palette)[1:n_vals]
+                      } else {
+                        colorRampPalette(RColorBrewer::brewer.pal(max_colors, current_palette))(n_vals)
+                      }
+                    }, error = function(e) {
+                      rainbow(n_vals)
+                    })
+
+                    default_color_for_j <- if (j <= length(default_colors)) default_colors[j] else "#808080"
+                    existing_stored_color <- values$heatmap_configs[[i]]$custom_colors[[val_name]]
+
+                    # S2.7-FIX: Skip saving if:
+                    # 1. The incoming color is the default palette color for this position
+                    # 2. AND there's already a stored custom color that's different
+                    # This prevents UI rebuild from resetting custom colors to defaults
+                    is_default_color <- toupper(color_value) == toupper(default_color_for_j)
+                    has_different_stored <- !is.null(existing_stored_color) &&
+                                            toupper(existing_stored_color) != toupper(default_color_for_j)
+
+                    if (is_default_color && has_different_stored) {
+                      # S2.7-DEBUG: Log skipped saves
+                      cat(file=stderr(), paste0("[S2.7-DEBUG] SKIPPED saving default color for heatmap ", i,
+                                               " value '", val_name, "' (default=", default_color_for_j,
+                                               ", keeping stored=", existing_stored_color, ")\n"))
+                    } else {
+                      # Normal save: either it's a custom color, or there's no conflict
+                      values$heatmap_configs[[i]]$custom_colors[[val_name]] <- color_value
+                      values$heatmap_configs[[i]]$custom_discrete <- TRUE
+                      # S2.6-DEBUG: Log when color is saved
+                      cat(file=stderr(), paste0("[S2.6-DEBUG] SAVED color for heatmap ", i, " value '", val_name, "' = ", color_value, "\n"))
+                    }
                   }
                 }
               }
