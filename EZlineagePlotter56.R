@@ -79,20 +79,28 @@ options(shiny.maxRequestSize = 100*1024^2)
 #       - All v180 features included and tested
 
 # ============================================================================
-# VERSION S2.7
+# VERSION S2.8
 # ============================================================================
-# S2.7: Fix discrete heatmap custom colors being reset when adding second heatmap
-#       - BUG: Adding a second discrete heatmap reset first heatmap's custom colors
-#         to default palette colors (e.g., user's custom pink became default red)
-#       - ROOT CAUSE: During UI rebuild, color picker inputs fire change events
-#         with default palette colors. The save observer was saving these defaults,
-#         overwriting the user's custom colors stored in heatmap_configs.
-#       - FIX (two-part):
-#         1. Save observer now detects when incoming color is a default palette
-#            color that would overwrite an existing custom color, and skips saving
-#         2. renderUI now prioritizes stored_color (from heatmap_configs) over
-#            existing_color (from input), making heatmap_configs the source of truth
-#       - Debug logging retained from S2.6 for future troubleshooting
+# S2.8: Fix discrete heatmap custom colors reset - improved inhibit flag approach
+#       - BUG: S2.7's default color detection wasn't reliably preventing resets
+#         Adding a second discrete heatmap still reset first heatmap's custom colors
+#         (e.g., user's custom pink #E08F8F became default red #E41A1C)
+#       - ROOT CAUSE: Timing issue during UI rebuild. Color picker observers were
+#         firing with default values before the comparison logic could properly
+#         detect and skip them. The S2.7 approach of comparing incoming color to
+#         default palette colors had race conditions with Shiny's reactivity.
+#       - FIX: Added inhibit_color_save flag mechanism:
+#         1. When add/remove/move heatmap is triggered, set inhibit_color_save=TRUE
+#         2. Color save observer checks this flag FIRST and skips ALL saves if TRUE
+#         3. After 500ms delay (UI rebuild complete), flag is reset to FALSE
+#         4. This completely blocks any spurious saves during the critical window
+#       - This approach is more robust than S2.7's color comparison because it
+#         doesn't rely on correctly identifying default vs custom colors
+#       - Debug logging ([S2.8-DEBUG]) shows when saves are blocked
+#
+# S2.7: (Superseded by S2.8) Attempted fix using default color detection
+#       - Tried to detect default palette colors and skip saving them
+#       - Did not fully resolve the issue due to timing/reactivity problems
 #
 # S2.6: Debug version for investigating discrete heatmap color reset issue
 #       - Added detailed debug logging for custom_colors storage and retrieval
@@ -9606,6 +9614,11 @@ server <- function(input, output, session) {
   # This prevents the UI from rebuilding every time a slider or input changes
   heatmap_ui_trigger <- reactiveVal(0)
 
+  # S2.8-FIX: Flag to inhibit color saving during UI rebuilds
+  # When TRUE, color picker observers will skip saving to prevent default colors
+  # from overwriting user's custom colors during heatmap add/remove operations
+  inhibit_color_save <- reactiveVal(FALSE)
+
   # ==========================================================================
   # S1-PERF: DEBOUNCED REACTIVE INPUTS
   # ==========================================================================
@@ -14223,8 +14236,20 @@ server <- function(input, output, session) {
       }
     }
 
+    # S2.8-FIX: Set inhibit flag BEFORE triggering UI rebuild
+    # This prevents color picker observers from overwriting custom colors with defaults
+    inhibit_color_save(TRUE)
+    cat(file=stderr(), "[S2.8-DEBUG] inhibit_color_save set to TRUE (add heatmap)\n")
+
     # v107: Trigger UI regeneration when heatmap is added
     heatmap_ui_trigger(heatmap_ui_trigger() + 1)
+
+    # S2.8-FIX: Reset inhibit flag after UI has had time to rebuild
+    shinyjs::delay(500, {
+      inhibit_color_save(FALSE)
+      cat(file=stderr(), "[S2.8-DEBUG] inhibit_color_save set to FALSE (after delay)\n")
+    })
+
     showNotification(paste("Heatmap", length(values$heatmap_configs), "added"), type = "message")
   })
 
@@ -14234,8 +14259,16 @@ server <- function(input, output, session) {
       observeEvent(input[[paste0("heatmap_remove_", i)]], {
         if (i <= length(values$heatmap_configs)) {
           values$heatmap_configs <- values$heatmap_configs[-i]
+
+          # S2.8-FIX: Set inhibit flag before UI rebuild
+          inhibit_color_save(TRUE)
+
           # v107: Trigger UI regeneration when heatmap is removed
           heatmap_ui_trigger(heatmap_ui_trigger() + 1)
+
+          # S2.8-FIX: Reset inhibit flag after UI rebuild
+          shinyjs::delay(500, { inhibit_color_save(FALSE) })
+
           showNotification(paste("Heatmap", i, "removed"), type = "message")
         }
       }, ignoreInit = TRUE)
@@ -14252,8 +14285,12 @@ server <- function(input, output, session) {
           configs[[i]] <- configs[[i-1]]
           configs[[i-1]] <- temp
           values$heatmap_configs <- configs
+          # S2.8-FIX: Set inhibit flag before UI rebuild
+          inhibit_color_save(TRUE)
           # v107: Trigger UI regeneration when heatmap is moved
           heatmap_ui_trigger(heatmap_ui_trigger() + 1)
+          # S2.8-FIX: Reset inhibit flag after UI rebuild
+          shinyjs::delay(500, { inhibit_color_save(FALSE) })
         }
       }, ignoreInit = TRUE)
     })
@@ -14269,8 +14306,12 @@ server <- function(input, output, session) {
           configs[[i]] <- configs[[i+1]]
           configs[[i+1]] <- temp
           values$heatmap_configs <- configs
+          # S2.8-FIX: Set inhibit flag before UI rebuild
+          inhibit_color_save(TRUE)
           # v107: Trigger UI regeneration when heatmap is moved
           heatmap_ui_trigger(heatmap_ui_trigger() + 1)
+          # S2.8-FIX: Reset inhibit flag after UI rebuild
+          shinyjs::delay(500, { inhibit_color_save(FALSE) })
         }
       }, ignoreInit = TRUE)
     })
@@ -15669,10 +15710,20 @@ server <- function(input, output, session) {
   # When UI rebuilds, color pickers may fire change events with default palette colors.
   # We now detect when incoming color is a default palette color that would overwrite
   # an existing custom color, and skip saving in that case.
+  # S2.8-FIX: Added inhibit_color_save flag to completely block saving during UI rebuilds.
+  # This is more robust than color comparison because it prevents ALL saves during the
+  # critical window when UI is rebuilding.
   observe({
     lapply(1:6, function(i) {
       lapply(1:30, function(j) {
         observeEvent(input[[paste0("heatmap_", i, "_color_", j)]], {
+          # S2.8-FIX: Check inhibit flag first - skip ALL saves during UI rebuild
+          if (isTRUE(isolate(inhibit_color_save()))) {
+            cat(file=stderr(), paste0("[S2.8-DEBUG] BLOCKED color save for heatmap ", i,
+                                     " color ", j, " (UI rebuild in progress)\n"))
+            return(NULL)
+          }
+
           if (i <= length(values$heatmap_configs)) {
             # Get current column to know the unique values
             cols_selected <- input[[paste0("heatmap_columns_", i)]]
@@ -15752,6 +15803,11 @@ server <- function(input, output, session) {
 
       # S2.4-FIX: Also save NA color
       observeEvent(input[[paste0("heatmap_", i, "_na_color")]], {
+        # S2.8-FIX: Check inhibit flag first
+        if (isTRUE(isolate(inhibit_color_save()))) {
+          return(NULL)
+        }
+
         if (i <= length(values$heatmap_configs)) {
           na_color <- input[[paste0("heatmap_", i, "_na_color")]]
           if (!is.null(na_color)) {
