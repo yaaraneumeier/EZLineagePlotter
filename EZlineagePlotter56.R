@@ -79,8 +79,17 @@ options(shiny.maxRequestSize = 100*1024^2)
 #       - All v180 features included and tested
 
 # ============================================================================
-# VERSION S2.3 (Debug)
+# VERSION S2.4 (Fix)
 # ============================================================================
+# S2.4: Fix discrete heatmap colors resetting when adding second heatmap
+#       - BUG: Adding a second discrete heatmap caused first heatmap colors to reset
+#       - ROOT CAUSE: Colors were only stored in Shiny inputs (not heatmap_configs).
+#         When "Add Heatmap" is clicked, the UI rebuilds (heatmap_ui_trigger).
+#         During rebuild, old color picker inputs don't exist yet, so
+#         isolate(input[[...]]) returns NULL and default palette colors were used.
+#       - FIX: Added observer to persist color picker values to heatmap_configs.
+#         Modified renderUI to use stored colors as fallback when inputs don't exist.
+#
 # S2.3: Added debug output for multiple discrete heatmap column mapping investigation
 #       - Debug output shows column selections in apply handler
 #       - Debug output shows YAML according columns for each heatmap
@@ -128,7 +137,7 @@ options(shiny.maxRequestSize = 100*1024^2)
 #       - Layer reordering now happens ONCE at the end in generate_plot()
 # S1.2: Fixed undefined x_range_min in func_highlight causing "Problem while
 #       computing aesthetics" error when adding 2+ highlights with a heatmap.
-VERSION <- "S2.3"
+VERSION <- "S2.4"
 
 # Debug output control - set to TRUE to enable verbose console logging
 # For production/stable use, keep this FALSE for better performance
@@ -8315,11 +8324,15 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #155724;",
-                     tags$h4(style = "color: #155724; margin: 0;", "Version S2.3 (Debug)"),
+                     tags$h4(style = "color: #155724; margin: 0;", "Version S2.4 (Fix)"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
                             "Stable release with bug fixes.",
                             tags$br(), tags$br(),
-                            tags$strong("New in S2.2:"),
+                            tags$strong("New in S2.4:"),
+                            tags$ul(
+                              tags$li("Fixed discrete heatmap colors resetting when adding a second heatmap")
+                            ),
+                            tags$strong("From S2.2:"),
                             tags$ul(
                               tags$li("Fixed discrete heatmap colors not changing when color pickers changed"),
                               tags$li("Fixed heatmap legend colors not matching heatmap tile colors")
@@ -15425,13 +15438,30 @@ server <- function(input, output, session) {
           rainbow(n_vals)
         })
 
+        # S2.4-FIX: Get stored colors from heatmap_configs (used as fallback when input doesn't exist yet)
+        stored_colors <- isolate({
+          if (i <= length(values$heatmap_configs) && !is.null(values$heatmap_configs[[i]]$custom_colors)) {
+            values$heatmap_configs[[i]]$custom_colors
+          } else {
+            list()
+          }
+        })
+
         # v70: Generate color pickers for each value WITH dropdown menu
         color_pickers <- lapply(seq_along(unique_vals), function(j) {
           val <- as.character(unique_vals[j])
 
           # v69: Check if there's an existing custom color for this value
+          # S2.4-FIX: Also check stored colors in heatmap_configs as fallback
           existing_color <- isolate(input[[paste0("heatmap_", i, "_color_", j)]])
-          color_to_use <- if (!is.null(existing_color)) existing_color else default_colors[j]
+          stored_color <- stored_colors[[val]]
+          color_to_use <- if (!is.null(existing_color)) {
+            existing_color
+          } else if (!is.null(stored_color)) {
+            stored_color  # Use stored color when input doesn't exist (UI rebuild)
+          } else {
+            default_colors[j]
+          }
 
           fluidRow(
             style = "margin-bottom: 3px;",
@@ -15448,8 +15478,22 @@ server <- function(input, output, session) {
         })
 
         # v70: NA color picker (always shown at the end)
+        # S2.4-FIX: Also check stored NA color in heatmap_configs as fallback
         existing_na_color <- isolate(input[[paste0("heatmap_", i, "_na_color")]])
-        na_color_to_use <- if (!is.null(existing_na_color)) existing_na_color else "white"
+        stored_na_color <- isolate({
+          if (i <= length(values$heatmap_configs) && !is.null(values$heatmap_configs[[i]]$na_color)) {
+            values$heatmap_configs[[i]]$na_color
+          } else {
+            NULL
+          }
+        })
+        na_color_to_use <- if (!is.null(existing_na_color)) {
+          existing_na_color
+        } else if (!is.null(stored_na_color)) {
+          stored_na_color
+        } else {
+          "white"
+        }
 
         na_color_row <- fluidRow(
           style = "margin-bottom: 3px; background-color: #f8f8f8; padding: 5px; border-radius: 3px; margin-top: 10px;",
@@ -15518,6 +15562,63 @@ server <- function(input, output, session) {
         color_name <- input[[paste0("heatmap_", i, "_na_color_name")]]
         if (!is.null(color_name) && color_name != "") {
           updateColourInput(session, paste0("heatmap_", i, "_na_color"), value = color_name)
+        }
+      }, ignoreInit = TRUE)
+    })
+  })
+
+  # S2.4-FIX: Observer to save discrete color picker values to heatmap_configs
+  # This fixes the bug where adding a second heatmap resets the first heatmap's colors
+  # The issue was that colors were only stored in Shiny inputs, which get destroyed/recreated
+  # when the UI rebuilds. Now we persist them in heatmap_configs.
+  observe({
+    lapply(1:6, function(i) {
+      lapply(1:30, function(j) {
+        observeEvent(input[[paste0("heatmap_", i, "_color_", j)]], {
+          if (i <= length(values$heatmap_configs)) {
+            # Get current column to know the unique values
+            cols_selected <- input[[paste0("heatmap_columns_", i)]]
+            if (!is.null(cols_selected) && length(cols_selected) > 0 && !is.null(values$csv_data)) {
+              first_col <- cols_selected[1]
+              if (first_col %in% names(values$csv_data)) {
+                # Get filtered unique values (same logic as renderUI)
+                filtered_data <- values$csv_data
+                if (!is.null(values$tree) && !is.null(input$id_column) && input$id_column %in% names(values$csv_data)) {
+                  tree_tips <- values$tree$tip.label
+                  id_col_data <- as.character(values$csv_data[[input$id_column]])
+                  matching_rows <- id_col_data %in% tree_tips
+                  if (any(matching_rows)) {
+                    filtered_data <- values$csv_data[matching_rows, , drop = FALSE]
+                  }
+                }
+                unique_vals <- sort(unique(na.omit(filtered_data[[first_col]])))
+
+                if (j <= length(unique_vals)) {
+                  # Initialize custom_colors if needed
+                  if (is.null(values$heatmap_configs[[i]]$custom_colors)) {
+                    values$heatmap_configs[[i]]$custom_colors <- list()
+                  }
+                  # Store the color with the value name as key
+                  val_name <- as.character(unique_vals[j])
+                  color_value <- input[[paste0("heatmap_", i, "_color_", j)]]
+                  if (!is.null(color_value)) {
+                    values$heatmap_configs[[i]]$custom_colors[[val_name]] <- color_value
+                    values$heatmap_configs[[i]]$custom_discrete <- TRUE
+                  }
+                }
+              }
+            }
+          }
+        }, ignoreInit = TRUE)
+      })
+
+      # S2.4-FIX: Also save NA color
+      observeEvent(input[[paste0("heatmap_", i, "_na_color")]], {
+        if (i <= length(values$heatmap_configs)) {
+          na_color <- input[[paste0("heatmap_", i, "_na_color")]]
+          if (!is.null(na_color)) {
+            values$heatmap_configs[[i]]$na_color <- na_color
+          }
         }
       }, ignoreInit = TRUE)
     })
