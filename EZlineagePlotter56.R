@@ -79,6 +79,25 @@ options(shiny.maxRequestSize = 100*1024^2)
 #       - All v180 features included and tested
 
 # ============================================================================
+# VERSION S2.10
+# ============================================================================
+# S2.10: Fix discrete heatmap colors being lost when Apply Heatmaps is clicked
+#        after adding a second heatmap (S2.8/S2.9 didn't fully resolve this)
+#        - BUG: Even though S2.8/S2.9 protected stored colors during UI rebuild,
+#          the Apply Heatmaps code was reading colors from input[[...]] which
+#          could contain stale/default values if the UI hadn't fully updated.
+#        - EVIDENCE: Debug showed stored colors were correct in heatmap_configs,
+#          but the rendered plot used default palette colors instead.
+#        - ROOT CAUSE: Apply Heatmaps (lines 16253-16259) read color values
+#          directly from input color pickers instead of from heatmap_configs.
+#          When UI rebuilds during "Add Heatmap", input values may be stale.
+#        - FIX: Modified Apply Heatmaps to prioritize cfg$custom_colors (stored
+#          in heatmap_configs by the color observer) over input values.
+#          stored_color is now the source of truth; input is only a fallback.
+#        - Also fixed NA color to use stored cfg$na_color over input.
+#        - Debug logging ([S2.10-DEBUG]) shows color sources during Apply.
+#
+# ============================================================================
 # VERSION S2.9
 # ============================================================================
 # S2.9: Fix inhibit_color_save timing issue (S2.8 still had timing problems)
@@ -16250,13 +16269,37 @@ server <- function(input, output, session) {
           if (n_vals > 0 && n_vals <= 30) {
             custom_colors <- c()
             has_custom_colors <- FALSE
+
+            # S2.10-FIX: Prioritize stored colors from heatmap_configs over input values
+            # This fixes the bug where UI rebuild during "Add Heatmap" could cause
+            # input color pickers to have stale/default values, overwriting custom colors.
+            # cfg$custom_colors is the source of truth, maintained by the color observer.
+            stored_cfg_colors <- cfg$custom_colors
+
             for (j in seq_along(unique_vals)) {
+              val_name <- as.character(unique_vals[j])
+
+              # S2.10-FIX: First try stored color, then fall back to input
+              stored_color <- if (!is.null(stored_cfg_colors)) stored_cfg_colors[[val_name]] else NULL
               color_input <- input[[paste0("heatmap_", i, "_color_", j)]]
-              if (!is.null(color_input)) {
-                custom_colors[as.character(unique_vals[j])] <- color_input
+
+              # Use stored color if available (source of truth), otherwise use input
+              color_to_use <- if (!is.null(stored_color)) stored_color else color_input
+
+              if (!is.null(color_to_use)) {
+                custom_colors[val_name] <- color_to_use
                 has_custom_colors <- TRUE
               }
             }
+
+            # S2.10-DEBUG: Log color sources for debugging
+            if (has_custom_colors) {
+              cat(file=stderr(), paste0("[S2.10-DEBUG] Heatmap ", i, " custom_colors for Apply:\n"))
+              for (val_name in names(custom_colors)) {
+                cat(file=stderr(), paste0("[S2.10-DEBUG]   ", val_name, " = ", custom_colors[val_name], "\n"))
+              }
+            }
+
             if (has_custom_colors) {
               heatmap_entry$custom_colors <- custom_colors
               heatmap_entry$man_define_colors <- TRUE
@@ -16264,8 +16307,16 @@ server <- function(input, output, session) {
           }
 
           # v70: Get NA color from input (default to white if not set)
+          # S2.10-FIX: Also check stored NA color in cfg
           na_color_input <- input[[paste0("heatmap_", i, "_na_color")]]
-          heatmap_entry$na_color <- if (!is.null(na_color_input)) na_color_input else "white"
+          stored_na_color <- cfg$na_color
+          heatmap_entry$na_color <- if (!is.null(stored_na_color)) {
+            stored_na_color
+          } else if (!is.null(na_color_input)) {
+            na_color_input
+          } else {
+            "white"
+          }
         }
       } else {
         heatmap_entry$low_color <- cfg$low_color
