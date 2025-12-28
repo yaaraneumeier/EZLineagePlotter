@@ -15754,7 +15754,12 @@ server <- function(input, output, session) {
       lapply(1:30, function(j) {
         observeEvent(input[[paste0("heatmap_", i, "_color_", j)]], {
           # S2.8-FIX: Check inhibit flag first - skip ALL saves during UI rebuild
-          if (isTRUE(isolate(inhibit_color_save()))) {
+          inhibit_val <- isolate(inhibit_color_save())
+          color_val <- input[[paste0("heatmap_", i, "_color_", j)]]
+          cat(file=stderr(), paste0("[S2.11-DEBUG] Color observer fired: heatmap=", i,
+                                   ", color=", j, ", inhibit=", inhibit_val,
+                                   ", value=", ifelse(is.null(color_val), "NULL", color_val), "\n"))
+          if (isTRUE(inhibit_val)) {
             cat(file=stderr(), paste0("[S2.8-DEBUG] BLOCKED color save for heatmap ", i,
                                      " color ", j, " (UI rebuild in progress)\n"))
             return(NULL)
@@ -15830,6 +15835,12 @@ server <- function(input, output, session) {
                                                " value '", val_name, "' (default=", default_color_for_j,
                                                ", keeping stored=", existing_stored_color, ")\n"))
                     } else {
+                      # S2.11-DEBUG: Trace what's happening with the save
+                      cat(file=stderr(), paste0("[S2.11-DEBUG] Color save for heatmap ", i, " color ", j,
+                                               ": val_name='", val_name, "', color_value='", color_value,
+                                               "', is_default=", is_default_color,
+                                               ", existing_stored='", ifelse(is.null(existing_stored_color), "NULL", existing_stored_color),
+                                               "', default_for_j='", default_color_for_j, "'\n"))
                       # Normal save: either it's a custom color, or there's no conflict
                       values$heatmap_configs[[i]]$custom_colors[[val_name]] <- color_value
                       values$heatmap_configs[[i]]$custom_discrete <- TRUE
@@ -16234,6 +16245,9 @@ server <- function(input, output, session) {
         label_mapping = label_mapping  # v108: Per-column label mapping
       )
       
+      # S2.11-DEBUG: Trace through discrete color handling
+      cat(file=stderr(), paste0("[S2.11-DEBUG] Heatmap ", i, " actual_type='", actual_type, "'\n"))
+
       if (actual_type == "discrete") {
         # v69: Get palette from current input (not stale cfg)
         # S1.62dev: Fall back to cfg$discrete_palette if input not available (e.g., after YAML import)
@@ -16245,6 +16259,11 @@ server <- function(input, output, session) {
         } else {
           "Set1"
         }
+
+        # S2.11-DEBUG: Trace first_col and csv_data availability
+        cat(file=stderr(), paste0("[S2.11-DEBUG] Heatmap ", i, " first_col='", first_col, "'\n"))
+        cat(file=stderr(), paste0("[S2.11-DEBUG] Heatmap ", i, " csv_data is NULL: ", is.null(values$csv_data), "\n"))
+        cat(file=stderr(), paste0("[S2.11-DEBUG] Heatmap ", i, " first_col in names: ", first_col %in% names(values$csv_data), "\n"))
 
         # v69: Collect custom colors if they've been set
         # S2.1-FIX: Use filtered data (matching tree tips) to match renderUI color picker creation
@@ -16266,6 +16285,10 @@ server <- function(input, output, session) {
           unique_vals <- sort(unique(na.omit(filtered_data[[first_col]])))
           n_vals <- length(unique_vals)
 
+          # S2.11-DEBUG: Trace unique values
+          cat(file=stderr(), paste0("[S2.11-DEBUG] Heatmap ", i, " unique_vals: ", paste(unique_vals, collapse=", "), "\n"))
+          cat(file=stderr(), paste0("[S2.11-DEBUG] Heatmap ", i, " n_vals=", n_vals, "\n"))
+
           if (n_vals > 0 && n_vals <= 30) {
             custom_colors <- c()
             has_custom_colors <- FALSE
@@ -16276,12 +16299,24 @@ server <- function(input, output, session) {
             # cfg$custom_colors is the source of truth, maintained by the color observer.
             stored_cfg_colors <- cfg$custom_colors
 
+            # S2.11-DEBUG: Trace stored colors from config
+            cat(file=stderr(), paste0("[S2.11-DEBUG] Heatmap ", i, " cfg$custom_colors is NULL: ", is.null(stored_cfg_colors), "\n"))
+            if (!is.null(stored_cfg_colors) && length(stored_cfg_colors) > 0) {
+              cat(file=stderr(), paste0("[S2.11-DEBUG] Heatmap ", i, " cfg$custom_colors keys: ", paste(names(stored_cfg_colors), collapse=", "), "\n"))
+              cat(file=stderr(), paste0("[S2.11-DEBUG] Heatmap ", i, " cfg$custom_colors values: ", paste(unlist(stored_cfg_colors), collapse=", "), "\n"))
+            }
+
             for (j in seq_along(unique_vals)) {
               val_name <- as.character(unique_vals[j])
 
               # S2.10-FIX: First try stored color, then fall back to input
               stored_color <- if (!is.null(stored_cfg_colors)) stored_cfg_colors[[val_name]] else NULL
               color_input <- input[[paste0("heatmap_", i, "_color_", j)]]
+
+              # S2.11-DEBUG: Trace individual color resolution
+              cat(file=stderr(), paste0("[S2.11-DEBUG] Heatmap ", i, " val '", val_name, "': stored=",
+                  ifelse(is.null(stored_color), "NULL", stored_color),
+                  ", input=", ifelse(is.null(color_input), "NULL", color_input), "\n"))
 
               # Use stored color if available (source of truth), otherwise use input
               color_to_use <- if (!is.null(stored_color)) stored_color else color_input
