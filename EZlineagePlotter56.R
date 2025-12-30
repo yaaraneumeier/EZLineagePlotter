@@ -14500,16 +14500,30 @@ server <- function(input, output, session) {
       }, ignoreInit = TRUE)
 
       # S1.62dev: CNV WGD normalization change
+      # S2.13: Made mutually exclusive with per-cell WGD option
       observeEvent(input[[paste0("heatmap_cnv_wgd_norm_", i)]], {
         if (i <= length(values$heatmap_configs)) {
-          values$heatmap_configs[[i]]$cnv_wgd_norm <- input[[paste0("heatmap_cnv_wgd_norm_", i)]]
+          new_val <- input[[paste0("heatmap_cnv_wgd_norm_", i)]]
+          values$heatmap_configs[[i]]$cnv_wgd_norm <- new_val
+          # If checked, uncheck per-cell WGD option (mutually exclusive)
+          if (isTRUE(new_val)) {
+            updateCheckboxInput(session, paste0("heatmap_cnv_wgd_per_cell_", i), value = FALSE)
+            values$heatmap_configs[[i]]$cnv_wgd_per_cell <- FALSE
+          }
         }
       }, ignoreInit = TRUE)
 
       # S2.12: Per-cell WGD checkbox change
+      # S2.13: Made mutually exclusive with all-cells WGD option
       observeEvent(input[[paste0("heatmap_cnv_wgd_per_cell_", i)]], {
         if (i <= length(values$heatmap_configs)) {
-          values$heatmap_configs[[i]]$cnv_wgd_per_cell <- input[[paste0("heatmap_cnv_wgd_per_cell_", i)]]
+          new_val <- input[[paste0("heatmap_cnv_wgd_per_cell_", i)]]
+          values$heatmap_configs[[i]]$cnv_wgd_per_cell <- new_val
+          # If checked, uncheck all-cells WGD option (mutually exclusive)
+          if (isTRUE(new_val)) {
+            updateCheckboxInput(session, paste0("heatmap_cnv_wgd_norm_", i), value = FALSE)
+            values$heatmap_configs[[i]]$cnv_wgd_norm <- FALSE
+          }
         }
       }, ignoreInit = TRUE)
 
