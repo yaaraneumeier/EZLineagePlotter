@@ -8425,56 +8425,28 @@ ui <- dashboardPage(
         tabName = "data_upload",
         fluidRow(
           box(
-            title = "EZLineagePlotter - Debug Version",
-            status = "warning",
+            title = "EZLineagePlotter - Stable Release",
+            status = "success",
             solidHeader = TRUE,
             width = 12,
             collapsible = TRUE,
-            tags$div(style = "background: #fff3cd; padding: 15px; border-radius: 5px; border: 2px solid #856404;",
-                     tags$h4(style = "color: #856404; margin: 0;", "Version S2.6 (Debug)"),
-                     tags$p(style = "margin: 10px 0 0 0; color: #856404;",
-                            "Debug version: investigating discrete heatmap color reset issue.",
-                            tags$br(),
-                            "Please test: set custom colors for heatmap 1, add heatmap 2, check console for [S2.6-DEBUG] messages.",
-                            tags$br(), tags$br(),
-                            tags$strong("New in S2.6:"),
+            tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #155724;",
+                     tags$h4(style = "color: #155724; margin: 0;", "Version S2.7 Stable"),
+                     tags$p(style = "margin: 10px 0 0 0; color: #155724;",
+                            tags$strong("New in S2.7:"),
                             tags$ul(
-                              tags$li("Added detailed debug logging for custom_colors storage and retrieval"),
-                              tags$li("Debug output when: adding heatmap, changing colors, rebuilding UI")
-                            ),
-                            tags$strong("From S2.5:"),
-                            tags$ul(
-                              tags$li("Fixed heatmap column order changing when adding a second heatmap")
-                            ),
-                            tags$strong("From S2.4:"),
-                            tags$ul(
-                              tags$li("Fixed discrete heatmap colors resetting when adding a second heatmap")
-                            ),
-                            tags$strong("From S2.2:"),
-                            tags$ul(
-                              tags$li("Fixed discrete heatmap colors not changing when color pickers changed"),
-                              tags$li("Fixed heatmap legend colors not matching heatmap tile colors")
-                            ),
-                            tags$strong("From S2.1:"),
-                            tags$ul(
-                              tags$li("Two-tier caching for faster plot generation"),
-                              tags$li("Async garbage collection for faster UI response"),
-                              tags$li("Improved memory management during plot rendering")
+                              tags$li("Per-cell WGD normalization for CNV heatmaps (divide by 2 for WGD-positive cells)"),
+                              tags$li("Fixed discrete heatmap colors being preserved when adding/removing heatmaps"),
+                              tags$li("Fixed heatmap column order stability when adding new heatmaps"),
+                              tags$li("Improved heatmap legend colors matching tile colors")
                             ),
                             tags$strong("From S2.0:"),
                             tags$ul(
                               tags$li("RData CNV heatmaps: Import CNV data from QDNAseq/scIMPACT pipelines"),
                               tags$li("Automatic sample matching via CSV lookup columns"),
                               tags$li("Red-white-blue color scheme for CNV (red=loss, blue=gain)"),
-                              tags$li("Vertical column lines option for heatmaps"),
-                              tags$li("Horizontal row lines option for heatmaps"),
+                              tags$li("Vertical/horizontal guide lines option for heatmaps"),
                               tags$li("Multiple heatmap support (CSV + RData together)")
-                            ),
-                            tags$strong("From S1.6:"),
-                            tags$ul(
-                              tags$li("Performance optimizations - faster rendering"),
-                              tags$li("Legend Background color fix"),
-                              tags$li("Multiple highlights with heatmap fix")
                             ),
                             tags$strong("Core Features:"),
                             tags$ul(
