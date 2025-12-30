@@ -4355,6 +4355,44 @@ func.print.lineage.tree <- function(conf_yaml_path,
 
                 # Use the matched CNV data as the heatmap dataframe
                 df_heat_temp <- matched_cnv
+
+                # S2.12: Apply per-cell WGD normalization if specified
+                cnv_wgd_per_cell <- if ('cnv_wgd_per_cell' %in% names(heat_map_i_def)) {
+                  func.check.bin.val.from.conf(heat_map_i_def$cnv_wgd_per_cell)
+                } else {
+                  FALSE
+                }
+
+                if (cnv_wgd_per_cell) {
+                  cnv_wgd_column <- heat_map_i_def$cnv_wgd_column
+                  debug_cat(paste0("  S2.12: Per-cell WGD enabled, column: ", ifelse(is.null(cnv_wgd_column), "NULL", cnv_wgd_column), "\n"))
+
+                  if (!is.null(cnv_wgd_column) && cnv_wgd_column %in% names(readfile440)) {
+                    # Get the WGD values from CSV
+                    id_col_vals <- as.character(readfile440[[title.id]])
+                    wgd_col_vals <- readfile440[[cnv_wgd_column]]
+
+                    # Create a lookup: tree tip -> WGD value
+                    wgd_lookup <- setNames(wgd_col_vals, id_col_vals)
+
+                    # Apply per-cell normalization
+                    cells_normalized <- 0
+                    for (tip in rownames(df_heat_temp)) {
+                      if (tip %in% names(wgd_lookup)) {
+                        wgd_val <- wgd_lookup[[tip]]
+                        if (!is.na(wgd_val) && wgd_val == 1) {
+                          df_heat_temp[tip, ] <- df_heat_temp[tip, ] / 2
+                          cells_normalized <- cells_normalized + 1
+                        }
+                      }
+                    }
+                    debug_cat(paste0("  S2.12: Applied per-cell WGD normalization to ", cells_normalized, " cells (where ", cnv_wgd_column, " = 1)\n"))
+                    cat(file=stderr(), paste0("[HEATMAP-RENDER] S2.12: Per-cell WGD normalization applied to ", cells_normalized, " cells\n"))
+                  } else {
+                    cat(file=stderr(), paste0("[HEATMAP-RENDER] S2.12: WARNING - WGD column '", cnv_wgd_column, "' not found in CSV. Available columns: ", paste(names(readfile440), collapse=", "), "\n"))
+                  }
+                }
+
                 dxdf440_for_heat[[indx_for_sav]] <- df_heat_temp
 
                 cat(file=stderr(), paste0("[HEATMAP-RENDER] CNV heatmap data: ", nrow(df_heat_temp), " x ", ncol(df_heat_temp), "\n"))
@@ -11648,9 +11686,13 @@ server <- function(input, output, session) {
               # Store CNV settings (but NOT the matrix itself - that's passed separately)
               heatmap_item[[as.character(j)]]$cnv_downsample <- if (!is.null(heatmap_entry$cnv_downsample)) heatmap_entry$cnv_downsample else 10
               heatmap_item[[as.character(j)]]$cnv_wgd_norm <- if (!is.null(heatmap_entry$cnv_wgd_norm) && heatmap_entry$cnv_wgd_norm) "yes" else "no"
+              # S2.12: Per-cell WGD normalization settings
+              heatmap_item[[as.character(j)]]$cnv_wgd_per_cell <- if (!is.null(heatmap_entry$cnv_wgd_per_cell) && heatmap_entry$cnv_wgd_per_cell) "yes" else "no"
+              heatmap_item[[as.character(j)]]$cnv_wgd_column <- if (!is.null(heatmap_entry$cnv_wgd_column)) heatmap_entry$cnv_wgd_column else ""
               # S2.0: Store mapping column for sample name matching
               heatmap_item[[as.character(j)]]$rdata_mapping_column <- heatmap_entry$rdata_mapping_column
               debug_cat(paste0("    S2.0-RDATA: RData heatmap, mapping_column=", heatmap_entry$rdata_mapping_column, "\n"))
+              debug_cat(paste0("    S2.12: Per-cell WGD: enabled=", heatmap_entry$cnv_wgd_per_cell, ", column=", heatmap_entry$cnv_wgd_column, "\n"))
             } else {
               heatmap_item[[as.character(j)]]$data_source <- "csv"
               # Add columns - format must match expected YAML structure
@@ -11902,9 +11944,13 @@ server <- function(input, output, session) {
             # Store CNV settings (but NOT the matrix itself - that's passed separately)
             heatmap_item[[as.character(j)]]$cnv_downsample <- if (!is.null(heatmap_entry$cnv_downsample)) heatmap_entry$cnv_downsample else 10
             heatmap_item[[as.character(j)]]$cnv_wgd_norm <- if (!is.null(heatmap_entry$cnv_wgd_norm) && heatmap_entry$cnv_wgd_norm) "yes" else "no"
+            # S2.12: Per-cell WGD normalization settings
+            heatmap_item[[as.character(j)]]$cnv_wgd_per_cell <- if (!is.null(heatmap_entry$cnv_wgd_per_cell) && heatmap_entry$cnv_wgd_per_cell) "yes" else "no"
+            heatmap_item[[as.character(j)]]$cnv_wgd_column <- if (!is.null(heatmap_entry$cnv_wgd_column)) heatmap_entry$cnv_wgd_column else ""
             # S2.0: Store mapping column for sample name matching
             heatmap_item[[as.character(j)]]$rdata_mapping_column <- heatmap_entry$rdata_mapping_column
             debug_cat(paste0("    S2.0: RData heatmap, mapping_column=", heatmap_entry$rdata_mapping_column, "\n"))
+            debug_cat(paste0("    S2.12: Per-cell WGD: enabled=", heatmap_entry$cnv_wgd_per_cell, ", column=", heatmap_entry$cnv_wgd_column, "\n"))
           } else {
             heatmap_item[[as.character(j)]]$data_source <- "csv"
             # Add columns - format must match expected YAML structure
@@ -13897,9 +13943,48 @@ server <- function(input, output, session) {
                                step = 1)
             ),
             column(4,
-                   checkboxInput(paste0("heatmap_cnv_wgd_norm_", i), "WGD Normalization",
+                   checkboxInput(paste0("heatmap_cnv_wgd_norm_", i), "WGD Normalization (All Cells)",
                                  value = if (!is.null(cfg$cnv_wgd_norm)) cfg$cnv_wgd_norm else FALSE)
             )
+          ),
+          # S2.12: Per-cell WGD normalization option
+          fluidRow(
+            column(4,
+                   checkboxInput(paste0("heatmap_cnv_wgd_per_cell_", i), "Per-cell WGD (from CSV column)",
+                                 value = if (!is.null(cfg$cnv_wgd_per_cell)) cfg$cnv_wgd_per_cell else FALSE)
+            ),
+            column(8,
+                   conditionalPanel(
+                     condition = paste0("input.heatmap_cnv_wgd_per_cell_", i),
+                     selectizeInput(paste0("heatmap_cnv_wgd_column_", i), "WGD Column",
+                                    choices = if (!is.null(values$csv_data)) {
+                                      csv_cols <- names(values$csv_data)
+                                      # Auto-detect WGD column
+                                      wgd_cols <- csv_cols[grepl("^WGD$", csv_cols, ignore.case = TRUE)]
+                                      if (length(wgd_cols) > 0) {
+                                        c(csv_cols)  # All columns available
+                                      } else {
+                                        csv_cols
+                                      }
+                                    } else character(0),
+                                    selected = if (!is.null(cfg$cnv_wgd_column)) {
+                                      cfg$cnv_wgd_column
+                                    } else if (!is.null(values$csv_data)) {
+                                      # Auto-select WGD column if it exists
+                                      csv_cols <- names(values$csv_data)
+                                      wgd_match <- csv_cols[grepl("^WGD$", csv_cols, ignore.case = TRUE)]
+                                      if (length(wgd_match) > 0) wgd_match[1] else NULL
+                                    } else NULL,
+                                    options = list(placeholder = "Select WGD column..."))
+                   )
+            )
+          ),
+          tags$div(
+            style = "padding: 0 15px; margin-bottom: 10px;",
+            tags$small(class = "text-muted",
+                       icon("info-circle"),
+                       " Per-cell WGD: normalize only cells where selected column value = 1. ",
+                       "Auto-detects column named 'WGD'.")
           ),
           # S2.0: Sample mapping column selector (shown when auto-match fails)
           fluidRow(
@@ -14250,7 +14335,10 @@ server <- function(input, output, session) {
       midpoint = 0,
       # S1.62dev: CNV-specific settings
       cnv_downsample = 10,
-      cnv_wgd_norm = FALSE
+      cnv_wgd_norm = FALSE,
+      # S2.12: Per-cell WGD normalization settings
+      cnv_wgd_per_cell = FALSE,
+      cnv_wgd_column = NULL
     )
     
     values$heatmap_configs <- c(values$heatmap_configs, list(new_config))
@@ -14415,6 +14503,20 @@ server <- function(input, output, session) {
       observeEvent(input[[paste0("heatmap_cnv_wgd_norm_", i)]], {
         if (i <= length(values$heatmap_configs)) {
           values$heatmap_configs[[i]]$cnv_wgd_norm <- input[[paste0("heatmap_cnv_wgd_norm_", i)]]
+        }
+      }, ignoreInit = TRUE)
+
+      # S2.12: Per-cell WGD checkbox change
+      observeEvent(input[[paste0("heatmap_cnv_wgd_per_cell_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          values$heatmap_configs[[i]]$cnv_wgd_per_cell <- input[[paste0("heatmap_cnv_wgd_per_cell_", i)]]
+        }
+      }, ignoreInit = TRUE)
+
+      # S2.12: Per-cell WGD column selection change
+      observeEvent(input[[paste0("heatmap_cnv_wgd_column_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          values$heatmap_configs[[i]]$cnv_wgd_column <- input[[paste0("heatmap_cnv_wgd_column_", i)]]
         }
       }, ignoreInit = TRUE)
 
@@ -15963,8 +16065,14 @@ server <- function(input, output, session) {
         if (is.null(cnv_downsample)) cnv_downsample <- 10
         cnv_wgd_norm <- input[[paste0("heatmap_cnv_wgd_norm_", i)]]
         if (is.null(cnv_wgd_norm)) cnv_wgd_norm <- FALSE
+        # S2.12: Per-cell WGD settings
+        cnv_wgd_per_cell <- input[[paste0("heatmap_cnv_wgd_per_cell_", i)]]
+        if (is.null(cnv_wgd_per_cell)) cnv_wgd_per_cell <- FALSE
+        cnv_wgd_column <- input[[paste0("heatmap_cnv_wgd_column_", i)]]
+        if (is.null(cnv_wgd_column)) cnv_wgd_column <- NULL
 
         debug_cat(paste0("  S1.62dev: RData CNV heatmap ", i, ": downsample=", cnv_downsample, ", wgd_norm=", cnv_wgd_norm, "\n"))
+        debug_cat(paste0("  S2.12: Per-cell WGD: enabled=", cnv_wgd_per_cell, ", column=", ifelse(is.null(cnv_wgd_column), "NULL", cnv_wgd_column), "\n"))
         debug_cat(paste0("  S1.62dev: Raw CNV matrix: ", nrow(values$rdata_cnv_matrix), " samples x ", ncol(values$rdata_cnv_matrix), " positions\n"))
 
         # Build heatmap entry for RData CNV
@@ -15991,6 +16099,9 @@ server <- function(input, output, session) {
           # Store CNV settings (processing happens in func.print.lineage.tree)
           cnv_downsample = cnv_downsample,
           cnv_wgd_norm = cnv_wgd_norm,
+          # S2.12: Per-cell WGD normalization settings
+          cnv_wgd_per_cell = cnv_wgd_per_cell,
+          cnv_wgd_column = cnv_wgd_column,
           # S2.0: Store mapping column for sample name matching
           rdata_mapping_column = mapping_column,
           columns = character(0),  # No columns for RData - data comes from parameter
