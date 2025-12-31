@@ -79,8 +79,97 @@ options(shiny.maxRequestSize = 100*1024^2)
 #       - All v180 features included and tested
 
 # ============================================================================
-# VERSION S2.1 (Stable)
+# VERSION S2.10
 # ============================================================================
+# S2.10: Fix discrete heatmap colors being lost when Apply Heatmaps is clicked
+#        after adding a second heatmap (S2.8/S2.9 didn't fully resolve this)
+#        - BUG: Even though S2.8/S2.9 protected stored colors during UI rebuild,
+#          the Apply Heatmaps code was reading colors from input[[...]] which
+#          could contain stale/default values if the UI hadn't fully updated.
+#        - EVIDENCE: Debug showed stored colors were correct in heatmap_configs,
+#          but the rendered plot used default palette colors instead.
+#        - ROOT CAUSE: Apply Heatmaps (lines 16253-16259) read color values
+#          directly from input color pickers instead of from heatmap_configs.
+#          When UI rebuilds during "Add Heatmap", input values may be stale.
+#        - FIX: Modified Apply Heatmaps to prioritize cfg$custom_colors (stored
+#          in heatmap_configs by the color observer) over input values.
+#          stored_color is now the source of truth; input is only a fallback.
+#        - Also fixed NA color to use stored cfg$na_color over input.
+#        - Debug logging ([S2.10-DEBUG]) shows color sources during Apply.
+#
+# ============================================================================
+# VERSION S2.9
+# ============================================================================
+# S2.9: Fix inhibit_color_save timing issue (S2.8 still had timing problems)
+#       - BUG: S2.8's 500ms delay was too short. The UI rebuild process takes longer:
+#         heatmap_ui_trigger change -> renderUI runs -> colourInput widgets created
+#         -> change events fire. By the time these events fired, 500ms had passed
+#         and the inhibit flag was already FALSE.
+#       - EVIDENCE: Debug output showed inhibit_color_save=FALSE BEFORE renderUI ran:
+#         "[S2.8-DEBUG] inhibit_color_save set to FALSE (after delay)"
+#         "[S2.6-DEBUG] renderUI for discrete colors heatmap 1"  <- happens AFTER!
+#       - FIX: Increased delay from 500ms to 2500ms to cover full UI rebuild cycle
+#       - ADDITIONAL FIX: Skip saving if new color equals stored color (redundant save)
+#         This provides defense-in-depth when renderUI creates widgets with stored values
+#       - Debug logging ([S2.9-DEBUG]) shows when saves complete after longer delay
+#
+# S2.8: (S2.9 extended this fix) Added inhibit_color_save flag mechanism
+#       - BUG: S2.7's default color detection wasn't reliably preventing resets
+#         Adding a second discrete heatmap still reset first heatmap's custom colors
+#         (e.g., user's custom pink #E08F8F became default red #E41A1C)
+#       - ROOT CAUSE: Timing issue during UI rebuild. Color picker observers were
+#         firing with default values before the comparison logic could properly
+#         detect and skip them. The S2.7 approach of comparing incoming color to
+#         default palette colors had race conditions with Shiny's reactivity.
+#       - FIX: Added inhibit_color_save flag mechanism:
+#         1. When add/remove/move heatmap is triggered, set inhibit_color_save=TRUE
+#         2. Color save observer checks this flag FIRST and skips ALL saves if TRUE
+#         3. After delay (UI rebuild complete), flag is reset to FALSE
+#         4. This completely blocks any spurious saves during the critical window
+#       - This approach is more robust than S2.7's color comparison because it
+#         doesn't rely on correctly identifying default vs custom colors
+#       - Debug logging ([S2.8-DEBUG]) shows when saves are blocked
+#
+# S2.7: (Superseded by S2.8) Attempted fix using default color detection
+#       - Tried to detect default palette colors and skip saving them
+#       - Did not fully resolve the issue due to timing/reactivity problems
+#
+# S2.6: Debug version for investigating discrete heatmap color reset issue
+#       - Added detailed debug logging for custom_colors storage and retrieval
+#       - Debug points: add_new_heatmap observer, discrete color picker observers,
+#         renderUI for discrete colors
+#       - This version helps diagnose why colors reset when adding second heatmap
+#
+# S2.5: Fix heatmap column order changing when adding second heatmap
+#       - BUG: Adding a second heatmap caused first heatmap's column order to change
+#         (e.g., NRAS,BRAF,MET became BRAF,NRAS,MET) which changed heatmap appearance
+#       - ROOT CAUSE: Shiny selectize reorders selected items to match the order
+#         they appear in 'choices' when the UI rebuilds. Since choices were alphabetical,
+#         the user's selection order was lost after clicking "Add Heatmap".
+#       - FIX: Reorder the 'choices' list to put already-selected columns first
+#         (in their original order) before remaining columns. This ensures selectize
+#         preserves the user's intended column order through UI rebuilds.
+#
+# S2.4: Fix discrete heatmap colors resetting when adding second heatmap
+#       - BUG: Adding a second discrete heatmap caused first heatmap colors to reset
+#       - ROOT CAUSE: Colors were only stored in Shiny inputs (not heatmap_configs).
+#         When "Add Heatmap" is clicked, the UI rebuilds (heatmap_ui_trigger).
+#         During rebuild, old color picker inputs don't exist yet, so
+#         isolate(input[[...]]) returns NULL and default palette colors were used.
+#       - FIX: Added observer to persist color picker values to heatmap_configs.
+#         Modified renderUI to use stored colors as fallback when inputs don't exist.
+#
+# S2.3: Added debug output for multiple discrete heatmap column mapping investigation
+#       - Debug output shows column selections in apply handler
+#       - Debug output shows YAML according columns for each heatmap
+#       - Debug output shows column extraction during rendering
+#
+# S2.2: Bug fixes for discrete heatmap colors
+#       - Fixed discrete heatmap colors not changing when color pickers changed
+#       - Fixed heatmap legend colors not matching heatmap tile colors
+#       - Root cause: Color picker values were collected using unfiltered data
+#         but color pickers were created using filtered data (tree tips only),
+#         causing wrong value-to-color mappings
 # S2.1: Performance & stability improvements
 #       - Two-tier caching system for faster plot updates
 #       - Async garbage collection for responsive UI
@@ -117,7 +206,7 @@ options(shiny.maxRequestSize = 100*1024^2)
 #       - Layer reordering now happens ONCE at the end in generate_plot()
 # S1.2: Fixed undefined x_range_min in func_highlight causing "Problem while
 #       computing aesthetics" error when adding 2+ highlights with a heatmap.
-VERSION <- "S2.1"
+VERSION <- "S2.7"
 
 # Debug output control - set to TRUE to enable verbose console logging
 # For production/stable use, keep this FALSE for better performance
@@ -4266,6 +4355,44 @@ func.print.lineage.tree <- function(conf_yaml_path,
 
                 # Use the matched CNV data as the heatmap dataframe
                 df_heat_temp <- matched_cnv
+
+                # S2.12: Apply per-cell WGD normalization if specified
+                cnv_wgd_per_cell <- if ('cnv_wgd_per_cell' %in% names(heat_map_i_def)) {
+                  func.check.bin.val.from.conf(heat_map_i_def$cnv_wgd_per_cell)
+                } else {
+                  FALSE
+                }
+
+                if (cnv_wgd_per_cell) {
+                  cnv_wgd_column <- heat_map_i_def$cnv_wgd_column
+                  debug_cat(paste0("  S2.12: Per-cell WGD enabled, column: ", ifelse(is.null(cnv_wgd_column), "NULL", cnv_wgd_column), "\n"))
+
+                  if (!is.null(cnv_wgd_column) && cnv_wgd_column %in% names(readfile440)) {
+                    # Get the WGD values from CSV
+                    id_col_vals <- as.character(readfile440[[title.id]])
+                    wgd_col_vals <- readfile440[[cnv_wgd_column]]
+
+                    # Create a lookup: tree tip -> WGD value
+                    wgd_lookup <- setNames(wgd_col_vals, id_col_vals)
+
+                    # Apply per-cell normalization
+                    cells_normalized <- 0
+                    for (tip in rownames(df_heat_temp)) {
+                      if (tip %in% names(wgd_lookup)) {
+                        wgd_val <- wgd_lookup[[tip]]
+                        if (!is.na(wgd_val) && wgd_val == 1) {
+                          df_heat_temp[tip, ] <- df_heat_temp[tip, ] / 2
+                          cells_normalized <- cells_normalized + 1
+                        }
+                      }
+                    }
+                    debug_cat(paste0("  S2.12: Applied per-cell WGD normalization to ", cells_normalized, " cells (where ", cnv_wgd_column, " = 1)\n"))
+                    cat(file=stderr(), paste0("[HEATMAP-RENDER] S2.12: Per-cell WGD normalization applied to ", cells_normalized, " cells\n"))
+                  } else {
+                    cat(file=stderr(), paste0("[HEATMAP-RENDER] S2.12: WARNING - WGD column '", cnv_wgd_column, "' not found in CSV. Available columns: ", paste(names(readfile440), collapse=", "), "\n"))
+                  }
+                }
+
                 dxdf440_for_heat[[indx_for_sav]] <- df_heat_temp
 
                 cat(file=stderr(), paste0("[HEATMAP-RENDER] CNV heatmap data: ", nrow(df_heat_temp), " x ", ncol(df_heat_temp), "\n"))
@@ -4311,9 +4438,12 @@ func.print.lineage.tree <- function(conf_yaml_path,
                 l_titles_for_heat <- c(l_titles_for_heat,j2)
               }
               debug_cat(paste0("  Final l_titles_for_heat: ", paste(l_titles_for_heat, collapse=", "), "\n"))
+              # S2.3-DEBUG: Always show column extraction for verification
+              cat(file=stderr(), paste0("[RENDER-DEBUG] Heatmap inx=", inx, " (indx_for_sav=", indx_for_sav,
+                                        ") extracting columns: ", paste(l_titles_for_heat, collapse=", "), "\n"))
             }
-            
-            
+
+
             #print("B14")
             #names(readfile440)
             
@@ -8301,30 +8431,22 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #155724;",
-                     tags$h4(style = "color: #155724; margin: 0;", "Version S2.1 (Stable)"),
+                     tags$h4(style = "color: #155724; margin: 0;", "Version S2.7 Stable"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
-                            "Stable release with performance optimizations.",
-                            tags$br(), tags$br(),
-                            tags$strong("New in S2.1:"),
+                            tags$strong("New in S2.7:"),
                             tags$ul(
-                              tags$li("Two-tier caching for faster plot generation"),
-                              tags$li("Async garbage collection for faster UI response"),
-                              tags$li("Improved memory management during plot rendering")
+                              tags$li("Per-cell WGD normalization for CNV heatmaps (divide by 2 for WGD-positive cells)"),
+                              tags$li("Fixed discrete heatmap colors being preserved when adding/removing heatmaps"),
+                              tags$li("Fixed heatmap column order stability when adding new heatmaps"),
+                              tags$li("Improved heatmap legend colors matching tile colors")
                             ),
                             tags$strong("From S2.0:"),
                             tags$ul(
                               tags$li("RData CNV heatmaps: Import CNV data from QDNAseq/scIMPACT pipelines"),
                               tags$li("Automatic sample matching via CSV lookup columns"),
                               tags$li("Red-white-blue color scheme for CNV (red=loss, blue=gain)"),
-                              tags$li("Vertical column lines option for heatmaps"),
-                              tags$li("Horizontal row lines option for heatmaps"),
+                              tags$li("Vertical/horizontal guide lines option for heatmaps"),
                               tags$li("Multiple heatmap support (CSV + RData together)")
-                            ),
-                            tags$strong("From S1.6:"),
-                            tags$ul(
-                              tags$li("Performance optimizations - faster rendering"),
-                              tags$li("Legend Background color fix"),
-                              tags$li("Multiple highlights with heatmap fix")
                             ),
                             tags$strong("Core Features:"),
                             tags$ul(
@@ -9533,6 +9655,11 @@ server <- function(input, output, session) {
   # (add/remove/reorder heatmaps, or when CSV data changes)
   # This prevents the UI from rebuilding every time a slider or input changes
   heatmap_ui_trigger <- reactiveVal(0)
+
+  # S2.8-FIX: Flag to inhibit color saving during UI rebuilds
+  # When TRUE, color picker observers will skip saving to prevent default colors
+  # from overwriting user's custom colors during heatmap add/remove operations
+  inhibit_color_save <- reactiveVal(FALSE)
 
   # ==========================================================================
   # S1-PERF: DEBOUNCED REACTIVE INPUTS
@@ -11531,9 +11658,13 @@ server <- function(input, output, session) {
               # Store CNV settings (but NOT the matrix itself - that's passed separately)
               heatmap_item[[as.character(j)]]$cnv_downsample <- if (!is.null(heatmap_entry$cnv_downsample)) heatmap_entry$cnv_downsample else 10
               heatmap_item[[as.character(j)]]$cnv_wgd_norm <- if (!is.null(heatmap_entry$cnv_wgd_norm) && heatmap_entry$cnv_wgd_norm) "yes" else "no"
+              # S2.12: Per-cell WGD normalization settings
+              heatmap_item[[as.character(j)]]$cnv_wgd_per_cell <- if (!is.null(heatmap_entry$cnv_wgd_per_cell) && heatmap_entry$cnv_wgd_per_cell) "yes" else "no"
+              heatmap_item[[as.character(j)]]$cnv_wgd_column <- if (!is.null(heatmap_entry$cnv_wgd_column)) heatmap_entry$cnv_wgd_column else ""
               # S2.0: Store mapping column for sample name matching
               heatmap_item[[as.character(j)]]$rdata_mapping_column <- heatmap_entry$rdata_mapping_column
               debug_cat(paste0("    S2.0-RDATA: RData heatmap, mapping_column=", heatmap_entry$rdata_mapping_column, "\n"))
+              debug_cat(paste0("    S2.12: Per-cell WGD: enabled=", heatmap_entry$cnv_wgd_per_cell, ", column=", heatmap_entry$cnv_wgd_column, "\n"))
             } else {
               heatmap_item[[as.character(j)]]$data_source <- "csv"
               # Add columns - format must match expected YAML structure
@@ -11548,9 +11679,21 @@ server <- function(input, output, session) {
             }
 
             class_item[[as.character(i)]]$heatmap_display[[j]] <- heatmap_item
+            # S2.3-DEBUG: Show according columns for verification (custom classification path)
+            cat(file=stderr(), paste0("[YAML-DEBUG-CUSTOM] Heatmap ", j, " YAML according columns: "))
+            if (!is.null(heatmap_item[[as.character(j)]]$according) && length(heatmap_item[[as.character(j)]]$according) > 0) {
+              for (k_debug in seq_along(heatmap_item[[as.character(j)]]$according)) {
+                acc_entry <- heatmap_item[[as.character(j)]]$according[[k_debug]]
+                acc_key <- names(acc_entry)[1]
+                cat(file=stderr(), paste0(acc_entry[[acc_key]], " "))
+              }
+              cat(file=stderr(), "\n")
+            } else {
+              cat(file=stderr(), "(none)\n")
+            }
           }
         }
-        
+
         # ========================================================
         # === ADD HIGHLIGHT TO THIS CLASSIFICATION ===
         # *** KEY FIX: MOVED HERE - BEFORE adding class_item to YAML ***
@@ -11773,9 +11916,13 @@ server <- function(input, output, session) {
             # Store CNV settings (but NOT the matrix itself - that's passed separately)
             heatmap_item[[as.character(j)]]$cnv_downsample <- if (!is.null(heatmap_entry$cnv_downsample)) heatmap_entry$cnv_downsample else 10
             heatmap_item[[as.character(j)]]$cnv_wgd_norm <- if (!is.null(heatmap_entry$cnv_wgd_norm) && heatmap_entry$cnv_wgd_norm) "yes" else "no"
+            # S2.12: Per-cell WGD normalization settings
+            heatmap_item[[as.character(j)]]$cnv_wgd_per_cell <- if (!is.null(heatmap_entry$cnv_wgd_per_cell) && heatmap_entry$cnv_wgd_per_cell) "yes" else "no"
+            heatmap_item[[as.character(j)]]$cnv_wgd_column <- if (!is.null(heatmap_entry$cnv_wgd_column)) heatmap_entry$cnv_wgd_column else ""
             # S2.0: Store mapping column for sample name matching
             heatmap_item[[as.character(j)]]$rdata_mapping_column <- heatmap_entry$rdata_mapping_column
             debug_cat(paste0("    S2.0: RData heatmap, mapping_column=", heatmap_entry$rdata_mapping_column, "\n"))
+            debug_cat(paste0("    S2.12: Per-cell WGD: enabled=", heatmap_entry$cnv_wgd_per_cell, ", column=", heatmap_entry$cnv_wgd_column, "\n"))
           } else {
             heatmap_item[[as.character(j)]]$data_source <- "csv"
             # Add columns - format must match expected YAML structure
@@ -11794,6 +11941,18 @@ server <- function(input, output, session) {
                           paste(names(heatmap_item[[as.character(j)]]), collapse=", "), "\n"))
           debug_cat(paste0("    S1.62dev final data_source in heatmap_item: ",
                           if (!is.null(heatmap_item[[as.character(j)]]$data_source)) heatmap_item[[as.character(j)]]$data_source else "NULL", "\n"))
+          # S2.3-DEBUG: Show according columns for verification
+          cat(file=stderr(), paste0("[YAML-DEBUG] Heatmap ", j, " YAML according columns: "))
+          if (!is.null(heatmap_item[[as.character(j)]]$according) && length(heatmap_item[[as.character(j)]]$according) > 0) {
+            for (k_debug in seq_along(heatmap_item[[as.character(j)]]$according)) {
+              acc_entry <- heatmap_item[[as.character(j)]]$according[[k_debug]]
+              acc_key <- names(acc_entry)[1]
+              cat(file=stderr(), paste0(acc_entry[[acc_key]], " "))
+            }
+            cat(file=stderr(), "\n")
+          } else {
+            cat(file=stderr(), "(none)\n")
+          }
         }
       }
 
@@ -13598,6 +13757,19 @@ server <- function(input, output, session) {
 
       # Get column choices from CSV (using isolated value)
       col_choices <- if (!is.null(csv_data_local)) names(csv_data_local) else character(0)
+
+      # S2.5-FIX: Reorder choices to put selected columns first (in their original order)
+      # This ensures selectize preserves the user's column selection order when UI rebuilds
+      # Without this, adding a second heatmap causes the first heatmap's columns to reorder
+      # (selectize displays items in the order they appear in choices)
+      if (!is.null(cfg$columns) && length(cfg$columns) > 0 && length(col_choices) > 0) {
+        # Get columns that are both selected AND exist in current choices
+        valid_selected <- cfg$columns[cfg$columns %in% col_choices]
+        # Get remaining columns not in selection
+        remaining_choices <- setdiff(col_choices, valid_selected)
+        # Put selected first (preserving their order), then remaining alphabetically
+        col_choices <- c(valid_selected, sort(remaining_choices))
+      }
       
       # v56/v110/v119: Determine detected type based on first column (if multiple, they should be same type)
       # v119: Improved detection - also try to convert string columns to numeric
@@ -13743,9 +13915,48 @@ server <- function(input, output, session) {
                                step = 1)
             ),
             column(4,
-                   checkboxInput(paste0("heatmap_cnv_wgd_norm_", i), "WGD Normalization",
+                   checkboxInput(paste0("heatmap_cnv_wgd_norm_", i), "WGD Normalization (All Cells)",
                                  value = if (!is.null(cfg$cnv_wgd_norm)) cfg$cnv_wgd_norm else FALSE)
             )
+          ),
+          # S2.12: Per-cell WGD normalization option
+          fluidRow(
+            column(4,
+                   checkboxInput(paste0("heatmap_cnv_wgd_per_cell_", i), "Per-cell WGD (from CSV column)",
+                                 value = if (!is.null(cfg$cnv_wgd_per_cell)) cfg$cnv_wgd_per_cell else FALSE)
+            ),
+            column(8,
+                   conditionalPanel(
+                     condition = paste0("input.heatmap_cnv_wgd_per_cell_", i),
+                     selectizeInput(paste0("heatmap_cnv_wgd_column_", i), "WGD Column",
+                                    choices = if (!is.null(values$csv_data)) {
+                                      csv_cols <- names(values$csv_data)
+                                      # Auto-detect WGD column
+                                      wgd_cols <- csv_cols[grepl("^WGD$", csv_cols, ignore.case = TRUE)]
+                                      if (length(wgd_cols) > 0) {
+                                        c(csv_cols)  # All columns available
+                                      } else {
+                                        csv_cols
+                                      }
+                                    } else character(0),
+                                    selected = if (!is.null(cfg$cnv_wgd_column)) {
+                                      cfg$cnv_wgd_column
+                                    } else if (!is.null(values$csv_data)) {
+                                      # Auto-select WGD column if it exists
+                                      csv_cols <- names(values$csv_data)
+                                      wgd_match <- csv_cols[grepl("^WGD$", csv_cols, ignore.case = TRUE)]
+                                      if (length(wgd_match) > 0) wgd_match[1] else NULL
+                                    } else NULL,
+                                    options = list(placeholder = "Select WGD column..."))
+                   )
+            )
+          ),
+          tags$div(
+            style = "padding: 0 15px; margin-bottom: 10px;",
+            tags$small(class = "text-muted",
+                       icon("info-circle"),
+                       " Per-cell WGD: normalize only cells where selected column value = 1. ",
+                       "Auto-detects column named 'WGD'.")
           ),
           # S2.0: Sample mapping column selector (shown when auto-match fails)
           fluidRow(
@@ -14052,7 +14263,22 @@ server <- function(input, output, session) {
       showNotification("Maximum 10 heatmaps allowed", type = "warning")
       return()
     }
-    
+
+    # S2.6-DEBUG: Log existing custom_colors BEFORE adding new heatmap
+    cat(file=stderr(), paste0("\n[S2.6-DEBUG] ===== ADD NEW HEATMAP CLICKED =====\n"))
+    cat(file=stderr(), paste0("[S2.6-DEBUG] Current number of heatmap_configs: ", length(values$heatmap_configs), "\n"))
+    for (debug_idx in seq_along(values$heatmap_configs)) {
+      cfg <- values$heatmap_configs[[debug_idx]]
+      cat(file=stderr(), paste0("[S2.6-DEBUG] Heatmap ", debug_idx, " custom_colors:\n"))
+      if (!is.null(cfg$custom_colors) && length(cfg$custom_colors) > 0) {
+        cat(file=stderr(), paste0("[S2.6-DEBUG]   keys: ", paste(names(cfg$custom_colors), collapse=", "), "\n"))
+        cat(file=stderr(), paste0("[S2.6-DEBUG]   values: ", paste(unlist(cfg$custom_colors), collapse=", "), "\n"))
+      } else {
+        cat(file=stderr(), paste0("[S2.6-DEBUG]   (no custom colors)\n"))
+      }
+    }
+    cat(file=stderr(), paste0("[S2.6-DEBUG] ================================\n"))
+
     # v56: Add new empty config with columns (plural) for multiple column support
     # v107: Added distance and height initialization to prevent reactive loops
     new_config <- list(
@@ -14081,12 +14307,45 @@ server <- function(input, output, session) {
       midpoint = 0,
       # S1.62dev: CNV-specific settings
       cnv_downsample = 10,
-      cnv_wgd_norm = FALSE
+      cnv_wgd_norm = FALSE,
+      # S2.12: Per-cell WGD normalization settings
+      cnv_wgd_per_cell = FALSE,
+      cnv_wgd_column = NULL
     )
     
     values$heatmap_configs <- c(values$heatmap_configs, list(new_config))
+
+    # S2.6-DEBUG: Log existing custom_colors AFTER adding new heatmap
+    cat(file=stderr(), paste0("\n[S2.6-DEBUG] After adding heatmap, configs count: ", length(values$heatmap_configs), "\n"))
+    for (debug_idx in seq_along(values$heatmap_configs)) {
+      cfg <- values$heatmap_configs[[debug_idx]]
+      cat(file=stderr(), paste0("[S2.6-DEBUG] Heatmap ", debug_idx, " custom_colors AFTER:\n"))
+      if (!is.null(cfg$custom_colors) && length(cfg$custom_colors) > 0) {
+        cat(file=stderr(), paste0("[S2.6-DEBUG]   keys: ", paste(names(cfg$custom_colors), collapse=", "), "\n"))
+        cat(file=stderr(), paste0("[S2.6-DEBUG]   values: ", paste(unlist(cfg$custom_colors), collapse=", "), "\n"))
+      } else {
+        cat(file=stderr(), paste0("[S2.6-DEBUG]   (no custom colors)\n"))
+      }
+    }
+
+    # S2.8-FIX: Set inhibit flag BEFORE triggering UI rebuild
+    # This prevents color picker observers from overwriting custom colors with defaults
+    inhibit_color_save(TRUE)
+    cat(file=stderr(), "[S2.8-DEBUG] inhibit_color_save set to TRUE (add heatmap)\n")
+
     # v107: Trigger UI regeneration when heatmap is added
     heatmap_ui_trigger(heatmap_ui_trigger() + 1)
+
+    # S2.9-FIX: Reset inhibit flag after UI has had time to rebuild
+    # Increased delay from 500ms to 2500ms because Shiny's reactive system
+    # takes time to process heatmap_ui_trigger, then renderUI runs, then
+    # colourInput widgets are created, and finally change events fire.
+    # The inhibit must stay TRUE until ALL of these steps complete.
+    shinyjs::delay(2500, {
+      inhibit_color_save(FALSE)
+      cat(file=stderr(), "[S2.9-DEBUG] inhibit_color_save set to FALSE (after 2500ms delay)\n")
+    })
+
     showNotification(paste("Heatmap", length(values$heatmap_configs), "added"), type = "message")
   })
 
@@ -14096,8 +14355,16 @@ server <- function(input, output, session) {
       observeEvent(input[[paste0("heatmap_remove_", i)]], {
         if (i <= length(values$heatmap_configs)) {
           values$heatmap_configs <- values$heatmap_configs[-i]
+
+          # S2.9-FIX: Set inhibit flag before UI rebuild
+          inhibit_color_save(TRUE)
+
           # v107: Trigger UI regeneration when heatmap is removed
           heatmap_ui_trigger(heatmap_ui_trigger() + 1)
+
+          # S2.9-FIX: Reset inhibit flag after UI rebuild (2500ms to cover full rebuild cycle)
+          shinyjs::delay(2500, { inhibit_color_save(FALSE) })
+
           showNotification(paste("Heatmap", i, "removed"), type = "message")
         }
       }, ignoreInit = TRUE)
@@ -14114,8 +14381,12 @@ server <- function(input, output, session) {
           configs[[i]] <- configs[[i-1]]
           configs[[i-1]] <- temp
           values$heatmap_configs <- configs
+          # S2.9-FIX: Set inhibit flag before UI rebuild
+          inhibit_color_save(TRUE)
           # v107: Trigger UI regeneration when heatmap is moved
           heatmap_ui_trigger(heatmap_ui_trigger() + 1)
+          # S2.9-FIX: Reset inhibit flag after UI rebuild (2500ms to cover full rebuild cycle)
+          shinyjs::delay(2500, { inhibit_color_save(FALSE) })
         }
       }, ignoreInit = TRUE)
     })
@@ -14131,8 +14402,12 @@ server <- function(input, output, session) {
           configs[[i]] <- configs[[i+1]]
           configs[[i+1]] <- temp
           values$heatmap_configs <- configs
+          # S2.9-FIX: Set inhibit flag before UI rebuild
+          inhibit_color_save(TRUE)
           # v107: Trigger UI regeneration when heatmap is moved
           heatmap_ui_trigger(heatmap_ui_trigger() + 1)
+          # S2.9-FIX: Reset inhibit flag after UI rebuild (2500ms to cover full rebuild cycle)
+          shinyjs::delay(2500, { inhibit_color_save(FALSE) })
         }
       }, ignoreInit = TRUE)
     })
@@ -14197,9 +14472,37 @@ server <- function(input, output, session) {
       }, ignoreInit = TRUE)
 
       # S1.62dev: CNV WGD normalization change
+      # S2.13: Made mutually exclusive with per-cell WGD option
       observeEvent(input[[paste0("heatmap_cnv_wgd_norm_", i)]], {
         if (i <= length(values$heatmap_configs)) {
-          values$heatmap_configs[[i]]$cnv_wgd_norm <- input[[paste0("heatmap_cnv_wgd_norm_", i)]]
+          new_val <- input[[paste0("heatmap_cnv_wgd_norm_", i)]]
+          values$heatmap_configs[[i]]$cnv_wgd_norm <- new_val
+          # If checked, uncheck per-cell WGD option (mutually exclusive)
+          if (isTRUE(new_val)) {
+            updateCheckboxInput(session, paste0("heatmap_cnv_wgd_per_cell_", i), value = FALSE)
+            values$heatmap_configs[[i]]$cnv_wgd_per_cell <- FALSE
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      # S2.12: Per-cell WGD checkbox change
+      # S2.13: Made mutually exclusive with all-cells WGD option
+      observeEvent(input[[paste0("heatmap_cnv_wgd_per_cell_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          new_val <- input[[paste0("heatmap_cnv_wgd_per_cell_", i)]]
+          values$heatmap_configs[[i]]$cnv_wgd_per_cell <- new_val
+          # If checked, uncheck all-cells WGD option (mutually exclusive)
+          if (isTRUE(new_val)) {
+            updateCheckboxInput(session, paste0("heatmap_cnv_wgd_norm_", i), value = FALSE)
+            values$heatmap_configs[[i]]$cnv_wgd_norm <- FALSE
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      # S2.12: Per-cell WGD column selection change
+      observeEvent(input[[paste0("heatmap_cnv_wgd_column_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          values$heatmap_configs[[i]]$cnv_wgd_column <- input[[paste0("heatmap_cnv_wgd_column_", i)]]
         }
       }, ignoreInit = TRUE)
 
@@ -15382,13 +15685,41 @@ server <- function(input, output, session) {
           rainbow(n_vals)
         })
 
+        # S2.4-FIX: Get stored colors from heatmap_configs (used as fallback when input doesn't exist yet)
+        stored_colors <- isolate({
+          if (i <= length(values$heatmap_configs) && !is.null(values$heatmap_configs[[i]]$custom_colors)) {
+            values$heatmap_configs[[i]]$custom_colors
+          } else {
+            list()
+          }
+        })
+
+        # S2.6-DEBUG: Log stored colors during UI rebuild
+        cat(file=stderr(), paste0("\n[S2.6-DEBUG] renderUI for discrete colors heatmap ", i, "\n"))
+        cat(file=stderr(), paste0("[S2.6-DEBUG] length(stored_colors) = ", length(stored_colors), "\n"))
+        if (length(stored_colors) > 0) {
+          cat(file=stderr(), paste0("[S2.6-DEBUG] stored_colors keys: ", paste(names(stored_colors), collapse=", "), "\n"))
+          cat(file=stderr(), paste0("[S2.6-DEBUG] stored_colors values: ", paste(unlist(stored_colors), collapse=", "), "\n"))
+        }
+
         # v70: Generate color pickers for each value WITH dropdown menu
         color_pickers <- lapply(seq_along(unique_vals), function(j) {
           val <- as.character(unique_vals[j])
 
           # v69: Check if there's an existing custom color for this value
+          # S2.4-FIX: Also check stored colors in heatmap_configs as fallback
+          # S2.7-FIX: Prioritize stored_color over existing_color
+          # stored_color is the source of truth (persisted in heatmap_configs)
+          # This prevents UI rebuild from showing stale/default colors
           existing_color <- isolate(input[[paste0("heatmap_", i, "_color_", j)]])
-          color_to_use <- if (!is.null(existing_color)) existing_color else default_colors[j]
+          stored_color <- stored_colors[[val]]
+          color_to_use <- if (!is.null(stored_color)) {
+            stored_color  # S2.7-FIX: Always use stored color if available (source of truth)
+          } else if (!is.null(existing_color)) {
+            existing_color  # Fall back to existing input value
+          } else {
+            default_colors[j]
+          }
 
           fluidRow(
             style = "margin-bottom: 3px;",
@@ -15405,8 +15736,23 @@ server <- function(input, output, session) {
         })
 
         # v70: NA color picker (always shown at the end)
+        # S2.4-FIX: Also check stored NA color in heatmap_configs as fallback
+        # S2.7-FIX: Prioritize stored_na_color over existing_na_color (same pattern as value colors)
         existing_na_color <- isolate(input[[paste0("heatmap_", i, "_na_color")]])
-        na_color_to_use <- if (!is.null(existing_na_color)) existing_na_color else "white"
+        stored_na_color <- isolate({
+          if (i <= length(values$heatmap_configs) && !is.null(values$heatmap_configs[[i]]$na_color)) {
+            values$heatmap_configs[[i]]$na_color
+          } else {
+            NULL
+          }
+        })
+        na_color_to_use <- if (!is.null(stored_na_color)) {
+          stored_na_color  # S2.7-FIX: Stored color takes priority
+        } else if (!is.null(existing_na_color)) {
+          existing_na_color
+        } else {
+          "white"
+        }
 
         na_color_row <- fluidRow(
           style = "margin-bottom: 3px; background-color: #f8f8f8; padding: 5px; border-radius: 3px; margin-top: 10px;",
@@ -15480,6 +15826,140 @@ server <- function(input, output, session) {
     })
   })
 
+  # S2.4-FIX: Observer to save discrete color picker values to heatmap_configs
+  # This fixes the bug where adding a second heatmap resets the first heatmap's colors
+  # The issue was that colors were only stored in Shiny inputs, which get destroyed/recreated
+  # when the UI rebuilds. Now we persist them in heatmap_configs.
+  # S2.7-FIX: Added protection against UI rebuild overwriting custom colors with defaults.
+  # When UI rebuilds, color pickers may fire change events with default palette colors.
+  # We now detect when incoming color is a default palette color that would overwrite
+  # an existing custom color, and skip saving in that case.
+  # S2.8-FIX: Added inhibit_color_save flag to completely block saving during UI rebuilds.
+  # This is more robust than color comparison because it prevents ALL saves during the
+  # critical window when UI is rebuilding.
+  observe({
+    lapply(1:6, function(i) {
+      lapply(1:30, function(j) {
+        observeEvent(input[[paste0("heatmap_", i, "_color_", j)]], {
+          # S2.8-FIX: Check inhibit flag first - skip ALL saves during UI rebuild
+          inhibit_val <- isolate(inhibit_color_save())
+          color_val <- input[[paste0("heatmap_", i, "_color_", j)]]
+          cat(file=stderr(), paste0("[S2.11-DEBUG] Color observer fired: heatmap=", i,
+                                   ", color=", j, ", inhibit=", inhibit_val,
+                                   ", value=", ifelse(is.null(color_val), "NULL", color_val), "\n"))
+          if (isTRUE(inhibit_val)) {
+            cat(file=stderr(), paste0("[S2.8-DEBUG] BLOCKED color save for heatmap ", i,
+                                     " color ", j, " (UI rebuild in progress)\n"))
+            return(NULL)
+          }
+
+          if (i <= length(values$heatmap_configs)) {
+            # Get current column to know the unique values
+            cols_selected <- input[[paste0("heatmap_columns_", i)]]
+            if (!is.null(cols_selected) && length(cols_selected) > 0 && !is.null(values$csv_data)) {
+              first_col <- cols_selected[1]
+              if (first_col %in% names(values$csv_data)) {
+                # Get filtered unique values (same logic as renderUI)
+                filtered_data <- values$csv_data
+                if (!is.null(values$tree) && !is.null(input$id_column) && input$id_column %in% names(values$csv_data)) {
+                  tree_tips <- values$tree$tip.label
+                  id_col_data <- as.character(values$csv_data[[input$id_column]])
+                  matching_rows <- id_col_data %in% tree_tips
+                  if (any(matching_rows)) {
+                    filtered_data <- values$csv_data[matching_rows, , drop = FALSE]
+                  }
+                }
+                unique_vals <- sort(unique(na.omit(filtered_data[[first_col]])))
+
+                if (j <= length(unique_vals)) {
+                  # Initialize custom_colors if needed
+                  if (is.null(values$heatmap_configs[[i]]$custom_colors)) {
+                    values$heatmap_configs[[i]]$custom_colors <- list()
+                  }
+                  # Store the color with the value name as key
+                  val_name <- as.character(unique_vals[j])
+                  color_value <- input[[paste0("heatmap_", i, "_color_", j)]]
+
+                  if (!is.null(color_value)) {
+                    # S2.7-FIX: Check if this is a default palette color that would overwrite a custom color
+                    # Get current palette to compute default colors
+                    current_palette <- isolate(input[[paste0("heatmap_discrete_palette_", i)]])
+                    if (is.null(current_palette)) current_palette <- "Set1"
+
+                    # Generate default colors for comparison
+                    n_vals <- length(unique_vals)
+                    default_colors <- tryCatch({
+                      max_colors <- RColorBrewer::brewer.pal.info[current_palette, "maxcolors"]
+                      if (n_vals <= max_colors) {
+                        RColorBrewer::brewer.pal(max(3, n_vals), current_palette)[1:n_vals]
+                      } else {
+                        colorRampPalette(RColorBrewer::brewer.pal(max_colors, current_palette))(n_vals)
+                      }
+                    }, error = function(e) {
+                      rainbow(n_vals)
+                    })
+
+                    default_color_for_j <- if (j <= length(default_colors)) default_colors[j] else "#808080"
+                    existing_stored_color <- values$heatmap_configs[[i]]$custom_colors[[val_name]]
+
+                    # S2.9-FIX: Skip saving if color is already stored (no-op during UI rebuild)
+                    # This additional check helps when renderUI creates widgets with stored values
+                    if (!is.null(existing_stored_color) && toupper(color_value) == toupper(existing_stored_color)) {
+                      # Color is already saved with this exact value, skip redundant save
+                      return(NULL)
+                    }
+
+                    # S2.7-FIX: Skip saving if:
+                    # 1. The incoming color is the default palette color for this position
+                    # 2. AND there's already a stored custom color that's different
+                    # This prevents UI rebuild from resetting custom colors to defaults
+                    is_default_color <- toupper(color_value) == toupper(default_color_for_j)
+                    has_different_stored <- !is.null(existing_stored_color) &&
+                                            toupper(existing_stored_color) != toupper(default_color_for_j)
+
+                    if (is_default_color && has_different_stored) {
+                      # S2.7-DEBUG: Log skipped saves
+                      cat(file=stderr(), paste0("[S2.7-DEBUG] SKIPPED saving default color for heatmap ", i,
+                                               " value '", val_name, "' (default=", default_color_for_j,
+                                               ", keeping stored=", existing_stored_color, ")\n"))
+                    } else {
+                      # S2.11-DEBUG: Trace what's happening with the save
+                      cat(file=stderr(), paste0("[S2.11-DEBUG] Color save for heatmap ", i, " color ", j,
+                                               ": val_name='", val_name, "', color_value='", color_value,
+                                               "', is_default=", is_default_color,
+                                               ", existing_stored='", ifelse(is.null(existing_stored_color), "NULL", existing_stored_color),
+                                               "', default_for_j='", default_color_for_j, "'\n"))
+                      # Normal save: either it's a custom color, or there's no conflict
+                      values$heatmap_configs[[i]]$custom_colors[[val_name]] <- color_value
+                      values$heatmap_configs[[i]]$custom_discrete <- TRUE
+                      # S2.6-DEBUG: Log when color is saved
+                      cat(file=stderr(), paste0("[S2.6-DEBUG] SAVED color for heatmap ", i, " value '", val_name, "' = ", color_value, "\n"))
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }, ignoreInit = TRUE)
+      })
+
+      # S2.4-FIX: Also save NA color
+      observeEvent(input[[paste0("heatmap_", i, "_na_color")]], {
+        # S2.8-FIX: Check inhibit flag first
+        if (isTRUE(isolate(inhibit_color_save()))) {
+          return(NULL)
+        }
+
+        if (i <= length(values$heatmap_configs)) {
+          na_color <- input[[paste0("heatmap_", i, "_na_color")]]
+          if (!is.null(na_color)) {
+            values$heatmap_configs[[i]]$na_color <- na_color
+          }
+        }
+      }, ignoreInit = TRUE)
+    })
+  })
+
   # v69: Observer for "Apply Palette to All" buttons for heatmaps
   observe({
     lapply(1:6, function(i) {
@@ -15537,6 +16017,16 @@ server <- function(input, output, session) {
 
     cat(file=stderr(), paste0("[HEATMAP-APPLY] Processing ", length(values$heatmap_configs), " heatmap config(s)\n"))
 
+    # S2.3-DEBUG: Show all heatmap column selections upfront
+    cat(file=stderr(), "\n[HEATMAP-APPLY-DEBUG] === HEATMAP COLUMN MAPPING ===\n")
+    for (debug_i in seq_along(values$heatmap_configs)) {
+      debug_cols <- input[[paste0("heatmap_columns_", debug_i)]]
+      cat(file=stderr(), paste0("[HEATMAP-APPLY-DEBUG] Heatmap ", debug_i,
+                                 " columns from input: ",
+                                 if (is.null(debug_cols)) "NULL" else paste(debug_cols, collapse=", "), "\n"))
+    }
+    cat(file=stderr(), "[HEATMAP-APPLY-DEBUG] ==============================\n\n")
+
     # v56a: Build heatmaps list from configs with multiple column support
     # Read directly from inputs to ensure we get current values (fixes ignoreInit issue)
     heatmaps_list <- lapply(seq_along(values$heatmap_configs), function(i) {
@@ -15561,8 +16051,14 @@ server <- function(input, output, session) {
         if (is.null(cnv_downsample)) cnv_downsample <- 10
         cnv_wgd_norm <- input[[paste0("heatmap_cnv_wgd_norm_", i)]]
         if (is.null(cnv_wgd_norm)) cnv_wgd_norm <- FALSE
+        # S2.12: Per-cell WGD settings
+        cnv_wgd_per_cell <- input[[paste0("heatmap_cnv_wgd_per_cell_", i)]]
+        if (is.null(cnv_wgd_per_cell)) cnv_wgd_per_cell <- FALSE
+        cnv_wgd_column <- input[[paste0("heatmap_cnv_wgd_column_", i)]]
+        if (is.null(cnv_wgd_column)) cnv_wgd_column <- NULL
 
         debug_cat(paste0("  S1.62dev: RData CNV heatmap ", i, ": downsample=", cnv_downsample, ", wgd_norm=", cnv_wgd_norm, "\n"))
+        debug_cat(paste0("  S2.12: Per-cell WGD: enabled=", cnv_wgd_per_cell, ", column=", ifelse(is.null(cnv_wgd_column), "NULL", cnv_wgd_column), "\n"))
         debug_cat(paste0("  S1.62dev: Raw CNV matrix: ", nrow(values$rdata_cnv_matrix), " samples x ", ncol(values$rdata_cnv_matrix), " positions\n"))
 
         # Build heatmap entry for RData CNV
@@ -15589,6 +16085,9 @@ server <- function(input, output, session) {
           # Store CNV settings (processing happens in func.print.lineage.tree)
           cnv_downsample = cnv_downsample,
           cnv_wgd_norm = cnv_wgd_norm,
+          # S2.12: Per-cell WGD normalization settings
+          cnv_wgd_per_cell = cnv_wgd_per_cell,
+          cnv_wgd_column = cnv_wgd_column,
           # S2.0: Store mapping column for sample name matching
           rdata_mapping_column = mapping_column,
           columns = character(0),  # No columns for RData - data comes from parameter
@@ -15843,6 +16342,9 @@ server <- function(input, output, session) {
         label_mapping = label_mapping  # v108: Per-column label mapping
       )
       
+      # S2.11-DEBUG: Trace through discrete color handling
+      cat(file=stderr(), paste0("[S2.11-DEBUG] Heatmap ", i, " actual_type='", actual_type, "'\n"))
+
       if (actual_type == "discrete") {
         # v69: Get palette from current input (not stale cfg)
         # S1.62dev: Fall back to cfg$discrete_palette if input not available (e.g., after YAML import)
@@ -15855,21 +16357,81 @@ server <- function(input, output, session) {
           "Set1"
         }
 
+        # S2.11-DEBUG: Trace first_col and csv_data availability
+        cat(file=stderr(), paste0("[S2.11-DEBUG] Heatmap ", i, " first_col='", first_col, "'\n"))
+        cat(file=stderr(), paste0("[S2.11-DEBUG] Heatmap ", i, " csv_data is NULL: ", is.null(values$csv_data), "\n"))
+        cat(file=stderr(), paste0("[S2.11-DEBUG] Heatmap ", i, " first_col in names: ", first_col %in% names(values$csv_data), "\n"))
+
         # v69: Collect custom colors if they've been set
+        # S2.1-FIX: Use filtered data (matching tree tips) to match renderUI color picker creation
+        # Bug fix: Previously used unfiltered values$csv_data which caused wrong value-color mappings
         if (!is.null(values$csv_data) && first_col %in% names(values$csv_data)) {
-          unique_vals <- sort(unique(na.omit(values$csv_data[[first_col]])))
+          # S2.1-FIX: Filter to only patient-specific data (rows matching tree tips)
+          # This MUST match the filtering in heatmap_discrete_colors_ui renderUI (lines 15342-15353)
+          filtered_data <- values$csv_data
+          if (!is.null(values$tree) && !is.null(input$id_column) && input$id_column %in% names(values$csv_data)) {
+            tree_tips <- values$tree$tip.label
+            id_col_data <- as.character(values$csv_data[[input$id_column]])
+            matching_rows <- id_col_data %in% tree_tips
+            if (any(matching_rows)) {
+              filtered_data <- values$csv_data[matching_rows, , drop = FALSE]
+              debug_cat(paste0("S2.1-FIX: Filtered data for color collection from ", nrow(values$csv_data), " to ", nrow(filtered_data), " rows (tree tips)\n"))
+            }
+          }
+
+          unique_vals <- sort(unique(na.omit(filtered_data[[first_col]])))
           n_vals <- length(unique_vals)
+
+          # S2.11-DEBUG: Trace unique values
+          cat(file=stderr(), paste0("[S2.11-DEBUG] Heatmap ", i, " unique_vals: ", paste(unique_vals, collapse=", "), "\n"))
+          cat(file=stderr(), paste0("[S2.11-DEBUG] Heatmap ", i, " n_vals=", n_vals, "\n"))
 
           if (n_vals > 0 && n_vals <= 30) {
             custom_colors <- c()
             has_custom_colors <- FALSE
+
+            # S2.10-FIX: Prioritize stored colors from heatmap_configs over input values
+            # This fixes the bug where UI rebuild during "Add Heatmap" could cause
+            # input color pickers to have stale/default values, overwriting custom colors.
+            # cfg$custom_colors is the source of truth, maintained by the color observer.
+            stored_cfg_colors <- cfg$custom_colors
+
+            # S2.11-DEBUG: Trace stored colors from config
+            cat(file=stderr(), paste0("[S2.11-DEBUG] Heatmap ", i, " cfg$custom_colors is NULL: ", is.null(stored_cfg_colors), "\n"))
+            if (!is.null(stored_cfg_colors) && length(stored_cfg_colors) > 0) {
+              cat(file=stderr(), paste0("[S2.11-DEBUG] Heatmap ", i, " cfg$custom_colors keys: ", paste(names(stored_cfg_colors), collapse=", "), "\n"))
+              cat(file=stderr(), paste0("[S2.11-DEBUG] Heatmap ", i, " cfg$custom_colors values: ", paste(unlist(stored_cfg_colors), collapse=", "), "\n"))
+            }
+
             for (j in seq_along(unique_vals)) {
+              val_name <- as.character(unique_vals[j])
+
+              # S2.10-FIX: First try stored color, then fall back to input
+              stored_color <- if (!is.null(stored_cfg_colors)) stored_cfg_colors[[val_name]] else NULL
               color_input <- input[[paste0("heatmap_", i, "_color_", j)]]
-              if (!is.null(color_input)) {
-                custom_colors[as.character(unique_vals[j])] <- color_input
+
+              # S2.11-DEBUG: Trace individual color resolution
+              cat(file=stderr(), paste0("[S2.11-DEBUG] Heatmap ", i, " val '", val_name, "': stored=",
+                  ifelse(is.null(stored_color), "NULL", stored_color),
+                  ", input=", ifelse(is.null(color_input), "NULL", color_input), "\n"))
+
+              # Use stored color if available (source of truth), otherwise use input
+              color_to_use <- if (!is.null(stored_color)) stored_color else color_input
+
+              if (!is.null(color_to_use)) {
+                custom_colors[val_name] <- color_to_use
                 has_custom_colors <- TRUE
               }
             }
+
+            # S2.10-DEBUG: Log color sources for debugging
+            if (has_custom_colors) {
+              cat(file=stderr(), paste0("[S2.10-DEBUG] Heatmap ", i, " custom_colors for Apply:\n"))
+              for (val_name in names(custom_colors)) {
+                cat(file=stderr(), paste0("[S2.10-DEBUG]   ", val_name, " = ", custom_colors[val_name], "\n"))
+              }
+            }
+
             if (has_custom_colors) {
               heatmap_entry$custom_colors <- custom_colors
               heatmap_entry$man_define_colors <- TRUE
@@ -15877,8 +16439,16 @@ server <- function(input, output, session) {
           }
 
           # v70: Get NA color from input (default to white if not set)
+          # S2.10-FIX: Also check stored NA color in cfg
           na_color_input <- input[[paste0("heatmap_", i, "_na_color")]]
-          heatmap_entry$na_color <- if (!is.null(na_color_input)) na_color_input else "white"
+          stored_na_color <- cfg$na_color
+          heatmap_entry$na_color <- if (!is.null(stored_na_color)) {
+            stored_na_color
+          } else if (!is.null(na_color_input)) {
+            na_color_input
+          } else {
+            "white"
+          }
         }
       } else {
         heatmap_entry$low_color <- cfg$low_color
