@@ -3033,7 +3033,8 @@ func.print.lineage.tree <- function(conf_yaml_path,
                                     legend_settings = NULL,  # v135: Legend settings for highlight/bootstrap legends
                                     rdata_cnv_matrix = NULL,  # S1.62dev: CNV matrix from RData file
                                     cached_p_list_of_pairs = NULL,  # S2.0-PERF: Cached p-values (Option 3A)
-                                    cached_p_list_hash = NULL) {    # S2.0-PERF: Hash for cache validation
+                                    cached_p_list_hash = NULL,      # S2.0-PERF: Hash for cache validation
+                                    p_list_cache = list()) {        # S2.7-PERF: Multi-entry cache (hash -> p_list_of_pairs)
 
   # === DEBUG CHECKPOINT 2: FUNCTION ENTRY ===
   # v53: cat(file=stderr(), "\nÃ°Å¸â€Â DEBUG CHECKPOINT 2: func.print.lineage.tree ENTRY\n")
@@ -5245,7 +5246,8 @@ func.print.lineage.tree <- function(conf_yaml_path,
         heatmap_global_gap = heatmap_global_gap,  # v125: Gap between multiple heatmaps
         legend_settings = legend_settings,  # v136: Pass legend settings for highlight/bootstrap legends
         cached_p_list_of_pairs = cached_p_list_of_pairs,  # S2.0-PERF: Pass cached p-values
-        cached_p_list_hash = cached_p_list_hash  # S2.0-PERF: Pass cache hash for validation
+        cached_p_list_hash = cached_p_list_hash,  # S2.0-PERF: Pass cache hash for validation
+        p_list_cache = p_list_cache  # S2.7-PERF: Multi-entry cache
       )
       # }
 
@@ -5421,7 +5423,8 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
                                          heatmap_global_gap = 0.05,  # v125: Gap between multiple heatmaps
                                          legend_settings = NULL,  # v136: Legend settings for highlight/bootstrap legends
                                          cached_p_list_of_pairs = NULL,  # S2.0-PERF: Cached p-values (Option 3A)
-                                         cached_p_list_hash = NULL) {    # S2.0-PERF: Hash for cache validation
+                                         cached_p_list_hash = NULL,      # S2.0-PERF: Hash for cache validation
+                                         p_list_cache = list()) {        # S2.7-PERF: Multi-entry cache
 
   # === DEBUG CHECKPOINT 4: INNER FUNCTION ENTRY ===
   # v53: cat(file=stderr(), "\nÃ°Å¸â€Â DEBUG CHECKPOINT 4: func.make.plot.tree.heat.NEW ENTRY\n")
@@ -5551,27 +5554,40 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   #print("G")
 
   # S2.0-PERF: Two-tier caching for p_list_of_pairs (Option 3A)
+  # S2.7-PERF: Multi-entry cache - check p_list_cache first for instant switching
   # Compute current hash to check if cache is valid
   .prof_section_start <- Sys.time()
   current_p_list_hash <- func.create.p_list_cache_hash(
     tree440, list_id_by_class, dx_rx_types1_short, FDR_perc, simulate.p.value
   )
 
-  # Check if cache is valid - hash must match AND cached data must exist
-  cache_is_valid <- !is.null(cached_p_list_hash) &&
-                    !is.null(cached_p_list_of_pairs) &&
-                    (cached_p_list_hash == current_p_list_hash)
+  # S2.7-PERF: Check multi-entry cache FIRST (allows instant switching between classifications)
+  multi_cache_hit <- !is.null(p_list_cache) &&
+                     length(p_list_cache) > 0 &&
+                     (current_p_list_hash %in% names(p_list_cache))
 
-  if (cache_is_valid) {
-    # S2.0-PERF: Cache hit - use cached p-values
+  # Fall back to legacy single-entry cache
+  legacy_cache_hit <- !multi_cache_hit &&
+                      !is.null(cached_p_list_hash) &&
+                      !is.null(cached_p_list_of_pairs) &&
+                      (cached_p_list_hash == current_p_list_hash)
+
+  if (multi_cache_hit) {
+    # S2.7-PERF: Multi-cache hit - instant retrieval from previously computed classification
+    p_list_of_pairs <- p_list_cache[[current_p_list_hash]]
+    cat(file=stderr(), sprintf("[PERF-CACHE] MULTI-CACHE HIT (hash: %s, %d entries cached): %.3f sec\n",
+                               substr(current_p_list_hash, 1, 8), length(p_list_cache),
+                               as.numeric(Sys.time() - .prof_section_start)))
+  } else if (legacy_cache_hit) {
+    # S2.0-PERF: Legacy cache hit - use single cached p-values
     p_list_of_pairs <- cached_p_list_of_pairs
     cat(file=stderr(), sprintf("[PERF-CACHE] Using cached p_list_of_pairs (hash: %s): %.3f sec\n",
                                substr(current_p_list_hash, 1, 8), as.numeric(Sys.time() - .prof_section_start)))
   } else {
-    # S2.0-PERF: Cache miss - need to recalculate
-    if (!is.null(cached_p_list_hash)) {
-      cat(file=stderr(), sprintf("[PERF-CACHE] Cache INVALIDATED - hash changed from %s to %s\n",
-                                 substr(cached_p_list_hash, 1, 8), substr(current_p_list_hash, 1, 8)))
+    # Cache miss - need to recalculate
+    if (!is.null(cached_p_list_hash) && cached_p_list_hash != current_p_list_hash) {
+      cat(file=stderr(), sprintf("[PERF-CACHE] Cache miss - hash %s not in cache (%d entries)\n",
+                                 substr(current_p_list_hash, 1, 8), length(p_list_cache)))
     } else {
       cat(file=stderr(), "[PERF-CACHE] No cache available - computing p_list_of_pairs\n")
     }
@@ -9625,6 +9641,13 @@ server <- function(input, output, session) {
     # These cache the expensive Fisher test calculations - only recalculate when
     # tree structure, classification, FDR, or simulate.p.value change.
     # Visual-only changes (legend sizes, colors, fonts) skip recalculation.
+    # S2.7-PERF: Multi-entry cache - stores multiple classifications so switching
+    # between previously computed classifications is instant (no recomputation).
+    # The cache is keyed by hash, with LRU eviction when exceeding max entries.
+    p_list_cache = list(),            # Named list: hash -> p_list_of_pairs
+    p_list_cache_order = character(), # LRU order tracking (most recent last)
+    p_list_cache_max_size = 10,       # Maximum number of cached classifications
+    # Legacy single-entry cache variables (kept for compatibility, still updated)
     cached_p_list_hash = NULL,        # Hash of inputs that affect p-values
     cached_p_list_of_pairs = NULL,    # The cached p-value list
     cached_classification_column = NULL  # The classification column that was used
@@ -11121,7 +11144,14 @@ server <- function(input, output, session) {
       
       # Update YAML structure
       values$yaml_data$`Individual general definitions`$`tree path` <- list(tree_file$datapath)
-      
+
+      # S2.7-PERF: Clear cache when new tree is loaded (tree structure changed)
+      values$p_list_cache <- list()
+      values$p_list_cache_order <- character()
+      values$cached_p_list_of_pairs <- NULL
+      values$cached_p_list_hash <- NULL
+      cat(file=stderr(), "[PERF-CACHE] Cache cleared (new tree loaded)\n")
+
       # Hide progress
       values$progress_visible <- FALSE
 
@@ -17414,7 +17444,9 @@ server <- function(input, output, session) {
         rdata_cnv_matrix = values$rdata_cnv_matrix,
         # S2.0-PERF: Two-tier caching - pass cached p-values (Option 3A)
         cached_p_list_of_pairs = values$cached_p_list_of_pairs,
-        cached_p_list_hash = values$cached_p_list_hash
+        cached_p_list_hash = values$cached_p_list_hash,
+        # S2.7-PERF: Multi-entry cache for instant switching between classifications
+        p_list_cache = values$p_list_cache
       ))
       cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] RETURNED from func.print.lineage.tree at ", format(Sys.time(), "%H:%M:%OS3"), "\n"))
 
@@ -17433,12 +17465,44 @@ server <- function(input, output, session) {
 
         # Store cache data for future use
         if (!is.null(tree_result$cache_data)) {
+          # S2.0-PERF: Legacy single-entry cache (for backward compatibility)
           values$cached_p_list_of_pairs <- tree_result$cache_data$p_list_of_pairs
           values$cached_p_list_hash <- tree_result$cache_data$p_list_hash
           values$cached_classification_column <- input$classification_column
-          cat(file=stderr(), sprintf("[PERF-CACHE] Stored cache (hash: %s, classification: %s)\n",
-                                     substr(values$cached_p_list_hash, 1, 8),
-                                     values$cached_classification_column))
+
+          # S2.7-PERF: Multi-entry cache - store in named list keyed by hash
+          # This allows instant switching between previously computed classifications
+          new_hash <- tree_result$cache_data$p_list_hash
+          if (!is.null(new_hash) && !is.null(tree_result$cache_data$p_list_of_pairs)) {
+            # Add new entry to cache (or update existing)
+            values$p_list_cache[[new_hash]] <- tree_result$cache_data$p_list_of_pairs
+
+            # Update LRU order: remove if exists, then add to end (most recent)
+            values$p_list_cache_order <- c(
+              setdiff(values$p_list_cache_order, new_hash),
+              new_hash
+            )
+
+            # Evict oldest entries if cache exceeds max size
+            max_size <- values$p_list_cache_max_size
+            if (is.null(max_size)) max_size <- 10
+            while (length(values$p_list_cache_order) > max_size) {
+              oldest_hash <- values$p_list_cache_order[1]
+              values$p_list_cache[[oldest_hash]] <- NULL
+              values$p_list_cache_order <- values$p_list_cache_order[-1]
+              cat(file=stderr(), sprintf("[PERF-CACHE] Evicted oldest cache entry (hash: %s)\n",
+                                         substr(oldest_hash, 1, 8)))
+            }
+
+            cat(file=stderr(), sprintf("[PERF-CACHE] Stored in multi-cache (hash: %s, %d/%d entries, classification: %s)\n",
+                                       substr(new_hash, 1, 8),
+                                       length(values$p_list_cache_order), max_size,
+                                       values$cached_classification_column))
+          } else {
+            cat(file=stderr(), sprintf("[PERF-CACHE] Stored cache (hash: %s, classification: %s)\n",
+                                       substr(values$cached_p_list_hash, 1, 8),
+                                       values$cached_classification_column))
+          }
         }
       }
 
