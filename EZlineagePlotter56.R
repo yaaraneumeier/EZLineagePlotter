@@ -15681,6 +15681,16 @@ server <- function(input, output, session) {
         # Get CSV column names
         csv_cols <- if (!is.null(values$csv_data)) names(values$csv_data) else character(0)
 
+        # S2.8: Get the saved mapping column from heatmap_configs if available
+        saved_mapping_col <- NULL
+        if (!is.null(values$heatmap_configs) && length(values$heatmap_configs) >= i) {
+          saved_mapping_col <- values$heatmap_configs[[i]]$rdata_mapping_column
+        }
+        # Fall back to global value if no per-heatmap value
+        if (is.null(saved_mapping_col) || saved_mapping_col == "") {
+          saved_mapping_col <- values$rdata_mapping_column
+        }
+
         # Show RData sample names preview and mapping dropdown
         sample_preview <- paste(head(values$rdata_sample_names, 3), collapse=", ")
         if (length(values$rdata_sample_names) > 3) {
@@ -15704,7 +15714,7 @@ server <- function(input, output, session) {
                    selectInput(paste0("heatmap_rdata_mapping_col_", i),
                                "Select CSV column with sample names:",
                                choices = c("-- Select a column --" = "", csv_cols),
-                               selected = if (!is.null(values$rdata_mapping_column)) values$rdata_mapping_column else "")
+                               selected = if (!is.null(saved_mapping_col) && saved_mapping_col != "") saved_mapping_col else "")
             ),
             column(4,
                    tags$div(
