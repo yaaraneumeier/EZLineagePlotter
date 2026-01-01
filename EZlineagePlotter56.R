@@ -11361,6 +11361,11 @@ server <- function(input, output, session) {
     }
 
     # Manual rotation (node list)
+    # Ensure manual_rotation structure exists
+    if (is.null(values$yaml_data$`visual definitions`$manual_rotation)) {
+      values$yaml_data$`visual definitions`$manual_rotation <- list(display = "no", nodes = list())
+    }
+
     if (!is.null(values$manual_rotation_config) && length(values$manual_rotation_config) > 0 &&
         !all(is.na(values$manual_rotation_config))) {
       # Convert node list to YAML-friendly format
@@ -11373,6 +11378,9 @@ server <- function(input, output, session) {
       } else {
         values$yaml_data$`visual definitions`$manual_rotation$display <- "no"
       }
+      cat(file=stderr(), sprintf("[YAML-UPDATE] Saved manual_rotation: %d nodes (%s)\n",
+                                 length(values$manual_rotation_config),
+                                 paste(values$manual_rotation_config, collapse = ", ")))
     } else {
       # No manual rotation config, set display to no but keep structure
       values$yaml_data$`visual definitions`$manual_rotation$display <- "no"
@@ -19058,6 +19066,15 @@ server <- function(input, output, session) {
           # S1.62dev: Fixed - read from rotation2_config instead of rotation_settings$secondary
           according = if (!is.null(values$rotation2_config) && length(values$rotation2_config) > 0) {
             lapply(values$rotation2_config, function(r) list(col = r$col, val = r$val))
+          } else list()
+        ),
+        "manual_rotation" = list(
+          display = if (!is.null(input$enable_rotation) && input$enable_rotation &&
+                        !is.null(input$rotation_type) && input$rotation_type == "manual" &&
+                        !is.null(values$manual_rotation_config) && length(values$manual_rotation_config) > 0) "yes" else "no",
+          nodes = if (!is.null(values$manual_rotation_config) && length(values$manual_rotation_config) > 0 &&
+                      !all(is.na(values$manual_rotation_config))) {
+            as.list(values$manual_rotation_config)
           } else list()
         ),
         "trim tips" = list(
