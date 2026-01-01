@@ -9280,12 +9280,12 @@ ui <- dashboardPage(
             ),
             fluidRow(
               column(6,
-                sliderInput("tree_stretch_x", "Tree Length (horizontal):",
+                sliderInput("tree_stretch_x", "Tree Width (vertical):",
                            min = 0.5, max = 3, value = 1, step = 0.1,
                            post = "x")
               ),
               column(6,
-                sliderInput("tree_stretch_y", "Tree Width (vertical):",
+                sliderInput("tree_stretch_y", "Tree Length (horizontal):",
                            min = 0.5, max = 3, value = 1, step = 0.1,
                            post = "x")
               )
@@ -10699,9 +10699,27 @@ server <- function(input, output, session) {
           # S1.62dev: Import grid settings from YAML
           show_grid = if (!is.null(h$show_grid)) func.check.bin.val.from.conf(h$show_grid) else FALSE,
           grid_color = if (!is.null(h$grid_color)) h$grid_color else "#000000",
-          grid_size = if (!is.null(h$grid_size)) as.numeric(h$grid_size) else 0.5
+          grid_size = if (!is.null(h$grid_size)) as.numeric(h$grid_size) else 0.5,
+          # S2.8: Import row line settings (horizontal lines)
+          show_row_lines = if (!is.null(h$show_row_lines)) func.check.bin.val.from.conf(h$show_row_lines) else FALSE,
+          row_line_color = if (!is.null(h$row_line_color)) h$row_line_color else "#000000",
+          row_line_size = if (!is.null(h$row_line_size)) as.numeric(h$row_line_size) else 0.5,
+          # S2.8: Import column line settings (vertical lines)
+          show_col_lines = if (!is.null(h$show_col_lines)) func.check.bin.val.from.conf(h$show_col_lines) else FALSE,
+          col_line_color = if (!is.null(h$col_line_color)) h$col_line_color else "#000000",
+          col_line_size = if (!is.null(h$col_line_size)) as.numeric(h$col_line_size) else 0.5,
+          # S2.8: Import RData heatmap settings
+          data_source = if (!is.null(h$data_source)) h$data_source else "csv",
+          rdata_mapping_column = if (!is.null(h$rdata_mapping_column)) h$rdata_mapping_column else ""
         )
         values$heatmap_configs <- c(values$heatmap_configs, list(new_config))
+
+        # S2.8: Update global rdata_mapping_column if this heatmap has one
+        if (!is.null(new_config$data_source) && new_config$data_source == "rdata" &&
+            !is.null(new_config$rdata_mapping_column) && new_config$rdata_mapping_column != "") {
+          values$rdata_mapping_column <- new_config$rdata_mapping_column
+          cat(file=stderr(), sprintf("[YAML-IMPORT] Set global rdata_mapping_column to: %s\n", new_config$rdata_mapping_column))
+        }
       }
       # Trigger heatmap UI regeneration
       heatmap_ui_trigger(heatmap_ui_trigger() + 1)
@@ -10741,6 +10759,13 @@ server <- function(input, output, session) {
           show_row_lines = if (!is.null(cfg$show_row_lines)) cfg$show_row_lines else FALSE,
           row_line_color = if (!is.null(cfg$row_line_color)) cfg$row_line_color else "#000000",
           row_line_size = if (!is.null(cfg$row_line_size)) cfg$row_line_size else 0.5,
+          # S2.8: Column line settings
+          show_col_lines = if (!is.null(cfg$show_col_lines)) cfg$show_col_lines else FALSE,
+          col_line_color = if (!is.null(cfg$col_line_color)) cfg$col_line_color else "#000000",
+          col_line_size = if (!is.null(cfg$col_line_size)) cfg$col_line_size else 0.5,
+          # S2.8: RData heatmap settings
+          data_source = if (!is.null(cfg$data_source)) cfg$data_source else "csv",
+          rdata_mapping_column = if (!is.null(cfg$rdata_mapping_column)) cfg$rdata_mapping_column else "",
           show_guides = if (!is.null(cfg$show_guides)) cfg$show_guides else FALSE,
           guide_color1 = if (!is.null(cfg$guide_color1)) cfg$guide_color1 else "#CCCCCC",
           guide_color2 = if (!is.null(cfg$guide_color2)) cfg$guide_color2 else "#EEEEEE",
@@ -18913,7 +18938,18 @@ server <- function(input, output, session) {
           grid_size = if (!is.null(cfg$grid_size)) cfg$grid_size else 0.5,
           # S1.62dev: Discrete custom color settings (were missing from export)
           custom_discrete = if (!is.null(cfg$custom_discrete) && cfg$custom_discrete) "yes" else "no",
-          custom_colors = if (!is.null(cfg$custom_colors) && length(cfg$custom_colors) > 0) cfg$custom_colors else list()
+          custom_colors = if (!is.null(cfg$custom_colors) && length(cfg$custom_colors) > 0) cfg$custom_colors else list(),
+          # S2.8: Row line settings (horizontal lines) - were missing from export
+          show_row_lines = if (!is.null(cfg$show_row_lines) && cfg$show_row_lines) "yes" else "no",
+          row_line_color = if (!is.null(cfg$row_line_color)) cfg$row_line_color else "#000000",
+          row_line_size = if (!is.null(cfg$row_line_size)) cfg$row_line_size else 0.5,
+          # S2.8: Column line settings (vertical lines) - were missing from export
+          show_col_lines = if (!is.null(cfg$show_col_lines) && cfg$show_col_lines) "yes" else "no",
+          col_line_color = if (!is.null(cfg$col_line_color)) cfg$col_line_color else "#000000",
+          col_line_size = if (!is.null(cfg$col_line_size)) cfg$col_line_size else 0.5,
+          # S2.8: RData heatmap settings - were missing from export
+          data_source = if (!is.null(cfg$data_source)) cfg$data_source else "csv",
+          rdata_mapping_column = if (!is.null(cfg$rdata_mapping_column)) cfg$rdata_mapping_column else ""
         )
       }
     }
