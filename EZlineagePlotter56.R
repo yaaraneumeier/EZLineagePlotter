@@ -10710,7 +10710,11 @@ server <- function(input, output, session) {
           col_line_size = if (!is.null(h$col_line_size)) as.numeric(h$col_line_size) else 0.5,
           # S2.8: Import RData heatmap settings
           data_source = if (!is.null(h$data_source)) h$data_source else "csv",
-          rdata_mapping_column = if (!is.null(h$rdata_mapping_column)) h$rdata_mapping_column else ""
+          rdata_mapping_column = if (!is.null(h$rdata_mapping_column)) h$rdata_mapping_column else "",
+          # S2.8: Import WGD normalization settings
+          cnv_wgd_norm = if (!is.null(h$cnv_wgd_norm)) func.check.bin.val.from.conf(h$cnv_wgd_norm) else FALSE,
+          cnv_wgd_per_cell = if (!is.null(h$cnv_wgd_per_cell)) func.check.bin.val.from.conf(h$cnv_wgd_per_cell) else FALSE,
+          cnv_wgd_column = if (!is.null(h$cnv_wgd_column)) h$cnv_wgd_column else ""
         )
         values$heatmap_configs <- c(values$heatmap_configs, list(new_config))
 
@@ -10781,7 +10785,11 @@ server <- function(input, output, session) {
           # S1.62dev: Added missing row_label_offset and row_label_align
           row_label_offset = if (!is.null(cfg$row_label_offset)) cfg$row_label_offset else 1.0,
           row_label_align = if (!is.null(cfg$row_label_align)) cfg$row_label_align else "left",
-          custom_row_labels = if (!is.null(cfg$custom_row_labels)) cfg$custom_row_labels else ""
+          custom_row_labels = if (!is.null(cfg$custom_row_labels)) cfg$custom_row_labels else "",
+          # S2.8: WGD normalization settings
+          cnv_wgd_norm = if (!is.null(cfg$cnv_wgd_norm)) cfg$cnv_wgd_norm else FALSE,
+          cnv_wgd_per_cell = if (!is.null(cfg$cnv_wgd_per_cell)) cfg$cnv_wgd_per_cell else FALSE,
+          cnv_wgd_column = if (!is.null(cfg$cnv_wgd_column)) cfg$cnv_wgd_column else ""
         )
       })
       # Remove NULL entries (configs without columns)
@@ -10922,10 +10930,12 @@ server <- function(input, output, session) {
         cat(file=stderr(), "[YAML-IMPORT] plot_scale:", extra$plot_scale, "\n")
       }
       if (!is.null(extra$tree_stretch_x)) {
+        values$tree_stretch_x <- as.numeric(extra$tree_stretch_x)
         updateSliderInput(session, "tree_stretch_x", value = as.numeric(extra$tree_stretch_x))
         cat(file=stderr(), "[YAML-IMPORT] tree_stretch_x:", extra$tree_stretch_x, "\n")
       }
       if (!is.null(extra$tree_stretch_y)) {
+        values$tree_stretch_y <- as.numeric(extra$tree_stretch_y)
         updateSliderInput(session, "tree_stretch_y", value = as.numeric(extra$tree_stretch_y))
         cat(file=stderr(), "[YAML-IMPORT] tree_stretch_y:", extra$tree_stretch_y, "\n")
       }
@@ -18962,7 +18972,11 @@ server <- function(input, output, session) {
           col_line_size = if (!is.null(cfg$col_line_size)) cfg$col_line_size else 0.5,
           # S2.8: RData heatmap settings - were missing from export
           data_source = if (!is.null(cfg$data_source)) cfg$data_source else "csv",
-          rdata_mapping_column = if (!is.null(cfg$rdata_mapping_column)) cfg$rdata_mapping_column else ""
+          rdata_mapping_column = if (!is.null(cfg$rdata_mapping_column)) cfg$rdata_mapping_column else "",
+          # S2.8: WGD normalization settings - were missing from export
+          cnv_wgd_norm = if (!is.null(cfg$cnv_wgd_norm) && cfg$cnv_wgd_norm) "yes" else "no",
+          cnv_wgd_per_cell = if (!is.null(cfg$cnv_wgd_per_cell) && cfg$cnv_wgd_per_cell) "yes" else "no",
+          cnv_wgd_column = if (!is.null(cfg$cnv_wgd_column)) cfg$cnv_wgd_column else ""
         )
       }
     }
