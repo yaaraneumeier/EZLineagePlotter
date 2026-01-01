@@ -206,7 +206,7 @@ options(shiny.maxRequestSize = 100*1024^2)
 #       - Layer reordering now happens ONCE at the end in generate_plot()
 # S1.2: Fixed undefined x_range_min in func_highlight causing "Problem while
 #       computing aesthetics" error when adding 2+ highlights with a heatmap.
-VERSION <- "S2.7"
+VERSION <- "S2.8"
 
 # Debug output control - set to TRUE to enable verbose console logging
 # For production/stable use, keep this FALSE for better performance
@@ -8447,21 +8447,24 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #155724;",
-                     tags$h4(style = "color: #155724; margin: 0;", "Version S2.7 Stable"),
+                     tags$h4(style = "color: #155724; margin: 0;", "Version S2.8 Stable"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
-                            tags$strong("New in S2.7:"),
+                            tags$strong("New in S2.8:"),
                             tags$ul(
-                              tags$li("Per-cell WGD normalization for CNV heatmaps (divide by 2 for WGD-positive cells)"),
-                              tags$li("Fixed discrete heatmap colors being preserved when adding/removing heatmaps"),
-                              tags$li("Fixed heatmap column order stability when adding new heatmaps"),
-                              tags$li("Improved heatmap legend colors matching tile colors")
+                              tags$li("Faster classification switching with multi-entry LRU cache"),
+                              tags$li("Manual rotation nodes now saved and restored from YAML"),
+                              tags$li("RData heatmap settings fully persist in YAML (mapping column, WGD, lines)"),
+                              tags$li("Tree Length/Width sliders properly restored from YAML")
+                            ),
+                            tags$strong("From S2.7:"),
+                            tags$ul(
+                              tags$li("Per-cell WGD normalization for CNV heatmaps"),
+                              tags$li("Fixed discrete heatmap colors preserved when adding/removing heatmaps")
                             ),
                             tags$strong("From S2.0:"),
                             tags$ul(
-                              tags$li("RData CNV heatmaps: Import CNV data from QDNAseq/scIMPACT pipelines"),
+                              tags$li("RData CNV heatmaps from QDNAseq/scIMPACT pipelines"),
                               tags$li("Automatic sample matching via CSV lookup columns"),
-                              tags$li("Red-white-blue color scheme for CNV (red=loss, blue=gain)"),
-                              tags$li("Vertical/horizontal guide lines option for heatmaps"),
                               tags$li("Multiple heatmap support (CSV + RData together)")
                             ),
                             tags$strong("Core Features:"),
