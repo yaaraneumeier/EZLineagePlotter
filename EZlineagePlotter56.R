@@ -10727,7 +10727,10 @@ server <- function(input, output, session) {
       # S1.62dev: Also populate values$heatmaps for immediate plot rendering
       # This converts heatmap_configs to the format expected by the plot function
       heatmaps_for_plot <- lapply(values$heatmap_configs, function(cfg) {
-        if (is.null(cfg$columns) || length(cfg$columns) == 0) {
+        # S2.8: Only filter out heatmaps with no columns if they're NOT RData heatmaps
+        # RData heatmaps don't use columns - they use the RData matrix directly
+        if ((is.null(cfg$columns) || length(cfg$columns) == 0) &&
+            (is.null(cfg$data_source) || cfg$data_source != "rdata")) {
           return(NULL)
         }
         list(
