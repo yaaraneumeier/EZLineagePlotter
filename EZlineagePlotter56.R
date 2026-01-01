@@ -9942,6 +9942,10 @@ server <- function(input, output, session) {
         display = "no",
         according = list()
       ),
+      "manual_rotation" = list(
+        display = "no",
+        nodes = list()
+      ),
       "trim tips" = list(
         display = "yes",
         length = 0.05
@@ -10346,7 +10350,29 @@ server <- function(input, output, session) {
           }
         }
       }
-      
+
+      # Load Manual rotation settings
+      if (!is.null(yaml_data$`visual definitions`$manual_rotation)) {
+        manual_rotation_display <- yaml_data$`visual definitions`$manual_rotation$display
+        if (func.check.bin.val.from.conf(manual_rotation_display)) {
+          updateCheckboxInput(session, "enable_rotation", value = TRUE)
+          updateRadioButtons(session, "rotation_type", selected = "manual")
+
+          # Load node list into manual_rotation_config
+          if (!is.null(yaml_data$`visual definitions`$manual_rotation$nodes) &&
+              length(yaml_data$`visual definitions`$manual_rotation$nodes) > 0) {
+            # Convert list to numeric vector
+            nodes <- unlist(yaml_data$`visual definitions`$manual_rotation$nodes)
+            values$manual_rotation_config <- as.numeric(nodes)
+
+            # Update UI to show the selected nodes
+            updateSelectizeInput(session, "nodes_to_rotate", selected = as.character(nodes))
+            cat(file=stderr(), "[YAML-IMPORT] Imported manual_rotation with", length(nodes), "nodes:",
+                paste(nodes, collapse = ", "), "\n")
+          }
+        }
+      }
+
       # Load Trim tips settings
       if (!is.null(yaml_data$`visual definitions`$`trim tips`)) {
         trim_display <- yaml_data$`visual definitions`$`trim tips`$display
@@ -11333,7 +11359,26 @@ server <- function(input, output, session) {
       values$yaml_data$`visual definitions`$rotation2$display <- "no"
       values$yaml_data$`visual definitions`$rotation2$according <- list()
     }
-    
+
+    # Manual rotation (node list)
+    if (!is.null(values$manual_rotation_config) && length(values$manual_rotation_config) > 0 &&
+        !all(is.na(values$manual_rotation_config))) {
+      # Convert node list to YAML-friendly format
+      values$yaml_data$`visual definitions`$manual_rotation$nodes <- as.list(values$manual_rotation_config)
+
+      # Set display based on current rotation type selection
+      if (!is.null(input$enable_rotation) && input$enable_rotation &&
+          !is.null(input$rotation_type) && input$rotation_type == "manual") {
+        values$yaml_data$`visual definitions`$manual_rotation$display <- "yes"
+      } else {
+        values$yaml_data$`visual definitions`$manual_rotation$display <- "no"
+      }
+    } else {
+      # No manual rotation config, set display to no but keep structure
+      values$yaml_data$`visual definitions`$manual_rotation$display <- "no"
+      values$yaml_data$`visual definitions`$manual_rotation$nodes <- list()
+    }
+
     # Update advanced settings only if they exist
     if (!is.null(input$simulate_p_value)) {
       values$yaml_data$`visual definitions`$simulate_p_value <- 
