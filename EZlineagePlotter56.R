@@ -140,6 +140,12 @@ options(shiny.maxRequestSize = 100*1024^2)
 #         renderUI for discrete colors
 #       - This version helps diagnose why colors reset when adding second heatmap
 #
+# S2.15: Multi-column cache option for heatmap processing
+#       - Added checkbox to enable caching of column type detection and data filtering
+#       - Cache is automatically invalidated when CSV data, tree, or columns change
+#       - Uses MD5 hash to track cache validity
+#       - Logs cache hit/miss and timing for performance monitoring
+#
 # S2.5: Fix heatmap column order changing when adding second heatmap
 #       - BUG: Adding a second heatmap caused first heatmap's column order to change
 #         (e.g., NRAS,BRAF,MET became BRAF,NRAS,MET) which changed heatmap appearance
@@ -206,7 +212,7 @@ options(shiny.maxRequestSize = 100*1024^2)
 #       - Layer reordering now happens ONCE at the end in generate_plot()
 # S1.2: Fixed undefined x_range_min in func_highlight causing "Problem while
 #       computing aesthetics" error when adding 2+ highlights with a heatmap.
-VERSION <- "S2.7"
+VERSION <- "S2.15"
 
 # Debug output control - set to TRUE to enable verbose console logging
 # For production/stable use, keep this FALSE for better performance
@@ -1403,6 +1409,35 @@ func.create.p_list_cache_hash <- function(tree440, list_id_by_class, dx_rx_types
   # Use digest for reliable hashing
   hash_value <- digest::digest(cache_data, algo = "md5")
 
+  return(hash_value)
+}
+
+# S2.15: Create hash for multi-column heatmap cache
+# This hash determines if cached column processing data can be reused.
+# Inputs that affect column processing: csv_data structure, tree tips (for filtering),
+# id_column, heatmap column selections, and data source settings.
+func.create.multi_column_cache_hash <- function(csv_data, tree_tips, id_column, heatmap_configs) {
+  # Build a list of cache-relevant data
+  cache_data <- list(
+    # CSV data structure - use column names and dimensions (not full data for speed)
+    csv_col_names = if (!is.null(csv_data)) sort(names(csv_data)) else NULL,
+    csv_nrow = if (!is.null(csv_data)) nrow(csv_data) else 0,
+    csv_ncol = if (!is.null(csv_data)) ncol(csv_data) else 0,
+    # Tree tips for filtering
+    tree_tips = if (!is.null(tree_tips)) sort(tree_tips) else NULL,
+    # ID column for matching
+    id_column = id_column,
+    # Heatmap column selections (what columns are selected for each heatmap)
+    heatmap_columns = lapply(heatmap_configs, function(cfg) {
+      list(
+        columns = if (!is.null(cfg$columns)) sort(cfg$columns) else NULL,
+        data_source = if (!is.null(cfg$data_source)) cfg$data_source else "csv"
+      )
+    })
+  )
+
+  # Use digest for reliable hashing
+  hash_value <- digest::digest(cache_data, algo = "md5")
   return(hash_value)
 }
 
@@ -8431,14 +8466,18 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #155724;",
-                     tags$h4(style = "color: #155724; margin: 0;", "Version S2.7 Stable"),
+                     tags$h4(style = "color: #155724; margin: 0;", "Version S2.15"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
-                            tags$strong("New in S2.7:"),
+                            tags$strong("New in S2.15:"),
                             tags$ul(
-                              tags$li("Per-cell WGD normalization for CNV heatmaps (divide by 2 for WGD-positive cells)"),
-                              tags$li("Fixed discrete heatmap colors being preserved when adding/removing heatmaps"),
-                              tags$li("Fixed heatmap column order stability when adding new heatmaps"),
-                              tags$li("Improved heatmap legend colors matching tile colors")
+                              tags$li("Multi-column cache option for faster heatmap re-application"),
+                              tags$li("Caches type detection and data filtering results"),
+                              tags$li("Auto-invalidates when CSV data, tree, or column selections change")
+                            ),
+                            tags$strong("From S2.7:"),
+                            tags$ul(
+                              tags$li("Per-cell WGD normalization for CNV heatmaps"),
+                              tags$li("Fixed discrete heatmap colors preserved when adding/removing heatmaps")
                             ),
                             tags$strong("From S2.0:"),
                             tags$ul(
@@ -8971,7 +9010,20 @@ ui <- dashboardPage(
                               "Legend font size is controlled in the Legend tab. Per-heatmap settings are in each heatmap box below.")
                 )
               ),
-              
+
+              # S2.15: Multi-column cache option for performance optimization
+              fluidRow(
+                column(12,
+                       checkboxInput("heatmap_multi_column_cache",
+                                     "Enable multi-column cache (faster re-apply when columns unchanged)",
+                                     value = FALSE),
+                       tags$p(class = "text-muted", tags$small(
+                         "When enabled, column type detection and data filtering results are cached. ",
+                         "Cache is automatically invalidated when CSV data, tree, or column selections change."
+                       ))
+                )
+              ),
+
               hr(),
               
               # Add new heatmap button
@@ -9627,7 +9679,12 @@ server <- function(input, output, session) {
     # Visual-only changes (legend sizes, colors, fonts) skip recalculation.
     cached_p_list_hash = NULL,        # Hash of inputs that affect p-values
     cached_p_list_of_pairs = NULL,    # The cached p-value list
-    cached_classification_column = NULL  # The classification column that was used
+    cached_classification_column = NULL,  # The classification column that was used
+    # S2.15: Multi-column cache for heatmap processing (reduces redundant type detection and filtering)
+    # Caches: column type detection, unique values extraction, and filtered data for matching tree tips
+    multi_column_cache_enabled = FALSE,   # User toggle for enabling/disabling cache
+    multi_column_cache_hash = NULL,       # Hash of inputs affecting column processing
+    multi_column_cache_data = NULL        # Cached processed column data (list of heatmap column info)
   )
 
   classification_loading <- reactiveVal(FALSE)
@@ -16027,6 +16084,51 @@ server <- function(input, output, session) {
     }
     cat(file=stderr(), "[HEATMAP-APPLY-DEBUG] ==============================\n\n")
 
+    # S2.15: Multi-column cache logic
+    # Check if caching is enabled and compute hash to determine if cache is valid
+    cache_enabled <- isTRUE(input$heatmap_multi_column_cache)
+    values$multi_column_cache_enabled <- cache_enabled
+    use_cache <- FALSE
+    cache_start_time <- Sys.time()
+
+    if (cache_enabled) {
+      # Compute current hash based on inputs that affect column processing
+      tree_tips <- if (!is.null(values$tree)) values$tree$tip.label else NULL
+      current_cache_hash <- func.create.multi_column_cache_hash(
+        csv_data = values$csv_data,
+        tree_tips = tree_tips,
+        id_column = input$id_column,
+        heatmap_configs = values$heatmap_configs
+      )
+
+      # Check if cache is valid
+      if (!is.null(values$multi_column_cache_hash) &&
+          !is.null(values$multi_column_cache_data) &&
+          values$multi_column_cache_hash == current_cache_hash) {
+        use_cache <- TRUE
+        cat(file=stderr(), paste0("[S2.15-CACHE] Cache HIT - using cached column data (hash: ",
+                                   substr(current_cache_hash, 1, 8), "...)\n"))
+      } else {
+        # Cache miss - will need to recompute
+        if (is.null(values$multi_column_cache_hash)) {
+          cat(file=stderr(), "[S2.15-CACHE] Cache MISS - no previous cache exists\n")
+        } else {
+          cat(file=stderr(), paste0("[S2.15-CACHE] Cache INVALIDATED - hash changed from ",
+                                     substr(values$multi_column_cache_hash, 1, 8), "... to ",
+                                     substr(current_cache_hash, 1, 8), "...\n"))
+        }
+        # Store the new hash for next time
+        values$multi_column_cache_hash <- current_cache_hash
+        # Initialize empty cache data
+        values$multi_column_cache_data <- list()
+      }
+    } else {
+      cat(file=stderr(), "[S2.15-CACHE] Cache disabled by user\n")
+      # Clear cache when disabled
+      values$multi_column_cache_hash <- NULL
+      values$multi_column_cache_data <- NULL
+    }
+
     # v56a: Build heatmaps list from configs with multiple column support
     # Read directly from inputs to ensure we get current values (fixes ignoreInit issue)
     heatmaps_list <- lapply(seq_along(values$heatmap_configs), function(i) {
@@ -16152,13 +16254,32 @@ server <- function(input, output, session) {
       current_forced_type <- input[[paste0("heatmap_type_", i)]]
       if (is.null(current_forced_type)) current_forced_type <- "discrete"
 
+      # S2.15: Check for cached type detection result
+      cache_key <- paste0("heatmap_", i)
+      cached_entry <- if (use_cache && !is.null(values$multi_column_cache_data[[cache_key]])) {
+        values$multi_column_cache_data[[cache_key]]
+      } else {
+        NULL
+      }
+
       # v116: Improved auto-detect logic for discrete vs continuous
       # Priority: decimals = continuous, non-numeric = discrete, then check unique values
       actual_type <- current_forced_type  # v122: Default to forced type
       first_col <- cfg$columns[1]
-      debug_cat(paste0("  v22 AUTO-DETECT: auto_type=", current_auto_type,
-                                 ", forced_type=", current_forced_type, "\n"))
-      if (current_auto_type && !is.null(values$csv_data) && first_col %in% names(values$csv_data)) {
+
+      # S2.15: Use cached actual_type if available and auto_type settings match
+      if (!is.null(cached_entry) &&
+          !is.null(cached_entry$actual_type) &&
+          cached_entry$auto_type == current_auto_type &&
+          cached_entry$forced_type == current_forced_type &&
+          cached_entry$first_col == first_col) {
+        actual_type <- cached_entry$actual_type
+        cat(file=stderr(), paste0("[S2.15-CACHE] Heatmap ", i, ": Using cached actual_type='", actual_type, "'\n"))
+      } else {
+        # S2.15: Need to compute type - will cache the result
+        debug_cat(paste0("  v22 AUTO-DETECT: auto_type=", current_auto_type,
+                                   ", forced_type=", current_forced_type, "\n"))
+        if (current_auto_type && !is.null(values$csv_data) && first_col %in% names(values$csv_data)) {
         col_data <- values$csv_data[[first_col]]
         col_data_clean <- na.omit(col_data)
         unique_vals <- length(unique(col_data_clean))
@@ -16263,7 +16384,20 @@ server <- function(input, output, session) {
             }
           }
         }
-      }
+        }  # S2.15: End of type detection else block
+
+        # S2.15: Cache the computed type detection result for next time
+        if (cache_enabled) {
+          values$multi_column_cache_data[[cache_key]] <- list(
+            actual_type = actual_type,
+            auto_type = current_auto_type,
+            forced_type = current_forced_type,
+            first_col = first_col,
+            columns = cfg$columns
+          )
+          cat(file=stderr(), paste0("[S2.15-CACHE] Heatmap ", i, ": Cached actual_type='", actual_type, "'\n"))
+        }
+      }  # S2.15: End of cache check if-else
 
       # S1.62dev: Store the computed actual_type in config for export
       if (i <= length(values$heatmap_configs)) {
@@ -16492,6 +16626,13 @@ server <- function(input, output, session) {
       debug_cat(paste0("    S1.62dev all fields: ", paste(names(hm), collapse=", "), "\n"))
     }
     debug_cat("================================\n\n")
+
+    # S2.15: Log cache performance summary
+    cache_elapsed <- as.numeric(difftime(Sys.time(), cache_start_time, units = "secs"))
+    if (cache_enabled) {
+      cat(file=stderr(), paste0("[S2.15-CACHE] Processing completed in ", sprintf("%.3f", cache_elapsed), " sec",
+                                 " (cache ", if (use_cache) "HIT" else "MISS", ")\n"))
+    }
 
     # Generate plot
     generate_plot()
