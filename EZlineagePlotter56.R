@@ -206,7 +206,7 @@ options(shiny.maxRequestSize = 100*1024^2)
 #       - Layer reordering now happens ONCE at the end in generate_plot()
 # S1.2: Fixed undefined x_range_min in func_highlight causing "Problem while
 #       computing aesthetics" error when adding 2+ highlights with a heatmap.
-VERSION <- "S2.7"
+VERSION <- "S2.8"
 
 # Debug output control - set to TRUE to enable verbose console logging
 # For production/stable use, keep this FALSE for better performance
@@ -3033,7 +3033,8 @@ func.print.lineage.tree <- function(conf_yaml_path,
                                     legend_settings = NULL,  # v135: Legend settings for highlight/bootstrap legends
                                     rdata_cnv_matrix = NULL,  # S1.62dev: CNV matrix from RData file
                                     cached_p_list_of_pairs = NULL,  # S2.0-PERF: Cached p-values (Option 3A)
-                                    cached_p_list_hash = NULL) {    # S2.0-PERF: Hash for cache validation
+                                    cached_p_list_hash = NULL,      # S2.0-PERF: Hash for cache validation
+                                    p_list_cache = list()) {        # S2.7-PERF: Multi-entry cache (hash -> p_list_of_pairs)
 
   # === DEBUG CHECKPOINT 2: FUNCTION ENTRY ===
   # v53: cat(file=stderr(), "\nÃ°Å¸â€Â DEBUG CHECKPOINT 2: func.print.lineage.tree ENTRY\n")
@@ -5245,7 +5246,8 @@ func.print.lineage.tree <- function(conf_yaml_path,
         heatmap_global_gap = heatmap_global_gap,  # v125: Gap between multiple heatmaps
         legend_settings = legend_settings,  # v136: Pass legend settings for highlight/bootstrap legends
         cached_p_list_of_pairs = cached_p_list_of_pairs,  # S2.0-PERF: Pass cached p-values
-        cached_p_list_hash = cached_p_list_hash  # S2.0-PERF: Pass cache hash for validation
+        cached_p_list_hash = cached_p_list_hash,  # S2.0-PERF: Pass cache hash for validation
+        p_list_cache = p_list_cache  # S2.7-PERF: Multi-entry cache
       )
       # }
 
@@ -5421,7 +5423,8 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
                                          heatmap_global_gap = 0.05,  # v125: Gap between multiple heatmaps
                                          legend_settings = NULL,  # v136: Legend settings for highlight/bootstrap legends
                                          cached_p_list_of_pairs = NULL,  # S2.0-PERF: Cached p-values (Option 3A)
-                                         cached_p_list_hash = NULL) {    # S2.0-PERF: Hash for cache validation
+                                         cached_p_list_hash = NULL,      # S2.0-PERF: Hash for cache validation
+                                         p_list_cache = list()) {        # S2.7-PERF: Multi-entry cache
 
   # === DEBUG CHECKPOINT 4: INNER FUNCTION ENTRY ===
   # v53: cat(file=stderr(), "\nÃ°Å¸â€Â DEBUG CHECKPOINT 4: func.make.plot.tree.heat.NEW ENTRY\n")
@@ -5551,27 +5554,40 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   #print("G")
 
   # S2.0-PERF: Two-tier caching for p_list_of_pairs (Option 3A)
+  # S2.7-PERF: Multi-entry cache - check p_list_cache first for instant switching
   # Compute current hash to check if cache is valid
   .prof_section_start <- Sys.time()
   current_p_list_hash <- func.create.p_list_cache_hash(
     tree440, list_id_by_class, dx_rx_types1_short, FDR_perc, simulate.p.value
   )
 
-  # Check if cache is valid - hash must match AND cached data must exist
-  cache_is_valid <- !is.null(cached_p_list_hash) &&
-                    !is.null(cached_p_list_of_pairs) &&
-                    (cached_p_list_hash == current_p_list_hash)
+  # S2.7-PERF: Check multi-entry cache FIRST (allows instant switching between classifications)
+  multi_cache_hit <- !is.null(p_list_cache) &&
+                     length(p_list_cache) > 0 &&
+                     (current_p_list_hash %in% names(p_list_cache))
 
-  if (cache_is_valid) {
-    # S2.0-PERF: Cache hit - use cached p-values
+  # Fall back to legacy single-entry cache
+  legacy_cache_hit <- !multi_cache_hit &&
+                      !is.null(cached_p_list_hash) &&
+                      !is.null(cached_p_list_of_pairs) &&
+                      (cached_p_list_hash == current_p_list_hash)
+
+  if (multi_cache_hit) {
+    # S2.7-PERF: Multi-cache hit - instant retrieval from previously computed classification
+    p_list_of_pairs <- p_list_cache[[current_p_list_hash]]
+    cat(file=stderr(), sprintf("[PERF-CACHE] MULTI-CACHE HIT (hash: %s, %d entries cached): %.3f sec\n",
+                               substr(current_p_list_hash, 1, 8), length(p_list_cache),
+                               as.numeric(Sys.time() - .prof_section_start)))
+  } else if (legacy_cache_hit) {
+    # S2.0-PERF: Legacy cache hit - use single cached p-values
     p_list_of_pairs <- cached_p_list_of_pairs
     cat(file=stderr(), sprintf("[PERF-CACHE] Using cached p_list_of_pairs (hash: %s): %.3f sec\n",
                                substr(current_p_list_hash, 1, 8), as.numeric(Sys.time() - .prof_section_start)))
   } else {
-    # S2.0-PERF: Cache miss - need to recalculate
-    if (!is.null(cached_p_list_hash)) {
-      cat(file=stderr(), sprintf("[PERF-CACHE] Cache INVALIDATED - hash changed from %s to %s\n",
-                                 substr(cached_p_list_hash, 1, 8), substr(current_p_list_hash, 1, 8)))
+    # Cache miss - need to recalculate
+    if (!is.null(cached_p_list_hash) && cached_p_list_hash != current_p_list_hash) {
+      cat(file=stderr(), sprintf("[PERF-CACHE] Cache miss - hash %s not in cache (%d entries)\n",
+                                 substr(current_p_list_hash, 1, 8), length(p_list_cache)))
     } else {
       cat(file=stderr(), "[PERF-CACHE] No cache available - computing p_list_of_pairs\n")
     }
@@ -8431,21 +8447,24 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #155724;",
-                     tags$h4(style = "color: #155724; margin: 0;", "Version S2.7 Stable"),
+                     tags$h4(style = "color: #155724; margin: 0;", "Version S2.8 Stable"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
-                            tags$strong("New in S2.7:"),
+                            tags$strong("New in S2.8:"),
                             tags$ul(
-                              tags$li("Per-cell WGD normalization for CNV heatmaps (divide by 2 for WGD-positive cells)"),
-                              tags$li("Fixed discrete heatmap colors being preserved when adding/removing heatmaps"),
-                              tags$li("Fixed heatmap column order stability when adding new heatmaps"),
-                              tags$li("Improved heatmap legend colors matching tile colors")
+                              tags$li("Faster classification switching with multi-entry LRU cache"),
+                              tags$li("Manual rotation nodes now saved and restored from YAML"),
+                              tags$li("RData heatmap settings fully persist in YAML (mapping column, WGD, lines)"),
+                              tags$li("Tree Length/Width sliders properly restored from YAML")
+                            ),
+                            tags$strong("From S2.7:"),
+                            tags$ul(
+                              tags$li("Per-cell WGD normalization for CNV heatmaps"),
+                              tags$li("Fixed discrete heatmap colors preserved when adding/removing heatmaps")
                             ),
                             tags$strong("From S2.0:"),
                             tags$ul(
-                              tags$li("RData CNV heatmaps: Import CNV data from QDNAseq/scIMPACT pipelines"),
+                              tags$li("RData CNV heatmaps from QDNAseq/scIMPACT pipelines"),
                               tags$li("Automatic sample matching via CSV lookup columns"),
-                              tags$li("Red-white-blue color scheme for CNV (red=loss, blue=gain)"),
-                              tags$li("Vertical/horizontal guide lines option for heatmaps"),
                               tags$li("Multiple heatmap support (CSV + RData together)")
                             ),
                             tags$strong("Core Features:"),
@@ -9264,12 +9283,12 @@ ui <- dashboardPage(
             ),
             fluidRow(
               column(6,
-                sliderInput("tree_stretch_x", "Tree Length (horizontal):",
+                sliderInput("tree_stretch_x", "Tree Width (vertical):",
                            min = 0.5, max = 3, value = 1, step = 0.1,
                            post = "x")
               ),
               column(6,
-                sliderInput("tree_stretch_y", "Tree Width (vertical):",
+                sliderInput("tree_stretch_y", "Tree Length (horizontal):",
                            min = 0.5, max = 3, value = 1, step = 0.1,
                            post = "x")
               )
@@ -9625,6 +9644,13 @@ server <- function(input, output, session) {
     # These cache the expensive Fisher test calculations - only recalculate when
     # tree structure, classification, FDR, or simulate.p.value change.
     # Visual-only changes (legend sizes, colors, fonts) skip recalculation.
+    # S2.7-PERF: Multi-entry cache - stores multiple classifications so switching
+    # between previously computed classifications is instant (no recomputation).
+    # The cache is keyed by hash, with LRU eviction when exceeding max entries.
+    p_list_cache = list(),            # Named list: hash -> p_list_of_pairs
+    p_list_cache_order = character(), # LRU order tracking (most recent last)
+    p_list_cache_max_size = 10,       # Maximum number of cached classifications
+    # Legacy single-entry cache variables (kept for compatibility, still updated)
     cached_p_list_hash = NULL,        # Hash of inputs that affect p-values
     cached_p_list_of_pairs = NULL,    # The cached p-value list
     cached_classification_column = NULL  # The classification column that was used
@@ -9918,6 +9944,10 @@ server <- function(input, output, session) {
       "rotation2" = list(
         display = "no",
         according = list()
+      ),
+      "manual_rotation" = list(
+        display = "no",
+        nodes = list()
       ),
       "trim tips" = list(
         display = "yes",
@@ -10323,7 +10353,29 @@ server <- function(input, output, session) {
           }
         }
       }
-      
+
+      # Load Manual rotation settings
+      if (!is.null(yaml_data$`visual definitions`$manual_rotation)) {
+        manual_rotation_display <- yaml_data$`visual definitions`$manual_rotation$display
+        if (func.check.bin.val.from.conf(manual_rotation_display)) {
+          updateCheckboxInput(session, "enable_rotation", value = TRUE)
+          updateRadioButtons(session, "rotation_type", selected = "manual")
+
+          # Load node list into manual_rotation_config
+          if (!is.null(yaml_data$`visual definitions`$manual_rotation$nodes) &&
+              length(yaml_data$`visual definitions`$manual_rotation$nodes) > 0) {
+            # Convert list to numeric vector
+            nodes <- unlist(yaml_data$`visual definitions`$manual_rotation$nodes)
+            values$manual_rotation_config <- as.numeric(nodes)
+
+            # Update UI to show the selected nodes
+            updateSelectizeInput(session, "nodes_to_rotate", selected = as.character(nodes))
+            cat(file=stderr(), "[YAML-IMPORT] Imported manual_rotation with", length(nodes), "nodes:",
+                paste(nodes, collapse = ", "), "\n")
+          }
+        }
+      }
+
       # Load Trim tips settings
       if (!is.null(yaml_data$`visual definitions`$`trim tips`)) {
         trim_display <- yaml_data$`visual definitions`$`trim tips`$display
@@ -10650,9 +10702,31 @@ server <- function(input, output, session) {
           # S1.62dev: Import grid settings from YAML
           show_grid = if (!is.null(h$show_grid)) func.check.bin.val.from.conf(h$show_grid) else FALSE,
           grid_color = if (!is.null(h$grid_color)) h$grid_color else "#000000",
-          grid_size = if (!is.null(h$grid_size)) as.numeric(h$grid_size) else 0.5
+          grid_size = if (!is.null(h$grid_size)) as.numeric(h$grid_size) else 0.5,
+          # S2.8: Import row line settings (horizontal lines)
+          show_row_lines = if (!is.null(h$show_row_lines)) func.check.bin.val.from.conf(h$show_row_lines) else FALSE,
+          row_line_color = if (!is.null(h$row_line_color)) h$row_line_color else "#000000",
+          row_line_size = if (!is.null(h$row_line_size)) as.numeric(h$row_line_size) else 0.5,
+          # S2.8: Import column line settings (vertical lines)
+          show_col_lines = if (!is.null(h$show_col_lines)) func.check.bin.val.from.conf(h$show_col_lines) else FALSE,
+          col_line_color = if (!is.null(h$col_line_color)) h$col_line_color else "#000000",
+          col_line_size = if (!is.null(h$col_line_size)) as.numeric(h$col_line_size) else 0.5,
+          # S2.8: Import RData heatmap settings
+          data_source = if (!is.null(h$data_source)) h$data_source else "csv",
+          rdata_mapping_column = if (!is.null(h$rdata_mapping_column)) h$rdata_mapping_column else "",
+          # S2.8: Import WGD normalization settings
+          cnv_wgd_norm = if (!is.null(h$cnv_wgd_norm)) func.check.bin.val.from.conf(h$cnv_wgd_norm) else FALSE,
+          cnv_wgd_per_cell = if (!is.null(h$cnv_wgd_per_cell)) func.check.bin.val.from.conf(h$cnv_wgd_per_cell) else FALSE,
+          cnv_wgd_column = if (!is.null(h$cnv_wgd_column)) h$cnv_wgd_column else ""
         )
         values$heatmap_configs <- c(values$heatmap_configs, list(new_config))
+
+        # S2.8: Update global rdata_mapping_column if this heatmap has one
+        if (!is.null(new_config$data_source) && new_config$data_source == "rdata" &&
+            !is.null(new_config$rdata_mapping_column) && new_config$rdata_mapping_column != "") {
+          values$rdata_mapping_column <- new_config$rdata_mapping_column
+          cat(file=stderr(), sprintf("[YAML-IMPORT] Set global rdata_mapping_column to: %s\n", new_config$rdata_mapping_column))
+        }
       }
       # Trigger heatmap UI regeneration
       heatmap_ui_trigger(heatmap_ui_trigger() + 1)
@@ -10660,7 +10734,10 @@ server <- function(input, output, session) {
       # S1.62dev: Also populate values$heatmaps for immediate plot rendering
       # This converts heatmap_configs to the format expected by the plot function
       heatmaps_for_plot <- lapply(values$heatmap_configs, function(cfg) {
-        if (is.null(cfg$columns) || length(cfg$columns) == 0) {
+        # S2.8: Only filter out heatmaps with no columns if they're NOT RData heatmaps
+        # RData heatmaps don't use columns - they use the RData matrix directly
+        if ((is.null(cfg$columns) || length(cfg$columns) == 0) &&
+            (is.null(cfg$data_source) || cfg$data_source != "rdata")) {
           return(NULL)
         }
         list(
@@ -10692,6 +10769,13 @@ server <- function(input, output, session) {
           show_row_lines = if (!is.null(cfg$show_row_lines)) cfg$show_row_lines else FALSE,
           row_line_color = if (!is.null(cfg$row_line_color)) cfg$row_line_color else "#000000",
           row_line_size = if (!is.null(cfg$row_line_size)) cfg$row_line_size else 0.5,
+          # S2.8: Column line settings
+          show_col_lines = if (!is.null(cfg$show_col_lines)) cfg$show_col_lines else FALSE,
+          col_line_color = if (!is.null(cfg$col_line_color)) cfg$col_line_color else "#000000",
+          col_line_size = if (!is.null(cfg$col_line_size)) cfg$col_line_size else 0.5,
+          # S2.8: RData heatmap settings
+          data_source = if (!is.null(cfg$data_source)) cfg$data_source else "csv",
+          rdata_mapping_column = if (!is.null(cfg$rdata_mapping_column)) cfg$rdata_mapping_column else "",
           show_guides = if (!is.null(cfg$show_guides)) cfg$show_guides else FALSE,
           guide_color1 = if (!is.null(cfg$guide_color1)) cfg$guide_color1 else "#CCCCCC",
           guide_color2 = if (!is.null(cfg$guide_color2)) cfg$guide_color2 else "#EEEEEE",
@@ -10704,7 +10788,11 @@ server <- function(input, output, session) {
           # S1.62dev: Added missing row_label_offset and row_label_align
           row_label_offset = if (!is.null(cfg$row_label_offset)) cfg$row_label_offset else 1.0,
           row_label_align = if (!is.null(cfg$row_label_align)) cfg$row_label_align else "left",
-          custom_row_labels = if (!is.null(cfg$custom_row_labels)) cfg$custom_row_labels else ""
+          custom_row_labels = if (!is.null(cfg$custom_row_labels)) cfg$custom_row_labels else "",
+          # S2.8: WGD normalization settings
+          cnv_wgd_norm = if (!is.null(cfg$cnv_wgd_norm)) cfg$cnv_wgd_norm else FALSE,
+          cnv_wgd_per_cell = if (!is.null(cfg$cnv_wgd_per_cell)) cfg$cnv_wgd_per_cell else FALSE,
+          cnv_wgd_column = if (!is.null(cfg$cnv_wgd_column)) cfg$cnv_wgd_column else ""
         )
       })
       # Remove NULL entries (configs without columns)
@@ -10845,10 +10933,12 @@ server <- function(input, output, session) {
         cat(file=stderr(), "[YAML-IMPORT] plot_scale:", extra$plot_scale, "\n")
       }
       if (!is.null(extra$tree_stretch_x)) {
+        values$tree_stretch_x <- as.numeric(extra$tree_stretch_x)
         updateSliderInput(session, "tree_stretch_x", value = as.numeric(extra$tree_stretch_x))
         cat(file=stderr(), "[YAML-IMPORT] tree_stretch_x:", extra$tree_stretch_x, "\n")
       }
       if (!is.null(extra$tree_stretch_y)) {
+        values$tree_stretch_y <- as.numeric(extra$tree_stretch_y)
         updateSliderInput(session, "tree_stretch_y", value = as.numeric(extra$tree_stretch_y))
         cat(file=stderr(), "[YAML-IMPORT] tree_stretch_y:", extra$tree_stretch_y, "\n")
       }
@@ -11121,7 +11211,14 @@ server <- function(input, output, session) {
       
       # Update YAML structure
       values$yaml_data$`Individual general definitions`$`tree path` <- list(tree_file$datapath)
-      
+
+      # S2.7-PERF: Clear cache when new tree is loaded (tree structure changed)
+      values$p_list_cache <- list()
+      values$p_list_cache_order <- character()
+      values$cached_p_list_of_pairs <- NULL
+      values$cached_p_list_hash <- NULL
+      cat(file=stderr(), "[PERF-CACHE] Cache cleared (new tree loaded)\n")
+
       # Hide progress
       values$progress_visible <- FALSE
 
@@ -11303,7 +11400,34 @@ server <- function(input, output, session) {
       values$yaml_data$`visual definitions`$rotation2$display <- "no"
       values$yaml_data$`visual definitions`$rotation2$according <- list()
     }
-    
+
+    # Manual rotation (node list)
+    # Ensure manual_rotation structure exists
+    if (is.null(values$yaml_data$`visual definitions`$manual_rotation)) {
+      values$yaml_data$`visual definitions`$manual_rotation <- list(display = "no", nodes = list())
+    }
+
+    if (!is.null(values$manual_rotation_config) && length(values$manual_rotation_config) > 0 &&
+        !all(is.na(values$manual_rotation_config))) {
+      # Convert node list to YAML-friendly format
+      values$yaml_data$`visual definitions`$manual_rotation$nodes <- as.list(values$manual_rotation_config)
+
+      # Set display based on current rotation type selection
+      if (!is.null(input$enable_rotation) && input$enable_rotation &&
+          !is.null(input$rotation_type) && input$rotation_type == "manual") {
+        values$yaml_data$`visual definitions`$manual_rotation$display <- "yes"
+      } else {
+        values$yaml_data$`visual definitions`$manual_rotation$display <- "no"
+      }
+      cat(file=stderr(), sprintf("[YAML-UPDATE] Saved manual_rotation: %d nodes (%s)\n",
+                                 length(values$manual_rotation_config),
+                                 paste(values$manual_rotation_config, collapse = ", ")))
+    } else {
+      # No manual rotation config, set display to no but keep structure
+      values$yaml_data$`visual definitions`$manual_rotation$display <- "no"
+      values$yaml_data$`visual definitions`$manual_rotation$nodes <- list()
+    }
+
     # Update advanced settings only if they exist
     if (!is.null(input$simulate_p_value)) {
       values$yaml_data$`visual definitions`$simulate_p_value <- 
@@ -15573,6 +15697,16 @@ server <- function(input, output, session) {
         # Get CSV column names
         csv_cols <- if (!is.null(values$csv_data)) names(values$csv_data) else character(0)
 
+        # S2.8: Get the saved mapping column from heatmap_configs if available
+        saved_mapping_col <- NULL
+        if (!is.null(values$heatmap_configs) && length(values$heatmap_configs) >= i) {
+          saved_mapping_col <- values$heatmap_configs[[i]]$rdata_mapping_column
+        }
+        # Fall back to global value if no per-heatmap value
+        if (is.null(saved_mapping_col) || saved_mapping_col == "") {
+          saved_mapping_col <- values$rdata_mapping_column
+        }
+
         # Show RData sample names preview and mapping dropdown
         sample_preview <- paste(head(values$rdata_sample_names, 3), collapse=", ")
         if (length(values$rdata_sample_names) > 3) {
@@ -15596,7 +15730,7 @@ server <- function(input, output, session) {
                    selectInput(paste0("heatmap_rdata_mapping_col_", i),
                                "Select CSV column with sample names:",
                                choices = c("-- Select a column --" = "", csv_cols),
-                               selected = if (!is.null(values$rdata_mapping_column)) values$rdata_mapping_column else "")
+                               selected = if (!is.null(saved_mapping_col) && saved_mapping_col != "") saved_mapping_col else "")
             ),
             column(4,
                    tags$div(
@@ -17414,7 +17548,9 @@ server <- function(input, output, session) {
         rdata_cnv_matrix = values$rdata_cnv_matrix,
         # S2.0-PERF: Two-tier caching - pass cached p-values (Option 3A)
         cached_p_list_of_pairs = values$cached_p_list_of_pairs,
-        cached_p_list_hash = values$cached_p_list_hash
+        cached_p_list_hash = values$cached_p_list_hash,
+        # S2.7-PERF: Multi-entry cache for instant switching between classifications
+        p_list_cache = values$p_list_cache
       ))
       cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] RETURNED from func.print.lineage.tree at ", format(Sys.time(), "%H:%M:%OS3"), "\n"))
 
@@ -17433,12 +17569,44 @@ server <- function(input, output, session) {
 
         # Store cache data for future use
         if (!is.null(tree_result$cache_data)) {
+          # S2.0-PERF: Legacy single-entry cache (for backward compatibility)
           values$cached_p_list_of_pairs <- tree_result$cache_data$p_list_of_pairs
           values$cached_p_list_hash <- tree_result$cache_data$p_list_hash
           values$cached_classification_column <- input$classification_column
-          cat(file=stderr(), sprintf("[PERF-CACHE] Stored cache (hash: %s, classification: %s)\n",
-                                     substr(values$cached_p_list_hash, 1, 8),
-                                     values$cached_classification_column))
+
+          # S2.7-PERF: Multi-entry cache - store in named list keyed by hash
+          # This allows instant switching between previously computed classifications
+          new_hash <- tree_result$cache_data$p_list_hash
+          if (!is.null(new_hash) && !is.null(tree_result$cache_data$p_list_of_pairs)) {
+            # Add new entry to cache (or update existing)
+            values$p_list_cache[[new_hash]] <- tree_result$cache_data$p_list_of_pairs
+
+            # Update LRU order: remove if exists, then add to end (most recent)
+            values$p_list_cache_order <- c(
+              setdiff(values$p_list_cache_order, new_hash),
+              new_hash
+            )
+
+            # Evict oldest entries if cache exceeds max size
+            max_size <- values$p_list_cache_max_size
+            if (is.null(max_size)) max_size <- 10
+            while (length(values$p_list_cache_order) > max_size) {
+              oldest_hash <- values$p_list_cache_order[1]
+              values$p_list_cache[[oldest_hash]] <- NULL
+              values$p_list_cache_order <- values$p_list_cache_order[-1]
+              cat(file=stderr(), sprintf("[PERF-CACHE] Evicted oldest cache entry (hash: %s)\n",
+                                         substr(oldest_hash, 1, 8)))
+            }
+
+            cat(file=stderr(), sprintf("[PERF-CACHE] Stored in multi-cache (hash: %s, %d/%d entries, classification: %s)\n",
+                                       substr(new_hash, 1, 8),
+                                       length(values$p_list_cache_order), max_size,
+                                       values$cached_classification_column))
+          } else {
+            cat(file=stderr(), sprintf("[PERF-CACHE] Stored cache (hash: %s, classification: %s)\n",
+                                       substr(values$cached_p_list_hash, 1, 8),
+                                       values$cached_classification_column))
+          }
         }
       }
 
@@ -18796,7 +18964,22 @@ server <- function(input, output, session) {
           grid_size = if (!is.null(cfg$grid_size)) cfg$grid_size else 0.5,
           # S1.62dev: Discrete custom color settings (were missing from export)
           custom_discrete = if (!is.null(cfg$custom_discrete) && cfg$custom_discrete) "yes" else "no",
-          custom_colors = if (!is.null(cfg$custom_colors) && length(cfg$custom_colors) > 0) cfg$custom_colors else list()
+          custom_colors = if (!is.null(cfg$custom_colors) && length(cfg$custom_colors) > 0) cfg$custom_colors else list(),
+          # S2.8: Row line settings (horizontal lines) - were missing from export
+          show_row_lines = if (!is.null(cfg$show_row_lines) && cfg$show_row_lines) "yes" else "no",
+          row_line_color = if (!is.null(cfg$row_line_color)) cfg$row_line_color else "#000000",
+          row_line_size = if (!is.null(cfg$row_line_size)) cfg$row_line_size else 0.5,
+          # S2.8: Column line settings (vertical lines) - were missing from export
+          show_col_lines = if (!is.null(cfg$show_col_lines) && cfg$show_col_lines) "yes" else "no",
+          col_line_color = if (!is.null(cfg$col_line_color)) cfg$col_line_color else "#000000",
+          col_line_size = if (!is.null(cfg$col_line_size)) cfg$col_line_size else 0.5,
+          # S2.8: RData heatmap settings - were missing from export
+          data_source = if (!is.null(cfg$data_source)) cfg$data_source else "csv",
+          rdata_mapping_column = if (!is.null(cfg$rdata_mapping_column)) cfg$rdata_mapping_column else "",
+          # S2.8: WGD normalization settings - were missing from export
+          cnv_wgd_norm = if (!is.null(cfg$cnv_wgd_norm) && cfg$cnv_wgd_norm) "yes" else "no",
+          cnv_wgd_per_cell = if (!is.null(cfg$cnv_wgd_per_cell) && cfg$cnv_wgd_per_cell) "yes" else "no",
+          cnv_wgd_column = if (!is.null(cfg$cnv_wgd_column)) cfg$cnv_wgd_column else ""
         )
       }
     }
@@ -18949,6 +19132,15 @@ server <- function(input, output, session) {
           # S1.62dev: Fixed - read from rotation2_config instead of rotation_settings$secondary
           according = if (!is.null(values$rotation2_config) && length(values$rotation2_config) > 0) {
             lapply(values$rotation2_config, function(r) list(col = r$col, val = r$val))
+          } else list()
+        ),
+        "manual_rotation" = list(
+          display = if (!is.null(input$enable_rotation) && input$enable_rotation &&
+                        !is.null(input$rotation_type) && input$rotation_type == "manual" &&
+                        !is.null(values$manual_rotation_config) && length(values$manual_rotation_config) > 0) "yes" else "no",
+          nodes = if (!is.null(values$manual_rotation_config) && length(values$manual_rotation_config) > 0 &&
+                      !all(is.na(values$manual_rotation_config))) {
+            as.list(values$manual_rotation_config)
           } else list()
         ),
         "trim tips" = list(
