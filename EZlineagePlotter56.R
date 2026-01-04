@@ -6578,13 +6578,10 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
                 width = tile_width,
                 height = tile_height_detailed,
                 inherit.aes = FALSE
-              ) + scale_fill_identity(
-                guide = guide_legend(title = heatmap_title),
-                labels = NULL
-              )
+              ) + scale_fill_identity(guide = "none")  # No legend for identity scale
 
-              # Add a proper legend using a gradient colorbar
-              # Create dummy data for legend
+              # Add a proper gradient legend using invisible points
+              # This creates a continuous colorbar legend that matches the pre-computed colors
               legend_df <- data.frame(
                 x = rep(min(tile_df$x), 5),
                 y = rep(min(tile_df$y), 5),
@@ -11959,10 +11956,13 @@ server <- function(input, output, session) {
               heatmap_item[[as.character(j)]]$cnv_wgd_column <- if (!is.null(heatmap_entry$cnv_wgd_column)) heatmap_entry$cnv_wgd_column else ""
               # S2.8: Display mode (basic or detailed)
               heatmap_item[[as.character(j)]]$cnv_display_mode <- if (!is.null(heatmap_entry$cnv_display_mode)) heatmap_entry$cnv_display_mode else "basic"
+              # Height scale for detailed mode
+              heatmap_item[[as.character(j)]]$cnv_height_scale <- if (!is.null(heatmap_entry$cnv_height_scale)) heatmap_entry$cnv_height_scale else 1.0
               # S2.0: Store mapping column for sample name matching
               heatmap_item[[as.character(j)]]$rdata_mapping_column <- heatmap_entry$rdata_mapping_column
               debug_cat(paste0("    S2.0-RDATA: RData heatmap, mapping_column=", heatmap_entry$rdata_mapping_column, "\n"))
               debug_cat(paste0("    S2.12: Per-cell WGD: enabled=", heatmap_entry$cnv_wgd_per_cell, ", column=", heatmap_entry$cnv_wgd_column, "\n"))
+              debug_cat(paste0("    Height scale: ", heatmap_entry$cnv_height_scale, "\n"))
               debug_cat(paste0("    S2.8: Display mode: ", heatmap_entry$cnv_display_mode, "\n"))
             } else {
               heatmap_item[[as.character(j)]]$data_source <- "csv"
@@ -12221,11 +12221,14 @@ server <- function(input, output, session) {
             heatmap_item[[as.character(j)]]$cnv_wgd_column <- if (!is.null(heatmap_entry$cnv_wgd_column)) heatmap_entry$cnv_wgd_column else ""
             # S2.8: Display mode (basic or detailed)
             heatmap_item[[as.character(j)]]$cnv_display_mode <- if (!is.null(heatmap_entry$cnv_display_mode)) heatmap_entry$cnv_display_mode else "basic"
+            # Height scale for detailed mode
+            heatmap_item[[as.character(j)]]$cnv_height_scale <- if (!is.null(heatmap_entry$cnv_height_scale)) heatmap_entry$cnv_height_scale else 1.0
             # S2.0: Store mapping column for sample name matching
             heatmap_item[[as.character(j)]]$rdata_mapping_column <- heatmap_entry$rdata_mapping_column
             debug_cat(paste0("    S2.0: RData heatmap, mapping_column=", heatmap_entry$rdata_mapping_column, "\n"))
             debug_cat(paste0("    S2.12: Per-cell WGD: enabled=", heatmap_entry$cnv_wgd_per_cell, ", column=", heatmap_entry$cnv_wgd_column, "\n"))
             debug_cat(paste0("    S2.8: Display mode: ", heatmap_entry$cnv_display_mode, "\n"))
+            debug_cat(paste0("    Height scale: ", heatmap_entry$cnv_height_scale, "\n"))
           } else {
             heatmap_item[[as.character(j)]]$data_source <- "csv"
             # Add columns - format must match expected YAML structure
