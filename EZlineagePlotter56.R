@@ -6490,75 +6490,117 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
           cat(file=stderr(), paste0("[S2.8-DEBUG] is_rdata_detailed: ", is_rdata_detailed, "\n"))
 
           if (is_rdata_detailed) {
-            debug_cat(paste0("\n=== S2.8: DETAILED MODE (geom_tile with fine-grained colors) ===\n"))
-            cat(file=stderr(), "[HEATMAP-RENDER] Using DETAILED mode with geom_tile + 1998-color palette\n")
+            debug_cat(paste0("\n=== S2.8: DETAILED MODE (raster image like pheatmap) ===\n"))
+            cat(file=stderr(), "[HEATMAP-RENDER] Using DETAILED mode with annotation_raster (pheatmap-style)\n")
 
-            # For detailed mode, we use geom_tile with a fine-grained color palette (1998 colors)
-            # geom_tile handles irregular grids correctly (tree tips are not evenly spaced)
-            # The detailed look comes from the rich color palette, not interpolation
+            # For detailed mode, we render the heatmap as a raster image like pheatmap does
+            # This gives pixel-perfect cell rendering without vector artifacts
 
-            p_with_tiles <- p + geom_tile(
-              data = tile_df,
-              aes(x = x, y = y, fill = value),
-              width = tile_width,
-              height = tile_height,
-              inherit.aes = FALSE
-            )
-
-            # S2.8: Use a fine-grained color palette like pheatmap (1998 colors)
-            # pheatmap uses: colorRampPalette(c("blue", "white", "red"))(1998)
-            # with breaks centered at the neutral value
+            # Get color parameters
             low_color <- if (!is.null(heat_param[['low']]) && !is.na(heat_param[['low']])) heat_param[['low']] else "#FF0000"
             mid_color <- if (!is.null(heat_param[['mid']]) && !is.na(heat_param[['mid']])) heat_param[['mid']] else "#FFFFFF"
             high_color <- if (!is.null(heat_param[['high']]) && !is.na(heat_param[['high']])) heat_param[['high']] else "#0000FF"
             midpoint <- if (!is.null(heat_param[['midpoint']]) && !is.na(heat_param[['midpoint']])) as.numeric(heat_param[['midpoint']]) else 2
+            na_color <- if (!is.null(heat_param[['na_color']])) heat_param[['na_color']] else "grey90"
 
             debug_cat(paste0("  S2.8 Detailed colors: low=", low_color, ", mid=", mid_color, ", high=", high_color, "\n"))
             debug_cat(paste0("  S2.8 Detailed midpoint: ", midpoint, "\n"))
 
-            # Create fine-grained color palette like pheatmap (999 colors each side of midpoint)
+            # Create fine-grained color palette like pheatmap (1998 colors)
             colors_below <- colorRampPalette(c(low_color, mid_color))(999)
-            colors_above <- colorRampPalette(c(mid_color, high_color))(1000)[-1]  # Remove duplicate midpoint
-            detailed_colors <- c(colors_below, colors_above)
+            colors_above <- colorRampPalette(c(mid_color, high_color))(1000)[-1]
+            detailed_palette <- c(colors_below, colors_above)
 
-            # Get data range for proper scaling
-            data_values <- tile_df$value[!is.na(tile_df$value)]
+            # Get the CNV matrix in tree tip order
+            # heat_data should already be ordered by tree tips (rownames = tip labels)
+            # We need to reorder to match the y-positions in the tree
+            tip_order <- order(tip_data$y[match(rownames(heat_data), tip_data$label)])
+            ordered_matrix <- as.matrix(heat_data[tip_order, , drop = FALSE])
+
+            debug_cat(paste0("  S2.8 Matrix dimensions: ", nrow(ordered_matrix), " rows x ", ncol(ordered_matrix), " cols\n"))
+
+            # Calculate value range and create breaks centered at midpoint
+            data_values <- as.numeric(ordered_matrix[!is.na(ordered_matrix)])
             if (length(data_values) > 0) {
               data_min <- min(data_values, na.rm = TRUE)
               data_max <- max(data_values, na.rm = TRUE)
 
-              # Create breaks centered at midpoint, spanning the data range
-              # Extend slightly beyond data range for clean edges
               range_below <- midpoint - min(data_min, 0)
               range_above <- max(data_max, midpoint + 2) - midpoint
-              max_range <- max(range_below, range_above, 2)  # At least 2 units each side
+              max_range <- max(range_below, range_above, 2)
 
-              breaks_below <- seq(midpoint - max_range, midpoint - 0.001, length.out = 999)
-              breaks_above <- seq(midpoint, midpoint + max_range, length.out = 1000)
-              detailed_breaks <- c(breaks_below, breaks_above)
+              value_min <- midpoint - max_range
+              value_max <- midpoint + max_range
 
               debug_cat(paste0("  S2.8 Data range: [", round(data_min, 2), ", ", round(data_max, 2), "]\n"))
-              debug_cat(paste0("  S2.8 Break range: [", round(min(detailed_breaks), 2), ", ", round(max(detailed_breaks), 2), "]\n"))
+              debug_cat(paste0("  S2.8 Color range: [", round(value_min, 2), ", ", round(value_max, 2), "]\n"))
 
-              na_color <- if (!is.null(heat_param[['na_color']])) heat_param[['na_color']] else "grey90"
+              # Map values to colors (like pheatmap does)
+              # Normalize values to 0-1 range, then map to palette indices
+              normalized <- (ordered_matrix - value_min) / (value_max - value_min)
+              normalized[normalized < 0] <- 0
+              normalized[normalized > 1] <- 1
 
-              p_with_tiles <- p_with_tiles + scale_fill_gradientn(
-                colors = detailed_colors,
-                values = scales::rescale(detailed_breaks),
-                limits = c(min(detailed_breaks), max(detailed_breaks)),
-                oob = scales::squish,  # Squish out-of-bounds values to limits
-                name = heatmap_title,
-                na.value = na_color
+              # Convert to color indices (1 to 1998)
+              color_indices <- round(normalized * (length(detailed_palette) - 1)) + 1
+              color_indices[is.na(color_indices)] <- NA
+
+              # Create color matrix
+              color_matrix <- matrix(detailed_palette[color_indices], nrow = nrow(ordered_matrix), ncol = ncol(ordered_matrix))
+              color_matrix[is.na(ordered_matrix)] <- na_color
+
+              # Calculate raster position in plot coordinates
+              # The heatmap should span from current_heatmap_x_start + offset to the end of heatmap columns
+              x_start <- current_heatmap_x_start + heatmap_offset
+              x_end <- x_start + ncol(ordered_matrix) * tile_width
+
+              # Y positions: from min tip y to max tip y
+              y_positions <- tip_data$y[match(rownames(heat_data)[tip_order], tip_data$label)]
+              y_min <- min(y_positions) - tile_height / 2
+              y_max <- max(y_positions) + tile_height / 2
+
+              debug_cat(paste0("  S2.8 Raster position: x=[", round(x_start, 3), ", ", round(x_end, 3), "], y=[", round(y_min, 3), ", ", round(y_max, 3), "]\n"))
+
+              # annotation_raster expects the image as a raster object
+              # Rows go from bottom to top, so we need to flip the matrix
+              raster_img <- as.raster(color_matrix[nrow(color_matrix):1, , drop = FALSE])
+
+              # Add the raster image to the plot
+              p_with_tiles <- p + annotation_raster(
+                raster_img,
+                xmin = x_start, xmax = x_end,
+                ymin = y_min, ymax = y_max,
+                interpolate = FALSE  # Sharp pixels, no smoothing
               )
 
-              debug_cat(paste0("  S2.8 Added detailed color scale with ", length(detailed_colors), " colors\n"))
+              # Add a dummy geom for the legend (annotation_raster doesn't create legends)
+              # Create a small invisible layer with the fill scale
+              dummy_df <- data.frame(x = x_start, y = y_min, value = midpoint)
+              p_with_tiles <- p_with_tiles +
+                geom_point(data = dummy_df, aes(x = x, y = y, fill = value),
+                           alpha = 0, shape = 22, inherit.aes = FALSE) +
+                scale_fill_gradientn(
+                  colors = detailed_palette,
+                  limits = c(value_min, value_max),
+                  name = heatmap_title,
+                  na.value = na_color
+                )
+
+              debug_cat(paste0("  S2.8 Added raster heatmap with ", length(detailed_palette), " colors\n"))
             } else {
-              # Fallback to simple gradient if no data
-              p_with_tiles <- p_with_tiles + scale_fill_gradient2(
+              # Fallback to basic geom_tile if no data
+              debug_cat("  S2.8 WARNING: No valid data values, falling back to basic mode\n")
+              p_with_tiles <- p + geom_tile(
+                data = tile_df,
+                aes(x = x, y = y, fill = value),
+                width = tile_width,
+                height = tile_height,
+                inherit.aes = FALSE
+              ) + scale_fill_gradient2(
                 low = low_color, mid = mid_color, high = high_color,
                 midpoint = midpoint,
                 name = heatmap_title,
-                na.value = "grey90"
+                na.value = na_color
               )
             }
 
