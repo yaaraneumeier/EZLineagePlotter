@@ -6509,7 +6509,8 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             # For detailed mode, we use geom_tile with pre-computed colors like pheatmap
             # This ensures each tile is at the exact tip y-coordinate while having pheatmap-style coloring
 
-            # Get height scale for detailed mode (allows compressing the heatmap vertically)
+            # Get height scale for detailed mode (allows making the heatmap shorter)
+            # Note: Due to 90-degree rotation, "height" on screen = tile_width in code
             height_scale <- if (!is.null(heat_param[['cnv_height_scale']]) && !is.na(heat_param[['cnv_height_scale']])) {
               as.numeric(heat_param[['cnv_height_scale']])
             } else {
@@ -6517,9 +6518,9 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             }
             cat(file=stderr(), paste0("[S2.8-DETAILED] Height scale: ", height_scale, "\n"))
 
-            # Apply height scale to tile_height for detailed mode
-            tile_height_detailed <- tile_height * height_scale
-            cat(file=stderr(), paste0("[S2.8-DETAILED] Adjusted tile_height: ", tile_height_detailed, " (original: ", tile_height, ")\n"))
+            # Apply height scale to tile_width for detailed mode (controls heatmap "height" on screen)
+            tile_width_detailed <- tile_width * height_scale
+            cat(file=stderr(), paste0("[S2.8-DETAILED] Adjusted tile_width: ", tile_width_detailed, " (original: ", tile_width, ")\n"))
 
             # Get color parameters
             low_color <- if (!is.null(heat_param[['low']]) && !is.na(heat_param[['low']])) heat_param[['low']] else "#FF0000"
@@ -6575,12 +6576,12 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
               # Use geom_tile with pre-computed colors and scale_fill_identity
               # This positions each tile at exact tip y-coordinates
-              # Use tile_height_detailed (scaled by height_scale) for detailed mode
+              # Use tile_width_detailed (scaled by height_scale) to control heatmap "height" on screen
               p_with_tiles <- p + geom_tile(
                 data = tile_df,
                 aes(x = x, y = y, fill = fill_color),
-                width = tile_width,
-                height = tile_height_detailed,
+                width = tile_width_detailed,
+                height = tile_height,
                 inherit.aes = FALSE
               ) + scale_fill_identity(guide = "none")  # No legend for identity scale
 
@@ -6610,8 +6611,8 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
               p_with_tiles <- p + geom_tile(
                 data = tile_df,
                 aes(x = x, y = y, fill = value),
-                width = tile_width,
-                height = tile_height_detailed,
+                width = tile_width_detailed,
+                height = tile_height,
                 inherit.aes = FALSE
               ) + scale_fill_gradient2(
                 low = low_color, mid = mid_color, high = high_color,
@@ -14417,13 +14418,13 @@ server <- function(input, output, session) {
           ),
           column(4,
                  sliderInput(paste0("heatmap_height_", i), "Row Height",
-                             min = 0.1, max = 3.0,
+                             min = 0.01, max = 3.0,
                              value = if (!is.null(cfg$height)) cfg$height else 0.8,
-                             step = 0.1)
+                             step = 0.01)
           ),
           column(4,
-                 sliderInput(paste0("heatmap_row_height_", i), "Row Height",
-                             min = 0.1, max = 3.0,
+                 sliderInput(paste0("heatmap_row_height_", i), "Column Width",
+                             min = 0.5, max = 3.0,
                              value = if (!is.null(cfg$row_height)) cfg$row_height else 1.0,
                              step = 0.1)
           )
