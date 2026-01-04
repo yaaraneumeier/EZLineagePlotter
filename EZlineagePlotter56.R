@@ -6502,7 +6502,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             p_with_tiles <- p + geom_raster(
               data = tile_df,
               aes(x = x, y = y, fill = value),
-              interpolate = TRUE,  # Smooth interpolation like pheatmap
+              interpolate = FALSE,  # Sharp cell edges like pheatmap
               inherit.aes = FALSE
             )
 
