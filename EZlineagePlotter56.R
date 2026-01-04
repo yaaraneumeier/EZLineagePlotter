@@ -6517,6 +6517,15 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             tip_order <- order(tip_data$y[match(rownames(heat_data), tip_data$label)])
             ordered_matrix <- as.matrix(heat_data[tip_order, , drop = FALSE])
 
+            # S2.8: Enhanced debug logging for matrix dimensions
+            cat(file=stderr(), paste0("[S2.8-MATRIX] heat_data dimensions: ", nrow(heat_data), " rows x ", ncol(heat_data), " cols\n"))
+            cat(file=stderr(), paste0("[S2.8-MATRIX] Number of tree tips in tip_data: ", nrow(tip_data), "\n"))
+            cat(file=stderr(), paste0("[S2.8-MATRIX] ordered_matrix dimensions: ", nrow(ordered_matrix), " rows x ", ncol(ordered_matrix), " cols\n"))
+            cat(file=stderr(), paste0("[S2.8-MATRIX] heat_data rownames (first 5): ", paste(head(rownames(heat_data), 5), collapse=", "), "\n"))
+            cat(file=stderr(), paste0("[S2.8-MATRIX] tip_data labels (first 5): ", paste(head(tip_data$label, 5), collapse=", "), "\n"))
+            cat(file=stderr(), paste0("[S2.8-MATRIX] tip_data y range: [", min(tip_data$y), ", ", max(tip_data$y), "]\n"))
+            cat(file=stderr(), paste0("[S2.8-MATRIX] tip_order (first 10): ", paste(head(tip_order, 10), collapse=", "), "\n"))
+
             debug_cat(paste0("  S2.8 Matrix dimensions: ", nrow(ordered_matrix), " rows x ", ncol(ordered_matrix), " cols\n"))
 
             # Calculate value range and create breaks centered at midpoint
@@ -6559,11 +6568,18 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
               y_min <- min(y_positions) - tile_height / 2
               y_max <- max(y_positions) + tile_height / 2
 
+              cat(file=stderr(), paste0("[S2.8-RASTER] y_positions length: ", length(y_positions), "\n"))
+              cat(file=stderr(), paste0("[S2.8-RASTER] y_positions (first 10): ", paste(head(round(y_positions, 2), 10), collapse=", "), "\n"))
+              cat(file=stderr(), paste0("[S2.8-RASTER] y_min: ", round(y_min, 3), ", y_max: ", round(y_max, 3), "\n"))
+              cat(file=stderr(), paste0("[S2.8-RASTER] color_matrix dimensions: ", nrow(color_matrix), " rows x ", ncol(color_matrix), " cols\n"))
+              cat(file=stderr(), paste0("[S2.8-RASTER] tile_height: ", tile_height, "\n"))
+
               debug_cat(paste0("  S2.8 Raster position: x=[", round(x_start, 3), ", ", round(x_end, 3), "], y=[", round(y_min, 3), ", ", round(y_max, 3), "]\n"))
 
               # annotation_raster expects the image as a raster object
               # Rows go from bottom to top, so we need to flip the matrix
               raster_img <- as.raster(color_matrix[nrow(color_matrix):1, , drop = FALSE])
+              cat(file=stderr(), paste0("[S2.8-RASTER] raster_img dimensions: ", nrow(raster_img), " rows x ", ncol(raster_img), " cols\n"))
 
               # Add the raster image to the plot
               p_with_tiles <- p + annotation_raster(
