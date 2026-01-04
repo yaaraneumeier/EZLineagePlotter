@@ -4065,7 +4065,15 @@ func.print.lineage.tree <- function(conf_yaml_path,
               }
             }
 
-
+            # S2.8: Add data_source and cnv_display_mode for RData detailed rendering
+            if ('data_source' %in% names(heat_map_i_def)) {
+              param[['data_source']] <- heat_map_i_def[['data_source']]
+              cat(file=stderr(), paste0("[S2.8-PARAM] Setting data_source to: ", heat_map_i_def[['data_source']], "\n"))
+            }
+            if ('cnv_display_mode' %in% names(heat_map_i_def)) {
+              param[['cnv_display_mode']] <- heat_map_i_def[['cnv_display_mode']]
+              cat(file=stderr(), paste0("[S2.8-PARAM] Setting cnv_display_mode to: ", heat_map_i_def[['cnv_display_mode']], "\n"))
+            }
 
             heat_display_params_list[[indx_for_sav]] <- param
             # print("B12")
@@ -6470,10 +6478,16 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
           }
 
           # S2.8: Check for RData detailed display mode
+          cat(file=stderr(), paste0("[S2.8-DEBUG] heat_param data_source: ",
+              ifelse(!is.null(heat_param[['data_source']]), heat_param[['data_source']], "NULL"), "\n"))
+          cat(file=stderr(), paste0("[S2.8-DEBUG] heat_param cnv_display_mode: ",
+              ifelse(!is.null(heat_param[['cnv_display_mode']]), heat_param[['cnv_display_mode']], "NULL"), "\n"))
+
           is_rdata_detailed <- !is.null(heat_param[['data_source']]) &&
                                heat_param[['data_source']] == "rdata" &&
                                !is.null(heat_param[['cnv_display_mode']]) &&
                                heat_param[['cnv_display_mode']] == "detailed"
+          cat(file=stderr(), paste0("[S2.8-DEBUG] is_rdata_detailed: ", is_rdata_detailed, "\n"))
 
           if (is_rdata_detailed) {
             debug_cat(paste0("\n=== S2.8: DETAILED MODE (geom_raster like pheatmap) ===\n"))
