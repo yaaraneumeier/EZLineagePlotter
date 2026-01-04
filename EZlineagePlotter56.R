@@ -609,7 +609,7 @@ parse_yaml_config <- function(file_path) {
 #   - chr_info: chromosome information for each position (if available)
 #   - position_info: start/end positions (if available)
 #   - error: error message if failed (NULL if success)
-func.extract.cnv.from.rdata <- function(rdata_path, downsample_factor = 10) {
+func.extract.cnv.from.rdata <- function(rdata_path, downsample_factor = 5) {
   tryCatch({
     # Load RData into a new environment to avoid polluting global namespace
     env <- new.env()
@@ -4094,11 +4094,16 @@ func.print.lineage.tree <- function(conf_yaml_path,
               # Note: cnv_matrix doesn't serialize properly to YAML, so we pass it as a parameter
               if (!is.null(rdata_cnv_matrix)) {
                 # Apply downsampling if specified in heatmap config
-                cnv_downsample <- if ('cnv_downsample' %in% names(heat_map_i_def)) {
+                # Default is 0 (no additional downsampling during render)
+                # Check for new field name first, fall back to old name for backwards compatibility
+                cnv_downsample <- if ('cnv_render_downsample' %in% names(heat_map_i_def)) {
+                  as.numeric(heat_map_i_def$cnv_render_downsample)
+                } else if ('cnv_downsample' %in% names(heat_map_i_def)) {
                   as.numeric(heat_map_i_def$cnv_downsample)
                 } else {
-                  10
+                  0
                 }
+                cat(file=stderr(), paste0("[RDATA-CNV] Using render downsample factor: ", cnv_downsample, "\n"))
 
                 # Apply downsampling
                 cnv_data <- rdata_cnv_matrix
@@ -8741,6 +8746,11 @@ ui <- dashboardPage(
               condition = "output.files_loaded == 'TRUE'",
               fileInput("rdata_file", "Choose RData CNV File",
                         accept = c(".RData", ".rdata", ".Rdata")),
+              numericInput("rdata_import_downsample",
+                          "Import Downsample Factor",
+                          value = 5, min = 1, max = 100, step = 1),
+              tags$small(style = "color: #666; margin-top: -10px; display: block; margin-bottom: 10px;",
+                        "Reduces genomic positions during import. 1 = keep all, 5 = keep every 5th position."),
               verbatimTextOutput("rdata_import_status")
             ),
             conditionalPanel(
@@ -10194,7 +10204,10 @@ server <- function(input, output, session) {
     }
 
     # Extract CNV data from RData file
-    result <- func.extract.cnv.from.rdata(input$rdata_file$datapath, downsample_factor = 10)
+    # Use user-specified downsample factor (default 5) from UI input
+    import_downsample <- if (!is.null(input$rdata_import_downsample)) input$rdata_import_downsample else 5
+    cat(file=stderr(), paste0("[RDATA-IMPORT] Using import downsample factor: ", import_downsample, "\n"))
+    result <- func.extract.cnv.from.rdata(input$rdata_file$datapath, downsample_factor = import_downsample)
 
     if (!is.null(result$error)) {
       cat(file=stderr(), "[RDATA-IMPORT] ERROR:", result$error, "\n")
@@ -10848,7 +10861,9 @@ server <- function(input, output, session) {
           cnv_wgd_per_cell = if (!is.null(h$cnv_wgd_per_cell)) func.check.bin.val.from.conf(h$cnv_wgd_per_cell) else FALSE,
           cnv_wgd_column = if (!is.null(h$cnv_wgd_column)) h$cnv_wgd_column else "",
           # S2.8: Import display mode (basic or detailed)
-          cnv_display_mode = if (!is.null(h$cnv_display_mode)) h$cnv_display_mode else "basic"
+          cnv_display_mode = if (!is.null(h$cnv_display_mode)) h$cnv_display_mode else "basic",
+          # Render downsample factor (second stage, 0 = keep all)
+          cnv_render_downsample = if (!is.null(h$cnv_render_downsample)) as.numeric(h$cnv_render_downsample) else 0
         )
         values$heatmap_configs <- c(values$heatmap_configs, list(new_config))
 
@@ -10925,7 +10940,9 @@ server <- function(input, output, session) {
           cnv_wgd_per_cell = if (!is.null(cfg$cnv_wgd_per_cell)) cfg$cnv_wgd_per_cell else FALSE,
           cnv_wgd_column = if (!is.null(cfg$cnv_wgd_column)) cfg$cnv_wgd_column else "",
           # S2.8: Display mode (basic or detailed)
-          cnv_display_mode = if (!is.null(cfg$cnv_display_mode)) cfg$cnv_display_mode else "basic"
+          cnv_display_mode = if (!is.null(cfg$cnv_display_mode)) cfg$cnv_display_mode else "basic",
+          # Render downsample factor (second stage, 0 = keep all)
+          cnv_render_downsample = if (!is.null(cfg$cnv_render_downsample)) cfg$cnv_render_downsample else 0
         )
       })
       # Remove NULL entries (configs without columns)
@@ -11913,7 +11930,8 @@ server <- function(input, output, session) {
               heatmap_item[[as.character(j)]]$data_source <- "rdata"
               heatmap_item[[as.character(j)]]$use_midpoint <- "yes"  # Always use midpoint for CNV
               # Store CNV settings (but NOT the matrix itself - that's passed separately)
-              heatmap_item[[as.character(j)]]$cnv_downsample <- if (!is.null(heatmap_entry$cnv_downsample)) heatmap_entry$cnv_downsample else 10
+              heatmap_item[[as.character(j)]]$cnv_downsample <- if (!is.null(heatmap_entry$cnv_downsample)) heatmap_entry$cnv_downsample else 0
+              heatmap_item[[as.character(j)]]$cnv_render_downsample <- if (!is.null(heatmap_entry$cnv_render_downsample)) heatmap_entry$cnv_render_downsample else 0
               heatmap_item[[as.character(j)]]$cnv_wgd_norm <- if (!is.null(heatmap_entry$cnv_wgd_norm) && heatmap_entry$cnv_wgd_norm) "yes" else "no"
               # S2.12: Per-cell WGD normalization settings
               heatmap_item[[as.character(j)]]$cnv_wgd_per_cell <- if (!is.null(heatmap_entry$cnv_wgd_per_cell) && heatmap_entry$cnv_wgd_per_cell) "yes" else "no"
@@ -12174,7 +12192,8 @@ server <- function(input, output, session) {
             heatmap_item[[as.character(j)]]$data_source <- "rdata"
             heatmap_item[[as.character(j)]]$use_midpoint <- "yes"  # Always use midpoint for CNV
             # Store CNV settings (but NOT the matrix itself - that's passed separately)
-            heatmap_item[[as.character(j)]]$cnv_downsample <- if (!is.null(heatmap_entry$cnv_downsample)) heatmap_entry$cnv_downsample else 10
+            heatmap_item[[as.character(j)]]$cnv_downsample <- if (!is.null(heatmap_entry$cnv_downsample)) heatmap_entry$cnv_downsample else 0
+            heatmap_item[[as.character(j)]]$cnv_render_downsample <- if (!is.null(heatmap_entry$cnv_render_downsample)) heatmap_entry$cnv_render_downsample else 0
             heatmap_item[[as.character(j)]]$cnv_wgd_norm <- if (!is.null(heatmap_entry$cnv_wgd_norm) && heatmap_entry$cnv_wgd_norm) "yes" else "no"
             # S2.12: Per-cell WGD normalization settings
             heatmap_item[[as.character(j)]]$cnv_wgd_per_cell <- if (!is.null(heatmap_entry$cnv_wgd_per_cell) && heatmap_entry$cnv_wgd_per_cell) "yes" else "no"
@@ -14238,6 +14257,23 @@ server <- function(input, output, session) {
                    )
             )
           ),
+          # Render downsample factor (second stage downsampling)
+          fluidRow(
+            column(6,
+                   numericInput(paste0("heatmap_cnv_render_downsample_", i),
+                               "Render Downsample Factor",
+                               value = if (!is.null(cfg$cnv_render_downsample)) cfg$cnv_render_downsample else 0,
+                               min = 0, max = 100, step = 1)
+            ),
+            column(6,
+                   tags$div(
+                     style = "padding-top: 25px;",
+                     tags$small(class = "text-muted",
+                                icon("info-circle"),
+                                " 0 = keep all, N > 1 = keep every Nth position during render")
+                   )
+            )
+          ),
           # S2.0: Sample mapping column selector (shown when auto-match fails)
           fluidRow(
             column(12,
@@ -14586,7 +14622,8 @@ server <- function(input, output, session) {
       mid_color = "#FFFF99",
       midpoint = 0,
       # S1.62dev: CNV-specific settings
-      cnv_downsample = 10,
+      cnv_downsample = 0,  # Kept for YAML compatibility
+      cnv_render_downsample = 0,  # Second stage downsampling (0 = no downsampling)
       cnv_wgd_norm = FALSE,
       # S2.12: Per-cell WGD normalization settings
       cnv_wgd_per_cell = FALSE,
@@ -14794,6 +14831,15 @@ server <- function(input, output, session) {
           values$heatmap_configs[[i]]$cnv_display_mode <- input[[paste0("heatmap_cnv_display_mode_", i)]]
           cat(file=stderr(), paste0("[HEATMAP-CONFIG] Heatmap ", i, " display mode changed to: ",
                                     input[[paste0("heatmap_cnv_display_mode_", i)]], "\n"))
+        }
+      }, ignoreInit = TRUE)
+
+      # Render downsample factor change (second stage downsampling)
+      observeEvent(input[[paste0("heatmap_cnv_render_downsample_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          values$heatmap_configs[[i]]$cnv_render_downsample <- input[[paste0("heatmap_cnv_render_downsample_", i)]]
+          cat(file=stderr(), paste0("[HEATMAP-CONFIG] Heatmap ", i, " render downsample changed to: ",
+                                    input[[paste0("heatmap_cnv_render_downsample_", i)]], "\n"))
         }
       }, ignoreInit = TRUE)
 
@@ -16348,8 +16394,10 @@ server <- function(input, output, session) {
         }
 
         # Get CNV settings - these will be stored and applied later in func.print.lineage.tree
-        cnv_downsample <- input[[paste0("heatmap_cnv_downsample_", i)]]
-        if (is.null(cnv_downsample)) cnv_downsample <- 10
+        # Use new field name, but keep old one for backwards compatibility
+        cnv_render_downsample <- input[[paste0("heatmap_cnv_render_downsample_", i)]]
+        if (is.null(cnv_render_downsample)) cnv_render_downsample <- 0
+        cnv_downsample <- cnv_render_downsample  # For backwards compatibility
         cnv_wgd_norm <- input[[paste0("heatmap_cnv_wgd_norm_", i)]]
         if (is.null(cnv_wgd_norm)) cnv_wgd_norm <- FALSE
         # S2.12: Per-cell WGD settings
@@ -16384,7 +16432,8 @@ server <- function(input, output, session) {
           is_discrete = FALSE,  # CNV data is always continuous
           data_source = "rdata",
           # Store CNV settings (processing happens in func.print.lineage.tree)
-          cnv_downsample = cnv_downsample,
+          cnv_downsample = cnv_downsample,  # Backwards compatibility
+          cnv_render_downsample = cnv_render_downsample,  # New field name (default 0)
           cnv_wgd_norm = cnv_wgd_norm,
           # S2.12: Per-cell WGD normalization settings
           cnv_wgd_per_cell = cnv_wgd_per_cell,
@@ -19150,7 +19199,9 @@ server <- function(input, output, session) {
           cnv_wgd_per_cell = if (!is.null(cfg$cnv_wgd_per_cell) && cfg$cnv_wgd_per_cell) "yes" else "no",
           cnv_wgd_column = if (!is.null(cfg$cnv_wgd_column)) cfg$cnv_wgd_column else "",
           # S2.8: Display mode (basic or detailed) - for RData heatmaps
-          cnv_display_mode = if (!is.null(cfg$cnv_display_mode)) cfg$cnv_display_mode else "basic"
+          cnv_display_mode = if (!is.null(cfg$cnv_display_mode)) cfg$cnv_display_mode else "basic",
+          # Render downsample factor (second stage, 0 = keep all)
+          cnv_render_downsample = if (!is.null(cfg$cnv_render_downsample)) cfg$cnv_render_downsample else 0
         )
       }
     }
