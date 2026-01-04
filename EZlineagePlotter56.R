@@ -6490,19 +6490,18 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
           cat(file=stderr(), paste0("[S2.8-DEBUG] is_rdata_detailed: ", is_rdata_detailed, "\n"))
 
           if (is_rdata_detailed) {
-            debug_cat(paste0("\n=== S2.8: DETAILED MODE (geom_raster like pheatmap) ===\n"))
-            cat(file=stderr(), "[HEATMAP-RENDER] Using DETAILED mode with geom_raster\n")
+            debug_cat(paste0("\n=== S2.8: DETAILED MODE (geom_tile with fine-grained colors) ===\n"))
+            cat(file=stderr(), "[HEATMAP-RENDER] Using DETAILED mode with geom_tile + 1998-color palette\n")
 
-            # For detailed mode, we use geom_raster which renders as a smooth image
-            # This is more similar to pheatmap's rendering
+            # For detailed mode, we use geom_tile with a fine-grained color palette (1998 colors)
+            # geom_tile handles irregular grids correctly (tree tips are not evenly spaced)
+            # The detailed look comes from the rich color palette, not interpolation
 
-            # geom_raster works best with a regular grid, which our tile_df already is
-            # (each tip has a row for each genomic position)
-
-            p_with_tiles <- p + geom_raster(
+            p_with_tiles <- p + geom_tile(
               data = tile_df,
               aes(x = x, y = y, fill = value),
-              interpolate = FALSE,  # Sharp cell edges like pheatmap
+              width = tile_width,
+              height = tile_height,
               inherit.aes = FALSE
             )
 
