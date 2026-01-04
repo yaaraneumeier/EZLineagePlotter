@@ -6490,11 +6490,11 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
           cat(file=stderr(), paste0("[S2.8-DEBUG] is_rdata_detailed: ", is_rdata_detailed, "\n"))
 
           if (is_rdata_detailed) {
-            debug_cat(paste0("\n=== S2.8: DETAILED MODE (raster image like pheatmap) ===\n"))
-            cat(file=stderr(), "[HEATMAP-RENDER] Using DETAILED mode with annotation_raster (pheatmap-style)\n")
+            debug_cat(paste0("\n=== S2.8: DETAILED MODE (geom_tile with pre-computed colors like pheatmap) ===\n"))
+            cat(file=stderr(), "[HEATMAP-RENDER] Using DETAILED mode with geom_tile + pre-computed colors (pheatmap-style)\n")
 
-            # For detailed mode, we render the heatmap as a raster image like pheatmap does
-            # This gives pixel-perfect cell rendering without vector artifacts
+            # For detailed mode, we use geom_tile with pre-computed colors like pheatmap
+            # This ensures each tile is at the exact tip y-coordinate while having pheatmap-style coloring
 
             # Get color parameters
             low_color <- if (!is.null(heat_param[['low']]) && !is.na(heat_param[['low']])) heat_param[['low']] else "#FF0000"
@@ -6511,25 +6511,13 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             colors_above <- colorRampPalette(c(mid_color, high_color))(1000)[-1]
             detailed_palette <- c(colors_below, colors_above)
 
-            # Get the CNV matrix in tree tip order
-            # heat_data should already be ordered by tree tips (rownames = tip labels)
-            # We need to reorder to match the y-positions in the tree
-            tip_order <- order(tip_data$y[match(rownames(heat_data), tip_data$label)])
-            ordered_matrix <- as.matrix(heat_data[tip_order, , drop = FALSE])
-
             # S2.8: Enhanced debug logging for matrix dimensions
             cat(file=stderr(), paste0("[S2.8-MATRIX] heat_data dimensions: ", nrow(heat_data), " rows x ", ncol(heat_data), " cols\n"))
             cat(file=stderr(), paste0("[S2.8-MATRIX] Number of tree tips in tip_data: ", nrow(tip_data), "\n"))
-            cat(file=stderr(), paste0("[S2.8-MATRIX] ordered_matrix dimensions: ", nrow(ordered_matrix), " rows x ", ncol(ordered_matrix), " cols\n"))
-            cat(file=stderr(), paste0("[S2.8-MATRIX] heat_data rownames (first 5): ", paste(head(rownames(heat_data), 5), collapse=", "), "\n"))
-            cat(file=stderr(), paste0("[S2.8-MATRIX] tip_data labels (first 5): ", paste(head(tip_data$label, 5), collapse=", "), "\n"))
-            cat(file=stderr(), paste0("[S2.8-MATRIX] tip_data y range: [", min(tip_data$y), ", ", max(tip_data$y), "]\n"))
-            cat(file=stderr(), paste0("[S2.8-MATRIX] tip_order (first 10): ", paste(head(tip_order, 10), collapse=", "), "\n"))
+            cat(file=stderr(), paste0("[S2.8-MATRIX] tile_df rows: ", nrow(tile_df), "\n"))
 
-            debug_cat(paste0("  S2.8 Matrix dimensions: ", nrow(ordered_matrix), " rows x ", ncol(ordered_matrix), " cols\n"))
-
-            # Calculate value range and create breaks centered at midpoint
-            data_values <- as.numeric(ordered_matrix[!is.na(ordered_matrix)])
+            # Get data range for color mapping
+            data_values <- tile_df$value[!is.na(tile_df$value)]
             if (length(data_values) > 0) {
               data_min <- min(data_values, na.rm = TRUE)
               data_max <- max(data_values, na.rm = TRUE)
@@ -6544,56 +6532,46 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
               debug_cat(paste0("  S2.8 Data range: [", round(data_min, 2), ", ", round(data_max, 2), "]\n"))
               debug_cat(paste0("  S2.8 Color range: [", round(value_min, 2), ", ", round(value_max, 2), "]\n"))
 
-              # Map values to colors (like pheatmap does)
+              # Pre-compute colors for each tile (like pheatmap does)
               # Normalize values to 0-1 range, then map to palette indices
-              normalized <- (ordered_matrix - value_min) / (value_max - value_min)
-              normalized[normalized < 0] <- 0
-              normalized[normalized > 1] <- 1
+              normalized_values <- (tile_df$value - value_min) / (value_max - value_min)
+              normalized_values[normalized_values < 0] <- 0
+              normalized_values[normalized_values > 1] <- 1
 
               # Convert to color indices (1 to 1998)
-              color_indices <- round(normalized * (length(detailed_palette) - 1)) + 1
-              color_indices[is.na(color_indices)] <- NA
+              color_indices <- round(normalized_values * (length(detailed_palette) - 1)) + 1
 
-              # Create color matrix
-              color_matrix <- matrix(detailed_palette[color_indices], nrow = nrow(ordered_matrix), ncol = ncol(ordered_matrix))
-              color_matrix[is.na(ordered_matrix)] <- na_color
+              # Assign pre-computed colors
+              tile_df$fill_color <- detailed_palette[color_indices]
+              tile_df$fill_color[is.na(tile_df$value)] <- na_color
 
-              # Calculate raster position in plot coordinates
-              # The heatmap should span from current_heatmap_x_start + offset to the end of heatmap columns
-              x_start <- current_heatmap_x_start + heatmap_offset
-              x_end <- x_start + ncol(ordered_matrix) * tile_width
+              cat(file=stderr(), paste0("[S2.8-DETAILED] Pre-computed colors for ", nrow(tile_df), " tiles\n"))
+              cat(file=stderr(), paste0("[S2.8-DETAILED] Unique colors: ", length(unique(tile_df$fill_color)), "\n"))
 
-              # Y positions: from min tip y to max tip y
-              y_positions <- tip_data$y[match(rownames(heat_data)[tip_order], tip_data$label)]
-              y_min <- min(y_positions) - tile_height / 2
-              y_max <- max(y_positions) + tile_height / 2
-
-              cat(file=stderr(), paste0("[S2.8-RASTER] y_positions length: ", length(y_positions), "\n"))
-              cat(file=stderr(), paste0("[S2.8-RASTER] y_positions (first 10): ", paste(head(round(y_positions, 2), 10), collapse=", "), "\n"))
-              cat(file=stderr(), paste0("[S2.8-RASTER] y_min: ", round(y_min, 3), ", y_max: ", round(y_max, 3), "\n"))
-              cat(file=stderr(), paste0("[S2.8-RASTER] color_matrix dimensions: ", nrow(color_matrix), " rows x ", ncol(color_matrix), " cols\n"))
-              cat(file=stderr(), paste0("[S2.8-RASTER] tile_height: ", tile_height, "\n"))
-
-              debug_cat(paste0("  S2.8 Raster position: x=[", round(x_start, 3), ", ", round(x_end, 3), "], y=[", round(y_min, 3), ", ", round(y_max, 3), "]\n"))
-
-              # annotation_raster expects the image as a raster object
-              # Rows go from bottom to top, so we need to flip the matrix
-              raster_img <- as.raster(color_matrix[nrow(color_matrix):1, , drop = FALSE])
-              cat(file=stderr(), paste0("[S2.8-RASTER] raster_img dimensions: ", nrow(raster_img), " rows x ", ncol(raster_img), " cols\n"))
-
-              # Add the raster image to the plot
-              p_with_tiles <- p + annotation_raster(
-                raster_img,
-                xmin = x_start, xmax = x_end,
-                ymin = y_min, ymax = y_max,
-                interpolate = FALSE  # Sharp pixels, no smoothing
+              # Use geom_tile with pre-computed colors and scale_fill_identity
+              # This positions each tile at exact tip y-coordinates
+              p_with_tiles <- p + geom_tile(
+                data = tile_df,
+                aes(x = x, y = y, fill = fill_color),
+                width = tile_width,
+                height = tile_height,
+                inherit.aes = FALSE
+              ) + scale_fill_identity(
+                guide = guide_legend(title = heatmap_title),
+                labels = NULL
               )
 
-              # Add a dummy geom for the legend (annotation_raster doesn't create legends)
-              # Create a small invisible layer with the fill scale
-              dummy_df <- data.frame(x = x_start, y = y_min, value = midpoint)
+              # Add a proper legend using a gradient colorbar
+              # Create dummy data for legend
+              legend_df <- data.frame(
+                x = rep(min(tile_df$x), 5),
+                y = rep(min(tile_df$y), 5),
+                value = seq(value_min, value_max, length.out = 5)
+              )
+
               p_with_tiles <- p_with_tiles +
-                geom_point(data = dummy_df, aes(x = x, y = y, fill = value),
+                ggnewscale::new_scale_fill() +
+                geom_point(data = legend_df, aes(x = x, y = y, fill = value),
                            alpha = 0, shape = 22, inherit.aes = FALSE) +
                 scale_fill_gradientn(
                   colors = detailed_palette,
@@ -6602,7 +6580,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
                   na.value = na_color
                 )
 
-              debug_cat(paste0("  S2.8 Added raster heatmap with ", length(detailed_palette), " colors\n"))
+              debug_cat(paste0("  S2.8 Added geom_tile with ", length(detailed_palette), " pre-computed colors\n"))
             } else {
               # Fallback to basic geom_tile if no data
               debug_cat("  S2.8 WARNING: No valid data values, falling back to basic mode\n")
