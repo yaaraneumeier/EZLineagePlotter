@@ -6469,7 +6469,87 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             p <- p + ggnewscale::new_scale_fill()
           }
 
-          if (show_grid_bool) {
+          # S2.8: Check for RData detailed display mode
+          is_rdata_detailed <- !is.null(heat_param[['data_source']]) &&
+                               heat_param[['data_source']] == "rdata" &&
+                               !is.null(heat_param[['cnv_display_mode']]) &&
+                               heat_param[['cnv_display_mode']] == "detailed"
+
+          if (is_rdata_detailed) {
+            debug_cat(paste0("\n=== S2.8: DETAILED MODE (geom_raster like pheatmap) ===\n"))
+            cat(file=stderr(), "[HEATMAP-RENDER] Using DETAILED mode with geom_raster\n")
+
+            # For detailed mode, we use geom_raster which renders as a smooth image
+            # This is more similar to pheatmap's rendering
+
+            # geom_raster works best with a regular grid, which our tile_df already is
+            # (each tip has a row for each genomic position)
+
+            p_with_tiles <- p + geom_raster(
+              data = tile_df,
+              aes(x = x, y = y, fill = value),
+              interpolate = TRUE,  # Smooth interpolation like pheatmap
+              inherit.aes = FALSE
+            )
+
+            # S2.8: Use a fine-grained color palette like pheatmap (1998 colors)
+            # pheatmap uses: colorRampPalette(c("blue", "white", "red"))(1998)
+            # with breaks centered at the neutral value
+            low_color <- if (!is.null(heat_param[['low']]) && !is.na(heat_param[['low']])) heat_param[['low']] else "#FF0000"
+            mid_color <- if (!is.null(heat_param[['mid']]) && !is.na(heat_param[['mid']])) heat_param[['mid']] else "#FFFFFF"
+            high_color <- if (!is.null(heat_param[['high']]) && !is.na(heat_param[['high']])) heat_param[['high']] else "#0000FF"
+            midpoint <- if (!is.null(heat_param[['midpoint']]) && !is.na(heat_param[['midpoint']])) as.numeric(heat_param[['midpoint']]) else 2
+
+            debug_cat(paste0("  S2.8 Detailed colors: low=", low_color, ", mid=", mid_color, ", high=", high_color, "\n"))
+            debug_cat(paste0("  S2.8 Detailed midpoint: ", midpoint, "\n"))
+
+            # Create fine-grained color palette like pheatmap (999 colors each side of midpoint)
+            colors_below <- colorRampPalette(c(low_color, mid_color))(999)
+            colors_above <- colorRampPalette(c(mid_color, high_color))(1000)[-1]  # Remove duplicate midpoint
+            detailed_colors <- c(colors_below, colors_above)
+
+            # Get data range for proper scaling
+            data_values <- tile_df$value[!is.na(tile_df$value)]
+            if (length(data_values) > 0) {
+              data_min <- min(data_values, na.rm = TRUE)
+              data_max <- max(data_values, na.rm = TRUE)
+
+              # Create breaks centered at midpoint, spanning the data range
+              # Extend slightly beyond data range for clean edges
+              range_below <- midpoint - min(data_min, 0)
+              range_above <- max(data_max, midpoint + 2) - midpoint
+              max_range <- max(range_below, range_above, 2)  # At least 2 units each side
+
+              breaks_below <- seq(midpoint - max_range, midpoint - 0.001, length.out = 999)
+              breaks_above <- seq(midpoint, midpoint + max_range, length.out = 1000)
+              detailed_breaks <- c(breaks_below, breaks_above)
+
+              debug_cat(paste0("  S2.8 Data range: [", round(data_min, 2), ", ", round(data_max, 2), "]\n"))
+              debug_cat(paste0("  S2.8 Break range: [", round(min(detailed_breaks), 2), ", ", round(max(detailed_breaks), 2), "]\n"))
+
+              na_color <- if (!is.null(heat_param[['na_color']])) heat_param[['na_color']] else "grey90"
+
+              p_with_tiles <- p_with_tiles + scale_fill_gradientn(
+                colors = detailed_colors,
+                values = scales::rescale(detailed_breaks),
+                limits = c(min(detailed_breaks), max(detailed_breaks)),
+                oob = scales::squish,  # Squish out-of-bounds values to limits
+                name = heatmap_title,
+                na.value = na_color
+              )
+
+              debug_cat(paste0("  S2.8 Added detailed color scale with ", length(detailed_colors), " colors\n"))
+            } else {
+              # Fallback to simple gradient if no data
+              p_with_tiles <- p_with_tiles + scale_fill_gradient2(
+                low = low_color, mid = mid_color, high = high_color,
+                midpoint = midpoint,
+                name = heatmap_title,
+                na.value = "grey90"
+              )
+            }
+
+          } else if (show_grid_bool) {
             # v115: Draw tiles WITHOUT borders first (to avoid overlapping border issues)
             p_with_tiles <- p + geom_tile(
               data = tile_df,
@@ -10717,7 +10797,9 @@ server <- function(input, output, session) {
           # S2.8: Import WGD normalization settings
           cnv_wgd_norm = if (!is.null(h$cnv_wgd_norm)) func.check.bin.val.from.conf(h$cnv_wgd_norm) else FALSE,
           cnv_wgd_per_cell = if (!is.null(h$cnv_wgd_per_cell)) func.check.bin.val.from.conf(h$cnv_wgd_per_cell) else FALSE,
-          cnv_wgd_column = if (!is.null(h$cnv_wgd_column)) h$cnv_wgd_column else ""
+          cnv_wgd_column = if (!is.null(h$cnv_wgd_column)) h$cnv_wgd_column else "",
+          # S2.8: Import display mode (basic or detailed)
+          cnv_display_mode = if (!is.null(h$cnv_display_mode)) h$cnv_display_mode else "basic"
         )
         values$heatmap_configs <- c(values$heatmap_configs, list(new_config))
 
@@ -10792,7 +10874,9 @@ server <- function(input, output, session) {
           # S2.8: WGD normalization settings
           cnv_wgd_norm = if (!is.null(cfg$cnv_wgd_norm)) cfg$cnv_wgd_norm else FALSE,
           cnv_wgd_per_cell = if (!is.null(cfg$cnv_wgd_per_cell)) cfg$cnv_wgd_per_cell else FALSE,
-          cnv_wgd_column = if (!is.null(cfg$cnv_wgd_column)) cfg$cnv_wgd_column else ""
+          cnv_wgd_column = if (!is.null(cfg$cnv_wgd_column)) cfg$cnv_wgd_column else "",
+          # S2.8: Display mode (basic or detailed)
+          cnv_display_mode = if (!is.null(cfg$cnv_display_mode)) cfg$cnv_display_mode else "basic"
         )
       })
       # Remove NULL entries (configs without columns)
@@ -11785,10 +11869,13 @@ server <- function(input, output, session) {
               # S2.12: Per-cell WGD normalization settings
               heatmap_item[[as.character(j)]]$cnv_wgd_per_cell <- if (!is.null(heatmap_entry$cnv_wgd_per_cell) && heatmap_entry$cnv_wgd_per_cell) "yes" else "no"
               heatmap_item[[as.character(j)]]$cnv_wgd_column <- if (!is.null(heatmap_entry$cnv_wgd_column)) heatmap_entry$cnv_wgd_column else ""
+              # S2.8: Display mode (basic or detailed)
+              heatmap_item[[as.character(j)]]$cnv_display_mode <- if (!is.null(heatmap_entry$cnv_display_mode)) heatmap_entry$cnv_display_mode else "basic"
               # S2.0: Store mapping column for sample name matching
               heatmap_item[[as.character(j)]]$rdata_mapping_column <- heatmap_entry$rdata_mapping_column
               debug_cat(paste0("    S2.0-RDATA: RData heatmap, mapping_column=", heatmap_entry$rdata_mapping_column, "\n"))
               debug_cat(paste0("    S2.12: Per-cell WGD: enabled=", heatmap_entry$cnv_wgd_per_cell, ", column=", heatmap_entry$cnv_wgd_column, "\n"))
+              debug_cat(paste0("    S2.8: Display mode: ", heatmap_entry$cnv_display_mode, "\n"))
             } else {
               heatmap_item[[as.character(j)]]$data_source <- "csv"
               # Add columns - format must match expected YAML structure
@@ -12043,10 +12130,13 @@ server <- function(input, output, session) {
             # S2.12: Per-cell WGD normalization settings
             heatmap_item[[as.character(j)]]$cnv_wgd_per_cell <- if (!is.null(heatmap_entry$cnv_wgd_per_cell) && heatmap_entry$cnv_wgd_per_cell) "yes" else "no"
             heatmap_item[[as.character(j)]]$cnv_wgd_column <- if (!is.null(heatmap_entry$cnv_wgd_column)) heatmap_entry$cnv_wgd_column else ""
+            # S2.8: Display mode (basic or detailed)
+            heatmap_item[[as.character(j)]]$cnv_display_mode <- if (!is.null(heatmap_entry$cnv_display_mode)) heatmap_entry$cnv_display_mode else "basic"
             # S2.0: Store mapping column for sample name matching
             heatmap_item[[as.character(j)]]$rdata_mapping_column <- heatmap_entry$rdata_mapping_column
             debug_cat(paste0("    S2.0: RData heatmap, mapping_column=", heatmap_entry$rdata_mapping_column, "\n"))
             debug_cat(paste0("    S2.12: Per-cell WGD: enabled=", heatmap_entry$cnv_wgd_per_cell, ", column=", heatmap_entry$cnv_wgd_column, "\n"))
+            debug_cat(paste0("    S2.8: Display mode: ", heatmap_entry$cnv_display_mode, "\n"))
           } else {
             heatmap_item[[as.character(j)]]$data_source <- "csv"
             # Add columns - format must match expected YAML structure
@@ -14082,6 +14172,23 @@ server <- function(input, output, session) {
                        " Per-cell WGD: normalize only cells where selected column value = 1. ",
                        "Auto-detects column named 'WGD'.")
           ),
+          # S2.8: Display mode selector (basic vs detailed)
+          fluidRow(
+            column(6,
+                   radioButtons(paste0("heatmap_cnv_display_mode_", i), "Display Mode:",
+                                choices = c("Basic (faster)" = "basic", "Detailed (like pheatmap)" = "detailed"),
+                                selected = if (!is.null(cfg$cnv_display_mode)) cfg$cnv_display_mode else "basic",
+                                inline = TRUE)
+            ),
+            column(6,
+                   tags$div(
+                     style = "padding-top: 25px;",
+                     tags$small(class = "text-muted",
+                                icon("info-circle"),
+                                " Detailed mode: smoother rendering with finer color gradations")
+                   )
+            )
+          ),
           # S2.0: Sample mapping column selector (shown when auto-match fails)
           fluidRow(
             column(12,
@@ -14434,7 +14541,9 @@ server <- function(input, output, session) {
       cnv_wgd_norm = FALSE,
       # S2.12: Per-cell WGD normalization settings
       cnv_wgd_per_cell = FALSE,
-      cnv_wgd_column = NULL
+      cnv_wgd_column = NULL,
+      # S2.8: Display mode (basic = geom_tile, detailed = geom_raster like pheatmap)
+      cnv_display_mode = "basic"
     )
     
     values$heatmap_configs <- c(values$heatmap_configs, list(new_config))
@@ -14627,6 +14736,15 @@ server <- function(input, output, session) {
       observeEvent(input[[paste0("heatmap_cnv_wgd_column_", i)]], {
         if (i <= length(values$heatmap_configs)) {
           values$heatmap_configs[[i]]$cnv_wgd_column <- input[[paste0("heatmap_cnv_wgd_column_", i)]]
+        }
+      }, ignoreInit = TRUE)
+
+      # S2.8: Display mode change (basic vs detailed)
+      observeEvent(input[[paste0("heatmap_cnv_display_mode_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          values$heatmap_configs[[i]]$cnv_display_mode <- input[[paste0("heatmap_cnv_display_mode_", i)]]
+          cat(file=stderr(), paste0("[HEATMAP-CONFIG] Heatmap ", i, " display mode changed to: ",
+                                    input[[paste0("heatmap_cnv_display_mode_", i)]], "\n"))
         }
       }, ignoreInit = TRUE)
 
@@ -16222,6 +16340,8 @@ server <- function(input, output, session) {
           # S2.12: Per-cell WGD normalization settings
           cnv_wgd_per_cell = cnv_wgd_per_cell,
           cnv_wgd_column = cnv_wgd_column,
+          # S2.8: Display mode (basic = geom_tile, detailed = geom_raster like pheatmap)
+          cnv_display_mode = if (!is.null(input[[paste0("heatmap_cnv_display_mode_", i)]])) input[[paste0("heatmap_cnv_display_mode_", i)]] else "basic",
           # S2.0: Store mapping column for sample name matching
           rdata_mapping_column = mapping_column,
           columns = character(0),  # No columns for RData - data comes from parameter
@@ -18979,7 +19099,9 @@ server <- function(input, output, session) {
           # S2.8: WGD normalization settings - were missing from export
           cnv_wgd_norm = if (!is.null(cfg$cnv_wgd_norm) && cfg$cnv_wgd_norm) "yes" else "no",
           cnv_wgd_per_cell = if (!is.null(cfg$cnv_wgd_per_cell) && cfg$cnv_wgd_per_cell) "yes" else "no",
-          cnv_wgd_column = if (!is.null(cfg$cnv_wgd_column)) cfg$cnv_wgd_column else ""
+          cnv_wgd_column = if (!is.null(cfg$cnv_wgd_column)) cfg$cnv_wgd_column else "",
+          # S2.8: Display mode (basic or detailed) - for RData heatmaps
+          cnv_display_mode = if (!is.null(cfg$cnv_display_mode)) cfg$cnv_display_mode else "basic"
         )
       }
     }
