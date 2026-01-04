@@ -609,7 +609,7 @@ parse_yaml_config <- function(file_path) {
 #   - chr_info: chromosome information for each position (if available)
 #   - position_info: start/end positions (if available)
 #   - error: error message if failed (NULL if success)
-func.extract.cnv.from.rdata <- function(rdata_path, downsample_factor = 5) {
+func.extract.cnv.from.rdata <- function(rdata_path, downsample_factor = 10) {
   tryCatch({
     # Load RData into a new environment to avoid polluting global namespace
     env <- new.env()
@@ -4074,6 +4074,10 @@ func.print.lineage.tree <- function(conf_yaml_path,
               param[['cnv_display_mode']] <- heat_map_i_def[['cnv_display_mode']]
               cat(file=stderr(), paste0("[S2.8-PARAM] Setting cnv_display_mode to: ", heat_map_i_def[['cnv_display_mode']], "\n"))
             }
+            if ('cnv_height_scale' %in% names(heat_map_i_def)) {
+              param[['cnv_height_scale']] <- as.numeric(heat_map_i_def[['cnv_height_scale']])
+              cat(file=stderr(), paste0("[S2.8-PARAM] Setting cnv_height_scale to: ", heat_map_i_def[['cnv_height_scale']], "\n"))
+            }
 
             heat_display_params_list[[indx_for_sav]] <- param
             # print("B12")
@@ -6501,6 +6505,18 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             # For detailed mode, we use geom_tile with pre-computed colors like pheatmap
             # This ensures each tile is at the exact tip y-coordinate while having pheatmap-style coloring
 
+            # Get height scale for detailed mode (allows compressing the heatmap vertically)
+            height_scale <- if (!is.null(heat_param[['cnv_height_scale']]) && !is.na(heat_param[['cnv_height_scale']])) {
+              as.numeric(heat_param[['cnv_height_scale']])
+            } else {
+              1.0
+            }
+            cat(file=stderr(), paste0("[S2.8-DETAILED] Height scale: ", height_scale, "\n"))
+
+            # Apply height scale to tile_height for detailed mode
+            tile_height_detailed <- tile_height * height_scale
+            cat(file=stderr(), paste0("[S2.8-DETAILED] Adjusted tile_height: ", tile_height_detailed, " (original: ", tile_height, ")\n"))
+
             # Get color parameters
             low_color <- if (!is.null(heat_param[['low']]) && !is.na(heat_param[['low']])) heat_param[['low']] else "#FF0000"
             mid_color <- if (!is.null(heat_param[['mid']]) && !is.na(heat_param[['mid']])) heat_param[['mid']] else "#FFFFFF"
@@ -6555,11 +6571,12 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
               # Use geom_tile with pre-computed colors and scale_fill_identity
               # This positions each tile at exact tip y-coordinates
+              # Use tile_height_detailed (scaled by height_scale) for detailed mode
               p_with_tiles <- p + geom_tile(
                 data = tile_df,
                 aes(x = x, y = y, fill = fill_color),
                 width = tile_width,
-                height = tile_height,
+                height = tile_height_detailed,
                 inherit.aes = FALSE
               ) + scale_fill_identity(
                 guide = guide_legend(title = heatmap_title),
@@ -6593,7 +6610,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
                 data = tile_df,
                 aes(x = x, y = y, fill = value),
                 width = tile_width,
-                height = tile_height,
+                height = tile_height_detailed,
                 inherit.aes = FALSE
               ) + scale_fill_gradient2(
                 low = low_color, mid = mid_color, high = high_color,
@@ -8748,9 +8765,9 @@ ui <- dashboardPage(
                         accept = c(".RData", ".rdata", ".Rdata")),
               numericInput("rdata_import_downsample",
                           "Import Downsample Factor",
-                          value = 5, min = 1, max = 100, step = 1),
+                          value = 10, min = 1, max = 100, step = 1),
               tags$small(style = "color: #666; margin-top: -10px; display: block; margin-bottom: 10px;",
-                        "Reduces genomic positions during import. 1 = keep all, 5 = keep every 5th position."),
+                        "Reduces genomic positions during import. 1 = keep all, 10 = keep every 10th position."),
               verbatimTextOutput("rdata_import_status")
             ),
             conditionalPanel(
@@ -10204,8 +10221,8 @@ server <- function(input, output, session) {
     }
 
     # Extract CNV data from RData file
-    # Use user-specified downsample factor (default 5) from UI input
-    import_downsample <- if (!is.null(input$rdata_import_downsample)) input$rdata_import_downsample else 5
+    # Use user-specified downsample factor (default 10) from UI input
+    import_downsample <- if (!is.null(input$rdata_import_downsample)) input$rdata_import_downsample else 10
     cat(file=stderr(), paste0("[RDATA-IMPORT] Using import downsample factor: ", import_downsample, "\n"))
     result <- func.extract.cnv.from.rdata(input$rdata_file$datapath, downsample_factor = import_downsample)
 
@@ -10863,7 +10880,9 @@ server <- function(input, output, session) {
           # S2.8: Import display mode (basic or detailed)
           cnv_display_mode = if (!is.null(h$cnv_display_mode)) h$cnv_display_mode else "basic",
           # Render downsample factor (second stage, 0 = keep all)
-          cnv_render_downsample = if (!is.null(h$cnv_render_downsample)) as.numeric(h$cnv_render_downsample) else 0
+          cnv_render_downsample = if (!is.null(h$cnv_render_downsample)) as.numeric(h$cnv_render_downsample) else 10,
+          # Height scale for detailed mode
+          cnv_height_scale = if (!is.null(h$cnv_height_scale)) as.numeric(h$cnv_height_scale) else 1.0
         )
         values$heatmap_configs <- c(values$heatmap_configs, list(new_config))
 
@@ -10942,7 +10961,9 @@ server <- function(input, output, session) {
           # S2.8: Display mode (basic or detailed)
           cnv_display_mode = if (!is.null(cfg$cnv_display_mode)) cfg$cnv_display_mode else "basic",
           # Render downsample factor (second stage, 0 = keep all)
-          cnv_render_downsample = if (!is.null(cfg$cnv_render_downsample)) cfg$cnv_render_downsample else 0
+          cnv_render_downsample = if (!is.null(cfg$cnv_render_downsample)) cfg$cnv_render_downsample else 10,
+          # Height scale for detailed mode
+          cnv_height_scale = if (!is.null(cfg$cnv_height_scale)) as.numeric(cfg$cnv_height_scale) else 1.0
         )
       })
       # Remove NULL entries (configs without columns)
@@ -11930,8 +11951,8 @@ server <- function(input, output, session) {
               heatmap_item[[as.character(j)]]$data_source <- "rdata"
               heatmap_item[[as.character(j)]]$use_midpoint <- "yes"  # Always use midpoint for CNV
               # Store CNV settings (but NOT the matrix itself - that's passed separately)
-              heatmap_item[[as.character(j)]]$cnv_downsample <- if (!is.null(heatmap_entry$cnv_downsample)) heatmap_entry$cnv_downsample else 0
-              heatmap_item[[as.character(j)]]$cnv_render_downsample <- if (!is.null(heatmap_entry$cnv_render_downsample)) heatmap_entry$cnv_render_downsample else 0
+              heatmap_item[[as.character(j)]]$cnv_downsample <- if (!is.null(heatmap_entry$cnv_downsample)) heatmap_entry$cnv_downsample else 10
+              heatmap_item[[as.character(j)]]$cnv_render_downsample <- if (!is.null(heatmap_entry$cnv_render_downsample)) heatmap_entry$cnv_render_downsample else 10
               heatmap_item[[as.character(j)]]$cnv_wgd_norm <- if (!is.null(heatmap_entry$cnv_wgd_norm) && heatmap_entry$cnv_wgd_norm) "yes" else "no"
               # S2.12: Per-cell WGD normalization settings
               heatmap_item[[as.character(j)]]$cnv_wgd_per_cell <- if (!is.null(heatmap_entry$cnv_wgd_per_cell) && heatmap_entry$cnv_wgd_per_cell) "yes" else "no"
@@ -12192,8 +12213,8 @@ server <- function(input, output, session) {
             heatmap_item[[as.character(j)]]$data_source <- "rdata"
             heatmap_item[[as.character(j)]]$use_midpoint <- "yes"  # Always use midpoint for CNV
             # Store CNV settings (but NOT the matrix itself - that's passed separately)
-            heatmap_item[[as.character(j)]]$cnv_downsample <- if (!is.null(heatmap_entry$cnv_downsample)) heatmap_entry$cnv_downsample else 0
-            heatmap_item[[as.character(j)]]$cnv_render_downsample <- if (!is.null(heatmap_entry$cnv_render_downsample)) heatmap_entry$cnv_render_downsample else 0
+            heatmap_item[[as.character(j)]]$cnv_downsample <- if (!is.null(heatmap_entry$cnv_downsample)) heatmap_entry$cnv_downsample else 10
+            heatmap_item[[as.character(j)]]$cnv_render_downsample <- if (!is.null(heatmap_entry$cnv_render_downsample)) heatmap_entry$cnv_render_downsample else 10
             heatmap_item[[as.character(j)]]$cnv_wgd_norm <- if (!is.null(heatmap_entry$cnv_wgd_norm) && heatmap_entry$cnv_wgd_norm) "yes" else "no"
             # S2.12: Per-cell WGD normalization settings
             heatmap_item[[as.character(j)]]$cnv_wgd_per_cell <- if (!is.null(heatmap_entry$cnv_wgd_per_cell) && heatmap_entry$cnv_wgd_per_cell) "yes" else "no"
@@ -14262,7 +14283,7 @@ server <- function(input, output, session) {
             column(6,
                    numericInput(paste0("heatmap_cnv_render_downsample_", i),
                                "Render Downsample Factor",
-                               value = if (!is.null(cfg$cnv_render_downsample)) cfg$cnv_render_downsample else 0,
+                               value = if (!is.null(cfg$cnv_render_downsample)) cfg$cnv_render_downsample else 10,
                                min = 0, max = 100, step = 1)
             ),
             column(6,
@@ -14271,6 +14292,24 @@ server <- function(input, output, session) {
                      tags$small(class = "text-muted",
                                 icon("info-circle"),
                                 " 0 = keep all, N > 1 = keep every Nth position during render")
+                   )
+            )
+          ),
+          # Height scale for detailed mode (allows compressing the heatmap vertically)
+          fluidRow(
+            column(6,
+                   sliderInput(paste0("heatmap_cnv_height_scale_", i),
+                               "Height Scale (detailed mode)",
+                               min = 0.1, max = 2.0,
+                               value = if (!is.null(cfg$cnv_height_scale)) cfg$cnv_height_scale else 1.0,
+                               step = 0.1)
+            ),
+            column(6,
+                   tags$div(
+                     style = "padding-top: 25px;",
+                     tags$small(class = "text-muted",
+                                icon("info-circle"),
+                                " Controls total heatmap height. Lower values compress the heatmap.")
                    )
             )
           ),
@@ -14622,8 +14661,9 @@ server <- function(input, output, session) {
       mid_color = "#FFFF99",
       midpoint = 0,
       # S1.62dev: CNV-specific settings
-      cnv_downsample = 0,  # Kept for YAML compatibility
-      cnv_render_downsample = 0,  # Second stage downsampling (0 = no downsampling)
+      cnv_downsample = 10,  # Kept for YAML compatibility
+      cnv_render_downsample = 10,  # Second stage downsampling (10 = default)
+      cnv_height_scale = 1.0,  # Height scaling for detailed mode
       cnv_wgd_norm = FALSE,
       # S2.12: Per-cell WGD normalization settings
       cnv_wgd_per_cell = FALSE,
@@ -14840,6 +14880,15 @@ server <- function(input, output, session) {
           values$heatmap_configs[[i]]$cnv_render_downsample <- input[[paste0("heatmap_cnv_render_downsample_", i)]]
           cat(file=stderr(), paste0("[HEATMAP-CONFIG] Heatmap ", i, " render downsample changed to: ",
                                     input[[paste0("heatmap_cnv_render_downsample_", i)]], "\n"))
+        }
+      }, ignoreInit = TRUE)
+
+      # Height scale change (for detailed mode)
+      observeEvent(input[[paste0("heatmap_cnv_height_scale_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          values$heatmap_configs[[i]]$cnv_height_scale <- input[[paste0("heatmap_cnv_height_scale_", i)]]
+          cat(file=stderr(), paste0("[HEATMAP-CONFIG] Heatmap ", i, " height scale changed to: ",
+                                    input[[paste0("heatmap_cnv_height_scale_", i)]], "\n"))
         }
       }, ignoreInit = TRUE)
 
@@ -16396,7 +16445,7 @@ server <- function(input, output, session) {
         # Get CNV settings - these will be stored and applied later in func.print.lineage.tree
         # Use new field name, but keep old one for backwards compatibility
         cnv_render_downsample <- input[[paste0("heatmap_cnv_render_downsample_", i)]]
-        if (is.null(cnv_render_downsample)) cnv_render_downsample <- 0
+        if (is.null(cnv_render_downsample)) cnv_render_downsample <- 10
         cnv_downsample <- cnv_render_downsample  # For backwards compatibility
         cnv_wgd_norm <- input[[paste0("heatmap_cnv_wgd_norm_", i)]]
         if (is.null(cnv_wgd_norm)) cnv_wgd_norm <- FALSE
@@ -16440,6 +16489,8 @@ server <- function(input, output, session) {
           cnv_wgd_column = cnv_wgd_column,
           # S2.8: Display mode (basic = geom_tile, detailed = geom_raster like pheatmap)
           cnv_display_mode = if (!is.null(input[[paste0("heatmap_cnv_display_mode_", i)]])) input[[paste0("heatmap_cnv_display_mode_", i)]] else "basic",
+          # Height scale for detailed mode
+          cnv_height_scale = if (!is.null(input[[paste0("heatmap_cnv_height_scale_", i)]])) input[[paste0("heatmap_cnv_height_scale_", i)]] else 1.0,
           # S2.0: Store mapping column for sample name matching
           rdata_mapping_column = mapping_column,
           columns = character(0),  # No columns for RData - data comes from parameter
@@ -19200,8 +19251,10 @@ server <- function(input, output, session) {
           cnv_wgd_column = if (!is.null(cfg$cnv_wgd_column)) cfg$cnv_wgd_column else "",
           # S2.8: Display mode (basic or detailed) - for RData heatmaps
           cnv_display_mode = if (!is.null(cfg$cnv_display_mode)) cfg$cnv_display_mode else "basic",
-          # Render downsample factor (second stage, 0 = keep all)
-          cnv_render_downsample = if (!is.null(cfg$cnv_render_downsample)) cfg$cnv_render_downsample else 0
+          # Render downsample factor (second stage, 10 = default)
+          cnv_render_downsample = if (!is.null(cfg$cnv_render_downsample)) cfg$cnv_render_downsample else 10,
+          # Height scale for detailed mode
+          cnv_height_scale = if (!is.null(cfg$cnv_height_scale)) cfg$cnv_height_scale else 1.0
         )
       }
     }
