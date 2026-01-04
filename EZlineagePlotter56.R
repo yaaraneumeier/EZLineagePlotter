@@ -4108,6 +4108,10 @@ func.print.lineage.tree <- function(conf_yaml_path,
                   0
                 }
                 cat(file=stderr(), paste0("[RDATA-CNV] Using render downsample factor: ", cnv_downsample, "\n"))
+                cat(file=stderr(), paste0("[RDATA-CNV] heat_map_i_def fields: ", paste(names(heat_map_i_def), collapse=", "), "\n"))
+                cat(file=stderr(), paste0("[RDATA-CNV] cnv_render_downsample in heat_map_i_def: ",
+                    ifelse('cnv_render_downsample' %in% names(heat_map_i_def),
+                           as.character(heat_map_i_def$cnv_render_downsample), "NOT FOUND"), "\n"))
 
                 # Apply downsampling
                 cnv_data <- rdata_cnv_matrix
@@ -14418,8 +14422,8 @@ server <- function(input, output, session) {
                              step = 0.1)
           ),
           column(4,
-                 sliderInput(paste0("heatmap_row_height_", i), "Column Width",
-                             min = 0.5, max = 3.0,
+                 sliderInput(paste0("heatmap_row_height_", i), "Row Height",
+                             min = 0.1, max = 3.0,
                              value = if (!is.null(cfg$row_height)) cfg$row_height else 1.0,
                              step = 0.1)
           )
@@ -16458,7 +16462,8 @@ server <- function(input, output, session) {
         cnv_wgd_column <- input[[paste0("heatmap_cnv_wgd_column_", i)]]
         if (is.null(cnv_wgd_column)) cnv_wgd_column <- NULL
 
-        debug_cat(paste0("  S1.62dev: RData CNV heatmap ", i, ": downsample=", cnv_downsample, ", wgd_norm=", cnv_wgd_norm, "\n"))
+        debug_cat(paste0("  S1.62dev: RData CNV heatmap ", i, ": render_downsample=", cnv_render_downsample, ", wgd_norm=", cnv_wgd_norm, "\n"))
+        cat(file=stderr(), paste0("[RENDER-DOWNSAMPLE] Heatmap ", i, " render_downsample value: ", cnv_render_downsample, "\n"))
         debug_cat(paste0("  S2.12: Per-cell WGD: enabled=", cnv_wgd_per_cell, ", column=", ifelse(is.null(cnv_wgd_column), "NULL", cnv_wgd_column), "\n"))
         debug_cat(paste0("  S1.62dev: Raw CNV matrix: ", nrow(values$rdata_cnv_matrix), " samples x ", ncol(values$rdata_cnv_matrix), " positions\n"))
 
