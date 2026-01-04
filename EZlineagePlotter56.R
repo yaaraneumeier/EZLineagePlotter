@@ -9961,6 +9961,10 @@ server <- function(input, output, session) {
     shinyjs::show("download_status_waiting")
     shinyjs::hide("download_status_processing")
     shinyjs::hide("download_status_ready")
+    # Extra tab
+    shinyjs::show("extra_status_waiting")
+    shinyjs::hide("extra_status_processing")
+    shinyjs::hide("extra_status_ready")
   }
 
   show_status_processing <- function() {
@@ -9997,6 +10001,10 @@ server <- function(input, output, session) {
     shinyjs::hide("download_status_waiting")
     shinyjs::show("download_status_processing")
     shinyjs::hide("download_status_ready")
+    # Extra tab
+    shinyjs::hide("extra_status_waiting")
+    shinyjs::show("extra_status_processing")
+    shinyjs::hide("extra_status_ready")
   }
 
   show_status_ready <- function() {
@@ -10033,6 +10041,10 @@ server <- function(input, output, session) {
     shinyjs::hide("download_status_waiting")
     shinyjs::hide("download_status_processing")
     shinyjs::show("download_status_ready")
+    # Extra tab
+    shinyjs::hide("extra_status_waiting")
+    shinyjs::hide("extra_status_processing")
+    shinyjs::show("extra_status_ready")
   }
 
   show_status_click_to_generate <- function() {
@@ -10065,6 +10077,10 @@ server <- function(input, output, session) {
     shinyjs::show("legend_status_waiting")
     shinyjs::hide("legend_status_processing")
     shinyjs::hide("legend_status_ready")
+    # Extra tab (no click_to_generate status, just show waiting)
+    shinyjs::show("extra_status_waiting")
+    shinyjs::hide("extra_status_processing")
+    shinyjs::hide("extra_status_ready")
   }
 
   # Initialize YAML data structure immediately
@@ -10897,6 +10913,23 @@ server <- function(input, output, session) {
       }
       # Trigger heatmap UI regeneration
       heatmap_ui_trigger(heatmap_ui_trigger() + 1)
+
+      # Update RData mapping column dropdowns after UI regeneration
+      # This ensures the saved values are displayed correctly
+      if (!is.null(values$csv_data)) {
+        csv_cols <- names(values$csv_data)
+        for (cfg_idx in seq_along(values$heatmap_configs)) {
+          cfg <- values$heatmap_configs[[cfg_idx]]
+          if (!is.null(cfg$data_source) && cfg$data_source == "rdata" &&
+              !is.null(cfg$rdata_mapping_column) && cfg$rdata_mapping_column != "") {
+            updateSelectInput(session, paste0("heatmap_rdata_mapping_col_", cfg_idx),
+                              choices = c("-- Select a column --" = "", csv_cols),
+                              selected = cfg$rdata_mapping_column)
+            cat(file=stderr(), sprintf("[YAML-IMPORT] Updated dropdown %d with saved mapping column: %s\n",
+                                       cfg_idx, cfg$rdata_mapping_column))
+          }
+        }
+      }
 
       # S1.62dev: Also populate values$heatmaps for immediate plot rendering
       # This converts heatmap_configs to the format expected by the plot function
