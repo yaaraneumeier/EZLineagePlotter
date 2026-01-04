@@ -10916,19 +10916,22 @@ server <- function(input, output, session) {
 
       # Update RData mapping column dropdowns after UI regeneration
       # This ensures the saved values are displayed correctly
+      # IMPORTANT: Must delay to allow Shiny to render the UI first
       if (!is.null(values$csv_data)) {
         csv_cols <- names(values$csv_data)
-        for (cfg_idx in seq_along(values$heatmap_configs)) {
-          cfg <- values$heatmap_configs[[cfg_idx]]
-          if (!is.null(cfg$data_source) && cfg$data_source == "rdata" &&
-              !is.null(cfg$rdata_mapping_column) && cfg$rdata_mapping_column != "") {
-            updateSelectInput(session, paste0("heatmap_rdata_mapping_col_", cfg_idx),
-                              choices = c("-- Select a column --" = "", csv_cols),
-                              selected = cfg$rdata_mapping_column)
-            cat(file=stderr(), sprintf("[YAML-IMPORT] Updated dropdown %d with saved mapping column: %s\n",
-                                       cfg_idx, cfg$rdata_mapping_column))
+        shinyjs::delay(500, {
+          for (cfg_idx in seq_along(values$heatmap_configs)) {
+            cfg <- values$heatmap_configs[[cfg_idx]]
+            if (!is.null(cfg$data_source) && cfg$data_source == "rdata" &&
+                !is.null(cfg$rdata_mapping_column) && cfg$rdata_mapping_column != "") {
+              updateSelectInput(session, paste0("heatmap_rdata_mapping_col_", cfg_idx),
+                                choices = c("-- Select a column --" = "", csv_cols),
+                                selected = cfg$rdata_mapping_column)
+              cat(file=stderr(), sprintf("[YAML-IMPORT] Updated dropdown %d with saved mapping column: %s\n",
+                                         cfg_idx, cfg$rdata_mapping_column))
+            }
           }
-        }
+        })
       }
 
       # S1.62dev: Also populate values$heatmaps for immediate plot rendering
