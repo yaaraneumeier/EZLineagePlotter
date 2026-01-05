@@ -206,7 +206,7 @@ options(shiny.maxRequestSize = 100*1024^2)
 #       - Layer reordering now happens ONCE at the end in generate_plot()
 # S1.2: Fixed undefined x_range_min in func_highlight causing "Problem while
 #       computing aesthetics" error when adding 2+ highlights with a heatmap.
-VERSION <- "S2.8"
+VERSION <- "S2.9"
 
 # Debug output control - set to TRUE to enable verbose console logging
 # For production/stable use, keep this FALSE for better performance
@@ -1402,6 +1402,46 @@ func.create.p_list_cache_hash <- function(tree440, list_id_by_class, dx_rx_types
 
   # Use digest for reliable hashing
   hash_value <- digest::digest(cache_data, algo = "md5")
+
+  return(hash_value)
+}
+
+# S2.9-PERF: Create hash for heatmap caching
+# This hash determines if a heatmap can be reused from cache.
+# Inputs that affect heatmap rendering: data, colors, dimensions, display settings
+func.create.heatmap_cache_hash <- function(heat_param, heat_data = NULL, tree_tips = NULL) {
+  # Build a list of all cache-relevant data for this heatmap
+  cache_data <- list(
+    # Data source and content
+    data_source = heat_param[['data_source']],
+    # For RData, include a hash of the actual data matrix
+    data_hash = if (!is.null(heat_data)) digest::digest(heat_data, algo = "xxhash32") else NULL,
+    # Tree tips affect y-positioning
+    tree_tips_hash = if (!is.null(tree_tips)) digest::digest(sort(tree_tips), algo = "xxhash32") else NULL,
+    # Color parameters
+    low_color = heat_param[['low']],
+    mid_color = heat_param[['mid']],
+    high_color = heat_param[['high']],
+    midpoint = heat_param[['midpoint']],
+    na_color = heat_param[['na_color']],
+    # Display settings
+    cnv_display_mode = heat_param[['cnv_display_mode']],
+    cnv_height_scale = heat_param[['cnv_height_scale']],
+    cnv_render_downsample = heat_param[['cnv_render_downsample']],
+    # Dimensions
+    distance = heat_param[['distance']],
+    height = heat_param[['height']],
+    # Other visual settings
+    show_col_lines = heat_param[['show_col_lines']],
+    col_line_color = heat_param[['col_line_color']],
+    col_line_size = heat_param[['col_line_size']],
+    show_row_lines = heat_param[['show_row_lines']],
+    row_line_color = heat_param[['row_line_color']],
+    row_line_size = heat_param[['row_line_size']]
+  )
+
+  # Use digest for reliable hashing (xxhash64 is fast)
+  hash_value <- digest::digest(cache_data, algo = "xxhash64")
 
   return(hash_value)
 }
@@ -3034,7 +3074,8 @@ func.print.lineage.tree <- function(conf_yaml_path,
                                     rdata_cnv_matrix = NULL,  # S1.62dev: CNV matrix from RData file
                                     cached_p_list_of_pairs = NULL,  # S2.0-PERF: Cached p-values (Option 3A)
                                     cached_p_list_hash = NULL,      # S2.0-PERF: Hash for cache validation
-                                    p_list_cache = list()) {        # S2.7-PERF: Multi-entry cache (hash -> p_list_of_pairs)
+                                    p_list_cache = list(),          # S2.7-PERF: Multi-entry cache (hash -> p_list_of_pairs)
+                                    heatmap_cache = list()) {       # S2.9-PERF: Heatmap cache (index -> tile_df + hash)
 
   # === DEBUG CHECKPOINT 2: FUNCTION ENTRY ===
   # v53: cat(file=stderr(), "\nÃ°Å¸â€Â DEBUG CHECKPOINT 2: func.print.lineage.tree ENTRY\n")
@@ -4065,7 +4106,19 @@ func.print.lineage.tree <- function(conf_yaml_path,
               }
             }
 
-
+            # S2.8: Add data_source and cnv_display_mode for RData detailed rendering
+            if ('data_source' %in% names(heat_map_i_def)) {
+              param[['data_source']] <- heat_map_i_def[['data_source']]
+              cat(file=stderr(), paste0("[S2.8-PARAM] Setting data_source to: ", heat_map_i_def[['data_source']], "\n"))
+            }
+            if ('cnv_display_mode' %in% names(heat_map_i_def)) {
+              param[['cnv_display_mode']] <- heat_map_i_def[['cnv_display_mode']]
+              cat(file=stderr(), paste0("[S2.8-PARAM] Setting cnv_display_mode to: ", heat_map_i_def[['cnv_display_mode']], "\n"))
+            }
+            if ('cnv_height_scale' %in% names(heat_map_i_def)) {
+              param[['cnv_height_scale']] <- as.numeric(heat_map_i_def[['cnv_height_scale']])
+              cat(file=stderr(), paste0("[S2.8-PARAM] Setting cnv_height_scale to: ", heat_map_i_def[['cnv_height_scale']], "\n"))
+            }
 
             heat_display_params_list[[indx_for_sav]] <- param
             # print("B12")
@@ -4086,11 +4139,20 @@ func.print.lineage.tree <- function(conf_yaml_path,
               # Note: cnv_matrix doesn't serialize properly to YAML, so we pass it as a parameter
               if (!is.null(rdata_cnv_matrix)) {
                 # Apply downsampling if specified in heatmap config
-                cnv_downsample <- if ('cnv_downsample' %in% names(heat_map_i_def)) {
+                # Default is 0 (no additional downsampling during render)
+                # Check for new field name first, fall back to old name for backwards compatibility
+                cnv_downsample <- if ('cnv_render_downsample' %in% names(heat_map_i_def)) {
+                  as.numeric(heat_map_i_def$cnv_render_downsample)
+                } else if ('cnv_downsample' %in% names(heat_map_i_def)) {
                   as.numeric(heat_map_i_def$cnv_downsample)
                 } else {
-                  10
+                  0
                 }
+                cat(file=stderr(), paste0("[RDATA-CNV] Using render downsample factor: ", cnv_downsample, "\n"))
+                cat(file=stderr(), paste0("[RDATA-CNV] heat_map_i_def fields: ", paste(names(heat_map_i_def), collapse=", "), "\n"))
+                cat(file=stderr(), paste0("[RDATA-CNV] cnv_render_downsample in heat_map_i_def: ",
+                    ifelse('cnv_render_downsample' %in% names(heat_map_i_def),
+                           as.character(heat_map_i_def$cnv_render_downsample), "NOT FOUND"), "\n"))
 
                 # Apply downsampling
                 cnv_data <- rdata_cnv_matrix
@@ -5247,7 +5309,8 @@ func.print.lineage.tree <- function(conf_yaml_path,
         legend_settings = legend_settings,  # v136: Pass legend settings for highlight/bootstrap legends
         cached_p_list_of_pairs = cached_p_list_of_pairs,  # S2.0-PERF: Pass cached p-values
         cached_p_list_hash = cached_p_list_hash,  # S2.0-PERF: Pass cache hash for validation
-        p_list_cache = p_list_cache  # S2.7-PERF: Multi-entry cache
+        p_list_cache = p_list_cache,  # S2.7-PERF: Multi-entry cache
+        heatmap_cache = heatmap_cache  # S2.9-PERF: Heatmap cache
       )
       # }
 
@@ -5424,7 +5487,8 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
                                          legend_settings = NULL,  # v136: Legend settings for highlight/bootstrap legends
                                          cached_p_list_of_pairs = NULL,  # S2.0-PERF: Cached p-values (Option 3A)
                                          cached_p_list_hash = NULL,      # S2.0-PERF: Hash for cache validation
-                                         p_list_cache = list()) {        # S2.7-PERF: Multi-entry cache
+                                         p_list_cache = list(),          # S2.7-PERF: Multi-entry cache
+                                         heatmap_cache = list()) {       # S2.9-PERF: Heatmap cache
 
   # === DEBUG CHECKPOINT 4: INNER FUNCTION ENTRY ===
   # v53: cat(file=stderr(), "\nÃ°Å¸â€Â DEBUG CHECKPOINT 4: func.make.plot.tree.heat.NEW ENTRY\n")
@@ -6469,7 +6533,191 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             p <- p + ggnewscale::new_scale_fill()
           }
 
-          if (show_grid_bool) {
+          # S2.8: Check for RData detailed display mode
+          cat(file=stderr(), paste0("[S2.8-DEBUG] heat_param data_source: ",
+              ifelse(!is.null(heat_param[['data_source']]), heat_param[['data_source']], "NULL"), "\n"))
+          cat(file=stderr(), paste0("[S2.8-DEBUG] heat_param cnv_display_mode: ",
+              ifelse(!is.null(heat_param[['cnv_display_mode']]), heat_param[['cnv_display_mode']], "NULL"), "\n"))
+
+          is_rdata_detailed <- !is.null(heat_param[['data_source']]) &&
+                               heat_param[['data_source']] == "rdata" &&
+                               !is.null(heat_param[['cnv_display_mode']]) &&
+                               heat_param[['cnv_display_mode']] == "detailed"
+          cat(file=stderr(), paste0("[S2.8-DEBUG] is_rdata_detailed: ", is_rdata_detailed, "\n"))
+
+          if (is_rdata_detailed) {
+            debug_cat(paste0("\n=== S2.8: DETAILED MODE (geom_tile with pre-computed colors like pheatmap) ===\n"))
+            cat(file=stderr(), "[HEATMAP-RENDER] Using DETAILED mode with geom_tile + pre-computed colors (pheatmap-style)\n")
+
+            # S2.9-PERF: Check heatmap cache before expensive color computation
+            heatmap_cache_key <- as.character(heat_idx)
+            current_heatmap_hash <- func.create.heatmap_cache_hash(heat_param, heat_data, tip_data$label)
+
+            use_cached_colors <- FALSE
+            cached_tile_df <- NULL
+            cached_value_range <- NULL
+
+            if (!is.null(heatmap_cache) && heatmap_cache_key %in% names(heatmap_cache)) {
+              cached_entry <- heatmap_cache[[heatmap_cache_key]]
+              if (!is.null(cached_entry$hash) && cached_entry$hash == current_heatmap_hash) {
+                cat(file=stderr(), paste0("[S2.9-CACHE] Heatmap ", heat_idx, " CACHE HIT - reusing pre-computed colors\n"))
+                use_cached_colors <- TRUE
+                cached_tile_df <- cached_entry$tile_df
+                cached_value_range <- cached_entry$value_range
+              } else {
+                cat(file=stderr(), paste0("[S2.9-CACHE] Heatmap ", heat_idx, " cache MISS (hash mismatch)\n"))
+              }
+            } else {
+              cat(file=stderr(), paste0("[S2.9-CACHE] Heatmap ", heat_idx, " cache MISS (no cached entry)\n"))
+            }
+
+            # For detailed mode, we use geom_tile with pre-computed colors like pheatmap
+            # This ensures each tile is at the exact tip y-coordinate while having pheatmap-style coloring
+
+            # Get height scale for detailed mode (allows making the heatmap shorter)
+            # Note: Due to 90-degree rotation, "height" on screen = tile_width in code
+            height_scale <- if (!is.null(heat_param[['cnv_height_scale']]) && !is.na(heat_param[['cnv_height_scale']])) {
+              as.numeric(heat_param[['cnv_height_scale']])
+            } else {
+              1.0
+            }
+            cat(file=stderr(), paste0("[S2.8-DETAILED] Height scale: ", height_scale, "\n"))
+
+            # Apply height scale to tile_width for detailed mode (controls heatmap "height" on screen)
+            tile_width_detailed <- tile_width * height_scale
+            cat(file=stderr(), paste0("[S2.8-DETAILED] Adjusted tile_width: ", tile_width_detailed, " (original: ", tile_width, ")\n"))
+
+            # Get color parameters
+            low_color <- if (!is.null(heat_param[['low']]) && !is.na(heat_param[['low']])) heat_param[['low']] else "#FF0000"
+            mid_color <- if (!is.null(heat_param[['mid']]) && !is.na(heat_param[['mid']])) heat_param[['mid']] else "#FFFFFF"
+            high_color <- if (!is.null(heat_param[['high']]) && !is.na(heat_param[['high']])) heat_param[['high']] else "#0000FF"
+            midpoint <- if (!is.null(heat_param[['midpoint']]) && !is.na(heat_param[['midpoint']])) as.numeric(heat_param[['midpoint']]) else 2
+            na_color <- if (!is.null(heat_param[['na_color']])) heat_param[['na_color']] else "grey90"
+
+            debug_cat(paste0("  S2.8 Detailed colors: low=", low_color, ", mid=", mid_color, ", high=", high_color, "\n"))
+            debug_cat(paste0("  S2.8 Detailed midpoint: ", midpoint, "\n"))
+
+            # S2.9-PERF: Use cached colors if available, otherwise compute
+            if (use_cached_colors && !is.null(cached_tile_df)) {
+              # Use cached tile_df with pre-computed fill_color
+              tile_df <- cached_tile_df
+              value_min <- cached_value_range$min
+              value_max <- cached_value_range$max
+              cat(file=stderr(), paste0("[S2.9-CACHE] Using cached tile_df with ", nrow(tile_df), " tiles\n"))
+
+              # Still need to create palette for legend
+              colors_below <- colorRampPalette(c(low_color, mid_color))(999)
+              colors_above <- colorRampPalette(c(mid_color, high_color))(1000)[-1]
+              detailed_palette <- c(colors_below, colors_above)
+            } else {
+              # Create fine-grained color palette like pheatmap (1998 colors)
+              colors_below <- colorRampPalette(c(low_color, mid_color))(999)
+              colors_above <- colorRampPalette(c(mid_color, high_color))(1000)[-1]
+              detailed_palette <- c(colors_below, colors_above)
+
+              # S2.8: Enhanced debug logging for matrix dimensions
+              cat(file=stderr(), paste0("[S2.8-MATRIX] heat_data dimensions: ", nrow(heat_data), " rows x ", ncol(heat_data), " cols\n"))
+              cat(file=stderr(), paste0("[S2.8-MATRIX] Number of tree tips in tip_data: ", nrow(tip_data), "\n"))
+              cat(file=stderr(), paste0("[S2.8-MATRIX] tile_df rows: ", nrow(tile_df), "\n"))
+
+              # Get data range for color mapping
+              data_values <- tile_df$value[!is.na(tile_df$value)]
+              if (length(data_values) > 0) {
+                data_min <- min(data_values, na.rm = TRUE)
+                data_max <- max(data_values, na.rm = TRUE)
+
+                range_below <- midpoint - min(data_min, 0)
+                range_above <- max(data_max, midpoint + 2) - midpoint
+                max_range <- max(range_below, range_above, 2)
+
+                value_min <- midpoint - max_range
+                value_max <- midpoint + max_range
+
+                debug_cat(paste0("  S2.8 Data range: [", round(data_min, 2), ", ", round(data_max, 2), "]\n"))
+                debug_cat(paste0("  S2.8 Color range: [", round(value_min, 2), ", ", round(value_max, 2), "]\n"))
+
+                # Pre-compute colors for each tile (like pheatmap does)
+                # Normalize values to 0-1 range, then map to palette indices
+                normalized_values <- (tile_df$value - value_min) / (value_max - value_min)
+                normalized_values[normalized_values < 0] <- 0
+                normalized_values[normalized_values > 1] <- 1
+
+                # Convert to color indices (1 to 1998)
+                color_indices <- round(normalized_values * (length(detailed_palette) - 1)) + 1
+
+                # Assign pre-computed colors
+                tile_df$fill_color <- detailed_palette[color_indices]
+                tile_df$fill_color[is.na(tile_df$value)] <- na_color
+
+                cat(file=stderr(), paste0("[S2.8-DETAILED] Pre-computed colors for ", nrow(tile_df), " tiles\n"))
+                cat(file=stderr(), paste0("[S2.8-DETAILED] Unique colors: ", length(unique(tile_df$fill_color)), "\n"))
+
+                # S2.9-PERF: Store in cache for future use
+                if (!exists("updated_heatmap_cache")) {
+                  updated_heatmap_cache <- heatmap_cache
+                }
+                updated_heatmap_cache[[heatmap_cache_key]] <- list(
+                  hash = current_heatmap_hash,
+                  tile_df = tile_df,
+                  value_range = list(min = value_min, max = value_max)
+                )
+                cat(file=stderr(), paste0("[S2.9-CACHE] Cached heatmap ", heat_idx, " for future use\n"))
+              }
+            }
+
+            # Continue with rendering (both cached and fresh paths converge here)
+            data_values <- tile_df$value[!is.na(tile_df$value)]
+            if (length(data_values) > 0) {
+
+              # Use geom_tile with pre-computed colors and scale_fill_identity
+              # This positions each tile at exact tip y-coordinates
+              # Use tile_width_detailed (scaled by height_scale) to control heatmap "height" on screen
+              p_with_tiles <- p + geom_tile(
+                data = tile_df,
+                aes(x = x, y = y, fill = fill_color),
+                width = tile_width_detailed,
+                height = tile_height,
+                inherit.aes = FALSE
+              ) + scale_fill_identity(guide = "none")  # No legend for identity scale
+
+              # Add a proper gradient legend using invisible points
+              # This creates a continuous colorbar legend that matches the pre-computed colors
+              legend_df <- data.frame(
+                x = rep(min(tile_df$x), 5),
+                y = rep(min(tile_df$y), 5),
+                value = seq(value_min, value_max, length.out = 5)
+              )
+
+              p_with_tiles <- p_with_tiles +
+                ggnewscale::new_scale_fill() +
+                geom_point(data = legend_df, aes(x = x, y = y, fill = value),
+                           alpha = 0, shape = 22, inherit.aes = FALSE) +
+                scale_fill_gradientn(
+                  colors = detailed_palette,
+                  limits = c(value_min, value_max),
+                  name = heatmap_title,
+                  na.value = na_color
+                )
+
+              debug_cat(paste0("  S2.8 Added geom_tile with ", length(detailed_palette), " pre-computed colors\n"))
+            } else {
+              # Fallback to basic geom_tile if no data
+              debug_cat("  S2.8 WARNING: No valid data values, falling back to basic mode\n")
+              p_with_tiles <- p + geom_tile(
+                data = tile_df,
+                aes(x = x, y = y, fill = value),
+                width = tile_width_detailed,
+                height = tile_height,
+                inherit.aes = FALSE
+              ) + scale_fill_gradient2(
+                low = low_color, mid = mid_color, high = high_color,
+                midpoint = midpoint,
+                name = heatmap_title,
+                na.value = na_color
+              )
+            }
+
+          } else if (show_grid_bool) {
             # v115: Draw tiles WITHOUT borders first (to avoid overlapping border issues)
             p_with_tiles <- p + geom_tile(
               data = tile_df,
@@ -8364,11 +8612,13 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
   # S2.0-PERF: Return both the plot and cache data for two-tier caching (Option 3A)
   # The cache data allows generate_plot() to store and reuse p_list_of_pairs
+  # S2.9-PERF: Also return updated heatmap cache
   return(list(
     plot = p,
     cache_data = list(
       p_list_of_pairs = p_list_of_pairs,
-      p_list_hash = current_p_list_hash
+      p_list_hash = current_p_list_hash,
+      heatmap_cache = if (exists("updated_heatmap_cache")) updated_heatmap_cache else heatmap_cache
     )
   ))
 }
@@ -8447,33 +8697,29 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #155724;",
-                     tags$h4(style = "color: #155724; margin: 0;", "Version S2.8 Stable"),
+                     tags$h4(style = "color: #155724; margin: 0;", "Version S2.9 (stable)"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
-                            tags$strong("New in S2.8:"),
+                            tags$strong("New in S2.9:"),
+                            tags$ul(
+                              tags$li("Configurable two-stage CNV downsampling (import & render)"),
+                              tags$li("Height Scale control for detailed RData heatmaps"),
+                              tags$li("RData sample mapping column now properly saved to YAML"),
+                              tags$li("Fixed extra tab status indicator during processing"),
+                              tags$li("Fixed CSV column dropdown display after YAML import")
+                            ),
+                            tags$strong("From S2.8:"),
                             tags$ul(
                               tags$li("Faster classification switching with multi-entry LRU cache"),
-                              tags$li("Manual rotation nodes now saved and restored from YAML"),
-                              tags$li("RData heatmap settings fully persist in YAML (mapping column, WGD, lines)"),
-                              tags$li("Tree Length/Width sliders properly restored from YAML")
-                            ),
-                            tags$strong("From S2.7:"),
-                            tags$ul(
-                              tags$li("Per-cell WGD normalization for CNV heatmaps"),
-                              tags$li("Fixed discrete heatmap colors preserved when adding/removing heatmaps")
-                            ),
-                            tags$strong("From S2.0:"),
-                            tags$ul(
-                              tags$li("RData CNV heatmaps from QDNAseq/scIMPACT pipelines"),
-                              tags$li("Automatic sample matching via CSV lookup columns"),
-                              tags$li("Multiple heatmap support (CSV + RData together)")
+                              tags$li("Manual rotation nodes saved/restored from YAML"),
+                              tags$li("Per-cell WGD normalization for CNV heatmaps")
                             ),
                             tags$strong("Core Features:"),
                             tags$ul(
-                              tags$li("Tree visualization with classification coloring"),
+                              tags$li("RData CNV heatmaps from QDNAseq/scIMPACT pipelines"),
                               tags$li("Multiple heatmaps with discrete/continuous color scales"),
+                              tags$li("Tree visualization with classification coloring"),
                               tags$li("Highlight regions with customizable ellipses"),
-                              tags$li("Bootstrap value display (triangles, percentages, colors)"),
-                              tags$li("Flexible legend positioning and styling"),
+                              tags$li("Bootstrap value display and flexible legend styling"),
                               tags$li("Export to PDF/PNG with custom dimensions")
                             )
                      )
@@ -8612,6 +8858,11 @@ ui <- dashboardPage(
               condition = "output.files_loaded == 'TRUE'",
               fileInput("rdata_file", "Choose RData CNV File",
                         accept = c(".RData", ".rdata", ".Rdata")),
+              numericInput("rdata_import_downsample",
+                          "Import Downsample Factor",
+                          value = 10, min = 1, max = 100, step = 1),
+              tags$small(style = "color: #666; margin-top: -10px; display: block; margin-bottom: 10px;",
+                        "Reduces genomic positions during import. 1 = keep all, 10 = keep every 10th position."),
               verbatimTextOutput("rdata_import_status")
             ),
             conditionalPanel(
@@ -9653,7 +9904,13 @@ server <- function(input, output, session) {
     # Legacy single-entry cache variables (kept for compatibility, still updated)
     cached_p_list_hash = NULL,        # Hash of inputs that affect p-values
     cached_p_list_of_pairs = NULL,    # The cached p-value list
-    cached_classification_column = NULL  # The classification column that was used
+    cached_classification_column = NULL,  # The classification column that was used
+    # S2.9-PERF: Heatmap caching - avoid regenerating unchanged heatmaps
+    # The cache stores pre-computed tile_df and fill_colors for each heatmap index.
+    # On Apply, we compare the current config hash with the cached hash.
+    # If unchanged, we reuse the cached data instead of expensive regeneration.
+    heatmap_cache = list(),           # Named list: heatmap_index -> list(tile_df, hash, ...)
+    heatmap_cache_max_age = 5         # Clear cache entries older than N regenerations
   )
 
   classification_loading <- reactiveVal(FALSE)
@@ -9803,6 +10060,10 @@ server <- function(input, output, session) {
     shinyjs::show("download_status_waiting")
     shinyjs::hide("download_status_processing")
     shinyjs::hide("download_status_ready")
+    # Extra tab
+    shinyjs::show("extra_status_waiting")
+    shinyjs::hide("extra_status_processing")
+    shinyjs::hide("extra_status_ready")
   }
 
   show_status_processing <- function() {
@@ -9839,6 +10100,10 @@ server <- function(input, output, session) {
     shinyjs::hide("download_status_waiting")
     shinyjs::show("download_status_processing")
     shinyjs::hide("download_status_ready")
+    # Extra tab
+    shinyjs::hide("extra_status_waiting")
+    shinyjs::show("extra_status_processing")
+    shinyjs::hide("extra_status_ready")
   }
 
   show_status_ready <- function() {
@@ -9875,6 +10140,10 @@ server <- function(input, output, session) {
     shinyjs::hide("download_status_waiting")
     shinyjs::hide("download_status_processing")
     shinyjs::show("download_status_ready")
+    # Extra tab
+    shinyjs::hide("extra_status_waiting")
+    shinyjs::hide("extra_status_processing")
+    shinyjs::show("extra_status_ready")
   }
 
   show_status_click_to_generate <- function() {
@@ -9907,6 +10176,10 @@ server <- function(input, output, session) {
     shinyjs::show("legend_status_waiting")
     shinyjs::hide("legend_status_processing")
     shinyjs::hide("legend_status_ready")
+    # Extra tab (no click_to_generate status, just show waiting)
+    shinyjs::show("extra_status_waiting")
+    shinyjs::hide("extra_status_processing")
+    shinyjs::hide("extra_status_ready")
   }
 
   # Initialize YAML data structure immediately
@@ -10065,7 +10338,10 @@ server <- function(input, output, session) {
     }
 
     # Extract CNV data from RData file
-    result <- func.extract.cnv.from.rdata(input$rdata_file$datapath, downsample_factor = 10)
+    # Use user-specified downsample factor (default 10) from UI input
+    import_downsample <- if (!is.null(input$rdata_import_downsample)) input$rdata_import_downsample else 10
+    cat(file=stderr(), paste0("[RDATA-IMPORT] Using import downsample factor: ", import_downsample, "\n"))
+    result <- func.extract.cnv.from.rdata(input$rdata_file$datapath, downsample_factor = import_downsample)
 
     if (!is.null(result$error)) {
       cat(file=stderr(), "[RDATA-IMPORT] ERROR:", result$error, "\n")
@@ -10717,7 +10993,13 @@ server <- function(input, output, session) {
           # S2.8: Import WGD normalization settings
           cnv_wgd_norm = if (!is.null(h$cnv_wgd_norm)) func.check.bin.val.from.conf(h$cnv_wgd_norm) else FALSE,
           cnv_wgd_per_cell = if (!is.null(h$cnv_wgd_per_cell)) func.check.bin.val.from.conf(h$cnv_wgd_per_cell) else FALSE,
-          cnv_wgd_column = if (!is.null(h$cnv_wgd_column)) h$cnv_wgd_column else ""
+          cnv_wgd_column = if (!is.null(h$cnv_wgd_column)) h$cnv_wgd_column else "",
+          # S2.8: Import display mode (basic or detailed)
+          cnv_display_mode = if (!is.null(h$cnv_display_mode)) h$cnv_display_mode else "basic",
+          # Render downsample factor (second stage, 0 = keep all)
+          cnv_render_downsample = if (!is.null(h$cnv_render_downsample)) as.numeric(h$cnv_render_downsample) else 10,
+          # Height scale for detailed mode
+          cnv_height_scale = if (!is.null(h$cnv_height_scale)) as.numeric(h$cnv_height_scale) else 1.0
         )
         values$heatmap_configs <- c(values$heatmap_configs, list(new_config))
 
@@ -10730,6 +11012,26 @@ server <- function(input, output, session) {
       }
       # Trigger heatmap UI regeneration
       heatmap_ui_trigger(heatmap_ui_trigger() + 1)
+
+      # Update RData mapping column dropdowns after UI regeneration
+      # This ensures the saved values are displayed correctly
+      # IMPORTANT: Must delay to allow Shiny to render the UI first
+      if (!is.null(values$csv_data)) {
+        csv_cols <- names(values$csv_data)
+        shinyjs::delay(500, {
+          for (cfg_idx in seq_along(values$heatmap_configs)) {
+            cfg <- values$heatmap_configs[[cfg_idx]]
+            if (!is.null(cfg$data_source) && cfg$data_source == "rdata" &&
+                !is.null(cfg$rdata_mapping_column) && cfg$rdata_mapping_column != "") {
+              updateSelectInput(session, paste0("heatmap_rdata_mapping_col_", cfg_idx),
+                                choices = c("-- Select a column --" = "", csv_cols),
+                                selected = cfg$rdata_mapping_column)
+              cat(file=stderr(), sprintf("[YAML-IMPORT] Updated dropdown %d with saved mapping column: %s\n",
+                                         cfg_idx, cfg$rdata_mapping_column))
+            }
+          }
+        })
+      }
 
       # S1.62dev: Also populate values$heatmaps for immediate plot rendering
       # This converts heatmap_configs to the format expected by the plot function
@@ -10792,7 +11094,13 @@ server <- function(input, output, session) {
           # S2.8: WGD normalization settings
           cnv_wgd_norm = if (!is.null(cfg$cnv_wgd_norm)) cfg$cnv_wgd_norm else FALSE,
           cnv_wgd_per_cell = if (!is.null(cfg$cnv_wgd_per_cell)) cfg$cnv_wgd_per_cell else FALSE,
-          cnv_wgd_column = if (!is.null(cfg$cnv_wgd_column)) cfg$cnv_wgd_column else ""
+          cnv_wgd_column = if (!is.null(cfg$cnv_wgd_column)) cfg$cnv_wgd_column else "",
+          # S2.8: Display mode (basic or detailed)
+          cnv_display_mode = if (!is.null(cfg$cnv_display_mode)) cfg$cnv_display_mode else "basic",
+          # Render downsample factor (second stage, 0 = keep all)
+          cnv_render_downsample = if (!is.null(cfg$cnv_render_downsample)) cfg$cnv_render_downsample else 10,
+          # Height scale for detailed mode
+          cnv_height_scale = if (!is.null(cfg$cnv_height_scale)) as.numeric(cfg$cnv_height_scale) else 1.0
         )
       })
       # Remove NULL entries (configs without columns)
@@ -11781,14 +12089,21 @@ server <- function(input, output, session) {
               heatmap_item[[as.character(j)]]$use_midpoint <- "yes"  # Always use midpoint for CNV
               # Store CNV settings (but NOT the matrix itself - that's passed separately)
               heatmap_item[[as.character(j)]]$cnv_downsample <- if (!is.null(heatmap_entry$cnv_downsample)) heatmap_entry$cnv_downsample else 10
+              heatmap_item[[as.character(j)]]$cnv_render_downsample <- if (!is.null(heatmap_entry$cnv_render_downsample)) heatmap_entry$cnv_render_downsample else 10
               heatmap_item[[as.character(j)]]$cnv_wgd_norm <- if (!is.null(heatmap_entry$cnv_wgd_norm) && heatmap_entry$cnv_wgd_norm) "yes" else "no"
               # S2.12: Per-cell WGD normalization settings
               heatmap_item[[as.character(j)]]$cnv_wgd_per_cell <- if (!is.null(heatmap_entry$cnv_wgd_per_cell) && heatmap_entry$cnv_wgd_per_cell) "yes" else "no"
               heatmap_item[[as.character(j)]]$cnv_wgd_column <- if (!is.null(heatmap_entry$cnv_wgd_column)) heatmap_entry$cnv_wgd_column else ""
+              # S2.8: Display mode (basic or detailed)
+              heatmap_item[[as.character(j)]]$cnv_display_mode <- if (!is.null(heatmap_entry$cnv_display_mode)) heatmap_entry$cnv_display_mode else "basic"
+              # Height scale for detailed mode
+              heatmap_item[[as.character(j)]]$cnv_height_scale <- if (!is.null(heatmap_entry$cnv_height_scale)) heatmap_entry$cnv_height_scale else 1.0
               # S2.0: Store mapping column for sample name matching
               heatmap_item[[as.character(j)]]$rdata_mapping_column <- heatmap_entry$rdata_mapping_column
               debug_cat(paste0("    S2.0-RDATA: RData heatmap, mapping_column=", heatmap_entry$rdata_mapping_column, "\n"))
               debug_cat(paste0("    S2.12: Per-cell WGD: enabled=", heatmap_entry$cnv_wgd_per_cell, ", column=", heatmap_entry$cnv_wgd_column, "\n"))
+              debug_cat(paste0("    Height scale: ", heatmap_entry$cnv_height_scale, "\n"))
+              debug_cat(paste0("    S2.8: Display mode: ", heatmap_entry$cnv_display_mode, "\n"))
             } else {
               heatmap_item[[as.character(j)]]$data_source <- "csv"
               # Add columns - format must match expected YAML structure
@@ -12039,14 +12354,21 @@ server <- function(input, output, session) {
             heatmap_item[[as.character(j)]]$use_midpoint <- "yes"  # Always use midpoint for CNV
             # Store CNV settings (but NOT the matrix itself - that's passed separately)
             heatmap_item[[as.character(j)]]$cnv_downsample <- if (!is.null(heatmap_entry$cnv_downsample)) heatmap_entry$cnv_downsample else 10
+            heatmap_item[[as.character(j)]]$cnv_render_downsample <- if (!is.null(heatmap_entry$cnv_render_downsample)) heatmap_entry$cnv_render_downsample else 10
             heatmap_item[[as.character(j)]]$cnv_wgd_norm <- if (!is.null(heatmap_entry$cnv_wgd_norm) && heatmap_entry$cnv_wgd_norm) "yes" else "no"
             # S2.12: Per-cell WGD normalization settings
             heatmap_item[[as.character(j)]]$cnv_wgd_per_cell <- if (!is.null(heatmap_entry$cnv_wgd_per_cell) && heatmap_entry$cnv_wgd_per_cell) "yes" else "no"
             heatmap_item[[as.character(j)]]$cnv_wgd_column <- if (!is.null(heatmap_entry$cnv_wgd_column)) heatmap_entry$cnv_wgd_column else ""
+            # S2.8: Display mode (basic or detailed)
+            heatmap_item[[as.character(j)]]$cnv_display_mode <- if (!is.null(heatmap_entry$cnv_display_mode)) heatmap_entry$cnv_display_mode else "basic"
+            # Height scale for detailed mode
+            heatmap_item[[as.character(j)]]$cnv_height_scale <- if (!is.null(heatmap_entry$cnv_height_scale)) heatmap_entry$cnv_height_scale else 1.0
             # S2.0: Store mapping column for sample name matching
             heatmap_item[[as.character(j)]]$rdata_mapping_column <- heatmap_entry$rdata_mapping_column
             debug_cat(paste0("    S2.0: RData heatmap, mapping_column=", heatmap_entry$rdata_mapping_column, "\n"))
             debug_cat(paste0("    S2.12: Per-cell WGD: enabled=", heatmap_entry$cnv_wgd_per_cell, ", column=", heatmap_entry$cnv_wgd_column, "\n"))
+            debug_cat(paste0("    S2.8: Display mode: ", heatmap_entry$cnv_display_mode, "\n"))
+            debug_cat(paste0("    Height scale: ", heatmap_entry$cnv_height_scale, "\n"))
           } else {
             heatmap_item[[as.character(j)]]$data_source <- "csv"
             # Add columns - format must match expected YAML structure
@@ -14082,6 +14404,58 @@ server <- function(input, output, session) {
                        " Per-cell WGD: normalize only cells where selected column value = 1. ",
                        "Auto-detects column named 'WGD'.")
           ),
+          # S2.8: Display mode selector (basic vs detailed)
+          fluidRow(
+            column(6,
+                   radioButtons(paste0("heatmap_cnv_display_mode_", i), "Display Mode:",
+                                choices = c("Basic (faster)" = "basic", "Detailed (like pheatmap)" = "detailed"),
+                                selected = if (!is.null(cfg$cnv_display_mode)) cfg$cnv_display_mode else "basic",
+                                inline = TRUE)
+            ),
+            column(6,
+                   tags$div(
+                     style = "padding-top: 25px;",
+                     tags$small(class = "text-muted",
+                                icon("info-circle"),
+                                " Detailed mode: smoother rendering with finer color gradations")
+                   )
+            )
+          ),
+          # Render downsample factor (second stage downsampling)
+          fluidRow(
+            column(6,
+                   numericInput(paste0("heatmap_cnv_render_downsample_", i),
+                               "Render Downsample Factor",
+                               value = if (!is.null(cfg$cnv_render_downsample)) cfg$cnv_render_downsample else 10,
+                               min = 0, max = 100, step = 1)
+            ),
+            column(6,
+                   tags$div(
+                     style = "padding-top: 25px;",
+                     tags$small(class = "text-muted",
+                                icon("info-circle"),
+                                " 0 = keep all, N > 1 = keep every Nth position during render")
+                   )
+            )
+          ),
+          # Height scale for detailed mode (allows compressing the heatmap vertically)
+          fluidRow(
+            column(6,
+                   sliderInput(paste0("heatmap_cnv_height_scale_", i),
+                               "Height Scale (detailed mode)",
+                               min = 0.1, max = 2.0,
+                               value = if (!is.null(cfg$cnv_height_scale)) cfg$cnv_height_scale else 1.0,
+                               step = 0.1)
+            ),
+            column(6,
+                   tags$div(
+                     style = "padding-top: 25px;",
+                     tags$small(class = "text-muted",
+                                icon("info-circle"),
+                                " Controls total heatmap height. Lower values compress the heatmap.")
+                   )
+            )
+          ),
           # S2.0: Sample mapping column selector (shown when auto-match fails)
           fluidRow(
             column(12,
@@ -14179,9 +14553,9 @@ server <- function(input, output, session) {
           ),
           column(4,
                  sliderInput(paste0("heatmap_height_", i), "Row Height",
-                             min = 0.1, max = 3.0,
+                             min = 0.01, max = 3.0,
                              value = if (!is.null(cfg$height)) cfg$height else 0.8,
-                             step = 0.1)
+                             step = 0.01)
           ),
           column(4,
                  sliderInput(paste0("heatmap_row_height_", i), "Column Width",
@@ -14430,11 +14804,15 @@ server <- function(input, output, session) {
       mid_color = "#FFFF99",
       midpoint = 0,
       # S1.62dev: CNV-specific settings
-      cnv_downsample = 10,
+      cnv_downsample = 10,  # Kept for YAML compatibility
+      cnv_render_downsample = 10,  # Second stage downsampling (10 = default)
+      cnv_height_scale = 1.0,  # Height scaling for detailed mode
       cnv_wgd_norm = FALSE,
       # S2.12: Per-cell WGD normalization settings
       cnv_wgd_per_cell = FALSE,
-      cnv_wgd_column = NULL
+      cnv_wgd_column = NULL,
+      # S2.8: Display mode (basic = geom_tile, detailed = geom_raster like pheatmap)
+      cnv_display_mode = "basic"
     )
     
     values$heatmap_configs <- c(values$heatmap_configs, list(new_config))
@@ -14627,6 +15005,33 @@ server <- function(input, output, session) {
       observeEvent(input[[paste0("heatmap_cnv_wgd_column_", i)]], {
         if (i <= length(values$heatmap_configs)) {
           values$heatmap_configs[[i]]$cnv_wgd_column <- input[[paste0("heatmap_cnv_wgd_column_", i)]]
+        }
+      }, ignoreInit = TRUE)
+
+      # S2.8: Display mode change (basic vs detailed)
+      observeEvent(input[[paste0("heatmap_cnv_display_mode_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          values$heatmap_configs[[i]]$cnv_display_mode <- input[[paste0("heatmap_cnv_display_mode_", i)]]
+          cat(file=stderr(), paste0("[HEATMAP-CONFIG] Heatmap ", i, " display mode changed to: ",
+                                    input[[paste0("heatmap_cnv_display_mode_", i)]], "\n"))
+        }
+      }, ignoreInit = TRUE)
+
+      # Render downsample factor change (second stage downsampling)
+      observeEvent(input[[paste0("heatmap_cnv_render_downsample_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          values$heatmap_configs[[i]]$cnv_render_downsample <- input[[paste0("heatmap_cnv_render_downsample_", i)]]
+          cat(file=stderr(), paste0("[HEATMAP-CONFIG] Heatmap ", i, " render downsample changed to: ",
+                                    input[[paste0("heatmap_cnv_render_downsample_", i)]], "\n"))
+        }
+      }, ignoreInit = TRUE)
+
+      # Height scale change (for detailed mode)
+      observeEvent(input[[paste0("heatmap_cnv_height_scale_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          values$heatmap_configs[[i]]$cnv_height_scale <- input[[paste0("heatmap_cnv_height_scale_", i)]]
+          cat(file=stderr(), paste0("[HEATMAP-CONFIG] Heatmap ", i, " height scale changed to: ",
+                                    input[[paste0("heatmap_cnv_height_scale_", i)]], "\n"))
         }
       }, ignoreInit = TRUE)
 
@@ -15754,7 +16159,11 @@ server <- function(input, output, session) {
         selected_col <- input[[paste0("heatmap_rdata_mapping_col_", i)]]
         if (!is.null(selected_col) && selected_col != "") {
           values$rdata_mapping_column <- selected_col
-          cat(file=stderr(), paste0("[RDATA-MAPPING] User selected mapping column: '", selected_col, "'\n"))
+          # Also update the per-heatmap config so it gets saved to YAML
+          if (!is.null(values$heatmap_configs) && length(values$heatmap_configs) >= i) {
+            values$heatmap_configs[[i]]$rdata_mapping_column <- selected_col
+          }
+          cat(file=stderr(), paste0("[RDATA-MAPPING] User selected mapping column for heatmap ", i, ": '", selected_col, "'\n"))
         }
       }, ignoreInit = TRUE, ignoreNULL = TRUE)
     })
@@ -16181,8 +16590,10 @@ server <- function(input, output, session) {
         }
 
         # Get CNV settings - these will be stored and applied later in func.print.lineage.tree
-        cnv_downsample <- input[[paste0("heatmap_cnv_downsample_", i)]]
-        if (is.null(cnv_downsample)) cnv_downsample <- 10
+        # Use new field name, but keep old one for backwards compatibility
+        cnv_render_downsample <- input[[paste0("heatmap_cnv_render_downsample_", i)]]
+        if (is.null(cnv_render_downsample)) cnv_render_downsample <- 10
+        cnv_downsample <- cnv_render_downsample  # For backwards compatibility
         cnv_wgd_norm <- input[[paste0("heatmap_cnv_wgd_norm_", i)]]
         if (is.null(cnv_wgd_norm)) cnv_wgd_norm <- FALSE
         # S2.12: Per-cell WGD settings
@@ -16191,7 +16602,8 @@ server <- function(input, output, session) {
         cnv_wgd_column <- input[[paste0("heatmap_cnv_wgd_column_", i)]]
         if (is.null(cnv_wgd_column)) cnv_wgd_column <- NULL
 
-        debug_cat(paste0("  S1.62dev: RData CNV heatmap ", i, ": downsample=", cnv_downsample, ", wgd_norm=", cnv_wgd_norm, "\n"))
+        debug_cat(paste0("  S1.62dev: RData CNV heatmap ", i, ": render_downsample=", cnv_render_downsample, ", wgd_norm=", cnv_wgd_norm, "\n"))
+        cat(file=stderr(), paste0("[RENDER-DOWNSAMPLE] Heatmap ", i, " render_downsample value: ", cnv_render_downsample, "\n"))
         debug_cat(paste0("  S2.12: Per-cell WGD: enabled=", cnv_wgd_per_cell, ", column=", ifelse(is.null(cnv_wgd_column), "NULL", cnv_wgd_column), "\n"))
         debug_cat(paste0("  S1.62dev: Raw CNV matrix: ", nrow(values$rdata_cnv_matrix), " samples x ", ncol(values$rdata_cnv_matrix), " positions\n"))
 
@@ -16217,11 +16629,16 @@ server <- function(input, output, session) {
           is_discrete = FALSE,  # CNV data is always continuous
           data_source = "rdata",
           # Store CNV settings (processing happens in func.print.lineage.tree)
-          cnv_downsample = cnv_downsample,
+          cnv_downsample = cnv_downsample,  # Backwards compatibility
+          cnv_render_downsample = cnv_render_downsample,  # New field name (default 0)
           cnv_wgd_norm = cnv_wgd_norm,
           # S2.12: Per-cell WGD normalization settings
           cnv_wgd_per_cell = cnv_wgd_per_cell,
           cnv_wgd_column = cnv_wgd_column,
+          # S2.8: Display mode (basic = geom_tile, detailed = geom_raster like pheatmap)
+          cnv_display_mode = if (!is.null(input[[paste0("heatmap_cnv_display_mode_", i)]])) input[[paste0("heatmap_cnv_display_mode_", i)]] else "basic",
+          # Height scale for detailed mode
+          cnv_height_scale = if (!is.null(input[[paste0("heatmap_cnv_height_scale_", i)]])) input[[paste0("heatmap_cnv_height_scale_", i)]] else 1.0,
           # S2.0: Store mapping column for sample name matching
           rdata_mapping_column = mapping_column,
           columns = character(0),  # No columns for RData - data comes from parameter
@@ -17550,7 +17967,9 @@ server <- function(input, output, session) {
         cached_p_list_of_pairs = values$cached_p_list_of_pairs,
         cached_p_list_hash = values$cached_p_list_hash,
         # S2.7-PERF: Multi-entry cache for instant switching between classifications
-        p_list_cache = values$p_list_cache
+        p_list_cache = values$p_list_cache,
+        # S2.9-PERF: Heatmap cache for reusing unchanged heatmaps
+        heatmap_cache = values$heatmap_cache
       ))
       cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] RETURNED from func.print.lineage.tree at ", format(Sys.time(), "%H:%M:%OS3"), "\n"))
 
@@ -17606,6 +18025,13 @@ server <- function(input, output, session) {
             cat(file=stderr(), sprintf("[PERF-CACHE] Stored cache (hash: %s, classification: %s)\n",
                                        substr(values$cached_p_list_hash, 1, 8),
                                        values$cached_classification_column))
+          }
+
+          # S2.9-PERF: Store updated heatmap cache
+          if (!is.null(tree_result$cache_data$heatmap_cache)) {
+            values$heatmap_cache <- tree_result$cache_data$heatmap_cache
+            cat(file=stderr(), sprintf("[S2.9-CACHE] Updated heatmap cache (%d entries)\n",
+                                       length(values$heatmap_cache)))
           }
         }
       }
@@ -18979,7 +19405,13 @@ server <- function(input, output, session) {
           # S2.8: WGD normalization settings - were missing from export
           cnv_wgd_norm = if (!is.null(cfg$cnv_wgd_norm) && cfg$cnv_wgd_norm) "yes" else "no",
           cnv_wgd_per_cell = if (!is.null(cfg$cnv_wgd_per_cell) && cfg$cnv_wgd_per_cell) "yes" else "no",
-          cnv_wgd_column = if (!is.null(cfg$cnv_wgd_column)) cfg$cnv_wgd_column else ""
+          cnv_wgd_column = if (!is.null(cfg$cnv_wgd_column)) cfg$cnv_wgd_column else "",
+          # S2.8: Display mode (basic or detailed) - for RData heatmaps
+          cnv_display_mode = if (!is.null(cfg$cnv_display_mode)) cfg$cnv_display_mode else "basic",
+          # Render downsample factor (second stage, 10 = default)
+          cnv_render_downsample = if (!is.null(cfg$cnv_render_downsample)) cfg$cnv_render_downsample else 10,
+          # Height scale for detailed mode
+          cnv_height_scale = if (!is.null(cfg$cnv_height_scale)) cfg$cnv_height_scale else 1.0
         )
       }
     }
