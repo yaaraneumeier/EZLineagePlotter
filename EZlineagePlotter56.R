@@ -16060,7 +16060,11 @@ server <- function(input, output, session) {
         selected_col <- input[[paste0("heatmap_rdata_mapping_col_", i)]]
         if (!is.null(selected_col) && selected_col != "") {
           values$rdata_mapping_column <- selected_col
-          cat(file=stderr(), paste0("[RDATA-MAPPING] User selected mapping column: '", selected_col, "'\n"))
+          # Also update the per-heatmap config so it gets saved to YAML
+          if (!is.null(values$heatmap_configs) && length(values$heatmap_configs) >= i) {
+            values$heatmap_configs[[i]]$rdata_mapping_column <- selected_col
+          }
+          cat(file=stderr(), paste0("[RDATA-MAPPING] User selected mapping column for heatmap ", i, ": '", selected_col, "'\n"))
         }
       }, ignoreInit = TRUE, ignoreNULL = TRUE)
     })
