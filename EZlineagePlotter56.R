@@ -206,7 +206,7 @@ options(shiny.maxRequestSize = 100*1024^2)
 #       - Layer reordering now happens ONCE at the end in generate_plot()
 # S1.2: Fixed undefined x_range_min in func_highlight causing "Problem while
 #       computing aesthetics" error when adding 2+ highlights with a heatmap.
-VERSION <- "S2.8"
+VERSION <- "S2.9"
 
 # Debug output control - set to TRUE to enable verbose console logging
 # For production/stable use, keep this FALSE for better performance
@@ -8600,33 +8600,29 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #155724;",
-                     tags$h4(style = "color: #155724; margin: 0;", "Version S2.8 Stable"),
+                     tags$h4(style = "color: #155724; margin: 0;", "Version S2.9 (stable)"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
-                            tags$strong("New in S2.8:"),
+                            tags$strong("New in S2.9:"),
+                            tags$ul(
+                              tags$li("Configurable two-stage CNV downsampling (import & render)"),
+                              tags$li("Height Scale control for detailed RData heatmaps"),
+                              tags$li("RData sample mapping column now properly saved to YAML"),
+                              tags$li("Fixed extra tab status indicator during processing"),
+                              tags$li("Fixed CSV column dropdown display after YAML import")
+                            ),
+                            tags$strong("From S2.8:"),
                             tags$ul(
                               tags$li("Faster classification switching with multi-entry LRU cache"),
-                              tags$li("Manual rotation nodes now saved and restored from YAML"),
-                              tags$li("RData heatmap settings fully persist in YAML (mapping column, WGD, lines)"),
-                              tags$li("Tree Length/Width sliders properly restored from YAML")
-                            ),
-                            tags$strong("From S2.7:"),
-                            tags$ul(
-                              tags$li("Per-cell WGD normalization for CNV heatmaps"),
-                              tags$li("Fixed discrete heatmap colors preserved when adding/removing heatmaps")
-                            ),
-                            tags$strong("From S2.0:"),
-                            tags$ul(
-                              tags$li("RData CNV heatmaps from QDNAseq/scIMPACT pipelines"),
-                              tags$li("Automatic sample matching via CSV lookup columns"),
-                              tags$li("Multiple heatmap support (CSV + RData together)")
+                              tags$li("Manual rotation nodes saved/restored from YAML"),
+                              tags$li("Per-cell WGD normalization for CNV heatmaps")
                             ),
                             tags$strong("Core Features:"),
                             tags$ul(
-                              tags$li("Tree visualization with classification coloring"),
+                              tags$li("RData CNV heatmaps from QDNAseq/scIMPACT pipelines"),
                               tags$li("Multiple heatmaps with discrete/continuous color scales"),
+                              tags$li("Tree visualization with classification coloring"),
                               tags$li("Highlight regions with customizable ellipses"),
-                              tags$li("Bootstrap value display (triangles, percentages, colors)"),
-                              tags$li("Flexible legend positioning and styling"),
+                              tags$li("Bootstrap value display and flexible legend styling"),
                               tags$li("Export to PDF/PNG with custom dimensions")
                             )
                      )
