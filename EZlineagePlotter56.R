@@ -1406,6 +1406,46 @@ func.create.p_list_cache_hash <- function(tree440, list_id_by_class, dx_rx_types
   return(hash_value)
 }
 
+# S2.9-PERF: Create hash for heatmap caching
+# This hash determines if a heatmap can be reused from cache.
+# Inputs that affect heatmap rendering: data, colors, dimensions, display settings
+func.create.heatmap_cache_hash <- function(heat_param, heat_data = NULL, tree_tips = NULL) {
+  # Build a list of all cache-relevant data for this heatmap
+  cache_data <- list(
+    # Data source and content
+    data_source = heat_param[['data_source']],
+    # For RData, include a hash of the actual data matrix
+    data_hash = if (!is.null(heat_data)) digest::digest(heat_data, algo = "xxhash32") else NULL,
+    # Tree tips affect y-positioning
+    tree_tips_hash = if (!is.null(tree_tips)) digest::digest(sort(tree_tips), algo = "xxhash32") else NULL,
+    # Color parameters
+    low_color = heat_param[['low']],
+    mid_color = heat_param[['mid']],
+    high_color = heat_param[['high']],
+    midpoint = heat_param[['midpoint']],
+    na_color = heat_param[['na_color']],
+    # Display settings
+    cnv_display_mode = heat_param[['cnv_display_mode']],
+    cnv_height_scale = heat_param[['cnv_height_scale']],
+    cnv_render_downsample = heat_param[['cnv_render_downsample']],
+    # Dimensions
+    distance = heat_param[['distance']],
+    height = heat_param[['height']],
+    # Other visual settings
+    show_col_lines = heat_param[['show_col_lines']],
+    col_line_color = heat_param[['col_line_color']],
+    col_line_size = heat_param[['col_line_size']],
+    show_row_lines = heat_param[['show_row_lines']],
+    row_line_color = heat_param[['row_line_color']],
+    row_line_size = heat_param[['row_line_size']]
+  )
+
+  # Use digest for reliable hashing (xxhash64 is fast)
+  hash_value <- digest::digest(cache_data, algo = "xxhash64")
+
+  return(hash_value)
+}
+
 
 # Create list of p-values for each pair of nodes
 func.create.p_list_of_pairs <- function(list_node_by_class, d440, dx_rx_types1_short,
@@ -3034,7 +3074,8 @@ func.print.lineage.tree <- function(conf_yaml_path,
                                     rdata_cnv_matrix = NULL,  # S1.62dev: CNV matrix from RData file
                                     cached_p_list_of_pairs = NULL,  # S2.0-PERF: Cached p-values (Option 3A)
                                     cached_p_list_hash = NULL,      # S2.0-PERF: Hash for cache validation
-                                    p_list_cache = list()) {        # S2.7-PERF: Multi-entry cache (hash -> p_list_of_pairs)
+                                    p_list_cache = list(),          # S2.7-PERF: Multi-entry cache (hash -> p_list_of_pairs)
+                                    heatmap_cache = list()) {       # S2.9-PERF: Heatmap cache (index -> tile_df + hash)
 
   # === DEBUG CHECKPOINT 2: FUNCTION ENTRY ===
   # v53: cat(file=stderr(), "\nÃ°Å¸â€Â DEBUG CHECKPOINT 2: func.print.lineage.tree ENTRY\n")
@@ -5268,7 +5309,8 @@ func.print.lineage.tree <- function(conf_yaml_path,
         legend_settings = legend_settings,  # v136: Pass legend settings for highlight/bootstrap legends
         cached_p_list_of_pairs = cached_p_list_of_pairs,  # S2.0-PERF: Pass cached p-values
         cached_p_list_hash = cached_p_list_hash,  # S2.0-PERF: Pass cache hash for validation
-        p_list_cache = p_list_cache  # S2.7-PERF: Multi-entry cache
+        p_list_cache = p_list_cache,  # S2.7-PERF: Multi-entry cache
+        heatmap_cache = heatmap_cache  # S2.9-PERF: Heatmap cache
       )
       # }
 
@@ -5445,7 +5487,8 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
                                          legend_settings = NULL,  # v136: Legend settings for highlight/bootstrap legends
                                          cached_p_list_of_pairs = NULL,  # S2.0-PERF: Cached p-values (Option 3A)
                                          cached_p_list_hash = NULL,      # S2.0-PERF: Hash for cache validation
-                                         p_list_cache = list()) {        # S2.7-PERF: Multi-entry cache
+                                         p_list_cache = list(),          # S2.7-PERF: Multi-entry cache
+                                         heatmap_cache = list()) {       # S2.9-PERF: Heatmap cache
 
   # === DEBUG CHECKPOINT 4: INNER FUNCTION ENTRY ===
   # v53: cat(file=stderr(), "\nÃ°Å¸â€Â DEBUG CHECKPOINT 4: func.make.plot.tree.heat.NEW ENTRY\n")
@@ -6506,6 +6549,28 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             debug_cat(paste0("\n=== S2.8: DETAILED MODE (geom_tile with pre-computed colors like pheatmap) ===\n"))
             cat(file=stderr(), "[HEATMAP-RENDER] Using DETAILED mode with geom_tile + pre-computed colors (pheatmap-style)\n")
 
+            # S2.9-PERF: Check heatmap cache before expensive color computation
+            heatmap_cache_key <- as.character(heat_idx)
+            current_heatmap_hash <- func.create.heatmap_cache_hash(heat_param, heat_data, tip_data$label)
+
+            use_cached_colors <- FALSE
+            cached_tile_df <- NULL
+            cached_value_range <- NULL
+
+            if (!is.null(heatmap_cache) && heatmap_cache_key %in% names(heatmap_cache)) {
+              cached_entry <- heatmap_cache[[heatmap_cache_key]]
+              if (!is.null(cached_entry$hash) && cached_entry$hash == current_heatmap_hash) {
+                cat(file=stderr(), paste0("[S2.9-CACHE] Heatmap ", heat_idx, " CACHE HIT - reusing pre-computed colors\n"))
+                use_cached_colors <- TRUE
+                cached_tile_df <- cached_entry$tile_df
+                cached_value_range <- cached_entry$value_range
+              } else {
+                cat(file=stderr(), paste0("[S2.9-CACHE] Heatmap ", heat_idx, " cache MISS (hash mismatch)\n"))
+              }
+            } else {
+              cat(file=stderr(), paste0("[S2.9-CACHE] Heatmap ", heat_idx, " cache MISS (no cached entry)\n"))
+            }
+
             # For detailed mode, we use geom_tile with pre-computed colors like pheatmap
             # This ensures each tile is at the exact tip y-coordinate while having pheatmap-style coloring
 
@@ -6532,47 +6597,77 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             debug_cat(paste0("  S2.8 Detailed colors: low=", low_color, ", mid=", mid_color, ", high=", high_color, "\n"))
             debug_cat(paste0("  S2.8 Detailed midpoint: ", midpoint, "\n"))
 
-            # Create fine-grained color palette like pheatmap (1998 colors)
-            colors_below <- colorRampPalette(c(low_color, mid_color))(999)
-            colors_above <- colorRampPalette(c(mid_color, high_color))(1000)[-1]
-            detailed_palette <- c(colors_below, colors_above)
+            # S2.9-PERF: Use cached colors if available, otherwise compute
+            if (use_cached_colors && !is.null(cached_tile_df)) {
+              # Use cached tile_df with pre-computed fill_color
+              tile_df <- cached_tile_df
+              value_min <- cached_value_range$min
+              value_max <- cached_value_range$max
+              cat(file=stderr(), paste0("[S2.9-CACHE] Using cached tile_df with ", nrow(tile_df), " tiles\n"))
 
-            # S2.8: Enhanced debug logging for matrix dimensions
-            cat(file=stderr(), paste0("[S2.8-MATRIX] heat_data dimensions: ", nrow(heat_data), " rows x ", ncol(heat_data), " cols\n"))
-            cat(file=stderr(), paste0("[S2.8-MATRIX] Number of tree tips in tip_data: ", nrow(tip_data), "\n"))
-            cat(file=stderr(), paste0("[S2.8-MATRIX] tile_df rows: ", nrow(tile_df), "\n"))
+              # Still need to create palette for legend
+              colors_below <- colorRampPalette(c(low_color, mid_color))(999)
+              colors_above <- colorRampPalette(c(mid_color, high_color))(1000)[-1]
+              detailed_palette <- c(colors_below, colors_above)
+            } else {
+              # Create fine-grained color palette like pheatmap (1998 colors)
+              colors_below <- colorRampPalette(c(low_color, mid_color))(999)
+              colors_above <- colorRampPalette(c(mid_color, high_color))(1000)[-1]
+              detailed_palette <- c(colors_below, colors_above)
 
-            # Get data range for color mapping
+              # S2.8: Enhanced debug logging for matrix dimensions
+              cat(file=stderr(), paste0("[S2.8-MATRIX] heat_data dimensions: ", nrow(heat_data), " rows x ", ncol(heat_data), " cols\n"))
+              cat(file=stderr(), paste0("[S2.8-MATRIX] Number of tree tips in tip_data: ", nrow(tip_data), "\n"))
+              cat(file=stderr(), paste0("[S2.8-MATRIX] tile_df rows: ", nrow(tile_df), "\n"))
+
+              # Get data range for color mapping
+              data_values <- tile_df$value[!is.na(tile_df$value)]
+              if (length(data_values) > 0) {
+                data_min <- min(data_values, na.rm = TRUE)
+                data_max <- max(data_values, na.rm = TRUE)
+
+                range_below <- midpoint - min(data_min, 0)
+                range_above <- max(data_max, midpoint + 2) - midpoint
+                max_range <- max(range_below, range_above, 2)
+
+                value_min <- midpoint - max_range
+                value_max <- midpoint + max_range
+
+                debug_cat(paste0("  S2.8 Data range: [", round(data_min, 2), ", ", round(data_max, 2), "]\n"))
+                debug_cat(paste0("  S2.8 Color range: [", round(value_min, 2), ", ", round(value_max, 2), "]\n"))
+
+                # Pre-compute colors for each tile (like pheatmap does)
+                # Normalize values to 0-1 range, then map to palette indices
+                normalized_values <- (tile_df$value - value_min) / (value_max - value_min)
+                normalized_values[normalized_values < 0] <- 0
+                normalized_values[normalized_values > 1] <- 1
+
+                # Convert to color indices (1 to 1998)
+                color_indices <- round(normalized_values * (length(detailed_palette) - 1)) + 1
+
+                # Assign pre-computed colors
+                tile_df$fill_color <- detailed_palette[color_indices]
+                tile_df$fill_color[is.na(tile_df$value)] <- na_color
+
+                cat(file=stderr(), paste0("[S2.8-DETAILED] Pre-computed colors for ", nrow(tile_df), " tiles\n"))
+                cat(file=stderr(), paste0("[S2.8-DETAILED] Unique colors: ", length(unique(tile_df$fill_color)), "\n"))
+
+                # S2.9-PERF: Store in cache for future use
+                if (!exists("updated_heatmap_cache")) {
+                  updated_heatmap_cache <- heatmap_cache
+                }
+                updated_heatmap_cache[[heatmap_cache_key]] <- list(
+                  hash = current_heatmap_hash,
+                  tile_df = tile_df,
+                  value_range = list(min = value_min, max = value_max)
+                )
+                cat(file=stderr(), paste0("[S2.9-CACHE] Cached heatmap ", heat_idx, " for future use\n"))
+              }
+            }
+
+            # Continue with rendering (both cached and fresh paths converge here)
             data_values <- tile_df$value[!is.na(tile_df$value)]
             if (length(data_values) > 0) {
-              data_min <- min(data_values, na.rm = TRUE)
-              data_max <- max(data_values, na.rm = TRUE)
-
-              range_below <- midpoint - min(data_min, 0)
-              range_above <- max(data_max, midpoint + 2) - midpoint
-              max_range <- max(range_below, range_above, 2)
-
-              value_min <- midpoint - max_range
-              value_max <- midpoint + max_range
-
-              debug_cat(paste0("  S2.8 Data range: [", round(data_min, 2), ", ", round(data_max, 2), "]\n"))
-              debug_cat(paste0("  S2.8 Color range: [", round(value_min, 2), ", ", round(value_max, 2), "]\n"))
-
-              # Pre-compute colors for each tile (like pheatmap does)
-              # Normalize values to 0-1 range, then map to palette indices
-              normalized_values <- (tile_df$value - value_min) / (value_max - value_min)
-              normalized_values[normalized_values < 0] <- 0
-              normalized_values[normalized_values > 1] <- 1
-
-              # Convert to color indices (1 to 1998)
-              color_indices <- round(normalized_values * (length(detailed_palette) - 1)) + 1
-
-              # Assign pre-computed colors
-              tile_df$fill_color <- detailed_palette[color_indices]
-              tile_df$fill_color[is.na(tile_df$value)] <- na_color
-
-              cat(file=stderr(), paste0("[S2.8-DETAILED] Pre-computed colors for ", nrow(tile_df), " tiles\n"))
-              cat(file=stderr(), paste0("[S2.8-DETAILED] Unique colors: ", length(unique(tile_df$fill_color)), "\n"))
 
               # Use geom_tile with pre-computed colors and scale_fill_identity
               # This positions each tile at exact tip y-coordinates
@@ -8517,11 +8612,13 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
   # S2.0-PERF: Return both the plot and cache data for two-tier caching (Option 3A)
   # The cache data allows generate_plot() to store and reuse p_list_of_pairs
+  # S2.9-PERF: Also return updated heatmap cache
   return(list(
     plot = p,
     cache_data = list(
       p_list_of_pairs = p_list_of_pairs,
-      p_list_hash = current_p_list_hash
+      p_list_hash = current_p_list_hash,
+      heatmap_cache = if (exists("updated_heatmap_cache")) updated_heatmap_cache else heatmap_cache
     )
   ))
 }
@@ -9807,7 +9904,13 @@ server <- function(input, output, session) {
     # Legacy single-entry cache variables (kept for compatibility, still updated)
     cached_p_list_hash = NULL,        # Hash of inputs that affect p-values
     cached_p_list_of_pairs = NULL,    # The cached p-value list
-    cached_classification_column = NULL  # The classification column that was used
+    cached_classification_column = NULL,  # The classification column that was used
+    # S2.9-PERF: Heatmap caching - avoid regenerating unchanged heatmaps
+    # The cache stores pre-computed tile_df and fill_colors for each heatmap index.
+    # On Apply, we compare the current config hash with the cached hash.
+    # If unchanged, we reuse the cached data instead of expensive regeneration.
+    heatmap_cache = list(),           # Named list: heatmap_index -> list(tile_df, hash, ...)
+    heatmap_cache_max_age = 5         # Clear cache entries older than N regenerations
   )
 
   classification_loading <- reactiveVal(FALSE)
@@ -17864,7 +17967,9 @@ server <- function(input, output, session) {
         cached_p_list_of_pairs = values$cached_p_list_of_pairs,
         cached_p_list_hash = values$cached_p_list_hash,
         # S2.7-PERF: Multi-entry cache for instant switching between classifications
-        p_list_cache = values$p_list_cache
+        p_list_cache = values$p_list_cache,
+        # S2.9-PERF: Heatmap cache for reusing unchanged heatmaps
+        heatmap_cache = values$heatmap_cache
       ))
       cat(file=stderr(), paste0("[DEBUG-2ND-HIGHLIGHT] RETURNED from func.print.lineage.tree at ", format(Sys.time(), "%H:%M:%OS3"), "\n"))
 
@@ -17920,6 +18025,13 @@ server <- function(input, output, session) {
             cat(file=stderr(), sprintf("[PERF-CACHE] Stored cache (hash: %s, classification: %s)\n",
                                        substr(values$cached_p_list_hash, 1, 8),
                                        values$cached_classification_column))
+          }
+
+          # S2.9-PERF: Store updated heatmap cache
+          if (!is.null(tree_result$cache_data$heatmap_cache)) {
+            values$heatmap_cache <- tree_result$cache_data$heatmap_cache
+            cat(file=stderr(), sprintf("[S2.9-CACHE] Updated heatmap cache (%d entries)\n",
+                                       length(values$heatmap_cache)))
           }
         }
       }
