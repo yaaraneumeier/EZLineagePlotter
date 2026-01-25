@@ -206,7 +206,7 @@ options(shiny.maxRequestSize = 100*1024^2)
 #       - Layer reordering now happens ONCE at the end in generate_plot()
 # S1.2: Fixed undefined x_range_min in func_highlight causing "Problem while
 #       computing aesthetics" error when adding 2+ highlights with a heatmap.
-VERSION <- "S2.9"
+VERSION <- "S2.292dev"
 
 # Debug output control - set to TRUE to enable verbose console logging
 # For production/stable use, keep this FALSE for better performance
@@ -8691,27 +8691,26 @@ ui <- dashboardPage(
         tabName = "data_upload",
         fluidRow(
           box(
-            title = "EZLineagePlotter - Stable Release",
-            status = "success",
+            title = "EZLineagePlotter - Development Version",
+            status = "warning",
             solidHeader = TRUE,
             width = 12,
             collapsible = TRUE,
-            tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #155724;",
-                     tags$h4(style = "color: #155724; margin: 0;", "Version S2.9 (stable)"),
-                     tags$p(style = "margin: 10px 0 0 0; color: #155724;",
-                            tags$strong("New in S2.9:"),
+            tags$div(style = "background: #fff3cd; padding: 15px; border-radius: 5px; border: 2px solid #856404;",
+                     tags$h4(style = "color: #856404; margin: 0;", "Version S2.292dev"),
+                     tags$p(style = "margin: 10px 0 0 0; color: #856404;",
+                            tags$strong("New in S2.292dev:"),
+                            tags$ul(
+                              tags$li("Manual RGB/Hex color input for heatmap colors"),
+                              tags$li("Font type selection for legend text"),
+                              tags$li("Sync between color picker and hex text input")
+                            ),
+                            tags$strong("From S2.9 (stable):"),
                             tags$ul(
                               tags$li("Configurable two-stage CNV downsampling (import & render)"),
                               tags$li("Height Scale control for detailed RData heatmaps"),
-                              tags$li("RData sample mapping column now properly saved to YAML"),
-                              tags$li("Fixed extra tab status indicator during processing"),
-                              tags$li("Fixed CSV column dropdown display after YAML import")
-                            ),
-                            tags$strong("From S2.8:"),
-                            tags$ul(
-                              tags$li("Faster classification switching with multi-entry LRU cache"),
-                              tags$li("Manual rotation nodes saved/restored from YAML"),
-                              tags$li("Per-cell WGD normalization for CNV heatmaps")
+                              tags$li("Heatmap caching to avoid regenerating unchanged heatmaps"),
+                              tags$li("RData sample mapping column now properly saved to YAML")
                             ),
                             tags$strong("Core Features:"),
                             tags$ul(
@@ -9339,17 +9338,31 @@ ui <- dashboardPage(
               checkboxInput("legend_show_heatmap", "Heatmap Legends", value = TRUE)  # v180: Simplified to single checkbox
             ),
 
-            # Font Sizes box
+            # Font Sizes box - S2.292dev: Added font type selection
             box(
               title = NULL,
               status = "warning",
               solidHeader = FALSE,
               width = 12,
-              tags$h4(icon("text-height"), " Font Sizes", style = "margin-top: 0;"),
+              tags$h4(icon("text-height"), " Font Settings", style = "margin-top: 0;"),
               sliderInput("legend_title_size", "Legend Title Size",
                           min = 4, max = 48, value = 12, step = 1),
               sliderInput("legend_text_size", "Legend Text Size",
-                          min = 2, max = 36, value = 10, step = 1)
+                          min = 2, max = 36, value = 10, step = 1),
+              tags$hr(style = "margin: 10px 0;"),
+              selectInput("legend_font_family", "Font Type",
+                          choices = c("Sans-serif (default)" = "sans",
+                                      "Serif (Times-like)" = "serif",
+                                      "Monospace" = "mono",
+                                      "Helvetica" = "Helvetica",
+                                      "Arial" = "Arial",
+                                      "Times New Roman" = "Times",
+                                      "Courier" = "Courier",
+                                      "Palatino" = "Palatino"),
+                          selected = "sans"),
+              tags$p(class = "text-muted", tags$small(
+                "Note: Some fonts may not be available on all systems."
+              ))
             ),
 
             # v180: Symbol & Spacing Settings box - enhanced with more controls
@@ -9814,6 +9827,14 @@ ui <- dashboardPage(
 # Define server logic
 server <- function(input, output, session) {
   options(shiny.maxRequestSize = 100*1024^2)  # Increase to 100MB
+
+  # S2.292dev: Version endpoint - allows checking version via URL
+  # Access at: http://localhost:PORT/session/SESSION_ID/dataobj/version
+  # Or use the simpler output$version_info below
+  output$version_info <- renderText({
+    paste0('{"version": "', VERSION, '", "app": "EZLineagePlotter"}')
+  })
+
   # Reactive values to store data
   values <- reactiveValues(
     tree = NULL,
@@ -9847,6 +9868,7 @@ server <- function(input, output, session) {
     rdata_mapping_column = NULL, # S2.0: User-selected CSV column for RData sample mapping
     # v121: Legend settings
     # S1.5: Added all missing defaults for proper legend styling
+    # S2.292dev: Added font_family setting
     legend_settings = list(
       position = "right",
       show_classification = TRUE,
@@ -9856,6 +9878,7 @@ server <- function(input, output, session) {
       show_pvalue = TRUE,
       title_size = 12,
       text_size = 10,
+      font_family = "sans",
       key_size = 1,
       key_width = 1,
       key_height = 1,
@@ -11210,6 +11233,12 @@ server <- function(input, output, session) {
       if (!is.null(leg$text_size)) {
         values$legend_settings$text_size <- as.numeric(leg$text_size)
         updateSliderInput(session, "legend_text_size", value = as.numeric(leg$text_size))
+      }
+      # S2.292dev: Import font_family
+      if (!is.null(leg$font_family)) {
+        values$legend_settings$font_family <- leg$font_family
+        updateSelectInput(session, "legend_font_family", selected = leg$font_family)
+        cat(file=stderr(), "[YAML-IMPORT] legend_font_family:", leg$font_family, "\n")
       }
       if (!is.null(leg$box_background)) {
         values$legend_settings$box_background <- leg$box_background
@@ -15435,7 +15464,87 @@ server <- function(input, output, session) {
           values$heatmap_configs[[i]]$mid_color <- input[[paste0("heatmap_mid_color_", i)]]
         }
       }, ignoreInit = TRUE)
-      
+
+      # S2.292dev: Sync colourInput -> hex textInput for continuous colors
+      observeEvent(input[[paste0("heatmap_low_color_", i)]], {
+        color_val <- input[[paste0("heatmap_low_color_", i)]]
+        if (!is.null(color_val)) {
+          updateTextInput(session, paste0("heatmap_low_color_hex_", i), value = toupper(color_val))
+        }
+      }, ignoreInit = TRUE, priority = -1)
+
+      observeEvent(input[[paste0("heatmap_high_color_", i)]], {
+        color_val <- input[[paste0("heatmap_high_color_", i)]]
+        if (!is.null(color_val)) {
+          updateTextInput(session, paste0("heatmap_high_color_hex_", i), value = toupper(color_val))
+        }
+      }, ignoreInit = TRUE, priority = -1)
+
+      observeEvent(input[[paste0("heatmap_mid_color_", i)]], {
+        color_val <- input[[paste0("heatmap_mid_color_", i)]]
+        if (!is.null(color_val)) {
+          updateTextInput(session, paste0("heatmap_mid_color_hex_", i), value = toupper(color_val))
+        }
+      }, ignoreInit = TRUE, priority = -1)
+
+      observeEvent(input[[paste0("heatmap_", i, "_cont_na_color")]], {
+        color_val <- input[[paste0("heatmap_", i, "_cont_na_color")]]
+        if (!is.null(color_val)) {
+          updateTextInput(session, paste0("heatmap_", i, "_cont_na_color_hex"), value = toupper(color_val))
+          # Also save to config
+          if (i <= length(values$heatmap_configs)) {
+            values$heatmap_configs[[i]]$na_color <- color_val
+          }
+        }
+      }, ignoreInit = TRUE, priority = -1)
+
+      # S2.292dev: Sync hex textInput -> colourInput for continuous colors
+      observeEvent(input[[paste0("heatmap_low_color_hex_", i)]], {
+        hex_val <- input[[paste0("heatmap_low_color_hex_", i)]]
+        if (!is.null(hex_val) && nchar(trimws(hex_val)) > 0) {
+          # Normalize hex value (add # if missing)
+          hex_val <- trimws(hex_val)
+          if (!grepl("^#", hex_val)) hex_val <- paste0("#", hex_val)
+          # Validate hex format
+          if (grepl("^#[0-9A-Fa-f]{6}$", hex_val)) {
+            updateColourInput(session, paste0("heatmap_low_color_", i), value = hex_val)
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      observeEvent(input[[paste0("heatmap_high_color_hex_", i)]], {
+        hex_val <- input[[paste0("heatmap_high_color_hex_", i)]]
+        if (!is.null(hex_val) && nchar(trimws(hex_val)) > 0) {
+          hex_val <- trimws(hex_val)
+          if (!grepl("^#", hex_val)) hex_val <- paste0("#", hex_val)
+          if (grepl("^#[0-9A-Fa-f]{6}$", hex_val)) {
+            updateColourInput(session, paste0("heatmap_high_color_", i), value = hex_val)
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      observeEvent(input[[paste0("heatmap_mid_color_hex_", i)]], {
+        hex_val <- input[[paste0("heatmap_mid_color_hex_", i)]]
+        if (!is.null(hex_val) && nchar(trimws(hex_val)) > 0) {
+          hex_val <- trimws(hex_val)
+          if (!grepl("^#", hex_val)) hex_val <- paste0("#", hex_val)
+          if (grepl("^#[0-9A-Fa-f]{6}$", hex_val)) {
+            updateColourInput(session, paste0("heatmap_mid_color_", i), value = hex_val)
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      observeEvent(input[[paste0("heatmap_", i, "_cont_na_color_hex")]], {
+        hex_val <- input[[paste0("heatmap_", i, "_cont_na_color_hex")]]
+        if (!is.null(hex_val) && nchar(trimws(hex_val)) > 0) {
+          hex_val <- trimws(hex_val)
+          if (!grepl("^#", hex_val)) hex_val <- paste0("#", hex_val)
+          if (grepl("^#[0-9A-Fa-f]{6}$", hex_val)) {
+            updateColourInput(session, paste0("heatmap_", i, "_cont_na_color"), value = hex_val)
+          }
+        }
+      }, ignoreInit = TRUE)
+
       observeEvent(input[[paste0("heatmap_use_midpoint_", i)]], {
         if (i <= length(values$heatmap_configs)) {
           values$heatmap_configs[[i]]$use_midpoint <- input[[paste0("heatmap_use_midpoint_", i)]]
@@ -15758,6 +15867,7 @@ server <- function(input, output, session) {
           continuous_palettes <- c("Blues", "Greens", "Reds", "Purples", "Oranges",
                                    "Viridis", "Plasma", "Inferno", "Magma",
                                    "RdBu", "RdYlGn", "PiYG", "BrBG")
+          # S2.292dev: Add manual hex input next to each color picker
           return(tags$div(
             style = "background-color: #e6f3ff; padding: 10px; border-radius: 5px; margin-top: 10px;",
             tags$h5(icon("dna"), " CNV Color Settings"),
@@ -15769,13 +15879,25 @@ server <- function(input, output, session) {
               ),
               column(4,
                      # S1.62dev: Default red for deletion/loss
-                     colourInput(paste0("heatmap_low_color_", i), "Low (Deletion)",
-                                 value = if (!is.null(cfg$low_color)) cfg$low_color else "#FF0000")
+                     tags$label("Low (Deletion)"),
+                     tags$div(style = "display: flex; gap: 5px; align-items: center;",
+                       colourInput(paste0("heatmap_low_color_", i), NULL,
+                                   value = if (!is.null(cfg$low_color)) cfg$low_color else "#FF0000"),
+                       textInput(paste0("heatmap_low_color_hex_", i), NULL,
+                                 value = if (!is.null(cfg$low_color)) cfg$low_color else "#FF0000",
+                                 width = "90px")
+                     )
               ),
               column(4,
                      # S1.62dev: Default blue for amplification/gain
-                     colourInput(paste0("heatmap_high_color_", i), "High (Amplification)",
-                                 value = if (!is.null(cfg$high_color)) cfg$high_color else "#0000FF")
+                     tags$label("High (Amplification)"),
+                     tags$div(style = "display: flex; gap: 5px; align-items: center;",
+                       colourInput(paste0("heatmap_high_color_", i), NULL,
+                                   value = if (!is.null(cfg$high_color)) cfg$high_color else "#0000FF"),
+                       textInput(paste0("heatmap_high_color_hex_", i), NULL,
+                                 value = if (!is.null(cfg$high_color)) cfg$high_color else "#0000FF",
+                                 width = "90px")
+                     )
               )
             ),
             fluidRow(
@@ -15786,8 +15908,14 @@ server <- function(input, output, session) {
               column(4,
                      conditionalPanel(
                        condition = paste0("input.heatmap_use_midpoint_", i),
-                       colourInput(paste0("heatmap_mid_color_", i), "Mid (Diploid)",
-                                   value = if (!is.null(cfg$mid_color)) cfg$mid_color else "#FFFFFF")
+                       tags$label("Mid (Diploid)"),
+                       tags$div(style = "display: flex; gap: 5px; align-items: center;",
+                         colourInput(paste0("heatmap_mid_color_", i), NULL,
+                                     value = if (!is.null(cfg$mid_color)) cfg$mid_color else "#FFFFFF"),
+                         textInput(paste0("heatmap_mid_color_hex_", i), NULL,
+                                   value = if (!is.null(cfg$mid_color)) cfg$mid_color else "#FFFFFF",
+                                   width = "90px")
+                       )
                      )
               ),
               column(4,
@@ -15801,9 +15929,15 @@ server <- function(input, output, session) {
             ),
             fluidRow(
               column(4,
-                     colourInput(paste0("heatmap_", i, "_cont_na_color"), "NA Color",
+                     tags$label("NA Color"),
+                     tags$div(style = "display: flex; gap: 5px; align-items: center;",
+                       colourInput(paste0("heatmap_", i, "_cont_na_color"), NULL,
+                                   value = if (!is.null(cfg$na_color)) cfg$na_color else "#BEBEBE",
+                                   showColour = "background"),
+                       textInput(paste0("heatmap_", i, "_cont_na_color_hex"), NULL,
                                  value = if (!is.null(cfg$na_color)) cfg$na_color else "#BEBEBE",
-                                 showColour = "background")
+                                 width = "90px")
+                     )
               ),
               column(8,
                      tags$p(class = "text-muted", style = "margin-top: 25px;",
@@ -15938,6 +16072,7 @@ server <- function(input, output, session) {
           )
         } else {
           # Continuous settings UI
+          # S2.292dev: Add manual hex input next to each color picker
           tags$div(
             style = "background-color: #f0f7ff; padding: 10px; border-radius: 5px; margin-top: 10px;",
             tags$h5(icon("sliders-h"), " Continuous Color Settings"),
@@ -15949,12 +16084,24 @@ server <- function(input, output, session) {
                      uiOutput(paste0("heatmap_cont_palette_preview_", i))
               ),
               column(4,
-                     colourInput(paste0("heatmap_low_color_", i), "Low Color",
-                                 value = if (!is.null(cfg$low_color)) cfg$low_color else "#FFFFCC")
+                     tags$label("Low Color"),
+                     tags$div(style = "display: flex; gap: 5px; align-items: center;",
+                       colourInput(paste0("heatmap_low_color_", i), NULL,
+                                   value = if (!is.null(cfg$low_color)) cfg$low_color else "#FFFFCC"),
+                       textInput(paste0("heatmap_low_color_hex_", i), NULL,
+                                 value = if (!is.null(cfg$low_color)) cfg$low_color else "#FFFFCC",
+                                 width = "90px")
+                     )
               ),
               column(4,
-                     colourInput(paste0("heatmap_high_color_", i), "High Color",
-                                 value = if (!is.null(cfg$high_color)) cfg$high_color else "#006837")
+                     tags$label("High Color"),
+                     tags$div(style = "display: flex; gap: 5px; align-items: center;",
+                       colourInput(paste0("heatmap_high_color_", i), NULL,
+                                   value = if (!is.null(cfg$high_color)) cfg$high_color else "#006837"),
+                       textInput(paste0("heatmap_high_color_hex_", i), NULL,
+                                 value = if (!is.null(cfg$high_color)) cfg$high_color else "#006837",
+                                 width = "90px")
+                     )
               )
             ),
             fluidRow(
@@ -15965,8 +16112,14 @@ server <- function(input, output, session) {
               column(4,
                      conditionalPanel(
                        condition = paste0("input.heatmap_use_midpoint_", i),
-                       colourInput(paste0("heatmap_mid_color_", i), "Mid Color",
-                                   value = if (!is.null(cfg$mid_color)) cfg$mid_color else "#FFFF99")
+                       tags$label("Mid Color"),
+                       tags$div(style = "display: flex; gap: 5px; align-items: center;",
+                         colourInput(paste0("heatmap_mid_color_", i), NULL,
+                                     value = if (!is.null(cfg$mid_color)) cfg$mid_color else "#FFFF99"),
+                         textInput(paste0("heatmap_mid_color_hex_", i), NULL,
+                                   value = if (!is.null(cfg$mid_color)) cfg$mid_color else "#FFFF99",
+                                   width = "90px")
+                       )
                      )
               ),
               column(4,
@@ -15981,9 +16134,15 @@ server <- function(input, output, session) {
             # v112: NA color for continuous heatmaps
             fluidRow(
               column(4,
-                     colourInput(paste0("heatmap_", i, "_cont_na_color"), "NA Color",
+                     tags$label("NA Color"),
+                     tags$div(style = "display: flex; gap: 5px; align-items: center;",
+                       colourInput(paste0("heatmap_", i, "_cont_na_color"), NULL,
+                                   value = if (!is.null(cfg$na_color)) cfg$na_color else "#BEBEBE",
+                                   showColour = "background"),
+                       textInput(paste0("heatmap_", i, "_cont_na_color_hex"), NULL,
                                  value = if (!is.null(cfg$na_color)) cfg$na_color else "#BEBEBE",
-                                 showColour = "background")
+                                 width = "90px")
+                     )
               ),
               column(8)
             )
@@ -16246,6 +16405,7 @@ server <- function(input, output, session) {
         }
 
         # v70: Generate color pickers for each value WITH dropdown menu
+        # S2.292dev: Add manual hex input for discrete colors
         color_pickers <- lapply(seq_along(unique_vals), function(j) {
           val <- as.character(unique_vals[j])
 
@@ -16266,15 +16426,20 @@ server <- function(input, output, session) {
 
           fluidRow(
             style = "margin-bottom: 3px;",
-            column(4, tags$label(val, style = "padding-top: 5px; font-weight: normal; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;", title = val)),
-            column(4,
-                   colourInput(paste0("heatmap_", i, "_color_", j), NULL,
-                               value = color_to_use, showColour = "background")
+            column(3, tags$label(val, style = "padding-top: 5px; font-weight: normal; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;", title = val)),
+            column(3,
+                   tags$div(style = "display: flex; gap: 3px; align-items: center;",
+                     colourInput(paste0("heatmap_", i, "_color_", j), NULL,
+                                 value = color_to_use, showColour = "background"),
+                     textInput(paste0("heatmap_", i, "_color_hex_", j), NULL,
+                               value = color_to_use, width = "80px")
+                   )
             ),
-            column(4,
+            column(3,
                    selectInput(paste0("heatmap_", i, "_color_name_", j), NULL,
                                choices = heat_r_colors, selected = "")
-            )
+            ),
+            column(3)
           )
         })
 
@@ -16297,17 +16462,23 @@ server <- function(input, output, session) {
           "white"
         }
 
+        # S2.292dev: Add hex input to NA color row
         na_color_row <- fluidRow(
           style = "margin-bottom: 3px; background-color: #f8f8f8; padding: 5px; border-radius: 3px; margin-top: 10px;",
-          column(4, tags$label("NA / Missing", style = "padding-top: 5px; font-weight: bold; font-style: italic;")),
-          column(4,
-                 colourInput(paste0("heatmap_", i, "_na_color"), NULL,
-                             value = na_color_to_use, showColour = "background")
+          column(3, tags$label("NA / Missing", style = "padding-top: 5px; font-weight: bold; font-style: italic;")),
+          column(3,
+                 tags$div(style = "display: flex; gap: 3px; align-items: center;",
+                   colourInput(paste0("heatmap_", i, "_na_color"), NULL,
+                               value = na_color_to_use, showColour = "background"),
+                   textInput(paste0("heatmap_", i, "_na_color_hex"), NULL,
+                             value = na_color_to_use, width = "80px")
+                 )
           ),
-          column(4,
+          column(3,
                  selectInput(paste0("heatmap_", i, "_na_color_name"), NULL,
                              choices = heat_r_colors, selected = "")
-          )
+          ),
+          column(3)
         )
 
         # v104: Restructured with z-index fixes for dropdown menus
@@ -16500,6 +16671,50 @@ server <- function(input, output, session) {
           }
         }
       }, ignoreInit = TRUE)
+
+      # S2.292dev: Sync discrete colourInput -> hex textInput
+      lapply(1:30, function(j) {
+        observeEvent(input[[paste0("heatmap_", i, "_color_", j)]], {
+          color_val <- input[[paste0("heatmap_", i, "_color_", j)]]
+          if (!is.null(color_val)) {
+            updateTextInput(session, paste0("heatmap_", i, "_color_hex_", j), value = toupper(color_val))
+          }
+        }, ignoreInit = TRUE, priority = -1)
+      })
+
+      # S2.292dev: Sync discrete NA colourInput -> hex textInput
+      observeEvent(input[[paste0("heatmap_", i, "_na_color")]], {
+        color_val <- input[[paste0("heatmap_", i, "_na_color")]]
+        if (!is.null(color_val)) {
+          updateTextInput(session, paste0("heatmap_", i, "_na_color_hex"), value = toupper(color_val))
+        }
+      }, ignoreInit = TRUE, priority = -1)
+
+      # S2.292dev: Sync discrete hex textInput -> colourInput
+      lapply(1:30, function(j) {
+        observeEvent(input[[paste0("heatmap_", i, "_color_hex_", j)]], {
+          hex_val <- input[[paste0("heatmap_", i, "_color_hex_", j)]]
+          if (!is.null(hex_val) && nchar(trimws(hex_val)) > 0) {
+            hex_val <- trimws(hex_val)
+            if (!grepl("^#", hex_val)) hex_val <- paste0("#", hex_val)
+            if (grepl("^#[0-9A-Fa-f]{6}$", hex_val)) {
+              updateColourInput(session, paste0("heatmap_", i, "_color_", j), value = hex_val)
+            }
+          }
+        }, ignoreInit = TRUE)
+      })
+
+      # S2.292dev: Sync discrete NA hex textInput -> colourInput
+      observeEvent(input[[paste0("heatmap_", i, "_na_color_hex")]], {
+        hex_val <- input[[paste0("heatmap_", i, "_na_color_hex")]]
+        if (!is.null(hex_val) && nchar(trimws(hex_val)) > 0) {
+          hex_val <- trimws(hex_val)
+          if (!grepl("^#", hex_val)) hex_val <- paste0("#", hex_val)
+          if (grepl("^#[0-9A-Fa-f]{6}$", hex_val)) {
+            updateColourInput(session, paste0("heatmap_", i, "_na_color"), value = hex_val)
+          }
+        }
+      }, ignoreInit = TRUE)
     })
   })
 
@@ -16538,9 +16753,10 @@ server <- function(input, output, session) {
           rainbow(n_vals)
         })
 
-        # Update all color pickers
+        # Update all color pickers and hex inputs
         for (j in seq_along(unique_vals)) {
           updateColourInput(session, paste0("heatmap_", i, "_color_", j), value = new_colors[j])
+          updateTextInput(session, paste0("heatmap_", i, "_color_hex_", j), value = toupper(new_colors[j]))
         }
 
         showNotification(paste("Applied", palette_name, "palette to", n_vals, "values"), type = "message")
@@ -17064,6 +17280,7 @@ server <- function(input, output, session) {
     debug_cat("\n=== v180: APPLYING LEGEND SETTINGS ===\n")
 
     # Update legend settings in reactive values
+    # S2.292dev: Added font_family setting
     values$legend_settings <- list(
       position = input$legend_position,
       # Visibility controls
@@ -17072,9 +17289,10 @@ server <- function(input, output, session) {
       show_bootstrap = input$legend_show_bootstrap,
       show_pvalue = input$legend_show_pvalue,
       show_heatmap = input$legend_show_heatmap,  # v180: Simplified to single checkbox
-      # Font sizes
+      # Font settings
       title_size = input$legend_title_size,
       text_size = input$legend_text_size,
+      font_family = if (!is.null(input$legend_font_family)) input$legend_font_family else "sans",
       key_size = input$legend_key_size,
       # v180: Key dimensions
       key_width = input$legend_key_width,
@@ -17097,6 +17315,7 @@ server <- function(input, output, session) {
     debug_cat(paste0("  Show bootstrap: ", input$legend_show_bootstrap, "\n"))
     debug_cat(paste0("  Show P value: ", input$legend_show_pvalue, "\n"))
     debug_cat(paste0("  Show heatmap: ", input$legend_show_heatmap, "\n"))
+    debug_cat(paste0("  S2.292dev: Font family: ", input$legend_font_family, "\n"))
     debug_cat(paste0("  v80: Key width: ", input$legend_key_width, ", height: ", input$legend_key_height, "\n"))
     debug_cat(paste0("  v80: Title-key spacing: ", input$legend_title_key_spacing, "\n"))
     debug_cat(paste0("  v80: Between keys spacing: ", input$legend_key_spacing, "\n"))
@@ -18158,6 +18377,9 @@ server <- function(input, output, session) {
         key_width <- if (!is.null(legend_settings$key_width)) legend_settings$key_width else 1
         key_height <- if (!is.null(legend_settings$key_height)) legend_settings$key_height else 1
 
+        # S2.292dev: Get font family setting
+        font_family <- if (!is.null(legend_settings$font_family)) legend_settings$font_family else "sans"
+
         # v180: Get background settings
         # S1.5: Fix RGBA colors from colourpicker - extract RGB portion if 8-char hex
         # colourpicker with allowTransparent=TRUE returns #RRGGBBAA format
@@ -18185,10 +18407,11 @@ server <- function(input, output, session) {
         # Build theme modifications for legend
         # v180: Added key width/height, title-key spacing, box background, margin
         # S1.5: Fixed - added legend.background and legend.key for proper background coloring
+        # S2.292dev: Added font_family to legend text elements
         legend_theme <- theme(
           legend.position = legend_settings$position,
-          legend.title = element_text(size = legend_settings$title_size, face = "bold"),
-          legend.text = element_text(size = legend_settings$text_size),
+          legend.title = element_text(size = legend_settings$title_size, face = "bold", family = font_family),
+          legend.text = element_text(size = legend_settings$text_size, family = font_family),
           legend.key.size = unit(legend_settings$key_size, "lines"),
           legend.key.width = unit(key_width, "lines"),    # v180: Custom key width
           legend.key.height = unit(key_height, "lines"),  # v180: Custom key height
@@ -19487,6 +19710,7 @@ server <- function(input, output, session) {
     }
 
     # S1.62dev: Build legend settings from values$legend_settings
+    # S2.292dev: Added font_family to export
     legend_settings_yaml <- list(
       position = if (!is.null(values$legend_settings$position)) values$legend_settings$position else "right",
       show_classification = if (!is.null(values$legend_settings$show_classification) && values$legend_settings$show_classification) "yes" else "no",
@@ -19497,6 +19721,7 @@ server <- function(input, output, session) {
       show_heatmap = if (!is.null(values$legend_settings$show_heatmap) && values$legend_settings$show_heatmap) "yes" else "no",
       title_size = if (!is.null(values$legend_settings$title_size)) values$legend_settings$title_size else 12,
       text_size = if (!is.null(values$legend_settings$text_size)) values$legend_settings$text_size else 10,
+      font_family = if (!is.null(values$legend_settings$font_family)) values$legend_settings$font_family else "sans",
       box_background = if (!is.null(values$legend_settings$box_background)) values$legend_settings$box_background else "transparent",
       margin = if (!is.null(values$legend_settings$margin)) values$legend_settings$margin else 0.2
     )
