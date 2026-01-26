@@ -11026,6 +11026,18 @@ server <- function(input, output, session) {
         )
         values$heatmap_configs <- c(values$heatmap_configs, list(new_config))
 
+        # S2.292dev: Debug output for heatmap import
+        cat(file=stderr(), sprintf("[YAML-IMPORT] Heatmap %d config:\n", i))
+        cat(file=stderr(), sprintf("  data_source: %s\n", new_config$data_source))
+        cat(file=stderr(), sprintf("  low_color: %s\n", new_config$low_color))
+        cat(file=stderr(), sprintf("  high_color: %s\n", new_config$high_color))
+        cat(file=stderr(), sprintf("  mid_color: %s\n", new_config$mid_color))
+        cat(file=stderr(), sprintf("  use_midpoint: %s\n", new_config$use_midpoint))
+        cat(file=stderr(), sprintf("  midpoint: %s\n", new_config$midpoint))
+        if (!is.null(h$low_color)) cat(file=stderr(), sprintf("  YAML h$low_color: %s\n", h$low_color))
+        if (!is.null(h$high_color)) cat(file=stderr(), sprintf("  YAML h$high_color: %s\n", h$high_color))
+        if (!is.null(h$mid_color)) cat(file=stderr(), sprintf("  YAML h$mid_color: %s\n", h$mid_color))
+
         # S2.8: Update global rdata_mapping_column if this heatmap has one
         if (!is.null(new_config$data_source) && new_config$data_source == "rdata" &&
             !is.null(new_config$rdata_mapping_column) && new_config$rdata_mapping_column != "") {
@@ -15447,21 +15459,37 @@ server <- function(input, output, session) {
       }, ignoreInit = TRUE)
       
       # Color changes
+      # S2.292dev: Added debug output to track when color observers fire
       observeEvent(input[[paste0("heatmap_low_color_", i)]], {
+        color_val <- input[[paste0("heatmap_low_color_", i)]]
+        cat(file=stderr(), sprintf("[COLOR-OBSERVER] heatmap_%d low_color observer fired: '%s'\n", i, color_val))
         if (i <= length(values$heatmap_configs)) {
-          values$heatmap_configs[[i]]$low_color <- input[[paste0("heatmap_low_color_", i)]]
+          old_val <- values$heatmap_configs[[i]]$low_color
+          cat(file=stderr(), sprintf("[COLOR-OBSERVER]   Old value: '%s', New value: '%s'\n",
+                                     ifelse(is.null(old_val), "NULL", old_val), color_val))
+          values$heatmap_configs[[i]]$low_color <- color_val
         }
       }, ignoreInit = TRUE)
-      
+
       observeEvent(input[[paste0("heatmap_high_color_", i)]], {
+        color_val <- input[[paste0("heatmap_high_color_", i)]]
+        cat(file=stderr(), sprintf("[COLOR-OBSERVER] heatmap_%d high_color observer fired: '%s'\n", i, color_val))
         if (i <= length(values$heatmap_configs)) {
-          values$heatmap_configs[[i]]$high_color <- input[[paste0("heatmap_high_color_", i)]]
+          old_val <- values$heatmap_configs[[i]]$high_color
+          cat(file=stderr(), sprintf("[COLOR-OBSERVER]   Old value: '%s', New value: '%s'\n",
+                                     ifelse(is.null(old_val), "NULL", old_val), color_val))
+          values$heatmap_configs[[i]]$high_color <- color_val
         }
       }, ignoreInit = TRUE)
-      
+
       observeEvent(input[[paste0("heatmap_mid_color_", i)]], {
+        color_val <- input[[paste0("heatmap_mid_color_", i)]]
+        cat(file=stderr(), sprintf("[COLOR-OBSERVER] heatmap_%d mid_color observer fired: '%s'\n", i, color_val))
         if (i <= length(values$heatmap_configs)) {
-          values$heatmap_configs[[i]]$mid_color <- input[[paste0("heatmap_mid_color_", i)]]
+          old_val <- values$heatmap_configs[[i]]$mid_color
+          cat(file=stderr(), sprintf("[COLOR-OBSERVER]   Old value: '%s', New value: '%s'\n",
+                                     ifelse(is.null(old_val), "NULL", old_val), color_val))
+          values$heatmap_configs[[i]]$mid_color <- color_val
         }
       }, ignoreInit = TRUE)
 
@@ -15864,6 +15892,14 @@ server <- function(input, output, session) {
         if (!is.null(data_source) && data_source == "rdata") {
           # RData CNV heatmaps are always continuous - show continuous color settings
           cfg <- isolate(values$heatmap_configs[[i]])
+          # S2.292dev: Debug output for renderUI
+          cat(file=stderr(), sprintf("[RENDER-UI] RData heatmap %d color settings from cfg:\n", i))
+          cat(file=stderr(), sprintf("[RENDER-UI]   cfg is NULL: %s\n", is.null(cfg)))
+          if (!is.null(cfg)) {
+            cat(file=stderr(), sprintf("[RENDER-UI]   cfg$low_color: %s\n", ifelse(is.null(cfg$low_color), "NULL", cfg$low_color)))
+            cat(file=stderr(), sprintf("[RENDER-UI]   cfg$mid_color: %s\n", ifelse(is.null(cfg$mid_color), "NULL", cfg$mid_color)))
+            cat(file=stderr(), sprintf("[RENDER-UI]   cfg$high_color: %s\n", ifelse(is.null(cfg$high_color), "NULL", cfg$high_color)))
+          }
           continuous_palettes <- c("Blues", "Greens", "Reds", "Purples", "Oranges",
                                    "Viridis", "Plasma", "Inferno", "Magma",
                                    "RdBu", "RdYlGn", "PiYG", "BrBG")
@@ -17316,6 +17352,8 @@ server <- function(input, output, session) {
     debug_cat(paste0("  Show P value: ", input$legend_show_pvalue, "\n"))
     debug_cat(paste0("  Show heatmap: ", input$legend_show_heatmap, "\n"))
     debug_cat(paste0("  S2.292dev: Font family: ", input$legend_font_family, "\n"))
+    cat(file=stderr(), paste0("[LEGEND-SETTINGS] Font family set to: '", input$legend_font_family, "'\n"))
+    cat(file=stderr(), paste0("[LEGEND-SETTINGS] Stored in values$legend_settings$font_family: '", values$legend_settings$font_family, "'\n"))
     debug_cat(paste0("  v80: Key width: ", input$legend_key_width, ", height: ", input$legend_key_height, "\n"))
     debug_cat(paste0("  v80: Title-key spacing: ", input$legend_title_key_spacing, "\n"))
     debug_cat(paste0("  v80: Between keys spacing: ", input$legend_key_spacing, "\n"))
@@ -18439,6 +18477,8 @@ server <- function(input, output, session) {
         debug_cat(paste0("  v80: Spacings - H:", h_spacing, ", V:", v_spacing,
                                    ", Title-key:", title_key_spacing, ", Key:", key_spacing, "\n"))
         debug_cat(paste0("  v80: Box bg:", box_bg, ", Margin:", legend_margin_val, "\n"))
+        debug_cat(paste0("  S2.292dev: Font family: '", font_family, "'\n"))
+        cat(file=stderr(), paste0("[LEGEND-FONT] Applying font_family='", font_family, "' to legend\n"))
 
         # v180: Apply visibility controls using guides()
         # Also apply reverse order if requested
