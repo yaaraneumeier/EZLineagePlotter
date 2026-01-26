@@ -15460,7 +15460,13 @@ server <- function(input, output, session) {
       
       # Color changes
       # S2.292dev: Added debug output to track when color observers fire
+      # S2.292dev-FIX: Added inhibit_color_save check to prevent issues during UI rebuild
       observeEvent(input[[paste0("heatmap_low_color_", i)]], {
+        # Check inhibit flag first
+        if (isTRUE(isolate(inhibit_color_save()))) {
+          cat(file=stderr(), sprintf("[COLOR-OBSERVER] heatmap_%d low_color BLOCKED by inhibit flag\n", i))
+          return(NULL)
+        }
         color_val <- input[[paste0("heatmap_low_color_", i)]]
         cat(file=stderr(), sprintf("[COLOR-OBSERVER] heatmap_%d low_color observer fired: '%s'\n", i, color_val))
         if (i <= length(values$heatmap_configs)) {
@@ -15472,6 +15478,11 @@ server <- function(input, output, session) {
       }, ignoreInit = TRUE)
 
       observeEvent(input[[paste0("heatmap_high_color_", i)]], {
+        # Check inhibit flag first
+        if (isTRUE(isolate(inhibit_color_save()))) {
+          cat(file=stderr(), sprintf("[COLOR-OBSERVER] heatmap_%d high_color BLOCKED by inhibit flag\n", i))
+          return(NULL)
+        }
         color_val <- input[[paste0("heatmap_high_color_", i)]]
         cat(file=stderr(), sprintf("[COLOR-OBSERVER] heatmap_%d high_color observer fired: '%s'\n", i, color_val))
         if (i <= length(values$heatmap_configs)) {
@@ -15483,6 +15494,11 @@ server <- function(input, output, session) {
       }, ignoreInit = TRUE)
 
       observeEvent(input[[paste0("heatmap_mid_color_", i)]], {
+        # Check inhibit flag first
+        if (isTRUE(isolate(inhibit_color_save()))) {
+          cat(file=stderr(), sprintf("[COLOR-OBSERVER] heatmap_%d mid_color BLOCKED by inhibit flag\n", i))
+          return(NULL)
+        }
         color_val <- input[[paste0("heatmap_mid_color_", i)]]
         cat(file=stderr(), sprintf("[COLOR-OBSERVER] heatmap_%d mid_color observer fired: '%s'\n", i, color_val))
         if (i <= length(values$heatmap_configs)) {
@@ -15519,8 +15535,8 @@ server <- function(input, output, session) {
         color_val <- input[[paste0("heatmap_", i, "_cont_na_color")]]
         if (!is.null(color_val)) {
           updateTextInput(session, paste0("heatmap_", i, "_cont_na_color_hex"), value = toupper(color_val))
-          # Also save to config
-          if (i <= length(values$heatmap_configs)) {
+          # Also save to config - but check inhibit flag first
+          if (!isTRUE(isolate(inhibit_color_save())) && i <= length(values$heatmap_configs)) {
             values$heatmap_configs[[i]]$na_color <- color_val
           }
         }
@@ -18417,6 +18433,9 @@ server <- function(input, output, session) {
 
         # S2.292dev: Get font family setting
         font_family <- if (!is.null(legend_settings$font_family)) legend_settings$font_family else "sans"
+        cat(file=stderr(), sprintf("[FONT-DEBUG] legend_settings$font_family = '%s'\n",
+                                   ifelse(is.null(legend_settings$font_family), "NULL", legend_settings$font_family)))
+        cat(file=stderr(), sprintf("[FONT-DEBUG] Using font_family = '%s'\n", font_family))
 
         # v180: Get background settings
         # S1.5: Fix RGBA colors from colourpicker - extract RGB portion if 8-char hex
@@ -18446,7 +18465,11 @@ server <- function(input, output, session) {
         # v180: Added key width/height, title-key spacing, box background, margin
         # S1.5: Fixed - added legend.background and legend.key for proper background coloring
         # S2.292dev: Added font_family to legend text elements
+        # S2.292dev-FIX: Also set text element as parent to ensure font propagates
+        cat(file=stderr(), sprintf("[FONT-THEME] Setting legend.title and legend.text with family='%s'\n", font_family))
         legend_theme <- theme(
+          # Set base text family for all text elements (parent)
+          text = element_text(family = font_family),
           legend.position = legend_settings$position,
           legend.title = element_text(size = legend_settings$title_size, face = "bold", family = font_family),
           legend.text = element_text(size = legend_settings$text_size, family = font_family),
