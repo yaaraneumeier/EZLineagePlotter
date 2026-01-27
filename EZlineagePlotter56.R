@@ -5340,9 +5340,10 @@ func.print.lineage.tree <- function(conf_yaml_path,
       # }
 
       # S2.0-PERF: Extract plot and cache data from new return structure (Option 3A)
-      # func.make.plot.tree.heat.NEW now returns list(plot=..., cache_data=...)
+      # func.make.plot.tree.heat.NEW now returns list(plot=..., rotated_tree=..., cache_data=...)
       ou_result <- ou
       ou <- ou_result$plot  # Extract the plot object
+      rotated_tree_result <- ou_result$rotated_tree  # S2.292dev: Extract rotated tree for Newick export
       cache_data <- ou_result$cache_data  # Store cache data to return
 
       #print("ou is")
@@ -5451,8 +5452,14 @@ func.print.lineage.tree <- function(conf_yaml_path,
     cache_data <- NULL
   }
 
+  # S2.292dev: Include rotated tree for Newick export
+  if (!exists("rotated_tree_result") || is.null(rotated_tree_result)) {
+    rotated_tree_result <- NULL
+  }
+
   return(list(
     plots = out_trees,
+    rotated_tree = rotated_tree_result,  # S2.292dev: Rotated tree for Newick download
     cache_data = cache_data
   ))
   #close func
@@ -8638,8 +8645,10 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   # S2.0-PERF: Return both the plot and cache data for two-tier caching (Option 3A)
   # The cache data allows generate_plot() to store and reuse p_list_of_pairs
   # S2.9-PERF: Also return updated heatmap cache
+  # S2.292dev: Also return rotated tree for Newick export
   return(list(
     plot = p,
+    rotated_tree = tree_newick,  # S2.292dev: Rotated tree for Newick download
     cache_data = list(
       p_list_of_pairs = p_list_of_pairs,
       p_list_hash = current_p_list_hash,
@@ -9832,7 +9841,11 @@ ui <- dashboardPage(
             # v125: Changed to imageOutput to match other previews
             imageOutput("final_preview", height = "auto"),
             downloadButton("download_plot", "Download Plot", class = "btn-primary"),
-            downloadButton("download_yaml", "Download YAML Configuration", class = "btn-success")
+            downloadButton("download_yaml", "Download YAML Configuration", class = "btn-success"),
+            downloadButton("download_newick", "Download Rotated Tree (Newick)", class = "btn-info"),
+            tags$p(class = "text-muted", style = "margin-top: 5px;",
+              tags$small("The Newick file includes all rotations applied in Tree Display tab")
+            )
           )
         )
       ),
@@ -9874,6 +9887,7 @@ server <- function(input, output, session) {
   values <- reactiveValues(
     tree = NULL,
     tree_data = NULL,
+    rotated_tree = NULL,  # S2.292dev: Rotated tree for Newick download
     csv_data = NULL,
     id_match = NULL,
     classifications = list(),
@@ -18323,6 +18337,12 @@ server <- function(input, output, session) {
           cat(file=stderr(), "[PERF-CACHE] Using tree_result directly (legacy format)\n")
         }
 
+        # S2.292dev: Store rotated tree for Newick download
+        if (!is.null(tree_result$rotated_tree)) {
+          values$rotated_tree <- tree_result$rotated_tree
+          cat(file=stderr(), "[ROTATED-TREE] Stored rotated tree for Newick export\n")
+        }
+
         # Store cache data for future use
         if (!is.null(tree_result$cache_data)) {
           # S2.0-PERF: Legacy single-entry cache (for backward compatibility)
@@ -19996,7 +20016,30 @@ server <- function(input, output, session) {
       writeLines(yaml_content(), file)
     }
   )
-  
+
+  # S2.292dev: Download rotated tree as Newick file
+  output$download_newick <- downloadHandler(
+    filename = function() {
+      paste0(input$individual_name, "_rotated.newick")
+    },
+    content = function(file) {
+      if (!is.null(values$rotated_tree)) {
+        # Convert ggtree object to phylo and write as Newick
+        phylo_tree <- as.phylo(values$rotated_tree)
+        write.tree(phylo_tree, file = file)
+        cat(file=stderr(), "[NEWICK-DOWNLOAD] Rotated tree saved to Newick file\n")
+      } else if (!is.null(values$tree)) {
+        # Fallback to original tree if no rotations applied
+        write.tree(values$tree, file = file)
+        cat(file=stderr(), "[NEWICK-DOWNLOAD] Original tree saved (no rotations applied)\n")
+      } else {
+        # No tree available
+        writeLines("# No tree data available", file)
+        cat(file=stderr(), "[NEWICK-DOWNLOAD] Warning: No tree data available\n")
+      }
+    }
+  )
+
   # Download YAML configuration from configuration tab
   output$download_yaml_config <- downloadHandler(
     filename = function() {
