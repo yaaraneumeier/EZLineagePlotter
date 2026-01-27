@@ -4202,6 +4202,15 @@ func.print.lineage.tree <- function(conf_yaml_path,
             if ('cnv_chr_label_size' %in% names(heat_map_i_def)) {
               param[['cnv_chr_label_size']] <- as.numeric(heat_map_i_def[['cnv_chr_label_size']])
             }
+            if ('cnv_chr_label_position' %in% names(heat_map_i_def)) {
+              param[['cnv_chr_label_position']] <- heat_map_i_def[['cnv_chr_label_position']]
+            }
+            if ('cnv_chr_label_angle' %in% names(heat_map_i_def)) {
+              param[['cnv_chr_label_angle']] <- as.numeric(heat_map_i_def[['cnv_chr_label_angle']])
+            }
+            if ('cnv_chr_label_prefix' %in% names(heat_map_i_def)) {
+              param[['cnv_chr_label_prefix']] <- heat_map_i_def[['cnv_chr_label_prefix']]
+            }
 
             heat_display_params_list[[indx_for_sav]] <- param
             # print("B12")
@@ -7386,8 +7395,12 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
               chr_line_color <- if (!is.null(heat_param[['cnv_chr_line_color']])) heat_param[['cnv_chr_line_color']] else "#000000"
               chr_line_size <- if (!is.null(heat_param[['cnv_chr_line_size']])) as.numeric(heat_param[['cnv_chr_line_size']]) else 0.5
               chr_label_size <- if (!is.null(heat_param[['cnv_chr_label_size']])) as.numeric(heat_param[['cnv_chr_label_size']]) else 2.5
+              chr_label_position <- if (!is.null(heat_param[['cnv_chr_label_position']])) heat_param[['cnv_chr_label_position']] else "top"
+              chr_label_angle <- if (!is.null(heat_param[['cnv_chr_label_angle']])) as.numeric(heat_param[['cnv_chr_label_angle']]) else 90
+              chr_label_prefix <- if (!is.null(heat_param[['cnv_chr_label_prefix']])) heat_param[['cnv_chr_label_prefix']] else ""
 
               cat(file=stderr(), paste0("[CHR-BOUNDARY] Adding chromosome boundaries: lines=", show_chr_lines, ", labels=", show_chr_labels, "\n"))
+              cat(file=stderr(), paste0("[CHR-BOUNDARY] Label settings: position=", chr_label_position, ", angle=", chr_label_angle, ", prefix='", chr_label_prefix, "'\n"))
 
               # Calculate y range for vertical lines (spanning all tips)
               y_min <- min(tile_df$y) - tile_height / 2
@@ -7437,12 +7450,18 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
                     center_bin <- round((start_pos + end_pos) / 2)
                     center_bin <- max(1, min(center_bin, n_positions))
                     label_x <- all_x_positions[center_bin]
-                    # Position labels above the heatmap
-                    label_y <- y_max + tile_height * 0.5
+                    # Position labels based on user preference (top or bottom)
+                    label_y <- if (chr_label_position == "bottom") {
+                      y_min - tile_height * 0.5
+                    } else {
+                      y_max + tile_height * 0.5
+                    }
+                    # Apply prefix to chromosome label
+                    chr_label_text <- paste0(chr_label_prefix, as.character(chr_info$chr))
                     chr_label_data <- rbind(chr_label_data, data.frame(
                       x = label_x,
                       y = label_y,
-                      label = as.character(chr_info$chr)
+                      label = chr_label_text
                     ))
                   }
                 }
@@ -7473,14 +7492,24 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
               # Add chromosome labels
               if (show_chr_labels && nrow(chr_label_data) > 0) {
+                # Adjust hjust based on position and angle for proper alignment
+                # When angle is 90 (vertical), hjust controls up/down positioning
+                # When at top with angle 90: hjust=0 means text extends upward
+                # When at bottom with angle 90: hjust=1 means text extends downward
+                label_hjust <- if (chr_label_position == "bottom") {
+                  if (chr_label_angle == 90) 1 else 0.5
+                } else {
+                  if (chr_label_angle == 90) 0 else 0.5
+                }
+
                 p_with_tiles <- p_with_tiles +
                   geom_text(
                     data = chr_label_data,
                     aes(x = x, y = y, label = label),
                     size = chr_label_size,
-                    angle = 90,
+                    angle = chr_label_angle,
                     vjust = 0.5,
-                    hjust = 0,
+                    hjust = label_hjust,
                     inherit.aes = FALSE
                   )
 
@@ -11364,7 +11393,10 @@ server <- function(input, output, session) {
           cnv_chr_labels = if (!is.null(h$cnv_chr_labels)) func.check.bin.val.from.conf(h$cnv_chr_labels) else FALSE,
           cnv_chr_line_color = if (!is.null(h$cnv_chr_line_color)) h$cnv_chr_line_color else "#000000",
           cnv_chr_line_size = if (!is.null(h$cnv_chr_line_size)) as.numeric(h$cnv_chr_line_size) else 0.5,
-          cnv_chr_label_size = if (!is.null(h$cnv_chr_label_size)) as.numeric(h$cnv_chr_label_size) else 2.5
+          cnv_chr_label_size = if (!is.null(h$cnv_chr_label_size)) as.numeric(h$cnv_chr_label_size) else 2.5,
+          cnv_chr_label_position = if (!is.null(h$cnv_chr_label_position)) h$cnv_chr_label_position else "top",
+          cnv_chr_label_angle = if (!is.null(h$cnv_chr_label_angle)) as.numeric(h$cnv_chr_label_angle) else 90,
+          cnv_chr_label_prefix = if (!is.null(h$cnv_chr_label_prefix)) h$cnv_chr_label_prefix else ""
         )
         values$heatmap_configs <- c(values$heatmap_configs, list(new_config))
 
@@ -12496,6 +12528,9 @@ server <- function(input, output, session) {
               heatmap_item[[as.character(j)]]$cnv_chr_line_color <- if (!is.null(heatmap_entry$cnv_chr_line_color)) heatmap_entry$cnv_chr_line_color else "#000000"
               heatmap_item[[as.character(j)]]$cnv_chr_line_size <- if (!is.null(heatmap_entry$cnv_chr_line_size)) heatmap_entry$cnv_chr_line_size else 0.5
               heatmap_item[[as.character(j)]]$cnv_chr_label_size <- if (!is.null(heatmap_entry$cnv_chr_label_size)) heatmap_entry$cnv_chr_label_size else 2.5
+              heatmap_item[[as.character(j)]]$cnv_chr_label_position <- if (!is.null(heatmap_entry$cnv_chr_label_position)) heatmap_entry$cnv_chr_label_position else "top"
+              heatmap_item[[as.character(j)]]$cnv_chr_label_angle <- if (!is.null(heatmap_entry$cnv_chr_label_angle)) heatmap_entry$cnv_chr_label_angle else 90
+              heatmap_item[[as.character(j)]]$cnv_chr_label_prefix <- if (!is.null(heatmap_entry$cnv_chr_label_prefix)) heatmap_entry$cnv_chr_label_prefix else ""
               # S2.0: Store mapping column for sample name matching
               heatmap_item[[as.character(j)]]$rdata_mapping_column <- heatmap_entry$rdata_mapping_column
               debug_cat(paste0("    S2.0-RDATA: RData heatmap, mapping_column=", heatmap_entry$rdata_mapping_column, "\n"))
@@ -12767,6 +12802,9 @@ server <- function(input, output, session) {
             heatmap_item[[as.character(j)]]$cnv_chr_line_color <- if (!is.null(heatmap_entry$cnv_chr_line_color)) heatmap_entry$cnv_chr_line_color else "#000000"
             heatmap_item[[as.character(j)]]$cnv_chr_line_size <- if (!is.null(heatmap_entry$cnv_chr_line_size)) heatmap_entry$cnv_chr_line_size else 0.5
             heatmap_item[[as.character(j)]]$cnv_chr_label_size <- if (!is.null(heatmap_entry$cnv_chr_label_size)) heatmap_entry$cnv_chr_label_size else 2.5
+            heatmap_item[[as.character(j)]]$cnv_chr_label_position <- if (!is.null(heatmap_entry$cnv_chr_label_position)) heatmap_entry$cnv_chr_label_position else "top"
+            heatmap_item[[as.character(j)]]$cnv_chr_label_angle <- if (!is.null(heatmap_entry$cnv_chr_label_angle)) heatmap_entry$cnv_chr_label_angle else 90
+            heatmap_item[[as.character(j)]]$cnv_chr_label_prefix <- if (!is.null(heatmap_entry$cnv_chr_label_prefix)) heatmap_entry$cnv_chr_label_prefix else ""
             # S2.0: Store mapping column for sample name matching
             heatmap_item[[as.character(j)]]$rdata_mapping_column <- heatmap_entry$rdata_mapping_column
             debug_cat(paste0("    S2.0: RData heatmap, mapping_column=", heatmap_entry$rdata_mapping_column, "\n"))
@@ -14895,6 +14933,32 @@ server <- function(input, output, session) {
                      sliderInput(paste0("heatmap_cnv_chr_label_size_", i), "Label Size",
                                  min = 1, max = 10, value = if (!is.null(cfg$cnv_chr_label_size)) cfg$cnv_chr_label_size else 2.5,
                                  step = 0.5)
+                   )
+            ),
+            column(4,
+                   conditionalPanel(
+                     condition = paste0("input.heatmap_cnv_chr_labels_", i),
+                     selectInput(paste0("heatmap_cnv_chr_label_position_", i), "Label Position",
+                                 choices = c("Top" = "top", "Bottom" = "bottom"),
+                                 selected = if (!is.null(cfg$cnv_chr_label_position)) cfg$cnv_chr_label_position else "top")
+                   )
+            )
+          ),
+          # S2.292dev: Additional chromosome label options
+          fluidRow(
+            column(4,
+                   conditionalPanel(
+                     condition = paste0("input.heatmap_cnv_chr_labels_", i),
+                     sliderInput(paste0("heatmap_cnv_chr_label_angle_", i), "Label Angle",
+                                 min = 0, max = 90, value = if (!is.null(cfg$cnv_chr_label_angle)) cfg$cnv_chr_label_angle else 90,
+                                 step = 15)
+                   )
+            ),
+            column(4,
+                   conditionalPanel(
+                     condition = paste0("input.heatmap_cnv_chr_labels_", i),
+                     textInput(paste0("heatmap_cnv_chr_label_prefix_", i), "Label Prefix",
+                               value = if (!is.null(cfg$cnv_chr_label_prefix)) cfg$cnv_chr_label_prefix else "")
                    )
             ),
             column(4,
@@ -17331,6 +17395,9 @@ server <- function(input, output, session) {
           cnv_chr_line_color = if (!is.null(input[[paste0("heatmap_cnv_chr_line_color_", i)]])) input[[paste0("heatmap_cnv_chr_line_color_", i)]] else "#000000",
           cnv_chr_line_size = if (!is.null(input[[paste0("heatmap_cnv_chr_line_size_", i)]])) input[[paste0("heatmap_cnv_chr_line_size_", i)]] else 0.5,
           cnv_chr_label_size = if (!is.null(input[[paste0("heatmap_cnv_chr_label_size_", i)]])) input[[paste0("heatmap_cnv_chr_label_size_", i)]] else 2.5,
+          cnv_chr_label_position = if (!is.null(input[[paste0("heatmap_cnv_chr_label_position_", i)]])) input[[paste0("heatmap_cnv_chr_label_position_", i)]] else "top",
+          cnv_chr_label_angle = if (!is.null(input[[paste0("heatmap_cnv_chr_label_angle_", i)]])) input[[paste0("heatmap_cnv_chr_label_angle_", i)]] else 90,
+          cnv_chr_label_prefix = if (!is.null(input[[paste0("heatmap_cnv_chr_label_prefix_", i)]])) input[[paste0("heatmap_cnv_chr_label_prefix_", i)]] else "",
           # S2.0: Store mapping column for sample name matching
           rdata_mapping_column = mapping_column,
           columns = character(0),  # No columns for RData - data comes from parameter
