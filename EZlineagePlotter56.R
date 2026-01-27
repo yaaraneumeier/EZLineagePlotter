@@ -7400,6 +7400,13 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
               cat(file=stderr(), paste0("[CHR-BOUNDARY] Total positions in heatmap: ", n_positions, "\n"))
               cat(file=stderr(), paste0("[CHR-BOUNDARY] Chromosome boundaries rows: ", nrow(rdata_chr_boundaries), "\n"))
 
+              # S2.292dev: Calculate scaling factor for downsampled data
+              # The chromosome boundaries are based on original Annot bins (e.g., 4407)
+              # but the heatmap may be downsampled (e.g., to 44 positions)
+              original_max_bin <- max(rdata_chr_boundaries$end_bin)
+              scale_factor <- n_positions / original_max_bin
+              cat(file=stderr(), paste0("[CHR-BOUNDARY] Original max bin: ", original_max_bin, ", scale factor: ", round(scale_factor, 4), "\n"))
+
               # Build chromosome boundary positions
               # The end_bin of each chromosome marks where the line should go
               chr_line_x_positions <- c()
@@ -7407,8 +7414,12 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
               for (chr_idx in 1:nrow(rdata_chr_boundaries)) {
                 chr_info <- rdata_chr_boundaries[chr_idx, ]
-                chr_end_bin <- chr_info$end_bin
-                chr_start_bin <- chr_info$start_bin
+                # Scale the bin positions to match the downsampled heatmap
+                chr_end_bin <- round(chr_info$end_bin * scale_factor)
+                chr_start_bin <- round(chr_info$start_bin * scale_factor)
+                # Ensure bounds
+                chr_end_bin <- max(1, min(chr_end_bin, n_positions))
+                chr_start_bin <- max(1, min(chr_start_bin, n_positions))
 
                 # Make sure we don't exceed the number of positions
                 if (chr_end_bin <= n_positions && chr_idx < nrow(rdata_chr_boundaries)) {
@@ -7420,8 +7431,8 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
                 # For labels, calculate the center of each chromosome
                 if (show_chr_labels) {
-                  start_pos <- min(chr_start_bin, n_positions)
-                  end_pos <- min(chr_end_bin, n_positions)
+                  start_pos <- chr_start_bin
+                  end_pos <- chr_end_bin
                   if (start_pos <= end_pos && start_pos >= 1 && end_pos >= 1) {
                     center_bin <- round((start_pos + end_pos) / 2)
                     center_bin <- max(1, min(center_bin, n_positions))
