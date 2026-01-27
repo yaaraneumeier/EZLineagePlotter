@@ -9351,17 +9351,12 @@ ui <- dashboardPage(
                           min = 2, max = 36, value = 10, step = 1),
               tags$hr(style = "margin: 10px 0;"),
               selectInput("legend_font_family", "Font Type",
-                          choices = c("Sans-serif (default)" = "sans",
+                          choices = c("Sans-serif (Arial-like)" = "sans",
                                       "Serif (Times-like)" = "serif",
-                                      "Monospace" = "mono",
-                                      "Helvetica" = "Helvetica",
-                                      "Arial" = "Arial",
-                                      "Times New Roman" = "Times",
-                                      "Courier" = "Courier",
-                                      "Palatino" = "Palatino"),
+                                      "Monospace (Courier-like)" = "mono"),
                           selected = "sans"),
               tags$p(class = "text-muted", tags$small(
-                "Note: Some fonts may not be available on all systems."
+                "Sans=Arial, Serif=Times, Mono=Courier"
               ))
             ),
 
@@ -12017,9 +12012,18 @@ server <- function(input, output, session) {
         heatmaps_to_use <- NULL
         if (!is.null(class_def$heatmaps) && length(class_def$heatmaps) > 0) {
           heatmaps_to_use <- class_def$heatmaps
+          cat(file=stderr(), sprintf("[YAML-HEATMAP] Using class_def$heatmaps (%d heatmaps)\n", length(heatmaps_to_use)))
         } else if (!is.null(values$heatmaps) && length(values$heatmaps) > 0) {
           # v56: Use values$heatmaps from the new multi-heatmap interface
           heatmaps_to_use <- values$heatmaps
+          cat(file=stderr(), sprintf("[YAML-HEATMAP] Using values$heatmaps (%d heatmaps)\n", length(heatmaps_to_use)))
+          for (h_debug in seq_along(heatmaps_to_use)) {
+            cat(file=stderr(), sprintf("[YAML-HEATMAP]   Heatmap %d: data_source='%s'\n",
+                                       h_debug,
+                                       if (is.null(heatmaps_to_use[[h_debug]]$data_source)) "NULL" else heatmaps_to_use[[h_debug]]$data_source))
+          }
+        } else {
+          cat(file=stderr(), "[YAML-HEATMAP] No heatmaps to use (both class_def$heatmaps and values$heatmaps are NULL/empty)\n")
         }
         
         if (!is.null(heatmaps_to_use) && length(heatmaps_to_use) > 0) {
@@ -16844,9 +16848,14 @@ server <- function(input, output, session) {
       cfg <- values$heatmap_configs[[i]]
 
       # S1.62dev: Check data source - CSV columns or RData CNV
+      # S2.292dev-FIX: Also check cfg$data_source if input is not available (UI might not be rendered yet)
       current_data_source <- input[[paste0("heatmap_data_source_", i)]]
-      if (is.null(current_data_source)) current_data_source <- "csv"
-      cat(file=stderr(), paste0("[HEATMAP-APPLY] Heatmap ", i, " data_source: '", current_data_source, "'\n"))
+      if (is.null(current_data_source)) {
+        current_data_source <- if (!is.null(cfg$data_source)) cfg$data_source else "csv"
+        cat(file=stderr(), paste0("[HEATMAP-APPLY] Heatmap ", i, " data_source from cfg (input was NULL): '", current_data_source, "'\n"))
+      } else {
+        cat(file=stderr(), paste0("[HEATMAP-APPLY] Heatmap ", i, " data_source from input: '", current_data_source, "'\n"))
+      }
 
       # S1.62dev: Handle RData CNV source
       if (current_data_source == "rdata") {
@@ -17889,6 +17898,21 @@ server <- function(input, output, session) {
     # S1.4-PERF: Simplified entry logging (reduced from verbose DEBUG-2ND-HIGHLIGHT)
     cat(file=stderr(), "[PERF] generate_plot() called\n")
 
+    # S2.292dev-DEBUG: Log heatmap state at generate_plot entry
+    cat(file=stderr(), sprintf("[HEATMAP-STATE] values$heatmaps: %s\n",
+                               if (is.null(values$heatmaps)) "NULL" else paste(length(values$heatmaps), "heatmaps")))
+    if (!is.null(values$heatmaps) && length(values$heatmaps) > 0) {
+      for (hi in seq_along(values$heatmaps)) {
+        hm <- values$heatmaps[[hi]]
+        cat(file=stderr(), sprintf("[HEATMAP-STATE]   Heatmap %d: data_source='%s', title='%s'\n",
+                                   hi,
+                                   if (is.null(hm$data_source)) "NULL" else hm$data_source,
+                                   if (is.null(hm$title)) "NULL" else hm$title))
+      }
+    }
+    cat(file=stderr(), sprintf("[HEATMAP-STATE] values$rdata_cnv_matrix: %s\n",
+                               if (is.null(values$rdata_cnv_matrix)) "NULL" else paste(nrow(values$rdata_cnv_matrix), "x", ncol(values$rdata_cnv_matrix))))
+
     # === GUARD CHECKS (S1.4-PERF: consolidated - removed duplicate guards) ===
 
     # S2.0-PERF: Quick cooldown to prevent rapid consecutive calls (500ms)
@@ -18432,10 +18456,24 @@ server <- function(input, output, session) {
         key_height <- if (!is.null(legend_settings$key_height)) legend_settings$key_height else 1
 
         # S2.292dev: Get font family setting
-        font_family <- if (!is.null(legend_settings$font_family)) legend_settings$font_family else "sans"
+        raw_font_family <- if (!is.null(legend_settings$font_family)) legend_settings$font_family else "sans"
         cat(file=stderr(), sprintf("[FONT-DEBUG] legend_settings$font_family = '%s'\n",
                                    ifelse(is.null(legend_settings$font_family), "NULL", legend_settings$font_family)))
-        cat(file=stderr(), sprintf("[FONT-DEBUG] Using font_family = '%s'\n", font_family))
+
+        # S2.292dev-FIX: Map font names to R-compatible font families
+        # R on Windows only recognizes "sans", "serif", "mono" as font families
+        font_family <- switch(raw_font_family,
+          "sans" = "sans",
+          "serif" = "serif",
+          "mono" = "mono",
+          "Helvetica" = "sans",      # Helvetica -> sans (Arial on Windows)
+          "Arial" = "sans",          # Arial -> sans
+          "Times" = "serif",         # Times -> serif (Times New Roman on Windows)
+          "Courier" = "mono",        # Courier -> mono
+          "Palatino" = "serif",      # Palatino -> serif (closest match)
+          "sans"                     # default fallback
+        )
+        cat(file=stderr(), sprintf("[FONT-DEBUG] Mapped '%s' -> '%s'\n", raw_font_family, font_family))
 
         # v180: Get background settings
         # S1.5: Fix RGBA colors from colourpicker - extract RGB portion if 8-char hex
