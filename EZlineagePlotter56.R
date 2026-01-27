@@ -32,6 +32,31 @@ library(combinat)
 library(infotheo)
 library(aricode)
 
+# S2.292dev: Add showtext for Google Fonts support
+# This allows using a variety of fonts beyond the basic sans/serif/mono
+if (requireNamespace("showtext", quietly = TRUE)) {
+  library(showtext)
+  library(sysfonts)
+
+  # Add Google Fonts - these are free and widely available
+  font_add_google("Roboto", "Roboto")
+  font_add_google("Open Sans", "Open Sans")
+  font_add_google("Lato", "Lato")
+  font_add_google("Playfair Display", "Playfair Display")
+  font_add_google("Source Code Pro", "Source Code Pro")
+  font_add_google("Merriweather", "Merriweather")
+  font_add_google("Montserrat", "Montserrat")
+  font_add_google("PT Sans", "PT Sans")
+
+  # Enable showtext for ggplot2
+  showtext_auto()
+
+  SHOWTEXT_AVAILABLE <- TRUE
+  cat("showtext package loaded - Google Fonts available\n")
+} else {
+  SHOWTEXT_AVAILABLE <- FALSE
+  cat("showtext package not installed - using basic fonts only\n")
+}
 
 options(shiny.reactlog = TRUE)
 # v146: Increase max upload size for Shiny server deployments (100MB)
@@ -9351,12 +9376,27 @@ ui <- dashboardPage(
                           min = 2, max = 36, value = 10, step = 1),
               tags$hr(style = "margin: 10px 0;"),
               selectInput("legend_font_family", "Font Type",
-                          choices = c("Sans-serif (Arial-like)" = "sans",
-                                      "Serif (Times-like)" = "serif",
-                                      "Monospace (Courier-like)" = "mono"),
+                          choices = if (SHOWTEXT_AVAILABLE) {
+                            c("Sans-serif (default)" = "sans",
+                              "Serif (Times-like)" = "serif",
+                              "Monospace" = "mono",
+                              "--- Google Fonts ---" = "sans",  # Separator
+                              "Roboto (modern)" = "Roboto",
+                              "Open Sans" = "Open Sans",
+                              "Lato" = "Lato",
+                              "Montserrat" = "Montserrat",
+                              "PT Sans" = "PT Sans",
+                              "Playfair Display (elegant)" = "Playfair Display",
+                              "Merriweather (readable)" = "Merriweather",
+                              "Source Code Pro (code)" = "Source Code Pro")
+                          } else {
+                            c("Sans-serif (Arial-like)" = "sans",
+                              "Serif (Times-like)" = "serif",
+                              "Monospace (Courier-like)" = "mono")
+                          },
                           selected = "sans"),
               tags$p(class = "text-muted", tags$small(
-                "Sans=Arial, Serif=Times, Mono=Courier"
+                if (SHOWTEXT_AVAILABLE) "Google Fonts available via showtext" else "Install 'showtext' package for more fonts"
               ))
             ),
 
@@ -18461,19 +18501,30 @@ server <- function(input, output, session) {
                                    ifelse(is.null(legend_settings$font_family), "NULL", legend_settings$font_family)))
 
         # S2.292dev-FIX: Map font names to R-compatible font families
-        # R on Windows only recognizes "sans", "serif", "mono" as font families
-        font_family <- switch(raw_font_family,
-          "sans" = "sans",
-          "serif" = "serif",
-          "mono" = "mono",
-          "Helvetica" = "sans",      # Helvetica -> sans (Arial on Windows)
-          "Arial" = "sans",          # Arial -> sans
-          "Times" = "serif",         # Times -> serif (Times New Roman on Windows)
-          "Courier" = "mono",        # Courier -> mono
-          "Palatino" = "serif",      # Palatino -> serif (closest match)
-          "sans"                     # default fallback
-        )
-        cat(file=stderr(), sprintf("[FONT-DEBUG] Mapped '%s' -> '%s'\n", raw_font_family, font_family))
+        # If showtext is available, Google Fonts can be used directly
+        # Otherwise, map to basic R font families (sans, serif, mono)
+        google_fonts <- c("Roboto", "Open Sans", "Lato", "Playfair Display",
+                          "Source Code Pro", "Merriweather", "Montserrat", "PT Sans")
+
+        if (exists("SHOWTEXT_AVAILABLE") && SHOWTEXT_AVAILABLE && raw_font_family %in% google_fonts) {
+          # Use Google Font directly via showtext
+          font_family <- raw_font_family
+          cat(file=stderr(), sprintf("[FONT-DEBUG] Using Google Font directly: '%s'\n", font_family))
+        } else {
+          # Map to basic R font families
+          font_family <- switch(raw_font_family,
+            "sans" = "sans",
+            "serif" = "serif",
+            "mono" = "mono",
+            "Helvetica" = "sans",
+            "Arial" = "sans",
+            "Times" = "serif",
+            "Courier" = "mono",
+            "Palatino" = "serif",
+            "sans"                     # default fallback
+          )
+          cat(file=stderr(), sprintf("[FONT-DEBUG] Mapped '%s' -> '%s'\n", raw_font_family, font_family))
+        }
 
         # v180: Get background settings
         # S1.5: Fix RGBA colors from colourpicker - extract RGB portion if 8-char hex
