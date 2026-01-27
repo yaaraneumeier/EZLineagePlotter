@@ -4184,6 +4184,24 @@ func.print.lineage.tree <- function(conf_yaml_path,
               param[['cnv_height_scale']] <- as.numeric(heat_map_i_def[['cnv_height_scale']])
               cat(file=stderr(), paste0("[S2.8-PARAM] Setting cnv_height_scale to: ", heat_map_i_def[['cnv_height_scale']], "\n"))
             }
+            # S2.292dev: Chromosome boundary settings
+            if ('cnv_chr_lines' %in% names(heat_map_i_def)) {
+              param[['cnv_chr_lines']] <- heat_map_i_def[['cnv_chr_lines']]
+              cat(file=stderr(), paste0("[CHR-PARAM] Setting cnv_chr_lines to: ", heat_map_i_def[['cnv_chr_lines']], "\n"))
+            }
+            if ('cnv_chr_labels' %in% names(heat_map_i_def)) {
+              param[['cnv_chr_labels']] <- heat_map_i_def[['cnv_chr_labels']]
+              cat(file=stderr(), paste0("[CHR-PARAM] Setting cnv_chr_labels to: ", heat_map_i_def[['cnv_chr_labels']], "\n"))
+            }
+            if ('cnv_chr_line_color' %in% names(heat_map_i_def)) {
+              param[['cnv_chr_line_color']] <- heat_map_i_def[['cnv_chr_line_color']]
+            }
+            if ('cnv_chr_line_size' %in% names(heat_map_i_def)) {
+              param[['cnv_chr_line_size']] <- as.numeric(heat_map_i_def[['cnv_chr_line_size']])
+            }
+            if ('cnv_chr_label_size' %in% names(heat_map_i_def)) {
+              param[['cnv_chr_label_size']] <- as.numeric(heat_map_i_def[['cnv_chr_label_size']])
+            }
 
             heat_display_params_list[[indx_for_sav]] <- param
             # print("B12")
@@ -7336,6 +7354,19 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
           }
 
           # S2.292dev: Add chromosome boundary lines for RData heatmaps
+          # Debug: Log what we have at this point
+          cat(file=stderr(), sprintf("[CHR-DEBUG-RENDER] Checking chromosome boundary conditions:\n"))
+          cat(file=stderr(), sprintf("[CHR-DEBUG-RENDER]   heat_param[['data_source']] = %s\n",
+                                     ifelse(is.null(heat_param[['data_source']]), "NULL", heat_param[['data_source']])))
+          cat(file=stderr(), sprintf("[CHR-DEBUG-RENDER]   heat_param[['cnv_chr_lines']] = %s\n",
+                                     ifelse(is.null(heat_param[['cnv_chr_lines']]), "NULL", as.character(heat_param[['cnv_chr_lines']]))))
+          cat(file=stderr(), sprintf("[CHR-DEBUG-RENDER]   heat_param[['cnv_chr_labels']] = %s\n",
+                                     ifelse(is.null(heat_param[['cnv_chr_labels']]), "NULL", as.character(heat_param[['cnv_chr_labels']]))))
+          cat(file=stderr(), sprintf("[CHR-DEBUG-RENDER]   rdata_chr_boundaries is NULL = %s\n", is.null(rdata_chr_boundaries)))
+          if (!is.null(rdata_chr_boundaries)) {
+            cat(file=stderr(), sprintf("[CHR-DEBUG-RENDER]   rdata_chr_boundaries rows = %d\n", nrow(rdata_chr_boundaries)))
+          }
+
           if (!is.null(heat_param[['data_source']]) && heat_param[['data_source']] == "rdata" &&
               !is.null(rdata_chr_boundaries) && nrow(rdata_chr_boundaries) > 0) {
 
@@ -7347,6 +7378,9 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             show_chr_labels <- if (!is.null(heat_param[['cnv_chr_labels']])) {
               func.check.bin.val.from.conf(heat_param[['cnv_chr_labels']])
             } else FALSE
+
+            cat(file=stderr(), sprintf("[CHR-DEBUG-RENDER]   show_chr_lines (after func.check) = %s\n", show_chr_lines))
+            cat(file=stderr(), sprintf("[CHR-DEBUG-RENDER]   show_chr_labels (after func.check) = %s\n", show_chr_labels))
 
             if (show_chr_lines || show_chr_labels) {
               chr_line_color <- if (!is.null(heat_param[['cnv_chr_line_color']])) heat_param[['cnv_chr_line_color']] else "#000000"
@@ -17246,6 +17280,16 @@ server <- function(input, output, session) {
           use_midpoint = TRUE,  # Always use midpoint for CNV
           na_color = "grey90"
         )
+
+        # S2.292dev-DEBUG: Log chromosome boundary settings
+        cat(file=stderr(), sprintf("[CHR-DEBUG-APPLY] Heatmap %d RData entry created:\n", i))
+        cat(file=stderr(), sprintf("[CHR-DEBUG-APPLY]   cnv_chr_lines = %s\n", heatmap_entry$cnv_chr_lines))
+        cat(file=stderr(), sprintf("[CHR-DEBUG-APPLY]   cnv_chr_labels = %s\n", heatmap_entry$cnv_chr_labels))
+        cat(file=stderr(), sprintf("[CHR-DEBUG-APPLY]   cnv_chr_line_color = %s\n", heatmap_entry$cnv_chr_line_color))
+        cat(file=stderr(), sprintf("[CHR-DEBUG-APPLY]   values$rdata_chr_boundaries exists = %s\n", !is.null(values$rdata_chr_boundaries)))
+        if (!is.null(values$rdata_chr_boundaries)) {
+          cat(file=stderr(), sprintf("[CHR-DEBUG-APPLY]   values$rdata_chr_boundaries rows = %d\n", nrow(values$rdata_chr_boundaries)))
+        }
 
         return(heatmap_entry)
       }
