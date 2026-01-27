@@ -9081,7 +9081,21 @@ ui <- dashboardPage(
                           value = 10, min = 1, max = 100, step = 1),
               tags$small(style = "color: #666; margin-top: -10px; display: block; margin-bottom: 10px;",
                         "Reduces genomic positions during import. 1 = keep all, 10 = keep every 10th position."),
-              verbatimTextOutput("rdata_import_status")
+              verbatimTextOutput("rdata_import_status"),
+
+              # S2.292dev: Optional Annot/chromosome mapping RData file
+              tags$hr(style = "margin: 15px 0;"),
+              tags$div(
+                style = "margin-bottom: 10px;",
+                tags$strong("Chromosome Mapping File (Optional)"),
+                actionLink("annot_rdata_help", icon("question-circle"), style = "margin-left: 5px;")
+              ),
+              bsTooltip("annot_rdata_help",
+                        "Upload an RData file containing the 'Annot' dataframe with chromosome mapping (Chr, Start, End, Band columns). This enables chromosome boundary lines on RData heatmaps.",
+                        placement = "right", trigger = "hover"),
+              fileInput("annot_rdata_file", "Choose Chromosome Mapping RData File",
+                        accept = c(".RData", ".rdata", ".Rdata")),
+              verbatimTextOutput("annot_import_status")
             ),
             conditionalPanel(
               condition = "output.files_loaded != 'TRUE'",
@@ -10097,6 +10111,7 @@ server <- function(input, output, session) {
     rdata_cnv_env = NULL,       # Raw environment from loaded RData
     rdata_cnv_matrix = NULL,    # Processed CNV matrix (rows=positions, cols=samples)
     rdata_import_status = NULL, # Status message for RData import
+    annot_import_status = NULL, # S2.292dev: Status message for Annot RData import
     rdata_sample_names = NULL,  # Sample names from RData (column names)
     rdata_annot_df = NULL,      # S2.292dev: Annot dataframe from RData (Chr, Start, End, Band)
     rdata_chr_boundaries = NULL, # S2.292dev: Chromosome boundary positions (start_bin, end_bin per chr)
@@ -10574,6 +10589,73 @@ server <- function(input, output, session) {
     } else {
       values$rdata_import_status
     }
+  })
+
+  # S2.292dev: Annot/chromosome mapping RData import status output
+  output$annot_import_status <- renderText({
+    if (is.null(values$annot_import_status)) {
+      ""
+    } else {
+      values$annot_import_status
+    }
+  })
+
+  # S2.292dev: Annot/chromosome mapping RData file upload observer
+  observeEvent(input$annot_rdata_file, {
+    cat(file=stderr(), "[ANNOT-IMPORT] Observer triggered\n")
+    req(input$annot_rdata_file)
+    cat(file=stderr(), "[ANNOT-IMPORT] File received:", input$annot_rdata_file$datapath, "\n")
+
+    values$annot_import_status <- "Processing chromosome mapping file..."
+
+    tryCatch({
+      # Load RData into a new environment
+      env <- new.env()
+      load(input$annot_rdata_file$datapath, envir = env)
+
+      cat(file=stderr(), paste0("[ANNOT-IMPORT] Available objects in RData: ", paste(names(env), collapse=", "), "\n"))
+
+      # Check if Annot exists
+      if (!"Annot" %in% names(env)) {
+        values$annot_import_status <- "❌ Error: RData file does not contain 'Annot' dataframe"
+        showNotification("RData file does not contain 'Annot' dataframe", type = "error")
+        return()
+      }
+
+      annot_df <- env$Annot
+      cat(file=stderr(), paste0("[ANNOT-IMPORT] Found Annot dataframe: ", nrow(annot_df), " rows x ", ncol(annot_df), " cols\n"))
+      cat(file=stderr(), paste0("[ANNOT-IMPORT] Annot columns: ", paste(names(annot_df), collapse=", "), "\n"))
+
+      # Check if Chr column exists
+      if (!"Chr" %in% names(annot_df)) {
+        values$annot_import_status <- "❌ Error: Annot dataframe does not contain 'Chr' column"
+        showNotification("Annot dataframe does not contain 'Chr' column", type = "error")
+        return()
+      }
+
+      # Calculate chromosome boundaries (where each chromosome starts/ends)
+      chr_changes <- which(diff(as.numeric(annot_df$Chr)) != 0)
+      chr_boundaries <- data.frame(
+        chr = annot_df$Chr[c(1, chr_changes + 1)],
+        start_bin = c(1, chr_changes + 1),
+        end_bin = c(chr_changes, nrow(annot_df))
+      )
+
+      cat(file=stderr(), paste0("[ANNOT-IMPORT] Found ", nrow(chr_boundaries), " chromosome boundaries\n"))
+      cat(file=stderr(), paste0("[ANNOT-IMPORT] Chromosomes: ", paste(chr_boundaries$chr, collapse=", "), "\n"))
+
+      # Store the extracted data
+      values$rdata_annot_df <- annot_df
+      values$rdata_chr_boundaries <- chr_boundaries
+
+      values$annot_import_status <- paste0("✓ Loaded Annot: ", nrow(annot_df), " bins, ", nrow(chr_boundaries), " chromosomes")
+      showNotification(paste0("Successfully loaded chromosome mapping: ", nrow(chr_boundaries), " chromosomes"), type = "message")
+
+    }, error = function(e) {
+      cat(file=stderr(), paste0("[ANNOT-IMPORT] Error: ", e$message, "\n"))
+      values$annot_import_status <- paste0("❌ Error: ", e$message)
+      showNotification(paste0("Error loading chromosome mapping: ", e$message), type = "error")
+    })
   })
 
   # S1.62dev: RData CNV file upload observer
@@ -14812,7 +14894,7 @@ server <- function(input, output, session) {
                                 if (!is.null(values$rdata_chr_boundaries)) {
                                   paste0(" ", nrow(values$rdata_chr_boundaries), " chromosomes detected")
                                 } else {
-                                  " Requires Annot data in RData file"
+                                  " Upload Chromosome Mapping RData file in Data Import tab"
                                 })
                    )
             )
