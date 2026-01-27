@@ -645,6 +645,33 @@ func.extract.cnv.from.rdata <- function(rdata_path, downsample_factor = 10) {
       return(list(error = "RData file does not contain 'results_CNV_tool_final'"))
     }
 
+    # S2.292dev: Extract Annot dataframe if it exists (contains chromosome mapping)
+    # Annot has columns: Chr, Start, End, Band
+    # Each row corresponds to a bin in the CNV data
+    annot_df <- NULL
+    chr_boundaries <- NULL
+    if ("Annot" %in% names(env)) {
+      annot_df <- env$Annot
+      cat(file=stderr(), paste0("[RDATA-CNV] Found Annot dataframe: ", nrow(annot_df), " rows x ", ncol(annot_df), " cols\n"))
+      cat(file=stderr(), paste0("[RDATA-CNV] Annot columns: ", paste(names(annot_df), collapse=", "), "\n"))
+
+      # Calculate chromosome boundaries (where each chromosome starts/ends)
+      if ("Chr" %in% names(annot_df)) {
+        # Get unique chromosomes in order they appear
+        chr_changes <- which(diff(as.numeric(annot_df$Chr)) != 0)
+        chr_boundaries <- data.frame(
+          chr = annot_df$Chr[c(1, chr_changes + 1)],
+          start_bin = c(1, chr_changes + 1),
+          end_bin = c(chr_changes, nrow(annot_df))
+        )
+        cat(file=stderr(), paste0("[RDATA-CNV] Found ", nrow(chr_boundaries), " chromosome boundaries\n"))
+        cat(file=stderr(), paste0("[RDATA-CNV] Chromosomes: ", paste(chr_boundaries$chr, collapse=", "), "\n"))
+      }
+    } else {
+      cat(file=stderr(), "[RDATA-CNV] Annot dataframe not found in RData file\n")
+      cat(file=stderr(), paste0("[RDATA-CNV] Available objects in RData: ", paste(names(env), collapse=", "), "\n"))
+    }
+
     results <- env$results_CNV_tool_final
     sample_names <- names(results)
 
@@ -776,6 +803,16 @@ func.extract.cnv.from.rdata <- function(rdata_path, downsample_factor = 10) {
       cat(file=stderr(), paste0("[RDATA-CNV] ", chr_summary))
     }
 
+    # S2.292dev: Downsample chromosome boundaries if needed
+    if (!is.null(chr_boundaries) && downsample_factor > 1) {
+      # Adjust bin indices for downsampling
+      chr_boundaries$start_bin <- ceiling(chr_boundaries$start_bin / downsample_factor)
+      chr_boundaries$end_bin <- floor(chr_boundaries$end_bin / downsample_factor)
+      # Remove any chromosomes that got completely downsampled away
+      chr_boundaries <- chr_boundaries[chr_boundaries$end_bin >= chr_boundaries$start_bin, ]
+      cat(file=stderr(), paste0("[RDATA-CNV] Chromosome boundaries adjusted for downsampling\n"))
+    }
+
     return(list(
       matrix = as.matrix(cnv_matrix),
       sample_names = rownames(cnv_matrix),  # Now samples are rows
@@ -785,6 +822,8 @@ func.extract.cnv.from.rdata <- function(rdata_path, downsample_factor = 10) {
       start_info = start_info,              # S1.62dev: Start positions
       end_info = end_info,                  # S1.62dev: End positions
       chr_summary = chr_summary,            # S1.62dev: Summary string
+      annot_df = annot_df,                  # S2.292dev: Full Annot dataframe
+      chr_boundaries = chr_boundaries,      # S2.292dev: Chromosome boundary positions
       error = NULL
     ))
 
@@ -3097,6 +3136,7 @@ func.print.lineage.tree <- function(conf_yaml_path,
                                     heatmap_global_gap = 0.05,  # v125: Gap between multiple heatmaps
                                     legend_settings = NULL,  # v135: Legend settings for highlight/bootstrap legends
                                     rdata_cnv_matrix = NULL,  # S1.62dev: CNV matrix from RData file
+                                    rdata_chr_boundaries = NULL,  # S2.292dev: Chromosome boundaries for RData heatmaps
                                     cached_p_list_of_pairs = NULL,  # S2.0-PERF: Cached p-values (Option 3A)
                                     cached_p_list_hash = NULL,      # S2.0-PERF: Hash for cache validation
                                     p_list_cache = list(),          # S2.7-PERF: Multi-entry cache (hash -> p_list_of_pairs)
@@ -5332,6 +5372,7 @@ func.print.lineage.tree <- function(conf_yaml_path,
         heatmap_tree_distance = heatmap_tree_distance,
         heatmap_global_gap = heatmap_global_gap,  # v125: Gap between multiple heatmaps
         legend_settings = legend_settings,  # v136: Pass legend settings for highlight/bootstrap legends
+        rdata_chr_boundaries = rdata_chr_boundaries,  # S2.292dev: Chromosome boundaries for RData heatmaps
         cached_p_list_of_pairs = cached_p_list_of_pairs,  # S2.0-PERF: Pass cached p-values
         cached_p_list_hash = cached_p_list_hash,  # S2.0-PERF: Pass cache hash for validation
         p_list_cache = p_list_cache,  # S2.7-PERF: Multi-entry cache
@@ -5517,6 +5558,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
                                          heatmap_tree_distance = 0.02,
                                          heatmap_global_gap = 0.05,  # v125: Gap between multiple heatmaps
                                          legend_settings = NULL,  # v136: Legend settings for highlight/bootstrap legends
+                                         rdata_chr_boundaries = NULL,    # S2.292dev: Chromosome boundaries for RData heatmaps
                                          cached_p_list_of_pairs = NULL,  # S2.0-PERF: Cached p-values (Option 3A)
                                          cached_p_list_hash = NULL,      # S2.0-PERF: Hash for cache validation
                                          p_list_cache = list(),          # S2.7-PERF: Multi-entry cache
@@ -7291,6 +7333,115 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
               )
 
             debug_cat(paste0("  v16: Added ", n_tips, " tip guide lines\n"))
+          }
+
+          # S2.292dev: Add chromosome boundary lines for RData heatmaps
+          if (!is.null(heat_param[['data_source']]) && heat_param[['data_source']] == "rdata" &&
+              !is.null(rdata_chr_boundaries) && nrow(rdata_chr_boundaries) > 0) {
+
+            # Check if chromosome lines are enabled
+            show_chr_lines <- if (!is.null(heat_param[['cnv_chr_lines']])) {
+              func.check.bin.val.from.conf(heat_param[['cnv_chr_lines']])
+            } else FALSE
+
+            show_chr_labels <- if (!is.null(heat_param[['cnv_chr_labels']])) {
+              func.check.bin.val.from.conf(heat_param[['cnv_chr_labels']])
+            } else FALSE
+
+            if (show_chr_lines || show_chr_labels) {
+              chr_line_color <- if (!is.null(heat_param[['cnv_chr_line_color']])) heat_param[['cnv_chr_line_color']] else "#000000"
+              chr_line_size <- if (!is.null(heat_param[['cnv_chr_line_size']])) as.numeric(heat_param[['cnv_chr_line_size']]) else 0.5
+              chr_label_size <- if (!is.null(heat_param[['cnv_chr_label_size']])) as.numeric(heat_param[['cnv_chr_label_size']]) else 2.5
+
+              cat(file=stderr(), paste0("[CHR-BOUNDARY] Adding chromosome boundaries: lines=", show_chr_lines, ", labels=", show_chr_labels, "\n"))
+
+              # Calculate y range for vertical lines (spanning all tips)
+              y_min <- min(tile_df$y) - tile_height / 2
+              y_max <- max(tile_df$y) + tile_height / 2
+
+              # Get the x positions from tile_df (sorted)
+              all_x_positions <- sort(unique(tile_df$x))
+              n_positions <- length(all_x_positions)
+
+              cat(file=stderr(), paste0("[CHR-BOUNDARY] Total positions in heatmap: ", n_positions, "\n"))
+              cat(file=stderr(), paste0("[CHR-BOUNDARY] Chromosome boundaries rows: ", nrow(rdata_chr_boundaries), "\n"))
+
+              # Build chromosome boundary positions
+              # The end_bin of each chromosome marks where the line should go
+              chr_line_x_positions <- c()
+              chr_label_data <- data.frame(x = numeric(0), y = numeric(0), label = character(0))
+
+              for (chr_idx in 1:nrow(rdata_chr_boundaries)) {
+                chr_info <- rdata_chr_boundaries[chr_idx, ]
+                chr_end_bin <- chr_info$end_bin
+                chr_start_bin <- chr_info$start_bin
+
+                # Make sure we don't exceed the number of positions
+                if (chr_end_bin <= n_positions && chr_idx < nrow(rdata_chr_boundaries)) {
+                  # Get x position at the end of this chromosome
+                  # Add line between this chromosome and the next
+                  line_x <- all_x_positions[chr_end_bin] + tile_width / 2
+                  chr_line_x_positions <- c(chr_line_x_positions, line_x)
+                }
+
+                # For labels, calculate the center of each chromosome
+                if (show_chr_labels) {
+                  start_pos <- min(chr_start_bin, n_positions)
+                  end_pos <- min(chr_end_bin, n_positions)
+                  if (start_pos <= end_pos && start_pos >= 1 && end_pos >= 1) {
+                    center_bin <- round((start_pos + end_pos) / 2)
+                    center_bin <- max(1, min(center_bin, n_positions))
+                    label_x <- all_x_positions[center_bin]
+                    # Position labels above the heatmap
+                    label_y <- y_max + tile_height * 0.5
+                    chr_label_data <- rbind(chr_label_data, data.frame(
+                      x = label_x,
+                      y = label_y,
+                      label = as.character(chr_info$chr)
+                    ))
+                  }
+                }
+              }
+
+              cat(file=stderr(), paste0("[CHR-BOUNDARY] Found ", length(chr_line_x_positions), " chromosome boundary positions\n"))
+
+              # Add vertical lines at chromosome boundaries
+              if (show_chr_lines && length(chr_line_x_positions) > 0) {
+                chr_lines_df <- data.frame(
+                  x = chr_line_x_positions,
+                  xend = chr_line_x_positions,
+                  y = y_min,
+                  yend = y_max
+                )
+
+                p_with_tiles <- p_with_tiles +
+                  geom_segment(
+                    data = chr_lines_df,
+                    aes(x = x, xend = xend, y = y, yend = yend),
+                    color = chr_line_color,
+                    linewidth = chr_line_size,
+                    inherit.aes = FALSE
+                  )
+
+                cat(file=stderr(), paste0("[CHR-BOUNDARY] Added ", nrow(chr_lines_df), " chromosome boundary lines\n"))
+              }
+
+              # Add chromosome labels
+              if (show_chr_labels && nrow(chr_label_data) > 0) {
+                p_with_tiles <- p_with_tiles +
+                  geom_text(
+                    data = chr_label_data,
+                    aes(x = x, y = y, label = label),
+                    size = chr_label_size,
+                    angle = 90,
+                    vjust = 0.5,
+                    hjust = 0,
+                    inherit.aes = FALSE
+                  )
+
+                cat(file=stderr(), paste0("[CHR-BOUNDARY] Added ", nrow(chr_label_data), " chromosome labels\n"))
+              }
+            }
           }
 
           debug_cat(paste0("  Final layers: ", length(p_with_tiles$layers), "\n"))
@@ -9913,6 +10064,8 @@ server <- function(input, output, session) {
     rdata_cnv_matrix = NULL,    # Processed CNV matrix (rows=positions, cols=samples)
     rdata_import_status = NULL, # Status message for RData import
     rdata_sample_names = NULL,  # Sample names from RData (column names)
+    rdata_annot_df = NULL,      # S2.292dev: Annot dataframe from RData (Chr, Start, End, Band)
+    rdata_chr_boundaries = NULL, # S2.292dev: Chromosome boundary positions (start_bin, end_bin per chr)
     rdata_auto_match = FALSE,   # S2.0: Whether RData samples auto-match tree tips
     rdata_mapping_column = NULL, # S2.0: User-selected CSV column for RData sample mapping
     # v121: Legend settings
@@ -10431,6 +10584,13 @@ server <- function(input, output, session) {
     values$rdata_chr_info <- result$chr_info
     values$rdata_start_info <- result$start_info
     values$rdata_end_info <- result$end_info
+
+    # S2.292dev: Store Annot dataframe and chromosome boundaries
+    values$rdata_annot_df <- result$annot_df
+    values$rdata_chr_boundaries <- result$chr_boundaries
+    if (!is.null(result$chr_boundaries)) {
+      cat(file=stderr(), paste0("[RDATA-IMPORT] Chromosome boundaries loaded: ", nrow(result$chr_boundaries), " chromosomes\n"))
+    }
 
     cat(file=stderr(), "[RDATA-IMPORT] Successfully loaded CNV data\n")
     cat(file=stderr(), "[RDATA-IMPORT] Matrix dimensions:", nrow(result$matrix), "x", ncol(result$matrix), "\n")
@@ -11071,7 +11231,13 @@ server <- function(input, output, session) {
           # Render downsample factor (second stage, 0 = keep all)
           cnv_render_downsample = if (!is.null(h$cnv_render_downsample)) as.numeric(h$cnv_render_downsample) else 10,
           # Height scale for detailed mode
-          cnv_height_scale = if (!is.null(h$cnv_height_scale)) as.numeric(h$cnv_height_scale) else 1.0
+          cnv_height_scale = if (!is.null(h$cnv_height_scale)) as.numeric(h$cnv_height_scale) else 1.0,
+          # S2.292dev: Chromosome boundary settings
+          cnv_chr_lines = if (!is.null(h$cnv_chr_lines)) func.check.bin.val.from.conf(h$cnv_chr_lines) else FALSE,
+          cnv_chr_labels = if (!is.null(h$cnv_chr_labels)) func.check.bin.val.from.conf(h$cnv_chr_labels) else FALSE,
+          cnv_chr_line_color = if (!is.null(h$cnv_chr_line_color)) h$cnv_chr_line_color else "#000000",
+          cnv_chr_line_size = if (!is.null(h$cnv_chr_line_size)) as.numeric(h$cnv_chr_line_size) else 0.5,
+          cnv_chr_label_size = if (!is.null(h$cnv_chr_label_size)) as.numeric(h$cnv_chr_label_size) else 2.5
         )
         values$heatmap_configs <- c(values$heatmap_configs, list(new_config))
 
@@ -12197,6 +12363,12 @@ server <- function(input, output, session) {
               heatmap_item[[as.character(j)]]$cnv_display_mode <- if (!is.null(heatmap_entry$cnv_display_mode)) heatmap_entry$cnv_display_mode else "basic"
               # Height scale for detailed mode
               heatmap_item[[as.character(j)]]$cnv_height_scale <- if (!is.null(heatmap_entry$cnv_height_scale)) heatmap_entry$cnv_height_scale else 1.0
+              # S2.292dev: Chromosome boundary settings
+              heatmap_item[[as.character(j)]]$cnv_chr_lines <- if (!is.null(heatmap_entry$cnv_chr_lines) && heatmap_entry$cnv_chr_lines) "yes" else "no"
+              heatmap_item[[as.character(j)]]$cnv_chr_labels <- if (!is.null(heatmap_entry$cnv_chr_labels) && heatmap_entry$cnv_chr_labels) "yes" else "no"
+              heatmap_item[[as.character(j)]]$cnv_chr_line_color <- if (!is.null(heatmap_entry$cnv_chr_line_color)) heatmap_entry$cnv_chr_line_color else "#000000"
+              heatmap_item[[as.character(j)]]$cnv_chr_line_size <- if (!is.null(heatmap_entry$cnv_chr_line_size)) heatmap_entry$cnv_chr_line_size else 0.5
+              heatmap_item[[as.character(j)]]$cnv_chr_label_size <- if (!is.null(heatmap_entry$cnv_chr_label_size)) heatmap_entry$cnv_chr_label_size else 2.5
               # S2.0: Store mapping column for sample name matching
               heatmap_item[[as.character(j)]]$rdata_mapping_column <- heatmap_entry$rdata_mapping_column
               debug_cat(paste0("    S2.0-RDATA: RData heatmap, mapping_column=", heatmap_entry$rdata_mapping_column, "\n"))
@@ -12462,6 +12634,12 @@ server <- function(input, output, session) {
             heatmap_item[[as.character(j)]]$cnv_display_mode <- if (!is.null(heatmap_entry$cnv_display_mode)) heatmap_entry$cnv_display_mode else "basic"
             # Height scale for detailed mode
             heatmap_item[[as.character(j)]]$cnv_height_scale <- if (!is.null(heatmap_entry$cnv_height_scale)) heatmap_entry$cnv_height_scale else 1.0
+            # S2.292dev: Chromosome boundary settings
+            heatmap_item[[as.character(j)]]$cnv_chr_lines <- if (!is.null(heatmap_entry$cnv_chr_lines) && heatmap_entry$cnv_chr_lines) "yes" else "no"
+            heatmap_item[[as.character(j)]]$cnv_chr_labels <- if (!is.null(heatmap_entry$cnv_chr_labels) && heatmap_entry$cnv_chr_labels) "yes" else "no"
+            heatmap_item[[as.character(j)]]$cnv_chr_line_color <- if (!is.null(heatmap_entry$cnv_chr_line_color)) heatmap_entry$cnv_chr_line_color else "#000000"
+            heatmap_item[[as.character(j)]]$cnv_chr_line_size <- if (!is.null(heatmap_entry$cnv_chr_line_size)) heatmap_entry$cnv_chr_line_size else 0.5
+            heatmap_item[[as.character(j)]]$cnv_chr_label_size <- if (!is.null(heatmap_entry$cnv_chr_label_size)) heatmap_entry$cnv_chr_label_size else 2.5
             # S2.0: Store mapping column for sample name matching
             heatmap_item[[as.character(j)]]$rdata_mapping_column <- heatmap_entry$rdata_mapping_column
             debug_cat(paste0("    S2.0: RData heatmap, mapping_column=", heatmap_entry$rdata_mapping_column, "\n"))
@@ -14552,6 +14730,56 @@ server <- function(input, output, session) {
                      tags$small(class = "text-muted",
                                 icon("info-circle"),
                                 " Controls total heatmap height. Lower values compress the heatmap.")
+                   )
+            )
+          ),
+          # S2.292dev: Chromosome boundary lines and labels
+          tags$hr(style = "margin: 10px 0;"),
+          tags$strong("Chromosome Boundaries"),
+          fluidRow(
+            column(4,
+                   checkboxInput(paste0("heatmap_cnv_chr_lines_", i), "Show Chr Boundary Lines",
+                                 value = if (!is.null(cfg$cnv_chr_lines)) cfg$cnv_chr_lines else FALSE)
+            ),
+            column(4,
+                   checkboxInput(paste0("heatmap_cnv_chr_labels_", i), "Show Chr Labels",
+                                 value = if (!is.null(cfg$cnv_chr_labels)) cfg$cnv_chr_labels else FALSE)
+            ),
+            column(4,
+                   conditionalPanel(
+                     condition = paste0("input.heatmap_cnv_chr_lines_", i),
+                     colourpicker::colourInput(paste0("heatmap_cnv_chr_line_color_", i), "Line Color",
+                                               value = if (!is.null(cfg$cnv_chr_line_color)) cfg$cnv_chr_line_color else "#000000")
+                   )
+            )
+          ),
+          fluidRow(
+            column(4,
+                   conditionalPanel(
+                     condition = paste0("input.heatmap_cnv_chr_lines_", i),
+                     sliderInput(paste0("heatmap_cnv_chr_line_size_", i), "Line Width",
+                                 min = 0.1, max = 3, value = if (!is.null(cfg$cnv_chr_line_size)) cfg$cnv_chr_line_size else 0.5,
+                                 step = 0.1)
+                   )
+            ),
+            column(4,
+                   conditionalPanel(
+                     condition = paste0("input.heatmap_cnv_chr_labels_", i),
+                     sliderInput(paste0("heatmap_cnv_chr_label_size_", i), "Label Size",
+                                 min = 1, max = 10, value = if (!is.null(cfg$cnv_chr_label_size)) cfg$cnv_chr_label_size else 2.5,
+                                 step = 0.5)
+                   )
+            ),
+            column(4,
+                   tags$div(
+                     style = "padding-top: 25px;",
+                     tags$small(class = "text-muted",
+                                icon("info-circle"),
+                                if (!is.null(values$rdata_chr_boundaries)) {
+                                  paste0(" ", nrow(values$rdata_chr_boundaries), " chromosomes detected")
+                                } else {
+                                  " Requires Annot data in RData file"
+                                })
                    )
             )
           ),
@@ -16970,6 +17198,12 @@ server <- function(input, output, session) {
           cnv_display_mode = if (!is.null(input[[paste0("heatmap_cnv_display_mode_", i)]])) input[[paste0("heatmap_cnv_display_mode_", i)]] else "basic",
           # Height scale for detailed mode
           cnv_height_scale = if (!is.null(input[[paste0("heatmap_cnv_height_scale_", i)]])) input[[paste0("heatmap_cnv_height_scale_", i)]] else 1.0,
+          # S2.292dev: Chromosome boundary settings
+          cnv_chr_lines = if (!is.null(input[[paste0("heatmap_cnv_chr_lines_", i)]])) input[[paste0("heatmap_cnv_chr_lines_", i)]] else FALSE,
+          cnv_chr_labels = if (!is.null(input[[paste0("heatmap_cnv_chr_labels_", i)]])) input[[paste0("heatmap_cnv_chr_labels_", i)]] else FALSE,
+          cnv_chr_line_color = if (!is.null(input[[paste0("heatmap_cnv_chr_line_color_", i)]])) input[[paste0("heatmap_cnv_chr_line_color_", i)]] else "#000000",
+          cnv_chr_line_size = if (!is.null(input[[paste0("heatmap_cnv_chr_line_size_", i)]])) input[[paste0("heatmap_cnv_chr_line_size_", i)]] else 0.5,
+          cnv_chr_label_size = if (!is.null(input[[paste0("heatmap_cnv_chr_label_size_", i)]])) input[[paste0("heatmap_cnv_chr_label_size_", i)]] else 2.5,
           # S2.0: Store mapping column for sample name matching
           rdata_mapping_column = mapping_column,
           columns = character(0),  # No columns for RData - data comes from parameter
@@ -18314,6 +18548,8 @@ server <- function(input, output, session) {
         legend_settings = values$legend_settings,
         # S1.62dev: Pass RData CNV matrix for heatmaps with data_source="rdata"
         rdata_cnv_matrix = values$rdata_cnv_matrix,
+        # S2.292dev: Pass chromosome boundary info for RData heatmaps
+        rdata_chr_boundaries = values$rdata_chr_boundaries,
         # S2.0-PERF: Two-tier caching - pass cached p-values (Option 3A)
         cached_p_list_of_pairs = values$cached_p_list_of_pairs,
         cached_p_list_hash = values$cached_p_list_hash,
