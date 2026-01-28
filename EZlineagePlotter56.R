@@ -6739,17 +6739,28 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
             # S2.9-PERF: Use cached colors if available, otherwise compute
             if (use_cached_colors && !is.null(cached_tile_df)) {
-              # Use cached tile_df with pre-computed fill_color
-              tile_df <- cached_tile_df
-              value_min <- cached_value_range$min
-              value_max <- cached_value_range$max
-              cat(file=stderr(), paste0("[S2.9-CACHE] Using cached tile_df with ", nrow(tile_df), " tiles\n"))
+              # S2.9-FIX: Only copy fill_color from cache, keep fresh x/y coordinates
+              # The fresh tile_df has correct x/y coordinates based on current_heatmap_x_start
+              # The cached_tile_df may have stale coordinates from a previous render
+              if (nrow(tile_df) == nrow(cached_tile_df)) {
+                # Safe to copy fill_color - same number of tiles
+                tile_df$fill_color <- cached_tile_df$fill_color
+                value_min <- cached_value_range$min
+                value_max <- cached_value_range$max
+                cat(file=stderr(), paste0("[S2.9-CACHE] Using cached fill colors for ", nrow(tile_df), " tiles (fresh coordinates preserved)\n"))
+              } else {
+                # Row count mismatch - force recomputation
+                cat(file=stderr(), paste0("[S2.9-CACHE] WARNING: Row count mismatch (fresh=", nrow(tile_df), " vs cached=", nrow(cached_tile_df), ") - recomputing colors\n"))
+                use_cached_colors <- FALSE
+              }
 
               # Still need to create palette for legend
               colors_below <- colorRampPalette(c(low_color, mid_color))(999)
               colors_above <- colorRampPalette(c(mid_color, high_color))(1000)[-1]
               detailed_palette <- c(colors_below, colors_above)
-            } else {
+            }
+
+            if (!use_cached_colors) {
               # Create fine-grained color palette like pheatmap (1998 colors)
               colors_below <- colorRampPalette(c(low_color, mid_color))(999)
               colors_above <- colorRampPalette(c(mid_color, high_color))(1000)[-1]
