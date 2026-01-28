@@ -4409,9 +4409,16 @@ func.print.lineage.tree <- function(conf_yaml_path,
                       unique_vals <- unique(col_vals[!is.na(col_vals) & col_vals != ""])
                       if (length(unique_vals) > 0 && length(unique_vals) < 500) {  # Only check if reasonable number of unique values
                         for (val in unique_vals) {
-                          if (nchar(val) >= 3) {  # Only match if value is at least 3 chars
+                          # S2.292dev: Use tryCatch to handle invalid multibyte strings
+                          val_len <- tryCatch({
+                            nchar(val)
+                          }, error = function(e) {
+                            # If nchar fails due to invalid characters, try bytes or skip
+                            tryCatch(nchar(val, type = "bytes"), error = function(e2) 0)
+                          })
+                          if (val_len >= 3) {  # Only match if value is at least 3 chars
                             for (cnv_s in cnv_samples) {
-                              if (grepl(val, cnv_s, fixed = TRUE)) {
+                              if (tryCatch(grepl(val, cnv_s, fixed = TRUE), error = function(e) FALSE)) {
                                 partial_matches <- partial_matches + 1
                                 break
                               }
@@ -7395,7 +7402,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
               chr_line_color <- if (!is.null(heat_param[['cnv_chr_line_color']])) heat_param[['cnv_chr_line_color']] else "#000000"
               chr_line_size <- if (!is.null(heat_param[['cnv_chr_line_size']])) as.numeric(heat_param[['cnv_chr_line_size']]) else 0.5
               chr_label_size <- if (!is.null(heat_param[['cnv_chr_label_size']])) as.numeric(heat_param[['cnv_chr_label_size']]) else 2.5
-              chr_label_position <- if (!is.null(heat_param[['cnv_chr_label_position']])) heat_param[['cnv_chr_label_position']] else "top"
+              chr_label_position <- if (!is.null(heat_param[['cnv_chr_label_position']])) heat_param[['cnv_chr_label_position']] else "right"
               chr_label_angle <- if (!is.null(heat_param[['cnv_chr_label_angle']])) as.numeric(heat_param[['cnv_chr_label_angle']]) else 90
               chr_label_prefix <- if (!is.null(heat_param[['cnv_chr_label_prefix']])) heat_param[['cnv_chr_label_prefix']] else ""
 
@@ -7449,18 +7456,23 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
                   if (start_pos <= end_pos && start_pos >= 1 && end_pos >= 1) {
                     center_bin <- round((start_pos + end_pos) / 2)
                     center_bin <- max(1, min(center_bin, n_positions))
-                    label_x <- all_x_positions[center_bin]
-                    # Position labels based on user preference (top or bottom)
-                    label_y <- if (chr_label_position == "bottom") {
-                      y_min - tile_height * 0.5
+                    # For left/right positioning: x is at edge, y is at center of chromosome region
+                    # Calculate y position based on the center bin's x position mapped to a y range
+                    label_y_center <- all_x_positions[center_bin]
+
+                    # Position labels based on user preference (left or right of heatmap)
+                    # Use spacing similar to other heatmap labels (about 2-3 tile heights)
+                    label_spacing <- tile_height * 3
+                    label_x <- if (chr_label_position == "left") {
+                      y_min - label_spacing
                     } else {
-                      y_max + tile_height * 0.5
+                      y_max + label_spacing
                     }
                     # Apply prefix to chromosome label
                     chr_label_text <- paste0(chr_label_prefix, as.character(chr_info$chr))
                     chr_label_data <- rbind(chr_label_data, data.frame(
-                      x = label_x,
-                      y = label_y,
+                      x = label_y_center,  # x position along chromosome axis
+                      y = label_x,         # y position at left or right edge
                       label = chr_label_text
                     ))
                   }
@@ -7492,15 +7504,10 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
               # Add chromosome labels
               if (show_chr_labels && nrow(chr_label_data) > 0) {
-                # Adjust hjust based on position and angle for proper alignment
-                # When angle is 90 (vertical), hjust controls up/down positioning
-                # When at top with angle 90: hjust=0 means text extends upward
-                # When at bottom with angle 90: hjust=1 means text extends downward
-                label_hjust <- if (chr_label_position == "bottom") {
-                  if (chr_label_angle == 90) 1 else 0.5
-                } else {
-                  if (chr_label_angle == 90) 0 else 0.5
-                }
+                # Adjust hjust based on position for proper alignment
+                # For right: hjust=0 (text extends to the right)
+                # For left: hjust=1 (text extends to the left)
+                label_hjust <- if (chr_label_position == "left") 1 else 0
 
                 p_with_tiles <- p_with_tiles +
                   geom_text(
@@ -11394,7 +11401,7 @@ server <- function(input, output, session) {
           cnv_chr_line_color = if (!is.null(h$cnv_chr_line_color)) h$cnv_chr_line_color else "#000000",
           cnv_chr_line_size = if (!is.null(h$cnv_chr_line_size)) as.numeric(h$cnv_chr_line_size) else 0.5,
           cnv_chr_label_size = if (!is.null(h$cnv_chr_label_size)) as.numeric(h$cnv_chr_label_size) else 2.5,
-          cnv_chr_label_position = if (!is.null(h$cnv_chr_label_position)) h$cnv_chr_label_position else "top",
+          cnv_chr_label_position = if (!is.null(h$cnv_chr_label_position)) h$cnv_chr_label_position else "right",
           cnv_chr_label_angle = if (!is.null(h$cnv_chr_label_angle)) as.numeric(h$cnv_chr_label_angle) else 90,
           cnv_chr_label_prefix = if (!is.null(h$cnv_chr_label_prefix)) h$cnv_chr_label_prefix else ""
         )
@@ -12528,7 +12535,7 @@ server <- function(input, output, session) {
               heatmap_item[[as.character(j)]]$cnv_chr_line_color <- if (!is.null(heatmap_entry$cnv_chr_line_color)) heatmap_entry$cnv_chr_line_color else "#000000"
               heatmap_item[[as.character(j)]]$cnv_chr_line_size <- if (!is.null(heatmap_entry$cnv_chr_line_size)) heatmap_entry$cnv_chr_line_size else 0.5
               heatmap_item[[as.character(j)]]$cnv_chr_label_size <- if (!is.null(heatmap_entry$cnv_chr_label_size)) heatmap_entry$cnv_chr_label_size else 2.5
-              heatmap_item[[as.character(j)]]$cnv_chr_label_position <- if (!is.null(heatmap_entry$cnv_chr_label_position)) heatmap_entry$cnv_chr_label_position else "top"
+              heatmap_item[[as.character(j)]]$cnv_chr_label_position <- if (!is.null(heatmap_entry$cnv_chr_label_position)) heatmap_entry$cnv_chr_label_position else "right"
               heatmap_item[[as.character(j)]]$cnv_chr_label_angle <- if (!is.null(heatmap_entry$cnv_chr_label_angle)) heatmap_entry$cnv_chr_label_angle else 90
               heatmap_item[[as.character(j)]]$cnv_chr_label_prefix <- if (!is.null(heatmap_entry$cnv_chr_label_prefix)) heatmap_entry$cnv_chr_label_prefix else ""
               # S2.0: Store mapping column for sample name matching
@@ -12802,7 +12809,7 @@ server <- function(input, output, session) {
             heatmap_item[[as.character(j)]]$cnv_chr_line_color <- if (!is.null(heatmap_entry$cnv_chr_line_color)) heatmap_entry$cnv_chr_line_color else "#000000"
             heatmap_item[[as.character(j)]]$cnv_chr_line_size <- if (!is.null(heatmap_entry$cnv_chr_line_size)) heatmap_entry$cnv_chr_line_size else 0.5
             heatmap_item[[as.character(j)]]$cnv_chr_label_size <- if (!is.null(heatmap_entry$cnv_chr_label_size)) heatmap_entry$cnv_chr_label_size else 2.5
-            heatmap_item[[as.character(j)]]$cnv_chr_label_position <- if (!is.null(heatmap_entry$cnv_chr_label_position)) heatmap_entry$cnv_chr_label_position else "top"
+            heatmap_item[[as.character(j)]]$cnv_chr_label_position <- if (!is.null(heatmap_entry$cnv_chr_label_position)) heatmap_entry$cnv_chr_label_position else "right"
             heatmap_item[[as.character(j)]]$cnv_chr_label_angle <- if (!is.null(heatmap_entry$cnv_chr_label_angle)) heatmap_entry$cnv_chr_label_angle else 90
             heatmap_item[[as.character(j)]]$cnv_chr_label_prefix <- if (!is.null(heatmap_entry$cnv_chr_label_prefix)) heatmap_entry$cnv_chr_label_prefix else ""
             # S2.0: Store mapping column for sample name matching
@@ -14939,8 +14946,8 @@ server <- function(input, output, session) {
                    conditionalPanel(
                      condition = paste0("input.heatmap_cnv_chr_labels_", i),
                      selectInput(paste0("heatmap_cnv_chr_label_position_", i), "Label Position",
-                                 choices = c("Top" = "top", "Bottom" = "bottom"),
-                                 selected = if (!is.null(cfg$cnv_chr_label_position)) cfg$cnv_chr_label_position else "top")
+                                 choices = c("Right" = "right", "Left" = "left"),
+                                 selected = if (!is.null(cfg$cnv_chr_label_position)) cfg$cnv_chr_label_position else "right")
                    )
             )
           ),
@@ -17395,7 +17402,7 @@ server <- function(input, output, session) {
           cnv_chr_line_color = if (!is.null(input[[paste0("heatmap_cnv_chr_line_color_", i)]])) input[[paste0("heatmap_cnv_chr_line_color_", i)]] else "#000000",
           cnv_chr_line_size = if (!is.null(input[[paste0("heatmap_cnv_chr_line_size_", i)]])) input[[paste0("heatmap_cnv_chr_line_size_", i)]] else 0.5,
           cnv_chr_label_size = if (!is.null(input[[paste0("heatmap_cnv_chr_label_size_", i)]])) input[[paste0("heatmap_cnv_chr_label_size_", i)]] else 2.5,
-          cnv_chr_label_position = if (!is.null(input[[paste0("heatmap_cnv_chr_label_position_", i)]])) input[[paste0("heatmap_cnv_chr_label_position_", i)]] else "top",
+          cnv_chr_label_position = if (!is.null(input[[paste0("heatmap_cnv_chr_label_position_", i)]])) input[[paste0("heatmap_cnv_chr_label_position_", i)]] else "right",
           cnv_chr_label_angle = if (!is.null(input[[paste0("heatmap_cnv_chr_label_angle_", i)]])) input[[paste0("heatmap_cnv_chr_label_angle_", i)]] else 90,
           cnv_chr_label_prefix = if (!is.null(input[[paste0("heatmap_cnv_chr_label_prefix_", i)]])) input[[paste0("heatmap_cnv_chr_label_prefix_", i)]] else "",
           # S2.0: Store mapping column for sample name matching
