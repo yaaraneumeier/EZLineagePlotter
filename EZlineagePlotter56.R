@@ -32,6 +32,31 @@ library(combinat)
 library(infotheo)
 library(aricode)
 
+# S2.292dev: Add showtext for Google Fonts support
+# This allows using a variety of fonts beyond the basic sans/serif/mono
+if (requireNamespace("showtext", quietly = TRUE)) {
+  library(showtext)
+  library(sysfonts)
+
+  # Add Google Fonts - these are free and widely available
+  font_add_google("Roboto", "Roboto")
+  font_add_google("Open Sans", "Open Sans")
+  font_add_google("Lato", "Lato")
+  font_add_google("Playfair Display", "Playfair Display")
+  font_add_google("Source Code Pro", "Source Code Pro")
+  font_add_google("Merriweather", "Merriweather")
+  font_add_google("Montserrat", "Montserrat")
+  font_add_google("PT Sans", "PT Sans")
+
+  # Enable showtext for ggplot2
+  showtext_auto()
+
+  SHOWTEXT_AVAILABLE <- TRUE
+  cat("showtext package loaded - Google Fonts available\n")
+} else {
+  SHOWTEXT_AVAILABLE <- FALSE
+  cat("showtext package not installed - using basic fonts only\n")
+}
 
 options(shiny.reactlog = TRUE)
 # v146: Increase max upload size for Shiny server deployments (100MB)
@@ -206,7 +231,7 @@ options(shiny.maxRequestSize = 100*1024^2)
 #       - Layer reordering now happens ONCE at the end in generate_plot()
 # S1.2: Fixed undefined x_range_min in func_highlight causing "Problem while
 #       computing aesthetics" error when adding 2+ highlights with a heatmap.
-VERSION <- "S2.9"
+VERSION <- "S2.292dev"
 
 # Debug output control - set to TRUE to enable verbose console logging
 # For production/stable use, keep this FALSE for better performance
@@ -620,6 +645,33 @@ func.extract.cnv.from.rdata <- function(rdata_path, downsample_factor = 10) {
       return(list(error = "RData file does not contain 'results_CNV_tool_final'"))
     }
 
+    # S2.292dev: Extract Annot dataframe if it exists (contains chromosome mapping)
+    # Annot has columns: Chr, Start, End, Band
+    # Each row corresponds to a bin in the CNV data
+    annot_df <- NULL
+    chr_boundaries <- NULL
+    if ("Annot" %in% names(env)) {
+      annot_df <- env$Annot
+      cat(file=stderr(), paste0("[RDATA-CNV] Found Annot dataframe: ", nrow(annot_df), " rows x ", ncol(annot_df), " cols\n"))
+      cat(file=stderr(), paste0("[RDATA-CNV] Annot columns: ", paste(names(annot_df), collapse=", "), "\n"))
+
+      # Calculate chromosome boundaries (where each chromosome starts/ends)
+      if ("Chr" %in% names(annot_df)) {
+        # Get unique chromosomes in order they appear
+        chr_changes <- which(diff(as.numeric(annot_df$Chr)) != 0)
+        chr_boundaries <- data.frame(
+          chr = annot_df$Chr[c(1, chr_changes + 1)],
+          start_bin = c(1, chr_changes + 1),
+          end_bin = c(chr_changes, nrow(annot_df))
+        )
+        cat(file=stderr(), paste0("[RDATA-CNV] Found ", nrow(chr_boundaries), " chromosome boundaries\n"))
+        cat(file=stderr(), paste0("[RDATA-CNV] Chromosomes: ", paste(chr_boundaries$chr, collapse=", "), "\n"))
+      }
+    } else {
+      cat(file=stderr(), "[RDATA-CNV] Annot dataframe not found in RData file\n")
+      cat(file=stderr(), paste0("[RDATA-CNV] Available objects in RData: ", paste(names(env), collapse=", "), "\n"))
+    }
+
     results <- env$results_CNV_tool_final
     sample_names <- names(results)
 
@@ -751,6 +803,16 @@ func.extract.cnv.from.rdata <- function(rdata_path, downsample_factor = 10) {
       cat(file=stderr(), paste0("[RDATA-CNV] ", chr_summary))
     }
 
+    # S2.292dev: Downsample chromosome boundaries if needed
+    if (!is.null(chr_boundaries) && downsample_factor > 1) {
+      # Adjust bin indices for downsampling
+      chr_boundaries$start_bin <- ceiling(chr_boundaries$start_bin / downsample_factor)
+      chr_boundaries$end_bin <- floor(chr_boundaries$end_bin / downsample_factor)
+      # Remove any chromosomes that got completely downsampled away
+      chr_boundaries <- chr_boundaries[chr_boundaries$end_bin >= chr_boundaries$start_bin, ]
+      cat(file=stderr(), paste0("[RDATA-CNV] Chromosome boundaries adjusted for downsampling\n"))
+    }
+
     return(list(
       matrix = as.matrix(cnv_matrix),
       sample_names = rownames(cnv_matrix),  # Now samples are rows
@@ -760,6 +822,8 @@ func.extract.cnv.from.rdata <- function(rdata_path, downsample_factor = 10) {
       start_info = start_info,              # S1.62dev: Start positions
       end_info = end_info,                  # S1.62dev: End positions
       chr_summary = chr_summary,            # S1.62dev: Summary string
+      annot_df = annot_df,                  # S2.292dev: Full Annot dataframe
+      chr_boundaries = chr_boundaries,      # S2.292dev: Chromosome boundary positions
       error = NULL
     ))
 
@@ -3072,6 +3136,7 @@ func.print.lineage.tree <- function(conf_yaml_path,
                                     heatmap_global_gap = 0.05,  # v125: Gap between multiple heatmaps
                                     legend_settings = NULL,  # v135: Legend settings for highlight/bootstrap legends
                                     rdata_cnv_matrix = NULL,  # S1.62dev: CNV matrix from RData file
+                                    rdata_chr_boundaries = NULL,  # S2.292dev: Chromosome boundaries for RData heatmaps
                                     cached_p_list_of_pairs = NULL,  # S2.0-PERF: Cached p-values (Option 3A)
                                     cached_p_list_hash = NULL,      # S2.0-PERF: Hash for cache validation
                                     p_list_cache = list(),          # S2.7-PERF: Multi-entry cache (hash -> p_list_of_pairs)
@@ -4119,6 +4184,33 @@ func.print.lineage.tree <- function(conf_yaml_path,
               param[['cnv_height_scale']] <- as.numeric(heat_map_i_def[['cnv_height_scale']])
               cat(file=stderr(), paste0("[S2.8-PARAM] Setting cnv_height_scale to: ", heat_map_i_def[['cnv_height_scale']], "\n"))
             }
+            # S2.292dev: Chromosome boundary settings
+            if ('cnv_chr_lines' %in% names(heat_map_i_def)) {
+              param[['cnv_chr_lines']] <- heat_map_i_def[['cnv_chr_lines']]
+              cat(file=stderr(), paste0("[CHR-PARAM] Setting cnv_chr_lines to: ", heat_map_i_def[['cnv_chr_lines']], "\n"))
+            }
+            if ('cnv_chr_labels' %in% names(heat_map_i_def)) {
+              param[['cnv_chr_labels']] <- heat_map_i_def[['cnv_chr_labels']]
+              cat(file=stderr(), paste0("[CHR-PARAM] Setting cnv_chr_labels to: ", heat_map_i_def[['cnv_chr_labels']], "\n"))
+            }
+            if ('cnv_chr_line_color' %in% names(heat_map_i_def)) {
+              param[['cnv_chr_line_color']] <- heat_map_i_def[['cnv_chr_line_color']]
+            }
+            if ('cnv_chr_line_size' %in% names(heat_map_i_def)) {
+              param[['cnv_chr_line_size']] <- as.numeric(heat_map_i_def[['cnv_chr_line_size']])
+            }
+            if ('cnv_chr_label_size' %in% names(heat_map_i_def)) {
+              param[['cnv_chr_label_size']] <- as.numeric(heat_map_i_def[['cnv_chr_label_size']])
+            }
+            if ('cnv_chr_label_position' %in% names(heat_map_i_def)) {
+              param[['cnv_chr_label_position']] <- heat_map_i_def[['cnv_chr_label_position']]
+            }
+            if ('cnv_chr_label_angle' %in% names(heat_map_i_def)) {
+              param[['cnv_chr_label_angle']] <- as.numeric(heat_map_i_def[['cnv_chr_label_angle']])
+            }
+            if ('cnv_chr_label_prefix' %in% names(heat_map_i_def)) {
+              param[['cnv_chr_label_prefix']] <- heat_map_i_def[['cnv_chr_label_prefix']]
+            }
 
             heat_display_params_list[[indx_for_sav]] <- param
             # print("B12")
@@ -4317,9 +4409,22 @@ func.print.lineage.tree <- function(conf_yaml_path,
                       unique_vals <- unique(col_vals[!is.na(col_vals) & col_vals != ""])
                       if (length(unique_vals) > 0 && length(unique_vals) < 500) {  # Only check if reasonable number of unique values
                         for (val in unique_vals) {
-                          if (nchar(val) >= 3) {  # Only match if value is at least 3 chars
+                          # S2.292dev: Handle invalid multibyte strings by cleaning them
+                          clean_val <- tryCatch({
+                            # First try to use the string as-is
+                            nchar(val)  # Test if it's valid
+                            val
+                          }, error = function(e) {
+                            # If invalid, try to clean by removing non-ASCII characters
+                            tryCatch({
+                              cleaned <- iconv(val, from = "", to = "ASCII", sub = "")
+                              if (!is.na(cleaned) && nchar(cleaned) > 0) cleaned else NULL
+                            }, error = function(e2) NULL)
+                          })
+
+                          if (!is.null(clean_val) && nchar(clean_val) >= 3) {  # Only match if value is at least 3 chars
                             for (cnv_s in cnv_samples) {
-                              if (grepl(val, cnv_s, fixed = TRUE)) {
+                              if (tryCatch(grepl(clean_val, cnv_s, fixed = TRUE), error = function(e) FALSE)) {
                                 partial_matches <- partial_matches + 1
                                 break
                               }
@@ -4415,6 +4520,32 @@ func.print.lineage.tree <- function(conf_yaml_path,
 
                 cat(file=stderr(), paste0("[HEATMAP-RENDER] Matched ", matches_found, " out of ", length(tree_tips), " tree tips to CNV data\n"))
                 debug_cat(paste0("  Matched ", matches_found, " out of ", length(tree_tips), " tree tips to CNV data\n"))
+
+                # S2.292dev: Show detailed matching info - which cells matched and which didn't
+                matched_tips <- tree_tips[!apply(matched_cnv, 1, function(row) all(is.na(row)))]
+                unmatched_tips <- tree_tips[apply(matched_cnv, 1, function(row) all(is.na(row)))]
+
+                cat(file=stderr(), paste0("[HEATMAP-RENDER] === CELL MATCHING SUMMARY ===\n"))
+                cat(file=stderr(), paste0("[HEATMAP-RENDER] Matched cells (", length(matched_tips), "): "))
+                if (length(matched_tips) > 0) {
+                  if (length(matched_tips) <= 20) {
+                    cat(file=stderr(), paste(matched_tips, collapse=", "))
+                  } else {
+                    cat(file=stderr(), paste(c(head(matched_tips, 10), "...", tail(matched_tips, 5)), collapse=", "))
+                  }
+                }
+                cat(file=stderr(), "\n")
+
+                cat(file=stderr(), paste0("[HEATMAP-RENDER] Unmatched cells (", length(unmatched_tips), "): "))
+                if (length(unmatched_tips) > 0) {
+                  if (length(unmatched_tips) <= 20) {
+                    cat(file=stderr(), paste(unmatched_tips, collapse=", "))
+                  } else {
+                    cat(file=stderr(), paste(c(head(unmatched_tips, 10), "...", tail(unmatched_tips, 5)), collapse=", "))
+                  }
+                }
+                cat(file=stderr(), "\n")
+                cat(file=stderr(), paste0("[HEATMAP-RENDER] ============================\n"))
 
                 # Use the matched CNV data as the heatmap dataframe
                 df_heat_temp <- matched_cnv
@@ -5307,6 +5438,7 @@ func.print.lineage.tree <- function(conf_yaml_path,
         heatmap_tree_distance = heatmap_tree_distance,
         heatmap_global_gap = heatmap_global_gap,  # v125: Gap between multiple heatmaps
         legend_settings = legend_settings,  # v136: Pass legend settings for highlight/bootstrap legends
+        rdata_chr_boundaries = rdata_chr_boundaries,  # S2.292dev: Chromosome boundaries for RData heatmaps
         cached_p_list_of_pairs = cached_p_list_of_pairs,  # S2.0-PERF: Pass cached p-values
         cached_p_list_hash = cached_p_list_hash,  # S2.0-PERF: Pass cache hash for validation
         p_list_cache = p_list_cache,  # S2.7-PERF: Multi-entry cache
@@ -5315,9 +5447,10 @@ func.print.lineage.tree <- function(conf_yaml_path,
       # }
 
       # S2.0-PERF: Extract plot and cache data from new return structure (Option 3A)
-      # func.make.plot.tree.heat.NEW now returns list(plot=..., cache_data=...)
+      # func.make.plot.tree.heat.NEW now returns list(plot=..., rotated_tree=..., cache_data=...)
       ou_result <- ou
       ou <- ou_result$plot  # Extract the plot object
+      rotated_tree_result <- ou_result$rotated_tree  # S2.292dev: Extract rotated tree for Newick export
       cache_data <- ou_result$cache_data  # Store cache data to return
 
       #print("ou is")
@@ -5426,8 +5559,14 @@ func.print.lineage.tree <- function(conf_yaml_path,
     cache_data <- NULL
   }
 
+  # S2.292dev: Include rotated tree for Newick export
+  if (!exists("rotated_tree_result") || is.null(rotated_tree_result)) {
+    rotated_tree_result <- NULL
+  }
+
   return(list(
     plots = out_trees,
+    rotated_tree = rotated_tree_result,  # S2.292dev: Rotated tree for Newick download
     cache_data = cache_data
   ))
   #close func
@@ -5485,6 +5624,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
                                          heatmap_tree_distance = 0.02,
                                          heatmap_global_gap = 0.05,  # v125: Gap between multiple heatmaps
                                          legend_settings = NULL,  # v136: Legend settings for highlight/bootstrap legends
+                                         rdata_chr_boundaries = NULL,    # S2.292dev: Chromosome boundaries for RData heatmaps
                                          cached_p_list_of_pairs = NULL,  # S2.0-PERF: Cached p-values (Option 3A)
                                          cached_p_list_hash = NULL,      # S2.0-PERF: Hash for cache validation
                                          p_list_cache = list(),          # S2.7-PERF: Multi-entry cache
@@ -7261,6 +7401,156 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             debug_cat(paste0("  v16: Added ", n_tips, " tip guide lines\n"))
           }
 
+          # S2.292dev: Add chromosome boundary lines for RData heatmaps
+          # Debug: Log what we have at this point
+          cat(file=stderr(), sprintf("[CHR-DEBUG-RENDER] Checking chromosome boundary conditions:\n"))
+          cat(file=stderr(), sprintf("[CHR-DEBUG-RENDER]   heat_param[['data_source']] = %s\n",
+                                     ifelse(is.null(heat_param[['data_source']]), "NULL", heat_param[['data_source']])))
+          cat(file=stderr(), sprintf("[CHR-DEBUG-RENDER]   heat_param[['cnv_chr_lines']] = %s\n",
+                                     ifelse(is.null(heat_param[['cnv_chr_lines']]), "NULL", as.character(heat_param[['cnv_chr_lines']]))))
+          cat(file=stderr(), sprintf("[CHR-DEBUG-RENDER]   heat_param[['cnv_chr_labels']] = %s\n",
+                                     ifelse(is.null(heat_param[['cnv_chr_labels']]), "NULL", as.character(heat_param[['cnv_chr_labels']]))))
+          cat(file=stderr(), sprintf("[CHR-DEBUG-RENDER]   rdata_chr_boundaries is NULL = %s\n", is.null(rdata_chr_boundaries)))
+          if (!is.null(rdata_chr_boundaries)) {
+            cat(file=stderr(), sprintf("[CHR-DEBUG-RENDER]   rdata_chr_boundaries rows = %d\n", nrow(rdata_chr_boundaries)))
+          }
+
+          if (!is.null(heat_param[['data_source']]) && heat_param[['data_source']] == "rdata" &&
+              !is.null(rdata_chr_boundaries) && nrow(rdata_chr_boundaries) > 0) {
+
+            # Check if chromosome lines are enabled
+            show_chr_lines <- if (!is.null(heat_param[['cnv_chr_lines']])) {
+              func.check.bin.val.from.conf(heat_param[['cnv_chr_lines']])
+            } else FALSE
+
+            show_chr_labels <- if (!is.null(heat_param[['cnv_chr_labels']])) {
+              func.check.bin.val.from.conf(heat_param[['cnv_chr_labels']])
+            } else FALSE
+
+            cat(file=stderr(), sprintf("[CHR-DEBUG-RENDER]   show_chr_lines (after func.check) = %s\n", show_chr_lines))
+            cat(file=stderr(), sprintf("[CHR-DEBUG-RENDER]   show_chr_labels (after func.check) = %s\n", show_chr_labels))
+
+            if (show_chr_lines || show_chr_labels) {
+              chr_line_color <- if (!is.null(heat_param[['cnv_chr_line_color']])) heat_param[['cnv_chr_line_color']] else "#000000"
+              chr_line_size <- if (!is.null(heat_param[['cnv_chr_line_size']])) as.numeric(heat_param[['cnv_chr_line_size']]) else 0.5
+              chr_label_size <- if (!is.null(heat_param[['cnv_chr_label_size']])) as.numeric(heat_param[['cnv_chr_label_size']]) else 2.5
+              chr_label_position <- if (!is.null(heat_param[['cnv_chr_label_position']])) heat_param[['cnv_chr_label_position']] else "right"
+              chr_label_angle <- if (!is.null(heat_param[['cnv_chr_label_angle']])) as.numeric(heat_param[['cnv_chr_label_angle']]) else 90
+              chr_label_prefix <- if (!is.null(heat_param[['cnv_chr_label_prefix']])) heat_param[['cnv_chr_label_prefix']] else ""
+
+              cat(file=stderr(), paste0("[CHR-BOUNDARY] Adding chromosome boundaries: lines=", show_chr_lines, ", labels=", show_chr_labels, "\n"))
+              cat(file=stderr(), paste0("[CHR-BOUNDARY] Label settings: position=", chr_label_position, ", angle=", chr_label_angle, ", prefix='", chr_label_prefix, "'\n"))
+
+              # Calculate y range for vertical lines (spanning all tips)
+              y_min <- min(tile_df$y) - tile_height / 2
+              y_max <- max(tile_df$y) + tile_height / 2
+
+              # Get the x positions from tile_df (sorted)
+              all_x_positions <- sort(unique(tile_df$x))
+              n_positions <- length(all_x_positions)
+
+              cat(file=stderr(), paste0("[CHR-BOUNDARY] Total positions in heatmap: ", n_positions, "\n"))
+              cat(file=stderr(), paste0("[CHR-BOUNDARY] Chromosome boundaries rows: ", nrow(rdata_chr_boundaries), "\n"))
+
+              # S2.292dev: Calculate scaling factor for downsampled data
+              # The chromosome boundaries are based on original Annot bins (e.g., 4407)
+              # but the heatmap may be downsampled (e.g., to 44 positions)
+              original_max_bin <- max(rdata_chr_boundaries$end_bin)
+              scale_factor <- n_positions / original_max_bin
+              cat(file=stderr(), paste0("[CHR-BOUNDARY] Original max bin: ", original_max_bin, ", scale factor: ", round(scale_factor, 4), "\n"))
+
+              # Calculate the x range of the heatmap for exact boundary positioning
+              x_min_edge <- min(all_x_positions) - tile_width / 2
+              x_max_edge <- max(all_x_positions) + tile_width / 2
+              x_range <- x_max_edge - x_min_edge
+
+              # Build chromosome boundary positions
+              # The end_bin of each chromosome marks where the line should go
+              chr_line_x_positions <- c()
+              chr_label_data <- data.frame(x = numeric(0), y = numeric(0), label = character(0))
+
+              for (chr_idx in 1:nrow(rdata_chr_boundaries)) {
+                chr_info <- rdata_chr_boundaries[chr_idx, ]
+
+                # Calculate exact proportional position for the boundary line
+                # This avoids the rounding issue that can place lines in the middle of bins
+                if (chr_idx < nrow(rdata_chr_boundaries)) {
+                  # Place line at the exact proportional position between chromosomes
+                  boundary_proportion <- chr_info$end_bin / original_max_bin
+                  line_x <- x_min_edge + boundary_proportion * x_range
+                  chr_line_x_positions <- c(chr_line_x_positions, line_x)
+                }
+
+                # For labels, calculate the center of each chromosome region
+                if (show_chr_labels) {
+                  # Calculate center position proportionally
+                  center_proportion <- (chr_info$start_bin + chr_info$end_bin) / 2 / original_max_bin
+                  label_y_center <- x_min_edge + center_proportion * x_range
+
+                  # Position labels based on user preference (left or right of heatmap)
+                  # Use spacing similar to other heatmap labels (about 2-3 tile heights)
+                  label_spacing <- tile_height * 3
+                  label_x <- if (chr_label_position == "left") {
+                    y_min - label_spacing
+                  } else {
+                    y_max + label_spacing
+                  }
+                  # Apply prefix to chromosome label
+                  chr_label_text <- paste0(chr_label_prefix, as.character(chr_info$chr))
+                  chr_label_data <- rbind(chr_label_data, data.frame(
+                    x = label_y_center,  # x position along chromosome axis
+                    y = label_x,         # y position at left or right edge
+                    label = chr_label_text
+                  ))
+                }
+              }
+
+              cat(file=stderr(), paste0("[CHR-BOUNDARY] Found ", length(chr_line_x_positions), " chromosome boundary positions\n"))
+
+              # Add vertical lines at chromosome boundaries
+              if (show_chr_lines && length(chr_line_x_positions) > 0) {
+                chr_lines_df <- data.frame(
+                  x = chr_line_x_positions,
+                  xend = chr_line_x_positions,
+                  y = y_min,
+                  yend = y_max
+                )
+
+                p_with_tiles <- p_with_tiles +
+                  geom_segment(
+                    data = chr_lines_df,
+                    aes(x = x, xend = xend, y = y, yend = yend),
+                    color = chr_line_color,
+                    linewidth = chr_line_size,
+                    inherit.aes = FALSE
+                  )
+
+                cat(file=stderr(), paste0("[CHR-BOUNDARY] Added ", nrow(chr_lines_df), " chromosome boundary lines\n"))
+              }
+
+              # Add chromosome labels
+              if (show_chr_labels && nrow(chr_label_data) > 0) {
+                # Adjust hjust based on position for proper alignment
+                # For right: hjust=0 (text extends to the right)
+                # For left: hjust=1 (text extends to the left)
+                label_hjust <- if (chr_label_position == "left") 1 else 0
+
+                p_with_tiles <- p_with_tiles +
+                  geom_text(
+                    data = chr_label_data,
+                    aes(x = x, y = y, label = label),
+                    size = chr_label_size,
+                    angle = chr_label_angle,
+                    vjust = 0.5,
+                    hjust = label_hjust,
+                    inherit.aes = FALSE
+                  )
+
+                cat(file=stderr(), paste0("[CHR-BOUNDARY] Added ", nrow(chr_label_data), " chromosome labels\n"))
+              }
+            }
+          }
+
           debug_cat(paste0("  Final layers: ", length(p_with_tiles$layers), "\n"))
           p_with_tiles
 
@@ -8613,8 +8903,10 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   # S2.0-PERF: Return both the plot and cache data for two-tier caching (Option 3A)
   # The cache data allows generate_plot() to store and reuse p_list_of_pairs
   # S2.9-PERF: Also return updated heatmap cache
+  # S2.292dev: Also return rotated tree for Newick export
   return(list(
     plot = p,
+    rotated_tree = tree_newick,  # S2.292dev: Rotated tree for Newick download
     cache_data = list(
       p_list_of_pairs = p_list_of_pairs,
       p_list_hash = current_p_list_hash,
@@ -8691,27 +8983,26 @@ ui <- dashboardPage(
         tabName = "data_upload",
         fluidRow(
           box(
-            title = "EZLineagePlotter - Stable Release",
-            status = "success",
+            title = "EZLineagePlotter - Development Version",
+            status = "warning",
             solidHeader = TRUE,
             width = 12,
             collapsible = TRUE,
-            tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #155724;",
-                     tags$h4(style = "color: #155724; margin: 0;", "Version S2.9 (stable)"),
-                     tags$p(style = "margin: 10px 0 0 0; color: #155724;",
-                            tags$strong("New in S2.9:"),
+            tags$div(style = "background: #fff3cd; padding: 15px; border-radius: 5px; border: 2px solid #856404;",
+                     tags$h4(style = "color: #856404; margin: 0;", "Version S2.292dev"),
+                     tags$p(style = "margin: 10px 0 0 0; color: #856404;",
+                            tags$strong("New in S2.292dev:"),
+                            tags$ul(
+                              tags$li("Manual RGB/Hex color input for heatmap colors"),
+                              tags$li("Font type selection for legend text"),
+                              tags$li("Sync between color picker and hex text input")
+                            ),
+                            tags$strong("From S2.9 (stable):"),
                             tags$ul(
                               tags$li("Configurable two-stage CNV downsampling (import & render)"),
                               tags$li("Height Scale control for detailed RData heatmaps"),
-                              tags$li("RData sample mapping column now properly saved to YAML"),
-                              tags$li("Fixed extra tab status indicator during processing"),
-                              tags$li("Fixed CSV column dropdown display after YAML import")
-                            ),
-                            tags$strong("From S2.8:"),
-                            tags$ul(
-                              tags$li("Faster classification switching with multi-entry LRU cache"),
-                              tags$li("Manual rotation nodes saved/restored from YAML"),
-                              tags$li("Per-cell WGD normalization for CNV heatmaps")
+                              tags$li("Heatmap caching to avoid regenerating unchanged heatmaps"),
+                              tags$li("RData sample mapping column now properly saved to YAML")
                             ),
                             tags$strong("Core Features:"),
                             tags$ul(
@@ -8863,7 +9154,21 @@ ui <- dashboardPage(
                           value = 10, min = 1, max = 100, step = 1),
               tags$small(style = "color: #666; margin-top: -10px; display: block; margin-bottom: 10px;",
                         "Reduces genomic positions during import. 1 = keep all, 10 = keep every 10th position."),
-              verbatimTextOutput("rdata_import_status")
+              verbatimTextOutput("rdata_import_status"),
+
+              # S2.292dev: Optional Annot/chromosome mapping RData file
+              tags$hr(style = "margin: 15px 0;"),
+              tags$div(
+                style = "margin-bottom: 10px;",
+                tags$strong("Chromosome Mapping File (Optional)"),
+                actionLink("annot_rdata_help", icon("question-circle"), style = "margin-left: 5px;")
+              ),
+              bsTooltip("annot_rdata_help",
+                        "Upload an RData file containing the 'Annot' dataframe with chromosome mapping (Chr, Start, End, Band columns). This enables chromosome boundary lines on RData heatmaps.",
+                        placement = "right", trigger = "hover"),
+              fileInput("annot_rdata_file", "Choose Chromosome Mapping RData File",
+                        accept = c(".RData", ".rdata", ".Rdata")),
+              verbatimTextOutput("annot_import_status")
             ),
             conditionalPanel(
               condition = "output.files_loaded != 'TRUE'",
@@ -9339,17 +9644,41 @@ ui <- dashboardPage(
               checkboxInput("legend_show_heatmap", "Heatmap Legends", value = TRUE)  # v180: Simplified to single checkbox
             ),
 
-            # Font Sizes box
+            # Font Sizes box - S2.292dev: Added font type selection
             box(
               title = NULL,
               status = "warning",
               solidHeader = FALSE,
               width = 12,
-              tags$h4(icon("text-height"), " Font Sizes", style = "margin-top: 0;"),
+              tags$h4(icon("text-height"), " Font Settings", style = "margin-top: 0;"),
               sliderInput("legend_title_size", "Legend Title Size",
                           min = 4, max = 48, value = 12, step = 1),
               sliderInput("legend_text_size", "Legend Text Size",
-                          min = 2, max = 36, value = 10, step = 1)
+                          min = 2, max = 36, value = 10, step = 1),
+              tags$hr(style = "margin: 10px 0;"),
+              selectInput("legend_font_family", "Font Type",
+                          choices = if (SHOWTEXT_AVAILABLE) {
+                            c("Sans-serif (default)" = "sans",
+                              "Serif (Times-like)" = "serif",
+                              "Monospace" = "mono",
+                              "--- Google Fonts ---" = "sans",  # Separator
+                              "Roboto (modern)" = "Roboto",
+                              "Open Sans" = "Open Sans",
+                              "Lato" = "Lato",
+                              "Montserrat" = "Montserrat",
+                              "PT Sans" = "PT Sans",
+                              "Playfair Display (elegant)" = "Playfair Display",
+                              "Merriweather (readable)" = "Merriweather",
+                              "Source Code Pro (code)" = "Source Code Pro")
+                          } else {
+                            c("Sans-serif (Arial-like)" = "sans",
+                              "Serif (Times-like)" = "serif",
+                              "Monospace (Courier-like)" = "mono")
+                          },
+                          selected = "sans"),
+              tags$p(class = "text-muted", tags$small(
+                if (SHOWTEXT_AVAILABLE) "Google Fonts available via showtext" else "Install 'showtext' package for more fonts"
+              ))
             ),
 
             # v180: Symbol & Spacing Settings box - enhanced with more controls
@@ -9784,7 +10113,11 @@ ui <- dashboardPage(
             # v125: Changed to imageOutput to match other previews
             imageOutput("final_preview", height = "auto"),
             downloadButton("download_plot", "Download Plot", class = "btn-primary"),
-            downloadButton("download_yaml", "Download YAML Configuration", class = "btn-success")
+            downloadButton("download_yaml", "Download YAML Configuration", class = "btn-success"),
+            downloadButton("download_newick", "Download Rotated Tree (Newick)", class = "btn-info"),
+            tags$p(class = "text-muted", style = "margin-top: 5px;",
+              tags$small("The Newick file includes all rotations applied in Tree Display tab")
+            )
           )
         )
       ),
@@ -9814,10 +10147,19 @@ ui <- dashboardPage(
 # Define server logic
 server <- function(input, output, session) {
   options(shiny.maxRequestSize = 100*1024^2)  # Increase to 100MB
+
+  # S2.292dev: Version endpoint - allows checking version via URL
+  # Access at: http://localhost:PORT/session/SESSION_ID/dataobj/version
+  # Or use the simpler output$version_info below
+  output$version_info <- renderText({
+    paste0('{"version": "', VERSION, '", "app": "EZLineagePlotter"}')
+  })
+
   # Reactive values to store data
   values <- reactiveValues(
     tree = NULL,
     tree_data = NULL,
+    rotated_tree = NULL,  # S2.292dev: Rotated tree for Newick download
     csv_data = NULL,
     id_match = NULL,
     classifications = list(),
@@ -9842,11 +10184,15 @@ server <- function(input, output, session) {
     rdata_cnv_env = NULL,       # Raw environment from loaded RData
     rdata_cnv_matrix = NULL,    # Processed CNV matrix (rows=positions, cols=samples)
     rdata_import_status = NULL, # Status message for RData import
+    annot_import_status = NULL, # S2.292dev: Status message for Annot RData import
     rdata_sample_names = NULL,  # Sample names from RData (column names)
+    rdata_annot_df = NULL,      # S2.292dev: Annot dataframe from RData (Chr, Start, End, Band)
+    rdata_chr_boundaries = NULL, # S2.292dev: Chromosome boundary positions (start_bin, end_bin per chr)
     rdata_auto_match = FALSE,   # S2.0: Whether RData samples auto-match tree tips
     rdata_mapping_column = NULL, # S2.0: User-selected CSV column for RData sample mapping
     # v121: Legend settings
     # S1.5: Added all missing defaults for proper legend styling
+    # S2.292dev: Added font_family setting
     legend_settings = list(
       position = "right",
       show_classification = TRUE,
@@ -9856,6 +10202,7 @@ server <- function(input, output, session) {
       show_pvalue = TRUE,
       title_size = 12,
       text_size = 10,
+      font_family = "sans",
       key_size = 1,
       key_width = 1,
       key_height = 1,
@@ -10317,6 +10664,73 @@ server <- function(input, output, session) {
     }
   })
 
+  # S2.292dev: Annot/chromosome mapping RData import status output
+  output$annot_import_status <- renderText({
+    if (is.null(values$annot_import_status)) {
+      ""
+    } else {
+      values$annot_import_status
+    }
+  })
+
+  # S2.292dev: Annot/chromosome mapping RData file upload observer
+  observeEvent(input$annot_rdata_file, {
+    cat(file=stderr(), "[ANNOT-IMPORT] Observer triggered\n")
+    req(input$annot_rdata_file)
+    cat(file=stderr(), "[ANNOT-IMPORT] File received:", input$annot_rdata_file$datapath, "\n")
+
+    values$annot_import_status <- "Processing chromosome mapping file..."
+
+    tryCatch({
+      # Load RData into a new environment
+      env <- new.env()
+      load(input$annot_rdata_file$datapath, envir = env)
+
+      cat(file=stderr(), paste0("[ANNOT-IMPORT] Available objects in RData: ", paste(names(env), collapse=", "), "\n"))
+
+      # Check if Annot exists
+      if (!"Annot" %in% names(env)) {
+        values$annot_import_status <- "❌ Error: RData file does not contain 'Annot' dataframe"
+        showNotification("RData file does not contain 'Annot' dataframe", type = "error")
+        return()
+      }
+
+      annot_df <- env$Annot
+      cat(file=stderr(), paste0("[ANNOT-IMPORT] Found Annot dataframe: ", nrow(annot_df), " rows x ", ncol(annot_df), " cols\n"))
+      cat(file=stderr(), paste0("[ANNOT-IMPORT] Annot columns: ", paste(names(annot_df), collapse=", "), "\n"))
+
+      # Check if Chr column exists
+      if (!"Chr" %in% names(annot_df)) {
+        values$annot_import_status <- "❌ Error: Annot dataframe does not contain 'Chr' column"
+        showNotification("Annot dataframe does not contain 'Chr' column", type = "error")
+        return()
+      }
+
+      # Calculate chromosome boundaries (where each chromosome starts/ends)
+      chr_changes <- which(diff(as.numeric(annot_df$Chr)) != 0)
+      chr_boundaries <- data.frame(
+        chr = annot_df$Chr[c(1, chr_changes + 1)],
+        start_bin = c(1, chr_changes + 1),
+        end_bin = c(chr_changes, nrow(annot_df))
+      )
+
+      cat(file=stderr(), paste0("[ANNOT-IMPORT] Found ", nrow(chr_boundaries), " chromosome boundaries\n"))
+      cat(file=stderr(), paste0("[ANNOT-IMPORT] Chromosomes: ", paste(chr_boundaries$chr, collapse=", "), "\n"))
+
+      # Store the extracted data
+      values$rdata_annot_df <- annot_df
+      values$rdata_chr_boundaries <- chr_boundaries
+
+      values$annot_import_status <- paste0("✓ Loaded Annot: ", nrow(annot_df), " bins, ", nrow(chr_boundaries), " chromosomes")
+      showNotification(paste0("Successfully loaded chromosome mapping: ", nrow(chr_boundaries), " chromosomes"), type = "message")
+
+    }, error = function(e) {
+      cat(file=stderr(), paste0("[ANNOT-IMPORT] Error: ", e$message, "\n"))
+      values$annot_import_status <- paste0("❌ Error: ", e$message)
+      showNotification(paste0("Error loading chromosome mapping: ", e$message), type = "error")
+    })
+  })
+
   # S1.62dev: RData CNV file upload observer
   observeEvent(input$rdata_file, {
     cat(file=stderr(), "[RDATA-IMPORT] Observer triggered\n")
@@ -10359,6 +10773,13 @@ server <- function(input, output, session) {
     values$rdata_chr_info <- result$chr_info
     values$rdata_start_info <- result$start_info
     values$rdata_end_info <- result$end_info
+
+    # S2.292dev: Store Annot dataframe and chromosome boundaries
+    values$rdata_annot_df <- result$annot_df
+    values$rdata_chr_boundaries <- result$chr_boundaries
+    if (!is.null(result$chr_boundaries)) {
+      cat(file=stderr(), paste0("[RDATA-IMPORT] Chromosome boundaries loaded: ", nrow(result$chr_boundaries), " chromosomes\n"))
+    }
 
     cat(file=stderr(), "[RDATA-IMPORT] Successfully loaded CNV data\n")
     cat(file=stderr(), "[RDATA-IMPORT] Matrix dimensions:", nrow(result$matrix), "x", ncol(result$matrix), "\n")
@@ -10999,9 +11420,30 @@ server <- function(input, output, session) {
           # Render downsample factor (second stage, 0 = keep all)
           cnv_render_downsample = if (!is.null(h$cnv_render_downsample)) as.numeric(h$cnv_render_downsample) else 10,
           # Height scale for detailed mode
-          cnv_height_scale = if (!is.null(h$cnv_height_scale)) as.numeric(h$cnv_height_scale) else 1.0
+          cnv_height_scale = if (!is.null(h$cnv_height_scale)) as.numeric(h$cnv_height_scale) else 1.0,
+          # S2.292dev: Chromosome boundary settings
+          cnv_chr_lines = if (!is.null(h$cnv_chr_lines)) func.check.bin.val.from.conf(h$cnv_chr_lines) else FALSE,
+          cnv_chr_labels = if (!is.null(h$cnv_chr_labels)) func.check.bin.val.from.conf(h$cnv_chr_labels) else FALSE,
+          cnv_chr_line_color = if (!is.null(h$cnv_chr_line_color)) h$cnv_chr_line_color else "#000000",
+          cnv_chr_line_size = if (!is.null(h$cnv_chr_line_size)) as.numeric(h$cnv_chr_line_size) else 0.5,
+          cnv_chr_label_size = if (!is.null(h$cnv_chr_label_size)) as.numeric(h$cnv_chr_label_size) else 2.5,
+          cnv_chr_label_position = if (!is.null(h$cnv_chr_label_position)) h$cnv_chr_label_position else "right",
+          cnv_chr_label_angle = if (!is.null(h$cnv_chr_label_angle)) as.numeric(h$cnv_chr_label_angle) else 90,
+          cnv_chr_label_prefix = if (!is.null(h$cnv_chr_label_prefix)) h$cnv_chr_label_prefix else ""
         )
         values$heatmap_configs <- c(values$heatmap_configs, list(new_config))
+
+        # S2.292dev: Debug output for heatmap import
+        cat(file=stderr(), sprintf("[YAML-IMPORT] Heatmap %d config:\n", i))
+        cat(file=stderr(), sprintf("  data_source: %s\n", new_config$data_source))
+        cat(file=stderr(), sprintf("  low_color: %s\n", new_config$low_color))
+        cat(file=stderr(), sprintf("  high_color: %s\n", new_config$high_color))
+        cat(file=stderr(), sprintf("  mid_color: %s\n", new_config$mid_color))
+        cat(file=stderr(), sprintf("  use_midpoint: %s\n", new_config$use_midpoint))
+        cat(file=stderr(), sprintf("  midpoint: %s\n", new_config$midpoint))
+        if (!is.null(h$low_color)) cat(file=stderr(), sprintf("  YAML h$low_color: %s\n", h$low_color))
+        if (!is.null(h$high_color)) cat(file=stderr(), sprintf("  YAML h$high_color: %s\n", h$high_color))
+        if (!is.null(h$mid_color)) cat(file=stderr(), sprintf("  YAML h$mid_color: %s\n", h$mid_color))
 
         # S2.8: Update global rdata_mapping_column if this heatmap has one
         if (!is.null(new_config$data_source) && new_config$data_source == "rdata" &&
@@ -11210,6 +11652,12 @@ server <- function(input, output, session) {
       if (!is.null(leg$text_size)) {
         values$legend_settings$text_size <- as.numeric(leg$text_size)
         updateSliderInput(session, "legend_text_size", value = as.numeric(leg$text_size))
+      }
+      # S2.292dev: Import font_family
+      if (!is.null(leg$font_family)) {
+        values$legend_settings$font_family <- leg$font_family
+        updateSelectInput(session, "legend_font_family", selected = leg$font_family)
+        cat(file=stderr(), "[YAML-IMPORT] legend_font_family:", leg$font_family, "\n")
       }
       if (!is.null(leg$box_background)) {
         values$legend_settings$box_background <- leg$box_background
@@ -11976,9 +12424,18 @@ server <- function(input, output, session) {
         heatmaps_to_use <- NULL
         if (!is.null(class_def$heatmaps) && length(class_def$heatmaps) > 0) {
           heatmaps_to_use <- class_def$heatmaps
+          cat(file=stderr(), sprintf("[YAML-HEATMAP] Using class_def$heatmaps (%d heatmaps)\n", length(heatmaps_to_use)))
         } else if (!is.null(values$heatmaps) && length(values$heatmaps) > 0) {
           # v56: Use values$heatmaps from the new multi-heatmap interface
           heatmaps_to_use <- values$heatmaps
+          cat(file=stderr(), sprintf("[YAML-HEATMAP] Using values$heatmaps (%d heatmaps)\n", length(heatmaps_to_use)))
+          for (h_debug in seq_along(heatmaps_to_use)) {
+            cat(file=stderr(), sprintf("[YAML-HEATMAP]   Heatmap %d: data_source='%s'\n",
+                                       h_debug,
+                                       if (is.null(heatmaps_to_use[[h_debug]]$data_source)) "NULL" else heatmaps_to_use[[h_debug]]$data_source))
+          }
+        } else {
+          cat(file=stderr(), "[YAML-HEATMAP] No heatmaps to use (both class_def$heatmaps and values$heatmaps are NULL/empty)\n")
         }
         
         if (!is.null(heatmaps_to_use) && length(heatmaps_to_use) > 0) {
@@ -12098,6 +12555,15 @@ server <- function(input, output, session) {
               heatmap_item[[as.character(j)]]$cnv_display_mode <- if (!is.null(heatmap_entry$cnv_display_mode)) heatmap_entry$cnv_display_mode else "basic"
               # Height scale for detailed mode
               heatmap_item[[as.character(j)]]$cnv_height_scale <- if (!is.null(heatmap_entry$cnv_height_scale)) heatmap_entry$cnv_height_scale else 1.0
+              # S2.292dev: Chromosome boundary settings
+              heatmap_item[[as.character(j)]]$cnv_chr_lines <- if (!is.null(heatmap_entry$cnv_chr_lines) && heatmap_entry$cnv_chr_lines) "yes" else "no"
+              heatmap_item[[as.character(j)]]$cnv_chr_labels <- if (!is.null(heatmap_entry$cnv_chr_labels) && heatmap_entry$cnv_chr_labels) "yes" else "no"
+              heatmap_item[[as.character(j)]]$cnv_chr_line_color <- if (!is.null(heatmap_entry$cnv_chr_line_color)) heatmap_entry$cnv_chr_line_color else "#000000"
+              heatmap_item[[as.character(j)]]$cnv_chr_line_size <- if (!is.null(heatmap_entry$cnv_chr_line_size)) heatmap_entry$cnv_chr_line_size else 0.5
+              heatmap_item[[as.character(j)]]$cnv_chr_label_size <- if (!is.null(heatmap_entry$cnv_chr_label_size)) heatmap_entry$cnv_chr_label_size else 2.5
+              heatmap_item[[as.character(j)]]$cnv_chr_label_position <- if (!is.null(heatmap_entry$cnv_chr_label_position)) heatmap_entry$cnv_chr_label_position else "right"
+              heatmap_item[[as.character(j)]]$cnv_chr_label_angle <- if (!is.null(heatmap_entry$cnv_chr_label_angle)) heatmap_entry$cnv_chr_label_angle else 90
+              heatmap_item[[as.character(j)]]$cnv_chr_label_prefix <- if (!is.null(heatmap_entry$cnv_chr_label_prefix)) heatmap_entry$cnv_chr_label_prefix else ""
               # S2.0: Store mapping column for sample name matching
               heatmap_item[[as.character(j)]]$rdata_mapping_column <- heatmap_entry$rdata_mapping_column
               debug_cat(paste0("    S2.0-RDATA: RData heatmap, mapping_column=", heatmap_entry$rdata_mapping_column, "\n"))
@@ -12363,6 +12829,15 @@ server <- function(input, output, session) {
             heatmap_item[[as.character(j)]]$cnv_display_mode <- if (!is.null(heatmap_entry$cnv_display_mode)) heatmap_entry$cnv_display_mode else "basic"
             # Height scale for detailed mode
             heatmap_item[[as.character(j)]]$cnv_height_scale <- if (!is.null(heatmap_entry$cnv_height_scale)) heatmap_entry$cnv_height_scale else 1.0
+            # S2.292dev: Chromosome boundary settings
+            heatmap_item[[as.character(j)]]$cnv_chr_lines <- if (!is.null(heatmap_entry$cnv_chr_lines) && heatmap_entry$cnv_chr_lines) "yes" else "no"
+            heatmap_item[[as.character(j)]]$cnv_chr_labels <- if (!is.null(heatmap_entry$cnv_chr_labels) && heatmap_entry$cnv_chr_labels) "yes" else "no"
+            heatmap_item[[as.character(j)]]$cnv_chr_line_color <- if (!is.null(heatmap_entry$cnv_chr_line_color)) heatmap_entry$cnv_chr_line_color else "#000000"
+            heatmap_item[[as.character(j)]]$cnv_chr_line_size <- if (!is.null(heatmap_entry$cnv_chr_line_size)) heatmap_entry$cnv_chr_line_size else 0.5
+            heatmap_item[[as.character(j)]]$cnv_chr_label_size <- if (!is.null(heatmap_entry$cnv_chr_label_size)) heatmap_entry$cnv_chr_label_size else 2.5
+            heatmap_item[[as.character(j)]]$cnv_chr_label_position <- if (!is.null(heatmap_entry$cnv_chr_label_position)) heatmap_entry$cnv_chr_label_position else "right"
+            heatmap_item[[as.character(j)]]$cnv_chr_label_angle <- if (!is.null(heatmap_entry$cnv_chr_label_angle)) heatmap_entry$cnv_chr_label_angle else 90
+            heatmap_item[[as.character(j)]]$cnv_chr_label_prefix <- if (!is.null(heatmap_entry$cnv_chr_label_prefix)) heatmap_entry$cnv_chr_label_prefix else ""
             # S2.0: Store mapping column for sample name matching
             heatmap_item[[as.character(j)]]$rdata_mapping_column <- heatmap_entry$rdata_mapping_column
             debug_cat(paste0("    S2.0: RData heatmap, mapping_column=", heatmap_entry$rdata_mapping_column, "\n"))
@@ -14456,6 +14931,82 @@ server <- function(input, output, session) {
                    )
             )
           ),
+          # S2.292dev: Chromosome boundary lines and labels
+          tags$hr(style = "margin: 10px 0;"),
+          tags$strong("Chromosome Boundaries"),
+          fluidRow(
+            column(4,
+                   checkboxInput(paste0("heatmap_cnv_chr_lines_", i), "Show Chr Boundary Lines",
+                                 value = if (!is.null(cfg$cnv_chr_lines)) cfg$cnv_chr_lines else FALSE)
+            ),
+            column(4,
+                   checkboxInput(paste0("heatmap_cnv_chr_labels_", i), "Show Chr Labels",
+                                 value = if (!is.null(cfg$cnv_chr_labels)) cfg$cnv_chr_labels else FALSE)
+            ),
+            column(4,
+                   conditionalPanel(
+                     condition = paste0("input.heatmap_cnv_chr_lines_", i),
+                     colourpicker::colourInput(paste0("heatmap_cnv_chr_line_color_", i), "Line Color",
+                                               value = if (!is.null(cfg$cnv_chr_line_color)) cfg$cnv_chr_line_color else "#000000")
+                   )
+            )
+          ),
+          fluidRow(
+            column(4,
+                   conditionalPanel(
+                     condition = paste0("input.heatmap_cnv_chr_lines_", i),
+                     sliderInput(paste0("heatmap_cnv_chr_line_size_", i), "Line Width",
+                                 min = 0.1, max = 3, value = if (!is.null(cfg$cnv_chr_line_size)) cfg$cnv_chr_line_size else 0.5,
+                                 step = 0.1)
+                   )
+            ),
+            column(4,
+                   conditionalPanel(
+                     condition = paste0("input.heatmap_cnv_chr_labels_", i),
+                     sliderInput(paste0("heatmap_cnv_chr_label_size_", i), "Label Size",
+                                 min = 1, max = 10, value = if (!is.null(cfg$cnv_chr_label_size)) cfg$cnv_chr_label_size else 2.5,
+                                 step = 0.5)
+                   )
+            ),
+            column(4,
+                   conditionalPanel(
+                     condition = paste0("input.heatmap_cnv_chr_labels_", i),
+                     selectInput(paste0("heatmap_cnv_chr_label_position_", i), "Label Position",
+                                 choices = c("Right" = "right", "Left" = "left"),
+                                 selected = if (!is.null(cfg$cnv_chr_label_position)) cfg$cnv_chr_label_position else "right")
+                   )
+            )
+          ),
+          # S2.292dev: Additional chromosome label options
+          fluidRow(
+            column(4,
+                   conditionalPanel(
+                     condition = paste0("input.heatmap_cnv_chr_labels_", i),
+                     sliderInput(paste0("heatmap_cnv_chr_label_angle_", i), "Label Angle",
+                                 min = 0, max = 90, value = if (!is.null(cfg$cnv_chr_label_angle)) cfg$cnv_chr_label_angle else 90,
+                                 step = 15)
+                   )
+            ),
+            column(4,
+                   conditionalPanel(
+                     condition = paste0("input.heatmap_cnv_chr_labels_", i),
+                     textInput(paste0("heatmap_cnv_chr_label_prefix_", i), "Label Prefix",
+                               value = if (!is.null(cfg$cnv_chr_label_prefix)) cfg$cnv_chr_label_prefix else "")
+                   )
+            ),
+            column(4,
+                   tags$div(
+                     style = "padding-top: 25px;",
+                     tags$small(class = "text-muted",
+                                icon("info-circle"),
+                                if (!is.null(values$rdata_chr_boundaries)) {
+                                  paste0(" ", nrow(values$rdata_chr_boundaries), " chromosomes detected")
+                                } else {
+                                  " Upload Chromosome Mapping RData file in Data Import tab"
+                                })
+                   )
+            )
+          ),
           # S2.0: Sample mapping column selector (shown when auto-match fails)
           fluidRow(
             column(12,
@@ -15418,24 +15969,136 @@ server <- function(input, output, session) {
       }, ignoreInit = TRUE)
       
       # Color changes
+      # S2.292dev: Added debug output to track when color observers fire
+      # S2.292dev-FIX: Added inhibit_color_save check to prevent issues during UI rebuild
       observeEvent(input[[paste0("heatmap_low_color_", i)]], {
+        # Check inhibit flag first
+        if (isTRUE(isolate(inhibit_color_save()))) {
+          cat(file=stderr(), sprintf("[COLOR-OBSERVER] heatmap_%d low_color BLOCKED by inhibit flag\n", i))
+          return(NULL)
+        }
+        color_val <- input[[paste0("heatmap_low_color_", i)]]
+        cat(file=stderr(), sprintf("[COLOR-OBSERVER] heatmap_%d low_color observer fired: '%s'\n", i, color_val))
         if (i <= length(values$heatmap_configs)) {
-          values$heatmap_configs[[i]]$low_color <- input[[paste0("heatmap_low_color_", i)]]
+          old_val <- values$heatmap_configs[[i]]$low_color
+          cat(file=stderr(), sprintf("[COLOR-OBSERVER]   Old value: '%s', New value: '%s'\n",
+                                     ifelse(is.null(old_val), "NULL", old_val), color_val))
+          values$heatmap_configs[[i]]$low_color <- color_val
         }
       }, ignoreInit = TRUE)
-      
+
       observeEvent(input[[paste0("heatmap_high_color_", i)]], {
+        # Check inhibit flag first
+        if (isTRUE(isolate(inhibit_color_save()))) {
+          cat(file=stderr(), sprintf("[COLOR-OBSERVER] heatmap_%d high_color BLOCKED by inhibit flag\n", i))
+          return(NULL)
+        }
+        color_val <- input[[paste0("heatmap_high_color_", i)]]
+        cat(file=stderr(), sprintf("[COLOR-OBSERVER] heatmap_%d high_color observer fired: '%s'\n", i, color_val))
         if (i <= length(values$heatmap_configs)) {
-          values$heatmap_configs[[i]]$high_color <- input[[paste0("heatmap_high_color_", i)]]
+          old_val <- values$heatmap_configs[[i]]$high_color
+          cat(file=stderr(), sprintf("[COLOR-OBSERVER]   Old value: '%s', New value: '%s'\n",
+                                     ifelse(is.null(old_val), "NULL", old_val), color_val))
+          values$heatmap_configs[[i]]$high_color <- color_val
         }
       }, ignoreInit = TRUE)
-      
+
       observeEvent(input[[paste0("heatmap_mid_color_", i)]], {
+        # Check inhibit flag first
+        if (isTRUE(isolate(inhibit_color_save()))) {
+          cat(file=stderr(), sprintf("[COLOR-OBSERVER] heatmap_%d mid_color BLOCKED by inhibit flag\n", i))
+          return(NULL)
+        }
+        color_val <- input[[paste0("heatmap_mid_color_", i)]]
+        cat(file=stderr(), sprintf("[COLOR-OBSERVER] heatmap_%d mid_color observer fired: '%s'\n", i, color_val))
         if (i <= length(values$heatmap_configs)) {
-          values$heatmap_configs[[i]]$mid_color <- input[[paste0("heatmap_mid_color_", i)]]
+          old_val <- values$heatmap_configs[[i]]$mid_color
+          cat(file=stderr(), sprintf("[COLOR-OBSERVER]   Old value: '%s', New value: '%s'\n",
+                                     ifelse(is.null(old_val), "NULL", old_val), color_val))
+          values$heatmap_configs[[i]]$mid_color <- color_val
         }
       }, ignoreInit = TRUE)
-      
+
+      # S2.292dev: Sync colourInput -> hex textInput for continuous colors
+      observeEvent(input[[paste0("heatmap_low_color_", i)]], {
+        color_val <- input[[paste0("heatmap_low_color_", i)]]
+        if (!is.null(color_val)) {
+          updateTextInput(session, paste0("heatmap_low_color_hex_", i), value = toupper(color_val))
+        }
+      }, ignoreInit = TRUE, priority = -1)
+
+      observeEvent(input[[paste0("heatmap_high_color_", i)]], {
+        color_val <- input[[paste0("heatmap_high_color_", i)]]
+        if (!is.null(color_val)) {
+          updateTextInput(session, paste0("heatmap_high_color_hex_", i), value = toupper(color_val))
+        }
+      }, ignoreInit = TRUE, priority = -1)
+
+      observeEvent(input[[paste0("heatmap_mid_color_", i)]], {
+        color_val <- input[[paste0("heatmap_mid_color_", i)]]
+        if (!is.null(color_val)) {
+          updateTextInput(session, paste0("heatmap_mid_color_hex_", i), value = toupper(color_val))
+        }
+      }, ignoreInit = TRUE, priority = -1)
+
+      observeEvent(input[[paste0("heatmap_", i, "_cont_na_color")]], {
+        color_val <- input[[paste0("heatmap_", i, "_cont_na_color")]]
+        if (!is.null(color_val)) {
+          updateTextInput(session, paste0("heatmap_", i, "_cont_na_color_hex"), value = toupper(color_val))
+          # Also save to config - but check inhibit flag first
+          if (!isTRUE(isolate(inhibit_color_save())) && i <= length(values$heatmap_configs)) {
+            values$heatmap_configs[[i]]$na_color <- color_val
+          }
+        }
+      }, ignoreInit = TRUE, priority = -1)
+
+      # S2.292dev: Sync hex textInput -> colourInput for continuous colors
+      observeEvent(input[[paste0("heatmap_low_color_hex_", i)]], {
+        hex_val <- input[[paste0("heatmap_low_color_hex_", i)]]
+        if (!is.null(hex_val) && nchar(trimws(hex_val)) > 0) {
+          # Normalize hex value (add # if missing)
+          hex_val <- trimws(hex_val)
+          if (!grepl("^#", hex_val)) hex_val <- paste0("#", hex_val)
+          # Validate hex format
+          if (grepl("^#[0-9A-Fa-f]{6}$", hex_val)) {
+            updateColourInput(session, paste0("heatmap_low_color_", i), value = hex_val)
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      observeEvent(input[[paste0("heatmap_high_color_hex_", i)]], {
+        hex_val <- input[[paste0("heatmap_high_color_hex_", i)]]
+        if (!is.null(hex_val) && nchar(trimws(hex_val)) > 0) {
+          hex_val <- trimws(hex_val)
+          if (!grepl("^#", hex_val)) hex_val <- paste0("#", hex_val)
+          if (grepl("^#[0-9A-Fa-f]{6}$", hex_val)) {
+            updateColourInput(session, paste0("heatmap_high_color_", i), value = hex_val)
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      observeEvent(input[[paste0("heatmap_mid_color_hex_", i)]], {
+        hex_val <- input[[paste0("heatmap_mid_color_hex_", i)]]
+        if (!is.null(hex_val) && nchar(trimws(hex_val)) > 0) {
+          hex_val <- trimws(hex_val)
+          if (!grepl("^#", hex_val)) hex_val <- paste0("#", hex_val)
+          if (grepl("^#[0-9A-Fa-f]{6}$", hex_val)) {
+            updateColourInput(session, paste0("heatmap_mid_color_", i), value = hex_val)
+          }
+        }
+      }, ignoreInit = TRUE)
+
+      observeEvent(input[[paste0("heatmap_", i, "_cont_na_color_hex")]], {
+        hex_val <- input[[paste0("heatmap_", i, "_cont_na_color_hex")]]
+        if (!is.null(hex_val) && nchar(trimws(hex_val)) > 0) {
+          hex_val <- trimws(hex_val)
+          if (!grepl("^#", hex_val)) hex_val <- paste0("#", hex_val)
+          if (grepl("^#[0-9A-Fa-f]{6}$", hex_val)) {
+            updateColourInput(session, paste0("heatmap_", i, "_cont_na_color"), value = hex_val)
+          }
+        }
+      }, ignoreInit = TRUE)
+
       observeEvent(input[[paste0("heatmap_use_midpoint_", i)]], {
         if (i <= length(values$heatmap_configs)) {
           values$heatmap_configs[[i]]$use_midpoint <- input[[paste0("heatmap_use_midpoint_", i)]]
@@ -15755,9 +16418,18 @@ server <- function(input, output, session) {
         if (!is.null(data_source) && data_source == "rdata") {
           # RData CNV heatmaps are always continuous - show continuous color settings
           cfg <- isolate(values$heatmap_configs[[i]])
+          # S2.292dev: Debug output for renderUI
+          cat(file=stderr(), sprintf("[RENDER-UI] RData heatmap %d color settings from cfg:\n", i))
+          cat(file=stderr(), sprintf("[RENDER-UI]   cfg is NULL: %s\n", is.null(cfg)))
+          if (!is.null(cfg)) {
+            cat(file=stderr(), sprintf("[RENDER-UI]   cfg$low_color: %s\n", ifelse(is.null(cfg$low_color), "NULL", cfg$low_color)))
+            cat(file=stderr(), sprintf("[RENDER-UI]   cfg$mid_color: %s\n", ifelse(is.null(cfg$mid_color), "NULL", cfg$mid_color)))
+            cat(file=stderr(), sprintf("[RENDER-UI]   cfg$high_color: %s\n", ifelse(is.null(cfg$high_color), "NULL", cfg$high_color)))
+          }
           continuous_palettes <- c("Blues", "Greens", "Reds", "Purples", "Oranges",
                                    "Viridis", "Plasma", "Inferno", "Magma",
                                    "RdBu", "RdYlGn", "PiYG", "BrBG")
+          # S2.292dev: Add manual hex input next to each color picker
           return(tags$div(
             style = "background-color: #e6f3ff; padding: 10px; border-radius: 5px; margin-top: 10px;",
             tags$h5(icon("dna"), " CNV Color Settings"),
@@ -15769,13 +16441,25 @@ server <- function(input, output, session) {
               ),
               column(4,
                      # S1.62dev: Default red for deletion/loss
-                     colourInput(paste0("heatmap_low_color_", i), "Low (Deletion)",
-                                 value = if (!is.null(cfg$low_color)) cfg$low_color else "#FF0000")
+                     tags$label("Low (Deletion)"),
+                     tags$div(style = "display: flex; gap: 5px; align-items: center;",
+                       colourInput(paste0("heatmap_low_color_", i), NULL,
+                                   value = if (!is.null(cfg$low_color)) cfg$low_color else "#FF0000"),
+                       textInput(paste0("heatmap_low_color_hex_", i), NULL,
+                                 value = if (!is.null(cfg$low_color)) cfg$low_color else "#FF0000",
+                                 width = "90px")
+                     )
               ),
               column(4,
                      # S1.62dev: Default blue for amplification/gain
-                     colourInput(paste0("heatmap_high_color_", i), "High (Amplification)",
-                                 value = if (!is.null(cfg$high_color)) cfg$high_color else "#0000FF")
+                     tags$label("High (Amplification)"),
+                     tags$div(style = "display: flex; gap: 5px; align-items: center;",
+                       colourInput(paste0("heatmap_high_color_", i), NULL,
+                                   value = if (!is.null(cfg$high_color)) cfg$high_color else "#0000FF"),
+                       textInput(paste0("heatmap_high_color_hex_", i), NULL,
+                                 value = if (!is.null(cfg$high_color)) cfg$high_color else "#0000FF",
+                                 width = "90px")
+                     )
               )
             ),
             fluidRow(
@@ -15786,8 +16470,14 @@ server <- function(input, output, session) {
               column(4,
                      conditionalPanel(
                        condition = paste0("input.heatmap_use_midpoint_", i),
-                       colourInput(paste0("heatmap_mid_color_", i), "Mid (Diploid)",
-                                   value = if (!is.null(cfg$mid_color)) cfg$mid_color else "#FFFFFF")
+                       tags$label("Mid (Diploid)"),
+                       tags$div(style = "display: flex; gap: 5px; align-items: center;",
+                         colourInput(paste0("heatmap_mid_color_", i), NULL,
+                                     value = if (!is.null(cfg$mid_color)) cfg$mid_color else "#FFFFFF"),
+                         textInput(paste0("heatmap_mid_color_hex_", i), NULL,
+                                   value = if (!is.null(cfg$mid_color)) cfg$mid_color else "#FFFFFF",
+                                   width = "90px")
+                       )
                      )
               ),
               column(4,
@@ -15801,9 +16491,15 @@ server <- function(input, output, session) {
             ),
             fluidRow(
               column(4,
-                     colourInput(paste0("heatmap_", i, "_cont_na_color"), "NA Color",
+                     tags$label("NA Color"),
+                     tags$div(style = "display: flex; gap: 5px; align-items: center;",
+                       colourInput(paste0("heatmap_", i, "_cont_na_color"), NULL,
+                                   value = if (!is.null(cfg$na_color)) cfg$na_color else "#BEBEBE",
+                                   showColour = "background"),
+                       textInput(paste0("heatmap_", i, "_cont_na_color_hex"), NULL,
                                  value = if (!is.null(cfg$na_color)) cfg$na_color else "#BEBEBE",
-                                 showColour = "background")
+                                 width = "90px")
+                     )
               ),
               column(8,
                      tags$p(class = "text-muted", style = "margin-top: 25px;",
@@ -15938,6 +16634,7 @@ server <- function(input, output, session) {
           )
         } else {
           # Continuous settings UI
+          # S2.292dev: Add manual hex input next to each color picker
           tags$div(
             style = "background-color: #f0f7ff; padding: 10px; border-radius: 5px; margin-top: 10px;",
             tags$h5(icon("sliders-h"), " Continuous Color Settings"),
@@ -15949,12 +16646,24 @@ server <- function(input, output, session) {
                      uiOutput(paste0("heatmap_cont_palette_preview_", i))
               ),
               column(4,
-                     colourInput(paste0("heatmap_low_color_", i), "Low Color",
-                                 value = if (!is.null(cfg$low_color)) cfg$low_color else "#FFFFCC")
+                     tags$label("Low Color"),
+                     tags$div(style = "display: flex; gap: 5px; align-items: center;",
+                       colourInput(paste0("heatmap_low_color_", i), NULL,
+                                   value = if (!is.null(cfg$low_color)) cfg$low_color else "#FFFFCC"),
+                       textInput(paste0("heatmap_low_color_hex_", i), NULL,
+                                 value = if (!is.null(cfg$low_color)) cfg$low_color else "#FFFFCC",
+                                 width = "90px")
+                     )
               ),
               column(4,
-                     colourInput(paste0("heatmap_high_color_", i), "High Color",
-                                 value = if (!is.null(cfg$high_color)) cfg$high_color else "#006837")
+                     tags$label("High Color"),
+                     tags$div(style = "display: flex; gap: 5px; align-items: center;",
+                       colourInput(paste0("heatmap_high_color_", i), NULL,
+                                   value = if (!is.null(cfg$high_color)) cfg$high_color else "#006837"),
+                       textInput(paste0("heatmap_high_color_hex_", i), NULL,
+                                 value = if (!is.null(cfg$high_color)) cfg$high_color else "#006837",
+                                 width = "90px")
+                     )
               )
             ),
             fluidRow(
@@ -15965,8 +16674,14 @@ server <- function(input, output, session) {
               column(4,
                      conditionalPanel(
                        condition = paste0("input.heatmap_use_midpoint_", i),
-                       colourInput(paste0("heatmap_mid_color_", i), "Mid Color",
-                                   value = if (!is.null(cfg$mid_color)) cfg$mid_color else "#FFFF99")
+                       tags$label("Mid Color"),
+                       tags$div(style = "display: flex; gap: 5px; align-items: center;",
+                         colourInput(paste0("heatmap_mid_color_", i), NULL,
+                                     value = if (!is.null(cfg$mid_color)) cfg$mid_color else "#FFFF99"),
+                         textInput(paste0("heatmap_mid_color_hex_", i), NULL,
+                                   value = if (!is.null(cfg$mid_color)) cfg$mid_color else "#FFFF99",
+                                   width = "90px")
+                       )
                      )
               ),
               column(4,
@@ -15981,9 +16696,15 @@ server <- function(input, output, session) {
             # v112: NA color for continuous heatmaps
             fluidRow(
               column(4,
-                     colourInput(paste0("heatmap_", i, "_cont_na_color"), "NA Color",
+                     tags$label("NA Color"),
+                     tags$div(style = "display: flex; gap: 5px; align-items: center;",
+                       colourInput(paste0("heatmap_", i, "_cont_na_color"), NULL,
+                                   value = if (!is.null(cfg$na_color)) cfg$na_color else "#BEBEBE",
+                                   showColour = "background"),
+                       textInput(paste0("heatmap_", i, "_cont_na_color_hex"), NULL,
                                  value = if (!is.null(cfg$na_color)) cfg$na_color else "#BEBEBE",
-                                 showColour = "background")
+                                 width = "90px")
+                     )
               ),
               column(8)
             )
@@ -16246,6 +16967,7 @@ server <- function(input, output, session) {
         }
 
         # v70: Generate color pickers for each value WITH dropdown menu
+        # S2.292dev: Add manual hex input for discrete colors
         color_pickers <- lapply(seq_along(unique_vals), function(j) {
           val <- as.character(unique_vals[j])
 
@@ -16266,15 +16988,20 @@ server <- function(input, output, session) {
 
           fluidRow(
             style = "margin-bottom: 3px;",
-            column(4, tags$label(val, style = "padding-top: 5px; font-weight: normal; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;", title = val)),
-            column(4,
-                   colourInput(paste0("heatmap_", i, "_color_", j), NULL,
-                               value = color_to_use, showColour = "background")
+            column(3, tags$label(val, style = "padding-top: 5px; font-weight: normal; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;", title = val)),
+            column(3,
+                   tags$div(style = "display: flex; gap: 3px; align-items: center;",
+                     colourInput(paste0("heatmap_", i, "_color_", j), NULL,
+                                 value = color_to_use, showColour = "background"),
+                     textInput(paste0("heatmap_", i, "_color_hex_", j), NULL,
+                               value = color_to_use, width = "80px")
+                   )
             ),
-            column(4,
+            column(3,
                    selectInput(paste0("heatmap_", i, "_color_name_", j), NULL,
                                choices = heat_r_colors, selected = "")
-            )
+            ),
+            column(3)
           )
         })
 
@@ -16297,17 +17024,23 @@ server <- function(input, output, session) {
           "white"
         }
 
+        # S2.292dev: Add hex input to NA color row
         na_color_row <- fluidRow(
           style = "margin-bottom: 3px; background-color: #f8f8f8; padding: 5px; border-radius: 3px; margin-top: 10px;",
-          column(4, tags$label("NA / Missing", style = "padding-top: 5px; font-weight: bold; font-style: italic;")),
-          column(4,
-                 colourInput(paste0("heatmap_", i, "_na_color"), NULL,
-                             value = na_color_to_use, showColour = "background")
+          column(3, tags$label("NA / Missing", style = "padding-top: 5px; font-weight: bold; font-style: italic;")),
+          column(3,
+                 tags$div(style = "display: flex; gap: 3px; align-items: center;",
+                   colourInput(paste0("heatmap_", i, "_na_color"), NULL,
+                               value = na_color_to_use, showColour = "background"),
+                   textInput(paste0("heatmap_", i, "_na_color_hex"), NULL,
+                             value = na_color_to_use, width = "80px")
+                 )
           ),
-          column(4,
+          column(3,
                  selectInput(paste0("heatmap_", i, "_na_color_name"), NULL,
                              choices = heat_r_colors, selected = "")
-          )
+          ),
+          column(3)
         )
 
         # v104: Restructured with z-index fixes for dropdown menus
@@ -16500,6 +17233,50 @@ server <- function(input, output, session) {
           }
         }
       }, ignoreInit = TRUE)
+
+      # S2.292dev: Sync discrete colourInput -> hex textInput
+      lapply(1:30, function(j) {
+        observeEvent(input[[paste0("heatmap_", i, "_color_", j)]], {
+          color_val <- input[[paste0("heatmap_", i, "_color_", j)]]
+          if (!is.null(color_val)) {
+            updateTextInput(session, paste0("heatmap_", i, "_color_hex_", j), value = toupper(color_val))
+          }
+        }, ignoreInit = TRUE, priority = -1)
+      })
+
+      # S2.292dev: Sync discrete NA colourInput -> hex textInput
+      observeEvent(input[[paste0("heatmap_", i, "_na_color")]], {
+        color_val <- input[[paste0("heatmap_", i, "_na_color")]]
+        if (!is.null(color_val)) {
+          updateTextInput(session, paste0("heatmap_", i, "_na_color_hex"), value = toupper(color_val))
+        }
+      }, ignoreInit = TRUE, priority = -1)
+
+      # S2.292dev: Sync discrete hex textInput -> colourInput
+      lapply(1:30, function(j) {
+        observeEvent(input[[paste0("heatmap_", i, "_color_hex_", j)]], {
+          hex_val <- input[[paste0("heatmap_", i, "_color_hex_", j)]]
+          if (!is.null(hex_val) && nchar(trimws(hex_val)) > 0) {
+            hex_val <- trimws(hex_val)
+            if (!grepl("^#", hex_val)) hex_val <- paste0("#", hex_val)
+            if (grepl("^#[0-9A-Fa-f]{6}$", hex_val)) {
+              updateColourInput(session, paste0("heatmap_", i, "_color_", j), value = hex_val)
+            }
+          }
+        }, ignoreInit = TRUE)
+      })
+
+      # S2.292dev: Sync discrete NA hex textInput -> colourInput
+      observeEvent(input[[paste0("heatmap_", i, "_na_color_hex")]], {
+        hex_val <- input[[paste0("heatmap_", i, "_na_color_hex")]]
+        if (!is.null(hex_val) && nchar(trimws(hex_val)) > 0) {
+          hex_val <- trimws(hex_val)
+          if (!grepl("^#", hex_val)) hex_val <- paste0("#", hex_val)
+          if (grepl("^#[0-9A-Fa-f]{6}$", hex_val)) {
+            updateColourInput(session, paste0("heatmap_", i, "_na_color"), value = hex_val)
+          }
+        }
+      }, ignoreInit = TRUE)
     })
   })
 
@@ -16538,9 +17315,10 @@ server <- function(input, output, session) {
           rainbow(n_vals)
         })
 
-        # Update all color pickers
+        # Update all color pickers and hex inputs
         for (j in seq_along(unique_vals)) {
           updateColourInput(session, paste0("heatmap_", i, "_color_", j), value = new_colors[j])
+          updateTextInput(session, paste0("heatmap_", i, "_color_hex_", j), value = toupper(new_colors[j]))
         }
 
         showNotification(paste("Applied", palette_name, "palette to", n_vals, "values"), type = "message")
@@ -16576,9 +17354,14 @@ server <- function(input, output, session) {
       cfg <- values$heatmap_configs[[i]]
 
       # S1.62dev: Check data source - CSV columns or RData CNV
+      # S2.292dev-FIX: Also check cfg$data_source if input is not available (UI might not be rendered yet)
       current_data_source <- input[[paste0("heatmap_data_source_", i)]]
-      if (is.null(current_data_source)) current_data_source <- "csv"
-      cat(file=stderr(), paste0("[HEATMAP-APPLY] Heatmap ", i, " data_source: '", current_data_source, "'\n"))
+      if (is.null(current_data_source)) {
+        current_data_source <- if (!is.null(cfg$data_source)) cfg$data_source else "csv"
+        cat(file=stderr(), paste0("[HEATMAP-APPLY] Heatmap ", i, " data_source from cfg (input was NULL): '", current_data_source, "'\n"))
+      } else {
+        cat(file=stderr(), paste0("[HEATMAP-APPLY] Heatmap ", i, " data_source from input: '", current_data_source, "'\n"))
+      }
 
       # S1.62dev: Handle RData CNV source
       if (current_data_source == "rdata") {
@@ -16639,6 +17422,15 @@ server <- function(input, output, session) {
           cnv_display_mode = if (!is.null(input[[paste0("heatmap_cnv_display_mode_", i)]])) input[[paste0("heatmap_cnv_display_mode_", i)]] else "basic",
           # Height scale for detailed mode
           cnv_height_scale = if (!is.null(input[[paste0("heatmap_cnv_height_scale_", i)]])) input[[paste0("heatmap_cnv_height_scale_", i)]] else 1.0,
+          # S2.292dev: Chromosome boundary settings
+          cnv_chr_lines = if (!is.null(input[[paste0("heatmap_cnv_chr_lines_", i)]])) input[[paste0("heatmap_cnv_chr_lines_", i)]] else FALSE,
+          cnv_chr_labels = if (!is.null(input[[paste0("heatmap_cnv_chr_labels_", i)]])) input[[paste0("heatmap_cnv_chr_labels_", i)]] else FALSE,
+          cnv_chr_line_color = if (!is.null(input[[paste0("heatmap_cnv_chr_line_color_", i)]])) input[[paste0("heatmap_cnv_chr_line_color_", i)]] else "#000000",
+          cnv_chr_line_size = if (!is.null(input[[paste0("heatmap_cnv_chr_line_size_", i)]])) input[[paste0("heatmap_cnv_chr_line_size_", i)]] else 0.5,
+          cnv_chr_label_size = if (!is.null(input[[paste0("heatmap_cnv_chr_label_size_", i)]])) input[[paste0("heatmap_cnv_chr_label_size_", i)]] else 2.5,
+          cnv_chr_label_position = if (!is.null(input[[paste0("heatmap_cnv_chr_label_position_", i)]])) input[[paste0("heatmap_cnv_chr_label_position_", i)]] else "right",
+          cnv_chr_label_angle = if (!is.null(input[[paste0("heatmap_cnv_chr_label_angle_", i)]])) input[[paste0("heatmap_cnv_chr_label_angle_", i)]] else 90,
+          cnv_chr_label_prefix = if (!is.null(input[[paste0("heatmap_cnv_chr_label_prefix_", i)]])) input[[paste0("heatmap_cnv_chr_label_prefix_", i)]] else "",
           # S2.0: Store mapping column for sample name matching
           rdata_mapping_column = mapping_column,
           columns = character(0),  # No columns for RData - data comes from parameter
@@ -16681,6 +17473,16 @@ server <- function(input, output, session) {
           use_midpoint = TRUE,  # Always use midpoint for CNV
           na_color = "grey90"
         )
+
+        # S2.292dev-DEBUG: Log chromosome boundary settings
+        cat(file=stderr(), sprintf("[CHR-DEBUG-APPLY] Heatmap %d RData entry created:\n", i))
+        cat(file=stderr(), sprintf("[CHR-DEBUG-APPLY]   cnv_chr_lines = %s\n", heatmap_entry$cnv_chr_lines))
+        cat(file=stderr(), sprintf("[CHR-DEBUG-APPLY]   cnv_chr_labels = %s\n", heatmap_entry$cnv_chr_labels))
+        cat(file=stderr(), sprintf("[CHR-DEBUG-APPLY]   cnv_chr_line_color = %s\n", heatmap_entry$cnv_chr_line_color))
+        cat(file=stderr(), sprintf("[CHR-DEBUG-APPLY]   values$rdata_chr_boundaries exists = %s\n", !is.null(values$rdata_chr_boundaries)))
+        if (!is.null(values$rdata_chr_boundaries)) {
+          cat(file=stderr(), sprintf("[CHR-DEBUG-APPLY]   values$rdata_chr_boundaries rows = %d\n", nrow(values$rdata_chr_boundaries)))
+        }
 
         return(heatmap_entry)
       }
@@ -17064,6 +17866,7 @@ server <- function(input, output, session) {
     debug_cat("\n=== v180: APPLYING LEGEND SETTINGS ===\n")
 
     # Update legend settings in reactive values
+    # S2.292dev: Added font_family setting
     values$legend_settings <- list(
       position = input$legend_position,
       # Visibility controls
@@ -17072,9 +17875,10 @@ server <- function(input, output, session) {
       show_bootstrap = input$legend_show_bootstrap,
       show_pvalue = input$legend_show_pvalue,
       show_heatmap = input$legend_show_heatmap,  # v180: Simplified to single checkbox
-      # Font sizes
+      # Font settings
       title_size = input$legend_title_size,
       text_size = input$legend_text_size,
+      font_family = if (!is.null(input$legend_font_family)) input$legend_font_family else "sans",
       key_size = input$legend_key_size,
       # v180: Key dimensions
       key_width = input$legend_key_width,
@@ -17097,6 +17901,9 @@ server <- function(input, output, session) {
     debug_cat(paste0("  Show bootstrap: ", input$legend_show_bootstrap, "\n"))
     debug_cat(paste0("  Show P value: ", input$legend_show_pvalue, "\n"))
     debug_cat(paste0("  Show heatmap: ", input$legend_show_heatmap, "\n"))
+    debug_cat(paste0("  S2.292dev: Font family: ", input$legend_font_family, "\n"))
+    cat(file=stderr(), paste0("[LEGEND-SETTINGS] Font family set to: '", input$legend_font_family, "'\n"))
+    cat(file=stderr(), paste0("[LEGEND-SETTINGS] Stored in values$legend_settings$font_family: '", values$legend_settings$font_family, "'\n"))
     debug_cat(paste0("  v80: Key width: ", input$legend_key_width, ", height: ", input$legend_key_height, "\n"))
     debug_cat(paste0("  v80: Title-key spacing: ", input$legend_title_key_spacing, "\n"))
     debug_cat(paste0("  v80: Between keys spacing: ", input$legend_key_spacing, "\n"))
@@ -17616,6 +18423,21 @@ server <- function(input, output, session) {
     # S1.4-PERF: Simplified entry logging (reduced from verbose DEBUG-2ND-HIGHLIGHT)
     cat(file=stderr(), "[PERF] generate_plot() called\n")
 
+    # S2.292dev-DEBUG: Log heatmap state at generate_plot entry
+    cat(file=stderr(), sprintf("[HEATMAP-STATE] values$heatmaps: %s\n",
+                               if (is.null(values$heatmaps)) "NULL" else paste(length(values$heatmaps), "heatmaps")))
+    if (!is.null(values$heatmaps) && length(values$heatmaps) > 0) {
+      for (hi in seq_along(values$heatmaps)) {
+        hm <- values$heatmaps[[hi]]
+        cat(file=stderr(), sprintf("[HEATMAP-STATE]   Heatmap %d: data_source='%s', title='%s'\n",
+                                   hi,
+                                   if (is.null(hm$data_source)) "NULL" else hm$data_source,
+                                   if (is.null(hm$title)) "NULL" else hm$title))
+      }
+    }
+    cat(file=stderr(), sprintf("[HEATMAP-STATE] values$rdata_cnv_matrix: %s\n",
+                               if (is.null(values$rdata_cnv_matrix)) "NULL" else paste(nrow(values$rdata_cnv_matrix), "x", ncol(values$rdata_cnv_matrix))))
+
     # === GUARD CHECKS (S1.4-PERF: consolidated - removed duplicate guards) ===
 
     # S2.0-PERF: Quick cooldown to prevent rapid consecutive calls (500ms)
@@ -17963,6 +18785,8 @@ server <- function(input, output, session) {
         legend_settings = values$legend_settings,
         # S1.62dev: Pass RData CNV matrix for heatmaps with data_source="rdata"
         rdata_cnv_matrix = values$rdata_cnv_matrix,
+        # S2.292dev: Pass chromosome boundary info for RData heatmaps
+        rdata_chr_boundaries = values$rdata_chr_boundaries,
         # S2.0-PERF: Two-tier caching - pass cached p-values (Option 3A)
         cached_p_list_of_pairs = values$cached_p_list_of_pairs,
         cached_p_list_hash = values$cached_p_list_hash,
@@ -17984,6 +18808,12 @@ server <- function(input, output, session) {
           # Fallback for backward compatibility if structure is different
           plots_result <- tree_result
           cat(file=stderr(), "[PERF-CACHE] Using tree_result directly (legacy format)\n")
+        }
+
+        # S2.292dev: Store rotated tree for Newick download
+        if (!is.null(tree_result$rotated_tree)) {
+          values$rotated_tree <- tree_result$rotated_tree
+          cat(file=stderr(), "[ROTATED-TREE] Stored rotated tree for Newick export\n")
         }
 
         # Store cache data for future use
@@ -18158,6 +18988,37 @@ server <- function(input, output, session) {
         key_width <- if (!is.null(legend_settings$key_width)) legend_settings$key_width else 1
         key_height <- if (!is.null(legend_settings$key_height)) legend_settings$key_height else 1
 
+        # S2.292dev: Get font family setting
+        raw_font_family <- if (!is.null(legend_settings$font_family)) legend_settings$font_family else "sans"
+        cat(file=stderr(), sprintf("[FONT-DEBUG] legend_settings$font_family = '%s'\n",
+                                   ifelse(is.null(legend_settings$font_family), "NULL", legend_settings$font_family)))
+
+        # S2.292dev-FIX: Map font names to R-compatible font families
+        # If showtext is available, Google Fonts can be used directly
+        # Otherwise, map to basic R font families (sans, serif, mono)
+        google_fonts <- c("Roboto", "Open Sans", "Lato", "Playfair Display",
+                          "Source Code Pro", "Merriweather", "Montserrat", "PT Sans")
+
+        if (exists("SHOWTEXT_AVAILABLE") && SHOWTEXT_AVAILABLE && raw_font_family %in% google_fonts) {
+          # Use Google Font directly via showtext
+          font_family <- raw_font_family
+          cat(file=stderr(), sprintf("[FONT-DEBUG] Using Google Font directly: '%s'\n", font_family))
+        } else {
+          # Map to basic R font families
+          font_family <- switch(raw_font_family,
+            "sans" = "sans",
+            "serif" = "serif",
+            "mono" = "mono",
+            "Helvetica" = "sans",
+            "Arial" = "sans",
+            "Times" = "serif",
+            "Courier" = "mono",
+            "Palatino" = "serif",
+            "sans"                     # default fallback
+          )
+          cat(file=stderr(), sprintf("[FONT-DEBUG] Mapped '%s' -> '%s'\n", raw_font_family, font_family))
+        }
+
         # v180: Get background settings
         # S1.5: Fix RGBA colors from colourpicker - extract RGB portion if 8-char hex
         # colourpicker with allowTransparent=TRUE returns #RRGGBBAA format
@@ -18185,10 +19046,15 @@ server <- function(input, output, session) {
         # Build theme modifications for legend
         # v180: Added key width/height, title-key spacing, box background, margin
         # S1.5: Fixed - added legend.background and legend.key for proper background coloring
+        # S2.292dev: Added font_family to legend text elements
+        # S2.292dev-FIX: Also set text element as parent to ensure font propagates
+        cat(file=stderr(), sprintf("[FONT-THEME] Setting legend.title and legend.text with family='%s'\n", font_family))
         legend_theme <- theme(
+          # Set base text family for all text elements (parent)
+          text = element_text(family = font_family),
           legend.position = legend_settings$position,
-          legend.title = element_text(size = legend_settings$title_size, face = "bold"),
-          legend.text = element_text(size = legend_settings$text_size),
+          legend.title = element_text(size = legend_settings$title_size, face = "bold", family = font_family),
+          legend.text = element_text(size = legend_settings$text_size, family = font_family),
           legend.key.size = unit(legend_settings$key_size, "lines"),
           legend.key.width = unit(key_width, "lines"),    # v180: Custom key width
           legend.key.height = unit(key_height, "lines"),  # v180: Custom key height
@@ -18216,6 +19082,8 @@ server <- function(input, output, session) {
         debug_cat(paste0("  v80: Spacings - H:", h_spacing, ", V:", v_spacing,
                                    ", Title-key:", title_key_spacing, ", Key:", key_spacing, "\n"))
         debug_cat(paste0("  v80: Box bg:", box_bg, ", Margin:", legend_margin_val, "\n"))
+        debug_cat(paste0("  S2.292dev: Font family: '", font_family, "'\n"))
+        cat(file=stderr(), paste0("[LEGEND-FONT] Applying font_family='", font_family, "' to legend\n"))
 
         # v180: Apply visibility controls using guides()
         # Also apply reverse order if requested
@@ -19487,6 +20355,7 @@ server <- function(input, output, session) {
     }
 
     # S1.62dev: Build legend settings from values$legend_settings
+    # S2.292dev: Added font_family to export
     legend_settings_yaml <- list(
       position = if (!is.null(values$legend_settings$position)) values$legend_settings$position else "right",
       show_classification = if (!is.null(values$legend_settings$show_classification) && values$legend_settings$show_classification) "yes" else "no",
@@ -19497,6 +20366,7 @@ server <- function(input, output, session) {
       show_heatmap = if (!is.null(values$legend_settings$show_heatmap) && values$legend_settings$show_heatmap) "yes" else "no",
       title_size = if (!is.null(values$legend_settings$title_size)) values$legend_settings$title_size else 12,
       text_size = if (!is.null(values$legend_settings$text_size)) values$legend_settings$text_size else 10,
+      font_family = if (!is.null(values$legend_settings$font_family)) values$legend_settings$font_family else "sans",
       box_background = if (!is.null(values$legend_settings$box_background)) values$legend_settings$box_background else "transparent",
       margin = if (!is.null(values$legend_settings$margin)) values$legend_settings$margin else 0.2
     )
@@ -19619,7 +20489,30 @@ server <- function(input, output, session) {
       writeLines(yaml_content(), file)
     }
   )
-  
+
+  # S2.292dev: Download rotated tree as Newick file
+  output$download_newick <- downloadHandler(
+    filename = function() {
+      paste0(input$individual_name, "_rotated.newick")
+    },
+    content = function(file) {
+      if (!is.null(values$rotated_tree)) {
+        # Convert ggtree object to phylo and write as Newick
+        phylo_tree <- as.phylo(values$rotated_tree)
+        write.tree(phylo_tree, file = file)
+        cat(file=stderr(), "[NEWICK-DOWNLOAD] Rotated tree saved to Newick file\n")
+      } else if (!is.null(values$tree)) {
+        # Fallback to original tree if no rotations applied
+        write.tree(values$tree, file = file)
+        cat(file=stderr(), "[NEWICK-DOWNLOAD] Original tree saved (no rotations applied)\n")
+      } else {
+        # No tree available
+        writeLines("# No tree data available", file)
+        cat(file=stderr(), "[NEWICK-DOWNLOAD] Warning: No tree data available\n")
+      }
+    }
+  )
+
   # Download YAML configuration from configuration tab
   output$download_yaml_config <- downloadHandler(
     filename = function() {
