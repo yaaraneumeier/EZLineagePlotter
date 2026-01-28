@@ -7459,6 +7459,11 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
               scale_factor <- n_positions / original_max_bin
               cat(file=stderr(), paste0("[CHR-BOUNDARY] Original max bin: ", original_max_bin, ", scale factor: ", round(scale_factor, 4), "\n"))
 
+              # Calculate the x range of the heatmap for exact boundary positioning
+              x_min_edge <- min(all_x_positions) - tile_width / 2
+              x_max_edge <- max(all_x_positions) + tile_width / 2
+              x_range <- x_max_edge - x_min_edge
+
               # Build chromosome boundary positions
               # The end_bin of each chromosome marks where the line should go
               chr_line_x_positions <- c()
@@ -7466,48 +7471,37 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
               for (chr_idx in 1:nrow(rdata_chr_boundaries)) {
                 chr_info <- rdata_chr_boundaries[chr_idx, ]
-                # Scale the bin positions to match the downsampled heatmap
-                chr_end_bin <- round(chr_info$end_bin * scale_factor)
-                chr_start_bin <- round(chr_info$start_bin * scale_factor)
-                # Ensure bounds
-                chr_end_bin <- max(1, min(chr_end_bin, n_positions))
-                chr_start_bin <- max(1, min(chr_start_bin, n_positions))
 
-                # Make sure we don't exceed the number of positions
-                if (chr_end_bin <= n_positions && chr_idx < nrow(rdata_chr_boundaries)) {
-                  # Get x position at the end of this chromosome
-                  # Add line between this chromosome and the next
-                  line_x <- all_x_positions[chr_end_bin] + tile_width / 2
+                # Calculate exact proportional position for the boundary line
+                # This avoids the rounding issue that can place lines in the middle of bins
+                if (chr_idx < nrow(rdata_chr_boundaries)) {
+                  # Place line at the exact proportional position between chromosomes
+                  boundary_proportion <- chr_info$end_bin / original_max_bin
+                  line_x <- x_min_edge + boundary_proportion * x_range
                   chr_line_x_positions <- c(chr_line_x_positions, line_x)
                 }
 
-                # For labels, calculate the center of each chromosome
+                # For labels, calculate the center of each chromosome region
                 if (show_chr_labels) {
-                  start_pos <- chr_start_bin
-                  end_pos <- chr_end_bin
-                  if (start_pos <= end_pos && start_pos >= 1 && end_pos >= 1) {
-                    center_bin <- round((start_pos + end_pos) / 2)
-                    center_bin <- max(1, min(center_bin, n_positions))
-                    # For left/right positioning: x is at edge, y is at center of chromosome region
-                    # Calculate y position based on the center bin's x position mapped to a y range
-                    label_y_center <- all_x_positions[center_bin]
+                  # Calculate center position proportionally
+                  center_proportion <- (chr_info$start_bin + chr_info$end_bin) / 2 / original_max_bin
+                  label_y_center <- x_min_edge + center_proportion * x_range
 
-                    # Position labels based on user preference (left or right of heatmap)
-                    # Use spacing similar to other heatmap labels (about 2-3 tile heights)
-                    label_spacing <- tile_height * 3
-                    label_x <- if (chr_label_position == "left") {
-                      y_min - label_spacing
-                    } else {
-                      y_max + label_spacing
-                    }
-                    # Apply prefix to chromosome label
-                    chr_label_text <- paste0(chr_label_prefix, as.character(chr_info$chr))
-                    chr_label_data <- rbind(chr_label_data, data.frame(
-                      x = label_y_center,  # x position along chromosome axis
-                      y = label_x,         # y position at left or right edge
-                      label = chr_label_text
-                    ))
+                  # Position labels based on user preference (left or right of heatmap)
+                  # Use spacing similar to other heatmap labels (about 2-3 tile heights)
+                  label_spacing <- tile_height * 3
+                  label_x <- if (chr_label_position == "left") {
+                    y_min - label_spacing
+                  } else {
+                    y_max + label_spacing
                   }
+                  # Apply prefix to chromosome label
+                  chr_label_text <- paste0(chr_label_prefix, as.character(chr_info$chr))
+                  chr_label_data <- rbind(chr_label_data, data.frame(
+                    x = label_y_center,  # x position along chromosome axis
+                    y = label_x,         # y position at left or right edge
+                    label = chr_label_text
+                  ))
                 }
               }
 
