@@ -4409,16 +4409,22 @@ func.print.lineage.tree <- function(conf_yaml_path,
                       unique_vals <- unique(col_vals[!is.na(col_vals) & col_vals != ""])
                       if (length(unique_vals) > 0 && length(unique_vals) < 500) {  # Only check if reasonable number of unique values
                         for (val in unique_vals) {
-                          # S2.292dev: Use tryCatch to handle invalid multibyte strings
-                          val_len <- tryCatch({
-                            nchar(val)
+                          # S2.292dev: Handle invalid multibyte strings by cleaning them
+                          clean_val <- tryCatch({
+                            # First try to use the string as-is
+                            nchar(val)  # Test if it's valid
+                            val
                           }, error = function(e) {
-                            # If nchar fails due to invalid characters, try bytes or skip
-                            tryCatch(nchar(val, type = "bytes"), error = function(e2) 0)
+                            # If invalid, try to clean by removing non-ASCII characters
+                            tryCatch({
+                              cleaned <- iconv(val, from = "", to = "ASCII", sub = "")
+                              if (!is.na(cleaned) && nchar(cleaned) > 0) cleaned else NULL
+                            }, error = function(e2) NULL)
                           })
-                          if (val_len >= 3) {  # Only match if value is at least 3 chars
+
+                          if (!is.null(clean_val) && nchar(clean_val) >= 3) {  # Only match if value is at least 3 chars
                             for (cnv_s in cnv_samples) {
-                              if (tryCatch(grepl(val, cnv_s, fixed = TRUE), error = function(e) FALSE)) {
+                              if (tryCatch(grepl(clean_val, cnv_s, fixed = TRUE), error = function(e) FALSE)) {
                                 partial_matches <- partial_matches + 1
                                 break
                               }
@@ -4514,6 +4520,32 @@ func.print.lineage.tree <- function(conf_yaml_path,
 
                 cat(file=stderr(), paste0("[HEATMAP-RENDER] Matched ", matches_found, " out of ", length(tree_tips), " tree tips to CNV data\n"))
                 debug_cat(paste0("  Matched ", matches_found, " out of ", length(tree_tips), " tree tips to CNV data\n"))
+
+                # S2.292dev: Show detailed matching info - which cells matched and which didn't
+                matched_tips <- tree_tips[!apply(matched_cnv, 1, function(row) all(is.na(row)))]
+                unmatched_tips <- tree_tips[apply(matched_cnv, 1, function(row) all(is.na(row)))]
+
+                cat(file=stderr(), paste0("[HEATMAP-RENDER] === CELL MATCHING SUMMARY ===\n"))
+                cat(file=stderr(), paste0("[HEATMAP-RENDER] Matched cells (", length(matched_tips), "): "))
+                if (length(matched_tips) > 0) {
+                  if (length(matched_tips) <= 20) {
+                    cat(file=stderr(), paste(matched_tips, collapse=", "))
+                  } else {
+                    cat(file=stderr(), paste(c(head(matched_tips, 10), "...", tail(matched_tips, 5)), collapse=", "))
+                  }
+                }
+                cat(file=stderr(), "\n")
+
+                cat(file=stderr(), paste0("[HEATMAP-RENDER] Unmatched cells (", length(unmatched_tips), "): "))
+                if (length(unmatched_tips) > 0) {
+                  if (length(unmatched_tips) <= 20) {
+                    cat(file=stderr(), paste(unmatched_tips, collapse=", "))
+                  } else {
+                    cat(file=stderr(), paste(c(head(unmatched_tips, 10), "...", tail(unmatched_tips, 5)), collapse=", "))
+                  }
+                }
+                cat(file=stderr(), "\n")
+                cat(file=stderr(), paste0("[HEATMAP-RENDER] ============================\n"))
 
                 # Use the matched CNV data as the heatmap dataframe
                 df_heat_temp <- matched_cnv
