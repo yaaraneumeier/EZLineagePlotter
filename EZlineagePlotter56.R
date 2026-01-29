@@ -6742,22 +6742,38 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
               # S2.9-FIX: Only copy fill_color from cache, keep fresh x/y coordinates
               # The fresh tile_df has correct x/y coordinates based on current_heatmap_x_start
               # The cached_tile_df may have stale coordinates from a previous render
-              if (nrow(tile_df) == nrow(cached_tile_df)) {
-                # Safe to copy fill_color - same number of tiles
+
+              # S2.9-FIX2: Validate cached data has required columns and values
+              cache_valid <- nrow(tile_df) == nrow(cached_tile_df) &&
+                             "fill_color" %in% names(cached_tile_df) &&
+                             !is.null(cached_value_range$min) &&
+                             !is.null(cached_value_range$max)
+
+              if (cache_valid) {
+                # Safe to copy fill_color - same number of tiles and valid cache
                 tile_df$fill_color <- cached_tile_df$fill_color
                 value_min <- cached_value_range$min
                 value_max <- cached_value_range$max
                 cat(file=stderr(), paste0("[S2.9-CACHE] Using cached fill colors for ", nrow(tile_df), " tiles (fresh coordinates preserved)\n"))
               } else {
-                # Row count mismatch - force recomputation
-                cat(file=stderr(), paste0("[S2.9-CACHE] WARNING: Row count mismatch (fresh=", nrow(tile_df), " vs cached=", nrow(cached_tile_df), ") - recomputing colors\n"))
+                # Cache invalid - force recomputation
+                reason <- if (nrow(tile_df) != nrow(cached_tile_df)) {
+                  paste0("row count mismatch (fresh=", nrow(tile_df), " vs cached=", nrow(cached_tile_df), ")")
+                } else if (!"fill_color" %in% names(cached_tile_df)) {
+                  "missing fill_color column in cache"
+                } else {
+                  "missing value_range in cache"
+                }
+                cat(file=stderr(), paste0("[S2.9-CACHE] WARNING: Cache invalid (", reason, ") - recomputing colors\n"))
                 use_cached_colors <- FALSE
               }
 
-              # Still need to create palette for legend
-              colors_below <- colorRampPalette(c(low_color, mid_color))(999)
-              colors_above <- colorRampPalette(c(mid_color, high_color))(1000)[-1]
-              detailed_palette <- c(colors_below, colors_above)
+              # Still need to create palette for legend (only if cache was valid)
+              if (use_cached_colors) {
+                colors_below <- colorRampPalette(c(low_color, mid_color))(999)
+                colors_above <- colorRampPalette(c(mid_color, high_color))(1000)[-1]
+                detailed_palette <- c(colors_below, colors_above)
+              }
             }
 
             if (!use_cached_colors) {
@@ -7566,6 +7582,8 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
           p_with_tiles
 
         }, error = function(e) {
+          cat(file=stderr(), paste0("[HEATMAP-ERROR] Error adding heatmap: ", e$message, "\n"))
+          cat(file=stderr(), paste0("[HEATMAP-ERROR] Call: ", deparse(e$call), "\n"))
           debug_cat(paste0("  ERROR adding heatmap: ", e$message, "\n"))
           debug_cat(paste0("  Returning tree without heatmap\n"))
           p
