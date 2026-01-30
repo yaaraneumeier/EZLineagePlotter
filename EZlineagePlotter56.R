@@ -7119,7 +7119,11 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
           # v123: new_scale_fill() is now added BEFORE geom_tile (see line ~4993)
 
-          if (is_discrete) {
+          # S2.9-FIX3: Skip color scale section for detailed mode - it handles its own colors and legend
+          # Detailed mode uses scale_fill_identity() for tiles and scale_fill_gradientn() for legend
+          # Adding scale_fill_gradient2() here would conflict with the pre-computed colors
+          if (!is_rdata_detailed) {
+            if (is_discrete) {
             debug_cat(paste0("  Adding discrete color scale\n"))
 
             # v100: Check for custom colors from user
@@ -7244,6 +7248,10 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
                 na.value = na_color
               )
             }
+          }
+          } else {
+            # S2.9-FIX3: Detailed mode - colors already handled
+            debug_cat(paste0("  Skipping color scale (detailed mode already has pre-computed colors)\n"))
           }
 
           debug_cat(paste0("  Color scale added successfully\n"))
