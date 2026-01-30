@@ -6685,6 +6685,10 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
                                heat_param[['cnv_display_mode']] == "detailed"
           cat(file=stderr(), paste0("[S2.8-DEBUG] is_rdata_detailed: ", is_rdata_detailed, "\n"))
 
+          # S2.9-FIX4: Define heatmap_title and na_color BEFORE detailed mode section uses them
+          heatmap_title <- if (heat_idx <= length(heat_map_title_list)) heat_map_title_list[[heat_idx]] else paste0("Heatmap ", heat_idx)
+          na_color <- if (!is.null(heat_param[['na_color']])) heat_param[['na_color']] else "grey90"
+
           if (is_rdata_detailed) {
             debug_cat(paste0("\n=== S2.8: DETAILED MODE (geom_tile with pre-computed colors like pheatmap) ===\n"))
             cat(file=stderr(), "[HEATMAP-RENDER] Using DETAILED mode with geom_tile + pre-computed colors (pheatmap-style)\n")
