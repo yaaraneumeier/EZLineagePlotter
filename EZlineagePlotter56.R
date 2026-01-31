@@ -6297,12 +6297,28 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     # v53: cat(file=stderr(), "Ã°Å¸â€Â Ã¢Å“â€œ ADDING NODE NUMBERS with size:", node_number_font_size, "\n")
     # v53: debug_cat("================================================\n\n")
     
+    # S2.9-FIX6: Fixed node numbers not displaying when heatmaps are present.
+    # Issues fixed:
+    # 1. Removed colour from aes() - it created a mapped aesthetic that conflicted
+    #    with classification color scales
+    # 2. Added inherit.aes = FALSE to prevent inheriting fill/colour aesthetics from
+    #    heatmap layers that use new_scale_fill()
+    # 3. Explicitly provide the tree data to ensure correct x/y coordinates
+    cat(file=stderr(), "[NODE-NUMBERS] Adding node numbers layer\n")
+    node_data <- pr440_short_tips_TRY_new_with_boot_more1$data
+    cat(file=stderr(), paste0("[NODE-NUMBERS] Using data with ", nrow(node_data), " nodes\n"))
     pr440_short_tips_TRY_new_with_boot_more1 <- pr440_short_tips_TRY_new_with_boot_more1 +
       geom_text(
-        aes(label = node, angle = 90, colour = "black"), 
-        hjust = -0.5, vjust = -0.4, size = node_number_font_size,
-        show.legend = FALSE, colour = "black"
+        data = node_data,
+        aes(x = x, y = y, label = node),
+        angle = 90, hjust = -0.5, vjust = -0.4,
+        size = node_number_font_size,
+        colour = "black",
+        show.legend = FALSE,
+        inherit.aes = FALSE
       )
+    cat(file=stderr(), paste0("[NODE-NUMBERS] Layer added. Total layers: ",
+                              length(pr440_short_tips_TRY_new_with_boot_more1$layers), "\n"))
   } else {
     # v53: cat(file=stderr(), "Ã°Å¸â€Â Ã¢Å“â€” NODE NUMBERS NOT ENABLED\n")
     # v53: debug_cat("================================================\n\n")
