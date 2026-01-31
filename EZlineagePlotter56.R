@@ -7473,7 +7473,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
               chr_line_color <- if (!is.null(heat_param[['cnv_chr_line_color']])) heat_param[['cnv_chr_line_color']] else "#000000"
               chr_line_size <- if (!is.null(heat_param[['cnv_chr_line_size']])) as.numeric(heat_param[['cnv_chr_line_size']]) else 0.5
               chr_label_size <- if (!is.null(heat_param[['cnv_chr_label_size']])) as.numeric(heat_param[['cnv_chr_label_size']]) else 2.5
-              chr_label_position <- if (!is.null(heat_param[['cnv_chr_label_position']])) heat_param[['cnv_chr_label_position']] else "right"
+              chr_label_position <- if (!is.null(heat_param[['cnv_chr_label_position']])) heat_param[['cnv_chr_label_position']] else "left"
               chr_label_angle <- if (!is.null(heat_param[['cnv_chr_label_angle']])) as.numeric(heat_param[['cnv_chr_label_angle']]) else 90
               chr_label_prefix <- if (!is.null(heat_param[['cnv_chr_label_prefix']])) heat_param[['cnv_chr_label_prefix']] else ""
 
@@ -11468,7 +11468,7 @@ server <- function(input, output, session) {
           cnv_chr_line_color = if (!is.null(h$cnv_chr_line_color)) h$cnv_chr_line_color else "#000000",
           cnv_chr_line_size = if (!is.null(h$cnv_chr_line_size)) as.numeric(h$cnv_chr_line_size) else 0.5,
           cnv_chr_label_size = if (!is.null(h$cnv_chr_label_size)) as.numeric(h$cnv_chr_label_size) else 2.5,
-          cnv_chr_label_position = if (!is.null(h$cnv_chr_label_position)) h$cnv_chr_label_position else "right",
+          cnv_chr_label_position = if (!is.null(h$cnv_chr_label_position)) h$cnv_chr_label_position else "left",
           cnv_chr_label_angle = if (!is.null(h$cnv_chr_label_angle)) as.numeric(h$cnv_chr_label_angle) else 90,
           cnv_chr_label_prefix = if (!is.null(h$cnv_chr_label_prefix)) h$cnv_chr_label_prefix else ""
         )
@@ -12602,7 +12602,7 @@ server <- function(input, output, session) {
               heatmap_item[[as.character(j)]]$cnv_chr_line_color <- if (!is.null(heatmap_entry$cnv_chr_line_color)) heatmap_entry$cnv_chr_line_color else "#000000"
               heatmap_item[[as.character(j)]]$cnv_chr_line_size <- if (!is.null(heatmap_entry$cnv_chr_line_size)) heatmap_entry$cnv_chr_line_size else 0.5
               heatmap_item[[as.character(j)]]$cnv_chr_label_size <- if (!is.null(heatmap_entry$cnv_chr_label_size)) heatmap_entry$cnv_chr_label_size else 2.5
-              heatmap_item[[as.character(j)]]$cnv_chr_label_position <- if (!is.null(heatmap_entry$cnv_chr_label_position)) heatmap_entry$cnv_chr_label_position else "right"
+              heatmap_item[[as.character(j)]]$cnv_chr_label_position <- if (!is.null(heatmap_entry$cnv_chr_label_position)) heatmap_entry$cnv_chr_label_position else "left"
               heatmap_item[[as.character(j)]]$cnv_chr_label_angle <- if (!is.null(heatmap_entry$cnv_chr_label_angle)) heatmap_entry$cnv_chr_label_angle else 90
               heatmap_item[[as.character(j)]]$cnv_chr_label_prefix <- if (!is.null(heatmap_entry$cnv_chr_label_prefix)) heatmap_entry$cnv_chr_label_prefix else ""
               # S2.0: Store mapping column for sample name matching
@@ -12876,7 +12876,7 @@ server <- function(input, output, session) {
             heatmap_item[[as.character(j)]]$cnv_chr_line_color <- if (!is.null(heatmap_entry$cnv_chr_line_color)) heatmap_entry$cnv_chr_line_color else "#000000"
             heatmap_item[[as.character(j)]]$cnv_chr_line_size <- if (!is.null(heatmap_entry$cnv_chr_line_size)) heatmap_entry$cnv_chr_line_size else 0.5
             heatmap_item[[as.character(j)]]$cnv_chr_label_size <- if (!is.null(heatmap_entry$cnv_chr_label_size)) heatmap_entry$cnv_chr_label_size else 2.5
-            heatmap_item[[as.character(j)]]$cnv_chr_label_position <- if (!is.null(heatmap_entry$cnv_chr_label_position)) heatmap_entry$cnv_chr_label_position else "right"
+            heatmap_item[[as.character(j)]]$cnv_chr_label_position <- if (!is.null(heatmap_entry$cnv_chr_label_position)) heatmap_entry$cnv_chr_label_position else "left"
             heatmap_item[[as.character(j)]]$cnv_chr_label_angle <- if (!is.null(heatmap_entry$cnv_chr_label_angle)) heatmap_entry$cnv_chr_label_angle else 90
             heatmap_item[[as.character(j)]]$cnv_chr_label_prefix <- if (!is.null(heatmap_entry$cnv_chr_label_prefix)) heatmap_entry$cnv_chr_label_prefix else ""
             # S2.0: Store mapping column for sample name matching
@@ -15013,8 +15013,8 @@ server <- function(input, output, session) {
                    conditionalPanel(
                      condition = paste0("input.heatmap_cnv_chr_labels_", i),
                      selectInput(paste0("heatmap_cnv_chr_label_position_", i), "Label Position",
-                                 choices = c("Right" = "right", "Left" = "left"),
-                                 selected = if (!is.null(cfg$cnv_chr_label_position)) cfg$cnv_chr_label_position else "right")
+                                 choices = c("Left" = "right", "Right" = "left"),
+                                 selected = if (!is.null(cfg$cnv_chr_label_position)) cfg$cnv_chr_label_position else "left")
                    )
             )
           ),
@@ -15449,6 +15449,16 @@ server <- function(input, output, session) {
       observeEvent(input[[paste0("heatmap_remove_", i)]], {
         if (i <= length(values$heatmap_configs)) {
           values$heatmap_configs <- values$heatmap_configs[-i]
+
+          # S2.9-FIX5: Also clear values$heatmaps so the plot updates immediately
+          # Without this, the removed heatmap stays visible until "Apply Heatmaps" is clicked
+          if (!is.null(values$heatmaps) && length(values$heatmaps) >= i) {
+            values$heatmaps <- values$heatmaps[-i]
+            cat(file=stderr(), paste0("[HEATMAP-REMOVE] Removed heatmap ", i, " from values$heatmaps\n"))
+          }
+
+          # S2.9-FIX5: Trigger plot regeneration so removed heatmap disappears
+          request_plot_update()
 
           # S2.9-FIX: Set inhibit flag before UI rebuild
           inhibit_color_save(TRUE)
@@ -17469,7 +17479,7 @@ server <- function(input, output, session) {
           cnv_chr_line_color = if (!is.null(input[[paste0("heatmap_cnv_chr_line_color_", i)]])) input[[paste0("heatmap_cnv_chr_line_color_", i)]] else "#000000",
           cnv_chr_line_size = if (!is.null(input[[paste0("heatmap_cnv_chr_line_size_", i)]])) input[[paste0("heatmap_cnv_chr_line_size_", i)]] else 0.5,
           cnv_chr_label_size = if (!is.null(input[[paste0("heatmap_cnv_chr_label_size_", i)]])) input[[paste0("heatmap_cnv_chr_label_size_", i)]] else 2.5,
-          cnv_chr_label_position = if (!is.null(input[[paste0("heatmap_cnv_chr_label_position_", i)]])) input[[paste0("heatmap_cnv_chr_label_position_", i)]] else "right",
+          cnv_chr_label_position = if (!is.null(input[[paste0("heatmap_cnv_chr_label_position_", i)]])) input[[paste0("heatmap_cnv_chr_label_position_", i)]] else "left",
           cnv_chr_label_angle = if (!is.null(input[[paste0("heatmap_cnv_chr_label_angle_", i)]])) input[[paste0("heatmap_cnv_chr_label_angle_", i)]] else 90,
           cnv_chr_label_prefix = if (!is.null(input[[paste0("heatmap_cnv_chr_label_prefix_", i)]])) input[[paste0("heatmap_cnv_chr_label_prefix_", i)]] else "",
           # S2.0: Store mapping column for sample name matching
