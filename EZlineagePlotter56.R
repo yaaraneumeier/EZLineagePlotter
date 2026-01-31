@@ -6813,31 +6813,69 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
                 data_min <- min(data_values, na.rm = TRUE)
                 data_max <- max(data_values, na.rm = TRUE)
 
-                range_below <- midpoint - min(data_min, 0)
-                range_above <- max(data_max, midpoint + 2) - midpoint
-                max_range <- max(range_below, range_above, 2)
+                # S2.9-FIX7: Use actual data range for legend instead of artificially extended symmetric range
+                # The old code forced symmetric extension around midpoint which showed wrong values (e.g., -2.5 to 5)
+                # Now we use the actual data range, ensuring the legend accurately reflects the data
 
-                value_min <- midpoint - max_range
-                value_max <- midpoint + max_range
+                # For color mapping, we still center the color gradient around the midpoint
+                # but the legend shows actual data values
+                value_min <- data_min
+                value_max <- data_max
+
+                # Add small buffer only if range is too small (prevents division by zero)
+                if (abs(value_max - value_min) < 0.01) {
+                  value_min <- value_min - 0.5
+                  value_max <- value_max + 0.5
+                }
 
                 debug_cat(paste0("  S2.8 Data range: [", round(data_min, 2), ", ", round(data_max, 2), "]\n"))
-                debug_cat(paste0("  S2.8 Color range: [", round(value_min, 2), ", ", round(value_max, 2), "]\n"))
+                debug_cat(paste0("  S2.8 Color range (legend): [", round(value_min, 2), ", ", round(value_max, 2), "]\n"))
+                debug_cat(paste0("  S2.8 Midpoint: ", midpoint, "\n"))
 
-                # Pre-compute colors for each tile (like pheatmap does)
-                # Normalize values to 0-1 range, then map to palette indices
-                normalized_values <- (tile_df$value - value_min) / (value_max - value_min)
-                normalized_values[normalized_values < 0] <- 0
-                normalized_values[normalized_values > 1] <- 1
+                # S2.9-FIX7: Pre-compute colors with proper midpoint handling
+                # The palette has 1998 colors: indices 1-999 are low->mid, 999-1998 are mid->high
+                # Map values relative to midpoint to ensure midpoint gets mid_color
+                n_colors_half <- 999
+                color_indices <- numeric(length(tile_df$value))
 
-                # Convert to color indices (1 to 1998)
-                color_indices <- round(normalized_values * (length(detailed_palette) - 1)) + 1
+                for (idx in seq_along(tile_df$value)) {
+                  val <- tile_df$value[idx]
+                  if (is.na(val)) {
+                    color_indices[idx] <- NA
+                  } else if (val <= midpoint) {
+                    # Map values below or at midpoint to colors 1-999 (low to mid)
+                    if (value_min >= midpoint) {
+                      # All data is at or above midpoint
+                      color_indices[idx] <- n_colors_half
+                    } else {
+                      # Normalize to 0-1 within below-midpoint range
+                      norm_val <- (val - value_min) / (midpoint - value_min)
+                      norm_val <- max(0, min(1, norm_val))
+                      color_indices[idx] <- round(norm_val * (n_colors_half - 1)) + 1
+                    }
+                  } else {
+                    # Map values above midpoint to colors 1000-1998 (mid to high)
+                    if (value_max <= midpoint) {
+                      # All data is at or below midpoint
+                      color_indices[idx] <- n_colors_half
+                    } else {
+                      # Normalize to 0-1 within above-midpoint range
+                      norm_val <- (val - midpoint) / (value_max - midpoint)
+                      norm_val <- max(0, min(1, norm_val))
+                      color_indices[idx] <- n_colors_half + round(norm_val * (n_colors_half - 1))
+                    }
+                  }
+                }
 
-                # Assign pre-computed colors
-                tile_df$fill_color <- detailed_palette[color_indices]
+                # Assign pre-computed colors (handle NA indices safely)
+                valid_indices <- !is.na(color_indices)
+                tile_df$fill_color <- na_color  # Default to NA color
+                tile_df$fill_color[valid_indices] <- detailed_palette[color_indices[valid_indices]]
                 tile_df$fill_color[is.na(tile_df$value)] <- na_color
 
                 cat(file=stderr(), paste0("[S2.8-DETAILED] Pre-computed colors for ", nrow(tile_df), " tiles\n"))
                 cat(file=stderr(), paste0("[S2.8-DETAILED] Unique colors: ", length(unique(tile_df$fill_color)), "\n"))
+                cat(file=stderr(), paste0("[S2.8-DETAILED] Legend will show actual data range: ", round(value_min, 2), " to ", round(value_max, 2), "\n"))
 
                 # S2.9-PERF: Store in cache for future use
                 if (!exists("updated_heatmap_cache")) {
