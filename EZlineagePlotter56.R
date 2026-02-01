@@ -3944,7 +3944,9 @@ func.print.lineage.tree <- function(conf_yaml_path,
               param['low'] <- ll
               param['mid'] <- mm
               param['high'] <- hh
-              param['midpoint']<- .02
+              # S2.9-FIX8: Default midpoint to 2 for RData CNV (diploid baseline), 0.02 otherwise
+              is_rdata_heatmap_here <- 'data_source' %in% names(heat_map_i_def) && heat_map_i_def$data_source == "rdata"
+              param['midpoint'] <- if (is_rdata_heatmap_here) 2 else 0.02
               
               #print("param is")
               #print(param)
@@ -7277,7 +7279,10 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             low_color <- if (!is.null(heat_param[['low']]) && !is.na(heat_param[['low']])) heat_param[['low']] else "beige"
             mid_color <- if (!is.null(heat_param[['mid']]) && !is.na(heat_param[['mid']])) heat_param[['mid']] else "seashell2"
             high_color <- if (!is.null(heat_param[['high']]) && !is.na(heat_param[['high']])) heat_param[['high']] else "firebrick4"
-            midpoint <- if (!is.null(heat_param[['midpoint']]) && !is.na(heat_param[['midpoint']])) as.numeric(heat_param[['midpoint']]) else 0.02
+            # S2.9-FIX8: Default midpoint to 2 for RData CNV (diploid baseline), 0.02 for other heatmaps
+            is_rdata_source <- !is.null(heat_param[['data_source']]) && heat_param[['data_source']] == "rdata"
+            default_midpoint <- if (is_rdata_source) 2 else 0.02
+            midpoint <- if (!is.null(heat_param[['midpoint']]) && !is.na(heat_param[['midpoint']])) as.numeric(heat_param[['midpoint']]) else default_midpoint
             limits <- heat_param[['limits']]
 
             # v113: Debug output for continuous scale colors including NA color
@@ -8062,6 +8067,10 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       # Apply correct coloring scale based on heatmap type
       if (heat_param['is_discrete'] == FALSE) {
         limits <- heat_param[['limits']]
+        # S2.9-FIX8: Use midpoint from heat_param, default to 2 for RData CNV, 0.02 otherwise
+        is_rdata_source <- !is.null(heat_param[['data_source']]) && heat_param[['data_source']] == "rdata"
+        default_midpoint <- if (is_rdata_source) 2 else 0.02
+        current_midpoint <- if (!is.null(heat_param[['midpoint']]) && !is.na(heat_param[['midpoint']])) as.numeric(heat_param[['midpoint']]) else default_midpoint
 
         if (is.na(limits[1]) == TRUE) {
           pr440_short_tips_TRY_heat <- pr440_short_tips_TRY_heat +
@@ -8069,7 +8078,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
               low = heat_param['low'],
               mid = heat_param['mid'],
               high = heat_param['high'],
-              midpoint = .02,
+              midpoint = current_midpoint,
               name = heat_map_title_list[[j1]],
               na.value = "white"
             )
@@ -8079,7 +8088,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
               low = heat_param['low'],
               mid = heat_param['mid'],
               high = heat_param['high'],
-              midpoint = .02,
+              midpoint = current_midpoint,
               name = heat_map_title_list[[j1]],
               limits = limits,
               na.value = "white"
@@ -8327,13 +8336,17 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       } else {
         # Apply coloring for additional heatmaps
         if (heat_param['is_discrete'] == FALSE) {
+          # S2.9-FIX8: Use midpoint from heat_param, default to 2 for RData CNV
+          is_rdata_source2 <- !is.null(heat_param[['data_source']]) && heat_param[['data_source']] == "rdata"
+          default_midpoint2 <- if (is_rdata_source2) 2 else 0.02
+          current_midpoint2 <- if (!is.null(heat_param[['midpoint']]) && !is.na(heat_param[['midpoint']])) as.numeric(heat_param[['midpoint']]) else default_midpoint2
           pr440_short_tips_TRY_heat <- pr440_short_tips_TRY_heat +
             scale_fill_gradient2(
-              low = heat_param['low'], 
-              mid = heat_param['mid'], 
-              high = heat_param['high'], 
-              midpoint = .02,
-              name = heat_map_title_list[[j1]]       
+              low = heat_param['low'],
+              mid = heat_param['mid'],
+              high = heat_param['high'],
+              midpoint = current_midpoint2,
+              name = heat_map_title_list[[j1]]
             )
         } else {
           if (j == 2) {
