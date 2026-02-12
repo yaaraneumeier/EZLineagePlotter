@@ -9056,6 +9056,7 @@ ui <- dashboardPage(
       menuItem("Bootstrap Values", tabName = "bootstrap", icon = icon("percentage")),
       menuItem("Highlighting", tabName = "highlighting", icon = icon("highlighter")),
       menuItem("Heatmap", tabName = "heatmap", icon = icon("th")),
+      menuItem("SNP Analysis", tabName = "snp_analysis", icon = icon("dna")),
       menuItem("Legend", tabName = "legend", icon = icon("list")),
       menuItem("Extra", tabName = "extra", icon = icon("plus-circle")),  # v130: New tab for title, text, images
       menuItem("Download", tabName = "download", icon = icon("download")),
@@ -9714,6 +9715,270 @@ ui <- dashboardPage(
         )
       ),
 
+      # ============================================================================
+      # SNP ANALYSIS TAB
+      # Exploratory analysis of SNP mutation data with interactive threshold tuning
+      # ============================================================================
+      tabItem(
+        tabName = "snp_analysis",
+        fluidRow(
+          # Left column - Configuration
+          column(6,
+            # Data Selection Box
+            box(
+              title = tagList(icon("database"), " Data Selection"),
+              status = "primary",
+              solidHeader = TRUE,
+              width = 12,
+              collapsible = TRUE,
+
+              # CSV source selection
+              selectInput("snp_csv_source", "Select CSV Data Source",
+                          choices = c("No CSV loaded" = ""),
+                          selected = ""),
+
+              hr(),
+
+              # Column pairing configuration
+              tags$h5(icon("columns"), " Column Pairing"),
+              tags$p(class = "text-muted", "Specify suffixes to auto-detect M (mutant) and WT (wild-type) column pairs"),
+
+              fluidRow(
+                column(6,
+                       textInput("snp_m_suffix", "Mutant Column Suffix", value = "_M")
+                ),
+                column(6,
+                       textInput("snp_wt_suffix", "WT Column Suffix", value = "_WT")
+                )
+              ),
+
+              actionButton("snp_detect_columns", "Detect Column Pairs",
+                           icon = icon("search"), class = "btn-info"),
+
+              hr(),
+
+              # Detected loci table
+              tags$h5(icon("list-check"), " Detected Loci"),
+              uiOutput("snp_loci_table_ui"),
+
+              # Manual add option
+              actionButton("snp_add_manual_locus", "Add Locus Manually",
+                           icon = icon("plus"), class = "btn-secondary btn-sm",
+                           style = "margin-top: 10px;")
+            ),
+
+            # Threshold Controls Box
+            box(
+              title = tagList(icon("sliders-h"), " Threshold Controls"),
+              status = "warning",
+              solidHeader = TRUE,
+              width = 12,
+              collapsible = TRUE,
+
+              tags$p(class = "text-muted", "Adjust thresholds to see real-time changes in mutation calls"),
+
+              # Minimum coverage threshold
+              sliderInput("snp_min_coverage", "Minimum Coverage (M + WT reads)",
+                          min = 0, max = 500, value = 10, step = 1),
+              tags$p(class = "text-muted small", "Cells with fewer total reads will be marked as 'No-call'"),
+
+              hr(),
+
+              # VAF threshold
+              sliderInput("snp_vaf_threshold", "VAF Threshold (%)",
+                          min = 0, max = 100, value = 20, step = 1),
+              tags$p(class = "text-muted small", "VAF = M/(M+WT). Cells with VAF ≥ threshold are marked as 'Mutated'"),
+
+              hr(),
+
+              # Real-time update toggle
+              checkboxInput("snp_realtime_update", "Real-time preview updates", value = TRUE),
+              tags$p(class = "text-muted small", "Disable for better performance with large datasets")
+            ),
+
+            # Display Options Box
+            box(
+              title = tagList(icon("eye"), " Display Options"),
+              status = "info",
+              solidHeader = TRUE,
+              width = 12,
+              collapsible = TRUE,
+
+              tags$h5("What to Display"),
+              checkboxInput("snp_show_raw", "Show Raw Data Heatmap (VAF %)", value = TRUE),
+              checkboxInput("snp_show_decision", "Show Decision Heatmap", value = TRUE),
+              checkboxInput("snp_show_overlay", "Overlay Mode (Decision color + VAF text)", value = FALSE),
+
+              hr(),
+
+              # Overlay text size
+              conditionalPanel(
+                condition = "input.snp_show_overlay == true",
+                sliderInput("snp_overlay_text_size", "Overlay Text Size",
+                            min = 1, max = 10, value = 3, step = 0.5)
+              ),
+
+              hr(),
+
+              # Layout options
+              tags$h5("Layout"),
+              sliderInput("snp_loci_spacing", "Spacing Between Loci",
+                          min = 0, max = 1, value = 0.1, step = 0.01),
+              sliderInput("snp_heatmap_width", "Heatmap Width",
+                          min = 0.1, max = 2, value = 0.5, step = 0.05)
+            )
+          ),
+
+          # Right column - Visual styling and stats
+          column(6,
+            # Visual Styling Box
+            box(
+              title = tagList(icon("palette"), " Visual Styling"),
+              status = "success",
+              solidHeader = TRUE,
+              width = 12,
+              collapsible = TRUE,
+              collapsed = TRUE,
+
+              # Raw heatmap colors
+              tags$h5("Raw Data Heatmap Colors"),
+              fluidRow(
+                column(4,
+                       colourInput("snp_raw_low_color", "Low VAF (0%)", value = "#FFFFFF")
+                ),
+                column(4,
+                       colourInput("snp_raw_mid_color", "Mid VAF (50%)", value = "#FFCCCC")
+                ),
+                column(4,
+                       colourInput("snp_raw_high_color", "High VAF (100%)", value = "#FF0000")
+                )
+              ),
+
+              hr(),
+
+              # Decision heatmap colors
+              tags$h5("Decision Heatmap Colors"),
+              fluidRow(
+                column(6,
+                       colourInput("snp_color_mutated", "Mutated", value = "#E41A1C")
+                ),
+                column(6,
+                       colourInput("snp_color_wt", "Wild-Type (WT)", value = "#377EB8")
+                )
+              ),
+              fluidRow(
+                column(6,
+                       colourInput("snp_color_nocall", "No-call", value = "#FF7F00")
+                ),
+                column(6,
+                       colourInput("snp_color_na", "NA (No data)", value = "#999999")
+                )
+              ),
+
+              hr(),
+
+              # Border and legend options
+              tags$h5("Other Options"),
+              checkboxInput("snp_show_borders", "Show tile borders", value = FALSE),
+              conditionalPanel(
+                condition = "input.snp_show_borders == true",
+                colourInput("snp_border_color", "Border Color", value = "#000000"),
+                sliderInput("snp_border_width", "Border Width", min = 0.1, max = 2, value = 0.5, step = 0.1)
+              ),
+              checkboxInput("snp_show_legend", "Show Legend", value = TRUE)
+            ),
+
+            # Summary Statistics Box
+            box(
+              title = tagList(icon("chart-bar"), " Summary Statistics"),
+              status = "primary",
+              solidHeader = TRUE,
+              width = 12,
+              collapsible = TRUE,
+
+              tags$p(class = "text-muted", "Statistics update in real-time as thresholds change"),
+
+              uiOutput("snp_summary_stats_ui"),
+
+              hr(),
+
+              # Overall summary
+              uiOutput("snp_overall_summary_ui")
+            ),
+
+            # Save/Load Configuration Box
+            box(
+              title = tagList(icon("save"), " Save/Load Configuration"),
+              status = "secondary",
+              solidHeader = TRUE,
+              width = 12,
+              collapsible = TRUE,
+              collapsed = TRUE,
+
+              fluidRow(
+                column(6,
+                       downloadButton("snp_save_config", "Save to YAML", class = "btn-success btn-block")
+                ),
+                column(6,
+                       fileInput("snp_load_config", "Load YAML Config",
+                                 accept = c(".yml", ".yaml"),
+                                 buttonLabel = "Browse...")
+                )
+              )
+            )
+          )
+        ),
+
+        # Action buttons row
+        fluidRow(
+          column(12,
+            box(
+              width = 12,
+              status = "primary",
+              fluidRow(
+                column(4,
+                       actionButton("snp_apply_to_tree", "Apply to Tree",
+                                    icon = icon("check"), class = "btn-primary btn-lg btn-block")
+                ),
+                column(4,
+                       actionButton("snp_refresh_preview", "Refresh Preview",
+                                    icon = icon("sync"), class = "btn-info btn-lg btn-block")
+                ),
+                column(4,
+                       actionButton("snp_clear_all", "Clear All",
+                                    icon = icon("trash"), class = "btn-danger btn-lg btn-block")
+                )
+              )
+            )
+          )
+        ),
+
+        # Preview row
+        fluidRow(
+          box(
+            title = tagList(
+              "Preview ",
+              span(id = "snp_status_waiting",
+                style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #f8f9fa; color: #6c757d; font-size: 12px;",
+                icon("clock"), " Configure loci above"
+              ),
+              span(id = "snp_status_processing",
+                style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #6c757d; color: #ffffff; font-size: 12px; font-weight: bold;",
+                icon("spinner", class = "fa-spin"), " Processing..."
+              ),
+              span(id = "snp_status_ready",
+                style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #28a745; color: #ffffff; font-size: 12px; font-weight: bold;",
+                icon("check-circle"), " Ready"
+              )
+            ),
+            status = "primary",
+            solidHeader = TRUE,
+            width = 12,
+            imageOutput("snp_preview", height = "auto")
+          )
+        )
+      ),
+
       # Legend Tab (v122)
       tabItem(
         tabName = "legend",
@@ -10365,7 +10630,13 @@ server <- function(input, output, session) {
     # On Apply, we compare the current config hash with the cached hash.
     # If unchanged, we reuse the cached data instead of expensive regeneration.
     heatmap_cache = list(),           # Named list: heatmap_index -> list(tile_df, hash, ...)
-    heatmap_cache_max_age = 5         # Clear cache entries older than N regenerations
+    heatmap_cache_max_age = 5,        # Clear cache entries older than N regenerations
+
+    # SNP Analysis Tab - exploratory mutation analysis
+    snp_loci = list(),                # List of configured loci: list(name, m_col, wt_col, include)
+    snp_analysis_data = NULL,         # Processed SNP analysis results (decisions, VAF, etc.)
+    snp_heatmap_data = NULL,          # Prepared heatmap data for rendering
+    snp_applied = FALSE               # Whether SNP analysis has been applied to tree
   )
 
   classification_loading <- reactiveVal(FALSE)
@@ -19084,6 +19355,197 @@ server <- function(input, output, session) {
     if (!is.null(result)) {
       # v53: cat(file=stderr(), "=== Attempting to save plot ===\n")
 
+      # ========================================================================
+      # SNP ANALYSIS HEATMAP RENDERING
+      # Add SNP analysis heatmaps to the plot if configured
+      # ========================================================================
+      if (isTRUE(values$snp_applied) && !is.null(values$snp_analysis_data)) {
+        cat(file=stderr(), "[SNP-ANALYSIS] Adding SNP heatmaps to plot\n")
+
+        tryCatch({
+          snp_results <- values$snp_analysis_data
+          show_raw <- isTRUE(input$snp_show_raw)
+          show_decision <- isTRUE(input$snp_show_decision)
+          show_overlay <- isTRUE(input$snp_show_overlay)
+
+          if (show_raw || show_decision || show_overlay) {
+            # Get tree tip data for positioning
+            tree_data <- result$data
+            tip_data <- tree_data[tree_data$isTip == TRUE, ]
+
+            if (nrow(tip_data) > 0) {
+              # Get styling parameters
+              loci_spacing <- if (!is.null(input$snp_loci_spacing)) input$snp_loci_spacing else 0.1
+              heatmap_width <- if (!is.null(input$snp_heatmap_width)) input$snp_heatmap_width else 0.5
+              overlay_text_size <- if (!is.null(input$snp_overlay_text_size)) input$snp_overlay_text_size else 3
+
+              # Colors
+              raw_colors <- list(
+                low = if (!is.null(input$snp_raw_low_color)) input$snp_raw_low_color else "#FFFFFF",
+                mid = if (!is.null(input$snp_raw_mid_color)) input$snp_raw_mid_color else "#FFCCCC",
+                high = if (!is.null(input$snp_raw_high_color)) input$snp_raw_high_color else "#FF0000"
+              )
+              decision_colors <- list(
+                mutated = if (!is.null(input$snp_color_mutated)) input$snp_color_mutated else "#E41A1C",
+                wt = if (!is.null(input$snp_color_wt)) input$snp_color_wt else "#377EB8",
+                nocall = if (!is.null(input$snp_color_nocall)) input$snp_color_nocall else "#FF7F00",
+                na = if (!is.null(input$snp_color_na)) input$snp_color_na else "#999999"
+              )
+
+              show_borders <- isTRUE(input$snp_show_borders)
+              border_color <- if (!is.null(input$snp_border_color)) input$snp_border_color else "#000000"
+              border_width <- if (!is.null(input$snp_border_width)) input$snp_border_width else 0.5
+
+              # Calculate starting x position (after tree)
+              x_start <- max(tip_data$x, na.rm = TRUE) + 0.5
+              tile_height <- 0.8  # Height of each tile (matching tree tip spacing)
+
+              # Add new fill scale for SNP heatmaps
+              result <- result + ggnewscale::new_scale_fill()
+
+              x_offset <- x_start
+
+              for (locus_name in names(snp_results)) {
+                r <- snp_results[[locus_name]]
+
+                # Match SNP data to tree tips
+                # Assuming same row order as CSV which matches tree tips
+                n_tips <- nrow(tip_data)
+                n_snp <- length(r$vaf)
+
+                if (n_snp >= n_tips) {
+                  # Use first n_tips values
+                  vaf_values <- r$vaf[1:n_tips]
+                  decision_values <- r$decision[1:n_tips]
+                } else {
+                  # Pad with NA
+                  vaf_values <- c(r$vaf, rep(NA, n_tips - n_snp))
+                  decision_values <- c(r$decision, rep("NA", n_tips - n_snp))
+                }
+
+                # Raw VAF heatmap
+                if (show_raw && !show_overlay) {
+                  raw_df <- data.frame(
+                    x = rep(x_offset, n_tips),
+                    y = tip_data$y,
+                    value = vaf_values,
+                    stringsAsFactors = FALSE
+                  )
+
+                  result <- result +
+                    geom_tile(
+                      data = raw_df,
+                      aes(x = x, y = y, fill = value),
+                      width = heatmap_width,
+                      height = tile_height,
+                      color = if (show_borders) border_color else NA,
+                      linewidth = if (show_borders) border_width else 0,
+                      inherit.aes = FALSE
+                    ) +
+                    scale_fill_gradient2(
+                      low = raw_colors$low,
+                      mid = raw_colors$mid,
+                      high = raw_colors$high,
+                      midpoint = 50,
+                      limits = c(0, 100),
+                      name = paste0(locus_name, "\nVAF (%)"),
+                      na.value = decision_colors$na
+                    )
+
+                  x_offset <- x_offset + heatmap_width + loci_spacing / 2
+                  result <- result + ggnewscale::new_scale_fill()
+                }
+
+                # Decision heatmap
+                if (show_decision && !show_overlay) {
+                  decision_df <- data.frame(
+                    x = rep(x_offset, n_tips),
+                    y = tip_data$y,
+                    decision = factor(decision_values, levels = c("Mutated", "WT", "No-call", "NA")),
+                    stringsAsFactors = FALSE
+                  )
+
+                  result <- result +
+                    geom_tile(
+                      data = decision_df,
+                      aes(x = x, y = y, fill = decision),
+                      width = heatmap_width,
+                      height = tile_height,
+                      color = if (show_borders) border_color else NA,
+                      linewidth = if (show_borders) border_width else 0,
+                      inherit.aes = FALSE
+                    ) +
+                    scale_fill_manual(
+                      values = c(
+                        "Mutated" = decision_colors$mutated,
+                        "WT" = decision_colors$wt,
+                        "No-call" = decision_colors$nocall,
+                        "NA" = decision_colors$na
+                      ),
+                      name = paste0(locus_name, "\nCall"),
+                      na.value = decision_colors$na,
+                      drop = FALSE
+                    )
+
+                  x_offset <- x_offset + heatmap_width + loci_spacing / 2
+                  result <- result + ggnewscale::new_scale_fill()
+                }
+
+                # Overlay mode: decision color + VAF text
+                if (show_overlay) {
+                  overlay_df <- data.frame(
+                    x = rep(x_offset, n_tips),
+                    y = tip_data$y,
+                    decision = factor(decision_values, levels = c("Mutated", "WT", "No-call", "NA")),
+                    vaf_label = ifelse(!is.na(vaf_values), paste0(round(vaf_values, 0), "%"), ""),
+                    stringsAsFactors = FALSE
+                  )
+
+                  result <- result +
+                    geom_tile(
+                      data = overlay_df,
+                      aes(x = x, y = y, fill = decision),
+                      width = heatmap_width,
+                      height = tile_height,
+                      color = if (show_borders) border_color else NA,
+                      linewidth = if (show_borders) border_width else 0,
+                      inherit.aes = FALSE
+                    ) +
+                    scale_fill_manual(
+                      values = c(
+                        "Mutated" = decision_colors$mutated,
+                        "WT" = decision_colors$wt,
+                        "No-call" = decision_colors$nocall,
+                        "NA" = decision_colors$na
+                      ),
+                      name = paste0(locus_name, "\nCall"),
+                      na.value = decision_colors$na,
+                      drop = FALSE
+                    ) +
+                    geom_text(
+                      data = overlay_df,
+                      aes(x = x, y = y, label = vaf_label),
+                      size = overlay_text_size,
+                      color = "black",
+                      inherit.aes = FALSE
+                    )
+
+                  x_offset <- x_offset + heatmap_width + loci_spacing / 2
+                  result <- result + ggnewscale::new_scale_fill()
+                }
+
+                # Add spacing between loci
+                x_offset <- x_offset + loci_spacing / 2
+              }
+
+              cat(file=stderr(), paste0("[SNP-ANALYSIS] Added heatmaps for ", length(snp_results), " loci\n"))
+            }
+          }
+        }, error = function(e) {
+          cat(file=stderr(), paste0("[SNP-ANALYSIS] Error adding heatmaps: ", e$message, "\n"))
+        })
+      }
+
       # v121: Apply legend settings from the Legend tab
       # v180: Enhanced with key dimensions, byrow, box background, margin controls
       legend_settings <- values$legend_settings
@@ -20770,6 +21232,613 @@ server <- function(input, output, session) {
   settings_to_yaml <- function(settings) {
     yaml::as.yaml(settings, indent.mapping.sequence = TRUE)
   }
+
+  # ============================================================================
+  # SNP ANALYSIS TAB OBSERVERS
+  # Exploratory analysis of SNP mutation data with interactive threshold tuning
+  # ============================================================================
+
+  # Update CSV source dropdown when csv_data changes
+  observe({
+    req(values$csv_data)
+    csv_cols <- names(values$csv_data)
+    updateSelectInput(session, "snp_csv_source",
+                      choices = c("Use loaded CSV" = "loaded"),
+                      selected = "loaded")
+    cat(file=stderr(), "[SNP-ANALYSIS] CSV data available with ", length(csv_cols), " columns\n")
+  })
+
+  # Detect column pairs based on suffixes
+  observeEvent(input$snp_detect_columns, {
+    req(values$csv_data)
+
+    m_suffix <- input$snp_m_suffix
+    wt_suffix <- input$snp_wt_suffix
+
+    if (is.null(m_suffix) || m_suffix == "" || is.null(wt_suffix) || wt_suffix == "") {
+      showNotification("Please specify both M and WT suffixes", type = "error")
+      return()
+    }
+
+    csv_cols <- names(values$csv_data)
+    cat(file=stderr(), paste0("[SNP-ANALYSIS] Detecting column pairs with suffixes: M='", m_suffix, "', WT='", wt_suffix, "'\n"))
+
+    # Find columns ending with M suffix
+    m_cols <- csv_cols[grepl(paste0(gsub("([.|()\\^{}+$*?]|\\[|\\])", "\\\\\\1", m_suffix), "$"), csv_cols)]
+    cat(file=stderr(), paste0("[SNP-ANALYSIS] Found ", length(m_cols), " columns with M suffix\n"))
+
+    # For each M column, look for matching WT column
+    detected_loci <- list()
+    for (m_col in m_cols) {
+      # Get the prefix (everything before the M suffix)
+      prefix <- sub(paste0(gsub("([.|()\\^{}+$*?]|\\[|\\])", "\\\\\\1", m_suffix), "$"), "", m_col)
+      wt_col <- paste0(prefix, wt_suffix)
+
+      if (wt_col %in% csv_cols) {
+        locus_name <- prefix
+        detected_loci[[length(detected_loci) + 1]] <- list(
+          name = locus_name,
+          m_col = m_col,
+          wt_col = wt_col,
+          include = TRUE
+        )
+        cat(file=stderr(), paste0("[SNP-ANALYSIS] Detected locus: ", locus_name, " (M: ", m_col, ", WT: ", wt_col, ")\n"))
+      }
+    }
+
+    if (length(detected_loci) == 0) {
+      showNotification("No matching column pairs found. Check your suffixes.", type = "warning")
+    } else {
+      values$snp_loci <- detected_loci
+      showNotification(paste0("Detected ", length(detected_loci), " loci"), type = "message")
+    }
+  })
+
+  # Render the loci table
+  output$snp_loci_table_ui <- renderUI({
+    loci <- values$snp_loci
+
+    if (is.null(loci) || length(loci) == 0) {
+      return(tags$p(class = "text-muted", "No loci detected yet. Click 'Detect Column Pairs' above."))
+    }
+
+    # Create a table showing detected loci
+    loci_rows <- lapply(seq_along(loci), function(i) {
+      locus <- loci[[i]]
+      tags$tr(
+        tags$td(checkboxInput(paste0("snp_locus_include_", i),
+                              label = NULL, value = locus$include)),
+        tags$td(locus$name),
+        tags$td(tags$code(locus$m_col)),
+        tags$td(tags$code(locus$wt_col)),
+        tags$td(
+          actionButton(paste0("snp_locus_remove_", i), "",
+                       icon = icon("trash"), class = "btn-danger btn-xs")
+        )
+      )
+    })
+
+    tags$table(
+      class = "table table-condensed table-hover",
+      tags$thead(
+        tags$tr(
+          tags$th("Include", style = "width: 60px;"),
+          tags$th("Locus Name"),
+          tags$th("M Column"),
+          tags$th("WT Column"),
+          tags$th("", style = "width: 50px;")
+        )
+      ),
+      tags$tbody(loci_rows)
+    )
+  })
+
+  # Add manual locus observer
+  observeEvent(input$snp_add_manual_locus, {
+    req(values$csv_data)
+
+    showModal(modalDialog(
+      title = "Add Locus Manually",
+      selectInput("snp_manual_m_col", "Mutant (M) Column",
+                  choices = c("", names(values$csv_data))),
+      selectInput("snp_manual_wt_col", "Wild-Type (WT) Column",
+                  choices = c("", names(values$csv_data))),
+      textInput("snp_manual_locus_name", "Locus Name", value = ""),
+      footer = tagList(
+        modalButton("Cancel"),
+        actionButton("snp_manual_locus_confirm", "Add Locus", class = "btn-primary")
+      )
+    ))
+  })
+
+  observeEvent(input$snp_manual_locus_confirm, {
+    m_col <- input$snp_manual_m_col
+    wt_col <- input$snp_manual_wt_col
+    locus_name <- input$snp_manual_locus_name
+
+    if (is.null(m_col) || m_col == "" || is.null(wt_col) || wt_col == "") {
+      showNotification("Please select both M and WT columns", type = "error")
+      return()
+    }
+
+    if (is.null(locus_name) || locus_name == "") {
+      # Auto-generate name from M column
+      locus_name <- sub("_[^_]+$", "", m_col)
+    }
+
+    new_locus <- list(
+      name = locus_name,
+      m_col = m_col,
+      wt_col = wt_col,
+      include = TRUE
+    )
+
+    values$snp_loci <- c(values$snp_loci, list(new_locus))
+    removeModal()
+    showNotification(paste0("Added locus: ", locus_name), type = "message")
+  })
+
+  # Create observers for locus include checkboxes and remove buttons
+  observe({
+    loci <- values$snp_loci
+    if (is.null(loci) || length(loci) == 0) return()
+
+    lapply(seq_along(loci), function(i) {
+      # Include checkbox observer
+      observeEvent(input[[paste0("snp_locus_include_", i)]], {
+        if (i <= length(values$snp_loci)) {
+          values$snp_loci[[i]]$include <- input[[paste0("snp_locus_include_", i)]]
+        }
+      }, ignoreInit = TRUE, ignoreNULL = TRUE)
+
+      # Remove button observer
+      observeEvent(input[[paste0("snp_locus_remove_", i)]], {
+        if (i <= length(values$snp_loci)) {
+          values$snp_loci <- values$snp_loci[-i]
+          showNotification("Locus removed", type = "message")
+        }
+      }, ignoreInit = TRUE)
+    })
+  })
+
+  # ============================================================================
+  # SNP ANALYSIS - Core computation functions
+  # ============================================================================
+
+  # Function to compute SNP analysis results
+  func.compute.snp.analysis <- function(csv_data, loci, min_coverage, vaf_threshold) {
+    if (is.null(csv_data) || is.null(loci) || length(loci) == 0) {
+      return(NULL)
+    }
+
+    # Get only included loci
+    included_loci <- loci[sapply(loci, function(l) isTRUE(l$include))]
+    if (length(included_loci) == 0) {
+      return(NULL)
+    }
+
+    cat(file=stderr(), paste0("[SNP-ANALYSIS] Computing analysis for ", length(included_loci), " loci\n"))
+    cat(file=stderr(), paste0("[SNP-ANALYSIS] Thresholds: min_coverage=", min_coverage, ", vaf_threshold=", vaf_threshold, "%\n"))
+
+    results <- list()
+
+    for (locus in included_loci) {
+      m_col <- locus$m_col
+      wt_col <- locus$wt_col
+      locus_name <- locus$name
+
+      if (!(m_col %in% names(csv_data)) || !(wt_col %in% names(csv_data))) {
+        cat(file=stderr(), paste0("[SNP-ANALYSIS] WARNING: Columns not found for locus ", locus_name, "\n"))
+        next
+      }
+
+      m_values <- as.numeric(csv_data[[m_col]])
+      wt_values <- as.numeric(csv_data[[wt_col]])
+
+      # Calculate total coverage and VAF
+      total_coverage <- m_values + wt_values
+      vaf <- ifelse(total_coverage > 0, (m_values / total_coverage) * 100, NA)
+
+      # Make decisions
+      decision <- rep(NA_character_, length(m_values))
+
+      # NA: No data at all (both M and WT are NA)
+      is_na <- is.na(m_values) & is.na(wt_values)
+
+      # No-call: Data exists but insufficient coverage
+      has_data <- !is.na(m_values) | !is.na(wt_values)
+      insufficient_coverage <- has_data & (is.na(total_coverage) | total_coverage < min_coverage)
+
+      # Sufficient coverage cases
+      sufficient_coverage <- has_data & !is.na(total_coverage) & total_coverage >= min_coverage
+
+      # Mutated: VAF >= threshold
+      is_mutated <- sufficient_coverage & !is.na(vaf) & vaf >= vaf_threshold
+
+      # WT: VAF < threshold
+      is_wt <- sufficient_coverage & !is.na(vaf) & vaf < vaf_threshold
+
+      decision[is_na] <- "NA"
+      decision[insufficient_coverage] <- "No-call"
+      decision[is_mutated] <- "Mutated"
+      decision[is_wt] <- "WT"
+
+      results[[locus_name]] <- list(
+        locus_name = locus_name,
+        m_col = m_col,
+        wt_col = wt_col,
+        m_values = m_values,
+        wt_values = wt_values,
+        total_coverage = total_coverage,
+        vaf = vaf,
+        decision = decision,
+        # Summary stats
+        n_total = length(decision),
+        n_mutated = sum(decision == "Mutated", na.rm = TRUE),
+        n_wt = sum(decision == "WT", na.rm = TRUE),
+        n_nocall = sum(decision == "No-call", na.rm = TRUE),
+        n_na = sum(decision == "NA", na.rm = TRUE),
+        mean_vaf = mean(vaf[sufficient_coverage], na.rm = TRUE),
+        median_vaf = median(vaf[sufficient_coverage], na.rm = TRUE),
+        mean_coverage = mean(total_coverage[has_data & !is.na(total_coverage)], na.rm = TRUE)
+      )
+
+      cat(file=stderr(), paste0("[SNP-ANALYSIS] ", locus_name, ": ",
+                                results[[locus_name]]$n_mutated, " Mutated, ",
+                                results[[locus_name]]$n_wt, " WT, ",
+                                results[[locus_name]]$n_nocall, " No-call, ",
+                                results[[locus_name]]$n_na, " NA\n"))
+    }
+
+    return(results)
+  }
+
+  # Reactive to compute SNP analysis when inputs change
+  snp_analysis_results <- reactive({
+    req(values$csv_data)
+    req(values$snp_loci)
+    req(length(values$snp_loci) > 0)
+
+    min_coverage <- input$snp_min_coverage
+    vaf_threshold <- input$snp_vaf_threshold
+
+    if (is.null(min_coverage) || is.null(vaf_threshold)) {
+      return(NULL)
+    }
+
+    func.compute.snp.analysis(values$csv_data, values$snp_loci, min_coverage, vaf_threshold)
+  })
+
+  # ============================================================================
+  # SNP ANALYSIS - Summary Statistics UI
+  # ============================================================================
+
+  output$snp_summary_stats_ui <- renderUI({
+    results <- snp_analysis_results()
+
+    if (is.null(results) || length(results) == 0) {
+      return(tags$p(class = "text-muted", "Configure loci and thresholds to see statistics"))
+    }
+
+    # Build summary table
+    rows <- lapply(names(results), function(locus_name) {
+      r <- results[[locus_name]]
+      pct <- function(n) paste0(round(n / r$n_total * 100, 1), "%")
+
+      tags$tr(
+        tags$td(tags$strong(locus_name)),
+        tags$td(paste0(r$n_mutated, " (", pct(r$n_mutated), ")")),
+        tags$td(paste0(r$n_wt, " (", pct(r$n_wt), ")")),
+        tags$td(paste0(r$n_nocall, " (", pct(r$n_nocall), ")")),
+        tags$td(paste0(r$n_na, " (", pct(r$n_na), ")")),
+        tags$td(paste0(round(r$mean_vaf, 1), "%")),
+        tags$td(paste0(round(r$median_vaf, 1), "%")),
+        tags$td(round(r$mean_coverage, 0))
+      )
+    })
+
+    tags$table(
+      class = "table table-condensed table-striped",
+      style = "font-size: 12px;",
+      tags$thead(
+        tags$tr(
+          tags$th("Locus"),
+          tags$th("Mutated"),
+          tags$th("WT"),
+          tags$th("No-call"),
+          tags$th("NA"),
+          tags$th("Mean VAF"),
+          tags$th("Median VAF"),
+          tags$th("Mean Cov.")
+        )
+      ),
+      tags$tbody(rows)
+    )
+  })
+
+  output$snp_overall_summary_ui <- renderUI({
+    results <- snp_analysis_results()
+
+    if (is.null(results) || length(results) == 0) {
+      return(NULL)
+    }
+
+    # Calculate overall statistics
+    total_cells <- if (length(results) > 0) results[[1]]$n_total else 0
+
+    # Count cells with at least one mutation across all loci
+    if (total_cells > 0 && length(results) > 0) {
+      mutation_matrix <- sapply(results, function(r) r$decision == "Mutated")
+      if (is.matrix(mutation_matrix)) {
+        cells_with_mutation <- sum(rowSums(mutation_matrix, na.rm = TRUE) > 0)
+      } else {
+        cells_with_mutation <- sum(mutation_matrix, na.rm = TRUE)
+      }
+      cells_no_mutation <- total_cells - cells_with_mutation
+    } else {
+      cells_with_mutation <- 0
+      cells_no_mutation <- 0
+    }
+
+    tags$div(
+      class = "well well-sm",
+      tags$h5(icon("chart-pie"), " Overall Summary"),
+      tags$ul(
+        tags$li(paste0("Total cells: ", total_cells)),
+        tags$li(paste0("Cells with ≥1 mutation: ", cells_with_mutation,
+                       " (", round(cells_with_mutation / max(total_cells, 1) * 100, 1), "%)")),
+        tags$li(paste0("Cells with no mutations: ", cells_no_mutation,
+                       " (", round(cells_no_mutation / max(total_cells, 1) * 100, 1), "%)"))
+      )
+    )
+  })
+
+  # ============================================================================
+  # SNP ANALYSIS - Heatmap rendering
+  # ============================================================================
+
+  # Function to create SNP heatmap data for rendering
+  func.create.snp.heatmap.data <- function(results, tree_data, show_raw, show_decision,
+                                           raw_colors, decision_colors, loci_spacing, heatmap_width) {
+    if (is.null(results) || length(results) == 0 || is.null(tree_data)) {
+      return(NULL)
+    }
+
+    # Get tip data from tree
+    tip_data <- tree_data[tree_data$isTip == TRUE, ]
+    if (nrow(tip_data) == 0) {
+      return(NULL)
+    }
+
+    heatmap_list <- list()
+    x_offset <- max(tip_data$x, na.rm = TRUE) + 0.5  # Start position after tree
+
+    for (locus_name in names(results)) {
+      r <- results[[locus_name]]
+
+      # Match results to tree tips by row order (assuming same order as CSV)
+      # TODO: Add proper ID matching if needed
+
+      if (show_raw) {
+        # Create raw VAF heatmap data
+        raw_df <- data.frame(
+          y = tip_data$y,
+          x = x_offset,
+          value = r$vaf,
+          type = "raw",
+          locus = locus_name,
+          stringsAsFactors = FALSE
+        )
+        heatmap_list[[paste0(locus_name, "_raw")]] <- list(
+          data = raw_df,
+          type = "raw",
+          locus = locus_name,
+          colors = raw_colors,
+          x_position = x_offset,
+          width = heatmap_width
+        )
+        x_offset <- x_offset + heatmap_width + loci_spacing / 2
+      }
+
+      if (show_decision) {
+        # Create decision heatmap data
+        decision_df <- data.frame(
+          y = tip_data$y,
+          x = x_offset,
+          value = r$decision,
+          type = "decision",
+          locus = locus_name,
+          stringsAsFactors = FALSE
+        )
+        heatmap_list[[paste0(locus_name, "_decision")]] <- list(
+          data = decision_df,
+          type = "decision",
+          locus = locus_name,
+          colors = decision_colors,
+          x_position = x_offset,
+          width = heatmap_width
+        )
+        x_offset <- x_offset + heatmap_width + loci_spacing / 2
+      }
+
+      # Add spacing between loci
+      x_offset <- x_offset + loci_spacing / 2
+    }
+
+    return(heatmap_list)
+  }
+
+  # Apply SNP analysis to tree
+  observeEvent(input$snp_apply_to_tree, {
+    results <- snp_analysis_results()
+
+    if (is.null(results) || length(results) == 0) {
+      showNotification("No SNP analysis results to apply. Configure loci first.", type = "warning")
+      return()
+    }
+
+    # Store the analysis data for rendering
+    values$snp_analysis_data <- results
+    values$snp_applied <- TRUE
+
+    # Trigger plot regeneration
+    request_plot_update()
+
+    showNotification("SNP analysis applied to tree", type = "message")
+    cat(file=stderr(), "[SNP-ANALYSIS] Applied to tree\n")
+  })
+
+  # Refresh preview
+  observeEvent(input$snp_refresh_preview, {
+    # Just trigger a reactive invalidation
+    request_plot_update()
+  })
+
+  # Clear all SNP analysis
+  observeEvent(input$snp_clear_all, {
+    values$snp_loci <- list()
+    values$snp_analysis_data <- NULL
+    values$snp_applied <- FALSE
+
+    request_plot_update()
+
+    showNotification("SNP analysis cleared", type = "message")
+  })
+
+  # ============================================================================
+  # SNP ANALYSIS - YAML Save/Load
+  # ============================================================================
+
+  # Save SNP configuration to YAML
+  output$snp_save_config <- downloadHandler(
+    filename = function() {
+      paste0("snp_analysis_config_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".yml")
+    },
+    content = function(file) {
+      config <- list(
+        snp_analysis = list(
+          # Column pairing
+          m_suffix = input$snp_m_suffix,
+          wt_suffix = input$snp_wt_suffix,
+          loci = lapply(values$snp_loci, function(l) {
+            list(name = l$name, m_col = l$m_col, wt_col = l$wt_col, include = l$include)
+          }),
+
+          # Thresholds
+          min_coverage = input$snp_min_coverage,
+          vaf_threshold = input$snp_vaf_threshold,
+
+          # Display options
+          show_raw = input$snp_show_raw,
+          show_decision = input$snp_show_decision,
+          show_overlay = input$snp_show_overlay,
+          overlay_text_size = input$snp_overlay_text_size,
+          loci_spacing = input$snp_loci_spacing,
+          heatmap_width = input$snp_heatmap_width,
+
+          # Visual styling - raw heatmap
+          raw_low_color = input$snp_raw_low_color,
+          raw_mid_color = input$snp_raw_mid_color,
+          raw_high_color = input$snp_raw_high_color,
+
+          # Visual styling - decision heatmap
+          color_mutated = input$snp_color_mutated,
+          color_wt = input$snp_color_wt,
+          color_nocall = input$snp_color_nocall,
+          color_na = input$snp_color_na,
+
+          # Other options
+          show_borders = input$snp_show_borders,
+          border_color = input$snp_border_color,
+          border_width = input$snp_border_width,
+          show_legend = input$snp_show_legend
+        )
+      )
+
+      yaml::write_yaml(config, file)
+      cat(file=stderr(), "[SNP-ANALYSIS] Configuration saved to YAML\n")
+    }
+  )
+
+  # Load SNP configuration from YAML
+  observeEvent(input$snp_load_config, {
+    req(input$snp_load_config)
+
+    tryCatch({
+      config <- yaml::read_yaml(input$snp_load_config$datapath)
+
+      if (is.null(config$snp_analysis)) {
+        showNotification("Invalid SNP configuration file", type = "error")
+        return()
+      }
+
+      snp <- config$snp_analysis
+
+      # Update column pairing
+      if (!is.null(snp$m_suffix)) updateTextInput(session, "snp_m_suffix", value = snp$m_suffix)
+      if (!is.null(snp$wt_suffix)) updateTextInput(session, "snp_wt_suffix", value = snp$wt_suffix)
+
+      # Update loci
+      if (!is.null(snp$loci)) {
+        values$snp_loci <- lapply(snp$loci, function(l) {
+          list(name = l$name, m_col = l$m_col, wt_col = l$wt_col, include = isTRUE(l$include))
+        })
+      }
+
+      # Update thresholds
+      if (!is.null(snp$min_coverage)) updateSliderInput(session, "snp_min_coverage", value = snp$min_coverage)
+      if (!is.null(snp$vaf_threshold)) updateSliderInput(session, "snp_vaf_threshold", value = snp$vaf_threshold)
+
+      # Update display options
+      if (!is.null(snp$show_raw)) updateCheckboxInput(session, "snp_show_raw", value = snp$show_raw)
+      if (!is.null(snp$show_decision)) updateCheckboxInput(session, "snp_show_decision", value = snp$show_decision)
+      if (!is.null(snp$show_overlay)) updateCheckboxInput(session, "snp_show_overlay", value = snp$show_overlay)
+      if (!is.null(snp$overlay_text_size)) updateSliderInput(session, "snp_overlay_text_size", value = snp$overlay_text_size)
+      if (!is.null(snp$loci_spacing)) updateSliderInput(session, "snp_loci_spacing", value = snp$loci_spacing)
+      if (!is.null(snp$heatmap_width)) updateSliderInput(session, "snp_heatmap_width", value = snp$heatmap_width)
+
+      # Update visual styling
+      if (!is.null(snp$raw_low_color)) updateColourInput(session, "snp_raw_low_color", value = snp$raw_low_color)
+      if (!is.null(snp$raw_mid_color)) updateColourInput(session, "snp_raw_mid_color", value = snp$raw_mid_color)
+      if (!is.null(snp$raw_high_color)) updateColourInput(session, "snp_raw_high_color", value = snp$raw_high_color)
+      if (!is.null(snp$color_mutated)) updateColourInput(session, "snp_color_mutated", value = snp$color_mutated)
+      if (!is.null(snp$color_wt)) updateColourInput(session, "snp_color_wt", value = snp$color_wt)
+      if (!is.null(snp$color_nocall)) updateColourInput(session, "snp_color_nocall", value = snp$color_nocall)
+      if (!is.null(snp$color_na)) updateColourInput(session, "snp_color_na", value = snp$color_na)
+
+      if (!is.null(snp$show_borders)) updateCheckboxInput(session, "snp_show_borders", value = snp$show_borders)
+      if (!is.null(snp$border_color)) updateColourInput(session, "snp_border_color", value = snp$border_color)
+      if (!is.null(snp$border_width)) updateSliderInput(session, "snp_border_width", value = snp$border_width)
+      if (!is.null(snp$show_legend)) updateCheckboxInput(session, "snp_show_legend", value = snp$show_legend)
+
+      showNotification("SNP configuration loaded successfully", type = "message")
+      cat(file=stderr(), "[SNP-ANALYSIS] Configuration loaded from YAML\n")
+
+    }, error = function(e) {
+      showNotification(paste0("Error loading config: ", e$message), type = "error")
+      cat(file=stderr(), paste0("[SNP-ANALYSIS] Error loading config: ", e$message, "\n"))
+    })
+  })
+
+  # ============================================================================
+  # SNP ANALYSIS - Preview rendering
+  # ============================================================================
+
+  output$snp_preview <- renderImage({
+    # Use the same temp file mechanism as other previews
+    req(values$temp_plot_file, values$plot_counter)
+
+    if (!file.exists(values$temp_plot_file)) {
+      return(NULL)
+    }
+
+    list(
+      src = values$temp_plot_file,
+      contentType = "image/svg+xml",
+      width = "100%",
+      alt = "SNP Analysis preview"
+    )
+  }, deleteFile = FALSE)
 
 } # End of server function
 
