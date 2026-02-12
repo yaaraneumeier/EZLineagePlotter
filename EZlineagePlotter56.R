@@ -9732,16 +9732,9 @@ ui <- dashboardPage(
               width = 12,
               collapsible = TRUE,
 
-              # CSV source selection
-              selectInput("snp_csv_source", "Select CSV Data Source",
-                          choices = c("No CSV loaded" = ""),
-                          selected = ""),
-
-              hr(),
-
               # Column pairing configuration
               tags$h5(icon("columns"), " Column Pairing"),
-              tags$p(class = "text-muted", "Specify suffixes to auto-detect M (mutant) and WT (wild-type) column pairs"),
+              tags$p(class = "text-muted", "Specify suffixes to auto-detect M (mutant) and WT (wild-type) column pairs from the loaded CSV"),
 
               fluidRow(
                 column(6,
@@ -9787,13 +9780,7 @@ ui <- dashboardPage(
               # VAF threshold
               sliderInput("snp_vaf_threshold", "VAF Threshold (%)",
                           min = 0, max = 100, value = 20, step = 1),
-              tags$p(class = "text-muted small", "VAF = M/(M+WT). Cells with VAF ≥ threshold are marked as 'Mutated'"),
-
-              hr(),
-
-              # Real-time update toggle
-              checkboxInput("snp_realtime_update", "Real-time preview updates", value = TRUE),
-              tags$p(class = "text-muted small", "Disable for better performance with large datasets")
+              tags$p(class = "text-muted small", "VAF = M/(M+WT). Cells with VAF ≥ threshold are marked as 'Mutated'")
             ),
 
             # Display Options Box
@@ -9807,25 +9794,18 @@ ui <- dashboardPage(
               tags$h5("What to Display"),
               checkboxInput("snp_show_raw", "Show Raw Data Heatmap (VAF %)", value = TRUE),
               checkboxInput("snp_show_decision", "Show Decision Heatmap", value = TRUE),
-              checkboxInput("snp_show_overlay", "Overlay Mode (Decision color + VAF text)", value = FALSE),
-
-              hr(),
-
-              # Overlay text size
-              conditionalPanel(
-                condition = "input.snp_show_overlay == true",
-                sliderInput("snp_overlay_text_size", "Overlay Text Size",
-                            min = 1, max = 10, value = 3, step = 0.5)
-              ),
+              checkboxInput("snp_show_row_labels", "Show Row Labels (Locus Names)", value = FALSE),
 
               hr(),
 
               # Layout options
               tags$h5("Layout"),
+              sliderInput("snp_distance_from_tree", "Distance from Tree",
+                          min = 0, max = 2, value = 0.5, step = 0.05),
               sliderInput("snp_loci_spacing", "Spacing Between Loci",
                           min = 0, max = 1, value = 0.1, step = 0.01),
-              sliderInput("snp_heatmap_width", "Heatmap Width",
-                          min = 0.1, max = 2, value = 0.5, step = 0.05)
+              sliderInput("snp_heatmap_height", "Heatmap Height",
+                          min = 0.01, max = 1, value = 0.3, step = 0.01)
             )
           ),
 
@@ -9840,17 +9820,28 @@ ui <- dashboardPage(
               collapsible = TRUE,
               collapsed = TRUE,
 
-              # Raw heatmap colors
+              # Raw heatmap color palette
               tags$h5("Raw Data Heatmap Colors"),
-              fluidRow(
-                column(4,
-                       colourInput("snp_raw_low_color", "Low VAF (0%)", value = "#FFFFFF")
-                ),
-                column(4,
-                       colourInput("snp_raw_mid_color", "Mid VAF (50%)", value = "#FFCCCC")
-                ),
-                column(4,
-                       colourInput("snp_raw_high_color", "High VAF (100%)", value = "#FF0000")
+              selectInput("snp_raw_palette", "Color Palette",
+                          choices = c("White to Red" = "white_red",
+                                      "White to Blue" = "white_blue",
+                                      "Yellow to Red" = "yellow_red",
+                                      "Blue to Red" = "blue_red",
+                                      "Viridis" = "viridis",
+                                      "Custom" = "custom"),
+                          selected = "white_red"),
+              conditionalPanel(
+                condition = "input.snp_raw_palette == 'custom'",
+                fluidRow(
+                  column(4,
+                         colourInput("snp_raw_low_color", "Low VAF (0%)", value = "#FFFFFF")
+                  ),
+                  column(4,
+                         colourInput("snp_raw_mid_color", "Mid VAF (50%)", value = "#FFCCCC")
+                  ),
+                  column(4,
+                         colourInput("snp_raw_high_color", "High VAF (100%)", value = "#FF0000")
+                  )
                 )
               ),
 
@@ -9873,6 +9864,16 @@ ui <- dashboardPage(
                 column(6,
                        colourInput("snp_color_na", "NA (No data)", value = "#999999")
                 )
+              ),
+
+              hr(),
+
+              # Row labels options
+              tags$h5("Row Labels"),
+              conditionalPanel(
+                condition = "input.snp_show_row_labels == true",
+                sliderInput("snp_row_label_size", "Label Font Size",
+                            min = 1, max = 10, value = 3, step = 0.5)
               ),
 
               hr(),
@@ -9936,15 +9937,11 @@ ui <- dashboardPage(
               width = 12,
               status = "primary",
               fluidRow(
-                column(4,
+                column(6,
                        actionButton("snp_apply_to_tree", "Apply to Tree",
                                     icon = icon("check"), class = "btn-primary btn-lg btn-block")
                 ),
-                column(4,
-                       actionButton("snp_refresh_preview", "Refresh Preview",
-                                    icon = icon("sync"), class = "btn-info btn-lg btn-block")
-                ),
-                column(4,
+                column(6,
                        actionButton("snp_clear_all", "Clear All",
                                     icon = icon("trash"), class = "btn-danger btn-lg btn-block")
                 )
@@ -9960,7 +9957,7 @@ ui <- dashboardPage(
               "Preview ",
               span(id = "snp_status_waiting",
                 style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #f8f9fa; color: #6c757d; font-size: 12px;",
-                icon("clock"), " Configure loci above"
+                icon("clock"), " Waiting for data"
               ),
               span(id = "snp_status_processing",
                 style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #6c757d; color: #ffffff; font-size: 12px; font-weight: bold;",
@@ -19366,25 +19363,38 @@ server <- function(input, output, session) {
           snp_results <- values$snp_analysis_data
           show_raw <- isTRUE(input$snp_show_raw)
           show_decision <- isTRUE(input$snp_show_decision)
-          show_overlay <- isTRUE(input$snp_show_overlay)
+          show_row_labels <- isTRUE(input$snp_show_row_labels)
 
-          if (show_raw || show_decision || show_overlay) {
+          if (show_raw || show_decision) {
             # Get tree tip data for positioning
             tree_data <- result$data
             tip_data <- tree_data[tree_data$isTip == TRUE, ]
 
             if (nrow(tip_data) > 0) {
               # Get styling parameters
+              distance_from_tree <- if (!is.null(input$snp_distance_from_tree)) input$snp_distance_from_tree else 0.5
               loci_spacing <- if (!is.null(input$snp_loci_spacing)) input$snp_loci_spacing else 0.1
-              heatmap_width <- if (!is.null(input$snp_heatmap_width)) input$snp_heatmap_width else 0.5
-              overlay_text_size <- if (!is.null(input$snp_overlay_text_size)) input$snp_overlay_text_size else 3
+              heatmap_height <- if (!is.null(input$snp_heatmap_height)) input$snp_heatmap_height else 0.3
+              row_label_size <- if (!is.null(input$snp_row_label_size)) input$snp_row_label_size else 3
 
-              # Colors
-              raw_colors <- list(
-                low = if (!is.null(input$snp_raw_low_color)) input$snp_raw_low_color else "#FFFFFF",
-                mid = if (!is.null(input$snp_raw_mid_color)) input$snp_raw_mid_color else "#FFCCCC",
-                high = if (!is.null(input$snp_raw_high_color)) input$snp_raw_high_color else "#FF0000"
+              # Get color palette
+              raw_palette <- if (!is.null(input$snp_raw_palette)) input$snp_raw_palette else "white_red"
+
+              # Determine raw heatmap colors based on palette
+              raw_colors <- switch(raw_palette,
+                "white_red" = list(low = "#FFFFFF", mid = "#FFCCCC", high = "#FF0000"),
+                "white_blue" = list(low = "#FFFFFF", mid = "#CCCCFF", high = "#0000FF"),
+                "yellow_red" = list(low = "#FFFF00", mid = "#FF8800", high = "#FF0000"),
+                "blue_red" = list(low = "#0000FF", mid = "#FFFFFF", high = "#FF0000"),
+                "viridis" = list(low = "#440154", mid = "#21918C", high = "#FDE725"),
+                "custom" = list(
+                  low = if (!is.null(input$snp_raw_low_color)) input$snp_raw_low_color else "#FFFFFF",
+                  mid = if (!is.null(input$snp_raw_mid_color)) input$snp_raw_mid_color else "#FFCCCC",
+                  high = if (!is.null(input$snp_raw_high_color)) input$snp_raw_high_color else "#FF0000"
+                ),
+                list(low = "#FFFFFF", mid = "#FFCCCC", high = "#FF0000")  # default
               )
+
               decision_colors <- list(
                 mutated = if (!is.null(input$snp_color_mutated)) input$snp_color_mutated else "#E41A1C",
                 wt = if (!is.null(input$snp_color_wt)) input$snp_color_wt else "#377EB8",
@@ -19396,9 +19406,9 @@ server <- function(input, output, session) {
               border_color <- if (!is.null(input$snp_border_color)) input$snp_border_color else "#000000"
               border_width <- if (!is.null(input$snp_border_width)) input$snp_border_width else 0.5
 
-              # Calculate starting x position (after tree)
-              x_start <- max(tip_data$x, na.rm = TRUE) + 0.5
-              tile_height <- 0.8  # Height of each tile (matching tree tip spacing)
+              # Calculate starting x position (after tree + distance)
+              x_start <- max(tip_data$x, na.rm = TRUE) + distance_from_tree
+              tile_width <- 0.8  # Width of each tile (matching tree tip spacing)
 
               # Add new fill scale for SNP heatmaps
               result <- result + ggnewscale::new_scale_fill()
@@ -19424,7 +19434,7 @@ server <- function(input, output, session) {
                 }
 
                 # Raw VAF heatmap
-                if (show_raw && !show_overlay) {
+                if (show_raw) {
                   raw_df <- data.frame(
                     x = rep(x_offset, n_tips),
                     y = tip_data$y,
@@ -19436,8 +19446,8 @@ server <- function(input, output, session) {
                     geom_tile(
                       data = raw_df,
                       aes(x = x, y = y, fill = value),
-                      width = heatmap_width,
-                      height = tile_height,
+                      width = heatmap_height,
+                      height = tile_width,
                       color = if (show_borders) border_color else NA,
                       linewidth = if (show_borders) border_width else 0,
                       inherit.aes = FALSE
@@ -19452,12 +19462,21 @@ server <- function(input, output, session) {
                       na.value = decision_colors$na
                     )
 
-                  x_offset <- x_offset + heatmap_width + loci_spacing / 2
+                  # Add row label if enabled
+                  if (show_row_labels) {
+                    label_x <- x_offset + heatmap_height / 2 + 0.1
+                    result <- result +
+                      annotate("text", x = label_x, y = max(tip_data$y) + 0.5,
+                               label = paste0(locus_name, " (VAF)"),
+                               size = row_label_size, hjust = 0, angle = 90)
+                  }
+
+                  x_offset <- x_offset + heatmap_height + loci_spacing / 2
                   result <- result + ggnewscale::new_scale_fill()
                 }
 
                 # Decision heatmap
-                if (show_decision && !show_overlay) {
+                if (show_decision) {
                   decision_df <- data.frame(
                     x = rep(x_offset, n_tips),
                     y = tip_data$y,
@@ -19469,8 +19488,8 @@ server <- function(input, output, session) {
                     geom_tile(
                       data = decision_df,
                       aes(x = x, y = y, fill = decision),
-                      width = heatmap_width,
-                      height = tile_height,
+                      width = heatmap_height,
+                      height = tile_width,
                       color = if (show_borders) border_color else NA,
                       linewidth = if (show_borders) border_width else 0,
                       inherit.aes = FALSE
@@ -19487,50 +19506,16 @@ server <- function(input, output, session) {
                       drop = FALSE
                     )
 
-                  x_offset <- x_offset + heatmap_width + loci_spacing / 2
-                  result <- result + ggnewscale::new_scale_fill()
-                }
+                  # Add row label if enabled
+                  if (show_row_labels) {
+                    label_x <- x_offset + heatmap_height / 2 + 0.1
+                    result <- result +
+                      annotate("text", x = label_x, y = max(tip_data$y) + 0.5,
+                               label = paste0(locus_name, " (Call)"),
+                               size = row_label_size, hjust = 0, angle = 90)
+                  }
 
-                # Overlay mode: decision color + VAF text
-                if (show_overlay) {
-                  overlay_df <- data.frame(
-                    x = rep(x_offset, n_tips),
-                    y = tip_data$y,
-                    decision = factor(decision_values, levels = c("Mutated", "WT", "No-call", "NA")),
-                    vaf_label = ifelse(!is.na(vaf_values), paste0(round(vaf_values, 0), "%"), ""),
-                    stringsAsFactors = FALSE
-                  )
-
-                  result <- result +
-                    geom_tile(
-                      data = overlay_df,
-                      aes(x = x, y = y, fill = decision),
-                      width = heatmap_width,
-                      height = tile_height,
-                      color = if (show_borders) border_color else NA,
-                      linewidth = if (show_borders) border_width else 0,
-                      inherit.aes = FALSE
-                    ) +
-                    scale_fill_manual(
-                      values = c(
-                        "Mutated" = decision_colors$mutated,
-                        "WT" = decision_colors$wt,
-                        "No-call" = decision_colors$nocall,
-                        "NA" = decision_colors$na
-                      ),
-                      name = paste0(locus_name, "\nCall"),
-                      na.value = decision_colors$na,
-                      drop = FALSE
-                    ) +
-                    geom_text(
-                      data = overlay_df,
-                      aes(x = x, y = y, label = vaf_label),
-                      size = overlay_text_size,
-                      color = "black",
-                      inherit.aes = FALSE
-                    )
-
-                  x_offset <- x_offset + heatmap_width + loci_spacing / 2
+                  x_offset <- x_offset + heatmap_height + loci_spacing / 2
                   result <- result + ggnewscale::new_scale_fill()
                 }
 
@@ -21238,13 +21223,10 @@ server <- function(input, output, session) {
   # Exploratory analysis of SNP mutation data with interactive threshold tuning
   # ============================================================================
 
-  # Update CSV source dropdown when csv_data changes
+  # Log when CSV data is available for SNP analysis
   observe({
     req(values$csv_data)
     csv_cols <- names(values$csv_data)
-    updateSelectInput(session, "snp_csv_source",
-                      choices = c("Use loaded CSV" = "loaded"),
-                      selected = "loaded")
     cat(file=stderr(), "[SNP-ANALYSIS] CSV data available with ", length(csv_cols), " columns\n")
   })
 
@@ -21677,6 +21659,11 @@ server <- function(input, output, session) {
       return()
     }
 
+    # Update status indicator to processing
+    shinyjs::hide("snp_status_waiting")
+    shinyjs::hide("snp_status_ready")
+    shinyjs::show("snp_status_processing")
+
     # Store the analysis data for rendering
     values$snp_analysis_data <- results
     values$snp_applied <- TRUE
@@ -21688,10 +21675,14 @@ server <- function(input, output, session) {
     cat(file=stderr(), "[SNP-ANALYSIS] Applied to tree\n")
   })
 
-  # Refresh preview
-  observeEvent(input$snp_refresh_preview, {
-    # Just trigger a reactive invalidation
-    request_plot_update()
+  # Update SNP status to ready when plot is ready
+  observe({
+    req(values$plot_ready)
+    if (isTRUE(values$snp_applied)) {
+      shinyjs::hide("snp_status_waiting")
+      shinyjs::hide("snp_status_processing")
+      shinyjs::show("snp_status_ready")
+    }
   })
 
   # Clear all SNP analysis
@@ -21699,6 +21690,11 @@ server <- function(input, output, session) {
     values$snp_loci <- list()
     values$snp_analysis_data <- NULL
     values$snp_applied <- FALSE
+
+    # Reset status indicator
+    shinyjs::show("snp_status_waiting")
+    shinyjs::hide("snp_status_processing")
+    shinyjs::hide("snp_status_ready")
 
     request_plot_update()
 
@@ -21731,12 +21727,14 @@ server <- function(input, output, session) {
           # Display options
           show_raw = input$snp_show_raw,
           show_decision = input$snp_show_decision,
-          show_overlay = input$snp_show_overlay,
-          overlay_text_size = input$snp_overlay_text_size,
+          show_row_labels = input$snp_show_row_labels,
+          distance_from_tree = input$snp_distance_from_tree,
           loci_spacing = input$snp_loci_spacing,
-          heatmap_width = input$snp_heatmap_width,
+          heatmap_height = input$snp_heatmap_height,
+          row_label_size = input$snp_row_label_size,
 
           # Visual styling - raw heatmap
+          raw_palette = input$snp_raw_palette,
           raw_low_color = input$snp_raw_low_color,
           raw_mid_color = input$snp_raw_mid_color,
           raw_high_color = input$snp_raw_high_color,
@@ -21792,12 +21790,14 @@ server <- function(input, output, session) {
       # Update display options
       if (!is.null(snp$show_raw)) updateCheckboxInput(session, "snp_show_raw", value = snp$show_raw)
       if (!is.null(snp$show_decision)) updateCheckboxInput(session, "snp_show_decision", value = snp$show_decision)
-      if (!is.null(snp$show_overlay)) updateCheckboxInput(session, "snp_show_overlay", value = snp$show_overlay)
-      if (!is.null(snp$overlay_text_size)) updateSliderInput(session, "snp_overlay_text_size", value = snp$overlay_text_size)
+      if (!is.null(snp$show_row_labels)) updateCheckboxInput(session, "snp_show_row_labels", value = snp$show_row_labels)
+      if (!is.null(snp$distance_from_tree)) updateSliderInput(session, "snp_distance_from_tree", value = snp$distance_from_tree)
       if (!is.null(snp$loci_spacing)) updateSliderInput(session, "snp_loci_spacing", value = snp$loci_spacing)
-      if (!is.null(snp$heatmap_width)) updateSliderInput(session, "snp_heatmap_width", value = snp$heatmap_width)
+      if (!is.null(snp$heatmap_height)) updateSliderInput(session, "snp_heatmap_height", value = snp$heatmap_height)
+      if (!is.null(snp$row_label_size)) updateSliderInput(session, "snp_row_label_size", value = snp$row_label_size)
 
       # Update visual styling
+      if (!is.null(snp$raw_palette)) updateSelectInput(session, "snp_raw_palette", selected = snp$raw_palette)
       if (!is.null(snp$raw_low_color)) updateColourInput(session, "snp_raw_low_color", value = snp$raw_low_color)
       if (!is.null(snp$raw_mid_color)) updateColourInput(session, "snp_raw_mid_color", value = snp$raw_mid_color)
       if (!is.null(snp$raw_high_color)) updateColourInput(session, "snp_raw_high_color", value = snp$raw_high_color)
