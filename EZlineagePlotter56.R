@@ -9763,7 +9763,7 @@ ui <- dashboardPage(
 
               # Manual add option
               actionButton("snp_add_manual_locus", "Add Locus Manually",
-                           icon = icon("plus"), class = "btn-secondary btn-sm",
+                           icon = icon("plus"), class = "btn-default btn-sm",
                            style = "margin-top: 10px;")
             ),
 
@@ -9909,7 +9909,7 @@ ui <- dashboardPage(
             # Save/Load Configuration Box
             box(
               title = tagList(icon("save"), " Save/Load Configuration"),
-              status = "secondary",
+              status = "info",
               solidHeader = TRUE,
               width = 12,
               collapsible = TRUE,
