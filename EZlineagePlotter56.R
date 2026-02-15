@@ -19519,6 +19519,14 @@ server <- function(input, output, session) {
 
                 # Raw VAF heatmap
                 if (show_raw) {
+                  # Debug: show VAF value distribution
+                  valid_vaf <- vaf_values[!is.na(vaf_values)]
+                  if (length(valid_vaf) > 0) {
+                    cat(file=stderr(), paste0("[SNP-RENDER] ", locus_name, " VAF range: ",
+                                              round(min(valid_vaf), 1), "% to ", round(max(valid_vaf), 1), "%",
+                                              ", mean=", round(mean(valid_vaf), 1), "%\n"))
+                  }
+
                   raw_df <- data.frame(
                     x = rep(x_offset, n_tips),
                     y = tip_data$y,
