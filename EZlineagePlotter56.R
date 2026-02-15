@@ -19564,13 +19564,14 @@ server <- function(input, output, session) {
                     # - x values control visual TOP/BOTTOM (not relevant for left/right positioning)
 
                     # Position label to the left or right of the heatmap column
+                    # Account for tile_width/2 to get to edge of tiles, then add user distance
                     if (row_label_position == "right") {
-                      # Right of heatmap: use lower y values (below min)
-                      label_y <- min(tip_data$y) - 0.5 - row_label_distance
+                      # Right of heatmap: use lower y values (below min tip minus half tile width)
+                      label_y <- min(tip_data$y) - (tile_width / 2) - row_label_distance
                       label_hjust <- 1  # text ends at anchor (extends left toward heatmap)
                     } else {
-                      # Left of heatmap: use higher y values (above max)
-                      label_y <- max(tip_data$y) + 0.5 + row_label_distance
+                      # Left of heatmap: use higher y values (above max tip plus half tile width)
+                      label_y <- max(tip_data$y) + (tile_width / 2) + row_label_distance
                       label_hjust <- 0  # text starts at anchor (extends right toward heatmap)
                     }
 
@@ -19626,13 +19627,14 @@ server <- function(input, output, session) {
                     # - Higher y values = visually to the LEFT
 
                     # Position label to the left or right of the heatmap column
+                    # Account for tile_width/2 to get to edge of tiles, then add user distance
                     if (row_label_position == "right") {
-                      # Right of heatmap: use lower y values (below min)
-                      label_y <- min(tip_data$y) - 0.5 - row_label_distance
+                      # Right of heatmap: use lower y values (below min tip minus half tile width)
+                      label_y <- min(tip_data$y) - (tile_width / 2) - row_label_distance
                       label_hjust <- 1  # text ends at anchor (extends left toward heatmap)
                     } else {
-                      # Left of heatmap: use higher y values (above max)
-                      label_y <- max(tip_data$y) + 0.5 + row_label_distance
+                      # Left of heatmap: use higher y values (above max tip plus half tile width)
+                      label_y <- max(tip_data$y) + (tile_width / 2) + row_label_distance
                       label_hjust <- 0  # text starts at anchor (extends right toward heatmap)
                     }
 
