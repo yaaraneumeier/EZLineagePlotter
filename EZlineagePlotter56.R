@@ -231,7 +231,7 @@ options(shiny.maxRequestSize = 100*1024^2)
 #       - Layer reordering now happens ONCE at the end in generate_plot()
 # S1.2: Fixed undefined x_range_min in func_highlight causing "Problem while
 #       computing aesthetics" error when adding 2+ highlights with a heatmap.
-VERSION <- "S2.292dev"
+VERSION <- "S3.1"
 
 # Debug output control - set to TRUE to enable verbose console logging
 # For production/stable use, keep this FALSE for better performance
@@ -9092,21 +9092,25 @@ ui <- dashboardPage(
         tabName = "data_upload",
         fluidRow(
           box(
-            title = "EZLineagePlotter - Development Version",
-            status = "warning",
+            title = "EZLineagePlotter - Stable Release",
+            status = "success",
             solidHeader = TRUE,
             width = 12,
             collapsible = TRUE,
-            tags$div(style = "background: #fff3cd; padding: 15px; border-radius: 5px; border: 2px solid #856404;",
-                     tags$h4(style = "color: #856404; margin: 0;", "Version S2.292dev"),
-                     tags$p(style = "margin: 10px 0 0 0; color: #856404;",
-                            tags$strong("New in S2.292dev:"),
+            tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #155724;",
+                     tags$h4(style = "color: #155724; margin: 0;", "Version S3.1 Stable"),
+                     tags$p(style = "margin: 10px 0 0 0; color: #155724;",
+                            tags$strong("New in S3.1:"),
                             tags$ul(
+                              tags$li("SNP Analysis Tab: exploratory mutation analysis with VAF heatmaps and classification calls"),
+                              tags$li("Chromosome boundary lines and labels for RData CNV heatmaps"),
+                              tags$li("Separate chromosome mapping RData file upload"),
+                              tags$li("Detailed display mode for RData CNV heatmaps (per-cell resolution)"),
+                              tags$li("Rotated tree Newick download"),
                               tags$li("Manual RGB/Hex color input for heatmap colors"),
-                              tags$li("Font type selection for legend text"),
-                              tags$li("Sync between color picker and hex text input")
+                              tags$li("Google Fonts support for legend text")
                             ),
-                            tags$strong("From S2.9 (stable):"),
+                            tags$strong("From S2.9:"),
                             tags$ul(
                               tags$li("Configurable two-stage CNV downsampling (import & render)"),
                               tags$li("Height Scale control for detailed RData heatmaps"),
