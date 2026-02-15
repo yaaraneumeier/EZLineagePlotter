@@ -19484,18 +19484,25 @@ server <- function(input, output, session) {
               for (locus_name in names(snp_results)) {
                 r <- snp_results[[locus_name]]
 
-                # Match SNP data to tree tips using the ID column match
+                # Get tree_row_indices from results (computed during SNP analysis)
+                tree_indices <- r$tree_row_indices
                 n_tips <- nrow(tip_data)
 
-                if (!is.null(csv_to_tip_match)) {
-                  # Use proper matching via ID column
-                  vaf_values <- r$vaf[csv_to_tip_match]
-                  decision_values <- r$decision[csv_to_tip_match]
+                if (!is.null(tree_indices) && length(tree_indices) == n_tips) {
+                  # Use stored tree indices to extract values in correct order
+                  vaf_values <- r$vaf[tree_indices]
+                  decision_values <- r$decision[tree_indices]
                   # Replace unmatched with NA
                   decision_values[is.na(decision_values)] <- "NA"
-                  cat(file=stderr(), paste0("[SNP-ANALYSIS] Locus ", locus_name, ": matched ", sum(!is.na(vaf_values)), "/", n_tips, " values\n"))
+                  cat(file=stderr(), paste0("[SNP-ANALYSIS] Locus ", locus_name, ": using stored indices, ", sum(!is.na(vaf_values)), "/", n_tips, " valid values\n"))
+                } else if (!is.null(csv_to_tip_match)) {
+                  # Fallback: Use the match computed in rendering
+                  vaf_values <- r$vaf[csv_to_tip_match]
+                  decision_values <- r$decision[csv_to_tip_match]
+                  decision_values[is.na(decision_values)] <- "NA"
+                  cat(file=stderr(), paste0("[SNP-ANALYSIS] Locus ", locus_name, ": using csv_to_tip_match, ", sum(!is.na(vaf_values)), "/", n_tips, " valid values\n"))
                 } else {
-                  # Fallback: assume same row order (legacy behavior)
+                  # Final fallback: assume same row order (legacy behavior)
                   n_snp <- length(r$vaf)
                   if (n_snp >= n_tips) {
                     vaf_values <- r$vaf[1:n_tips]
@@ -19504,6 +19511,7 @@ server <- function(input, output, session) {
                     vaf_values <- c(r$vaf, rep(NA, n_tips - n_snp))
                     decision_values <- c(r$decision, rep("NA", n_tips - n_snp))
                   }
+                  cat(file=stderr(), paste0("[SNP-ANALYSIS] Locus ", locus_name, ": using row order fallback\n"))
                 }
 
                 # Raw VAF heatmap
@@ -19537,20 +19545,25 @@ server <- function(input, output, session) {
 
                   # Add row label if enabled
                   if (show_row_labels) {
-                    # Calculate label position based on settings
-                    # For rotated text (angle=90), use vjust for horizontal centering
+                    # For rotated tree (root above, leaves below with scale_y_reverse):
+                    # - min(tip_data$y) is visually at TOP of tree
+                    # - max(tip_data$y) is visually at BOTTOM of tree
+                    # Position label BELOW the heatmap (higher y = lower on plot)
+                    label_y <- max(tip_data$y) + 0.5 + row_label_distance
+
+                    # left/right positioning: adjust x relative to heatmap column center
                     if (row_label_position == "right") {
-                      label_x <- x_offset + heatmap_height / 2 + row_label_distance
+                      label_x <- x_offset + heatmap_height / 2 + 0.1
+                      label_hjust <- 0  # text extends to right
                     } else {
-                      label_x <- x_offset - heatmap_height / 2 - row_label_distance
+                      label_x <- x_offset - heatmap_height / 2 - 0.1
+                      label_hjust <- 1  # text extends to left
                     }
-                    # With angle=90, hjust controls vertical text extension:
-                    # hjust=0 = text extends upward from anchor (for angle=90)
-                    # vjust=0.5 centers text baseline on the x position
+
                     result <- result +
-                      annotate("text", x = label_x, y = max(tip_data$y) + 0.5,
+                      annotate("text", x = label_x, y = label_y,
                                label = paste0(locus_name, " (VAF)"),
-                               size = row_label_size, hjust = 0, vjust = 0.5, angle = row_label_angle)
+                               size = row_label_size, hjust = label_hjust, vjust = 0.5, angle = row_label_angle)
                   }
 
                   x_offset <- x_offset + heatmap_height + loci_spacing / 2
@@ -19590,16 +19603,23 @@ server <- function(input, output, session) {
 
                   # Add row label if enabled
                   if (show_row_labels) {
-                    # Calculate label position based on settings
+                    # For rotated tree (root above, leaves below with scale_y_reverse):
+                    # Position label BELOW the heatmap (higher y = lower on plot)
+                    label_y <- max(tip_data$y) + 0.5 + row_label_distance
+
+                    # left/right positioning: adjust x relative to heatmap column center
                     if (row_label_position == "right") {
-                      label_x <- x_offset + heatmap_height / 2 + row_label_distance
+                      label_x <- x_offset + heatmap_height / 2 + 0.1
+                      label_hjust <- 0  # text extends to right
                     } else {
-                      label_x <- x_offset - heatmap_height / 2 - row_label_distance
+                      label_x <- x_offset - heatmap_height / 2 - 0.1
+                      label_hjust <- 1  # text extends to left
                     }
+
                     result <- result +
-                      annotate("text", x = label_x, y = max(tip_data$y) + 0.5,
+                      annotate("text", x = label_x, y = label_y,
                                label = paste0(locus_name, " (Call)"),
-                               size = row_label_size, hjust = 0, vjust = 0.5, angle = row_label_angle)
+                               size = row_label_size, hjust = label_hjust, vjust = 0.5, angle = row_label_angle)
                   }
 
                   x_offset <- x_offset + heatmap_height + loci_spacing / 2
@@ -21493,7 +21513,8 @@ server <- function(input, output, session) {
   # ============================================================================
 
   # Function to compute SNP analysis results
-  func.compute.snp.analysis <- function(csv_data, loci, min_coverage, vaf_threshold, data_format = "m_wt", row_indices = NULL) {
+  # Computes for ALL rows in CSV, stores tree_row_indices for filtering at display time
+  func.compute.snp.analysis <- function(csv_data, loci, min_coverage, vaf_threshold, data_format = "m_wt", tree_row_indices = NULL) {
     if (is.null(csv_data) || is.null(loci) || length(loci) == 0) {
       return(NULL)
     }
@@ -21504,19 +21525,7 @@ server <- function(input, output, session) {
       return(NULL)
     }
 
-    # If row_indices provided, filter CSV data to only those rows (tree cells)
-    if (!is.null(row_indices)) {
-      # Remove NA indices and filter to valid rows
-      valid_indices <- row_indices[!is.na(row_indices) & row_indices > 0 & row_indices <= nrow(csv_data)]
-      if (length(valid_indices) == 0) {
-        cat(file=stderr(), "[SNP-ANALYSIS] WARNING: No valid row indices for tree matching\n")
-        return(NULL)
-      }
-      csv_data <- csv_data[valid_indices, , drop = FALSE]
-      cat(file=stderr(), paste0("[SNP-ANALYSIS] Filtered to ", nrow(csv_data), " tree cells\n"))
-    }
-
-    cat(file=stderr(), paste0("[SNP-ANALYSIS] Computing analysis for ", length(included_loci), " loci\n"))
+    cat(file=stderr(), paste0("[SNP-ANALYSIS] Computing analysis for ", length(included_loci), " loci (all ", nrow(csv_data), " CSV rows)\n"))
     cat(file=stderr(), paste0("[SNP-ANALYSIS] Thresholds: min_coverage=", min_coverage, ", vaf_threshold=", vaf_threshold, "%, format=", data_format, "\n"))
 
     results <- list()
@@ -21533,8 +21542,31 @@ server <- function(input, output, session) {
         next
       }
 
-      first_col_values <- as.numeric(csv_data[[m_col]])
-      wt_values <- as.numeric(csv_data[[wt_col]])
+      # Get column values and clean them for numeric conversion
+      raw_first <- csv_data[[m_col]]
+      raw_wt <- csv_data[[wt_col]]
+
+      # Debug: show first few values
+      cat(file=stderr(), paste0("[SNP-ANALYSIS] ", m_col, " first 5 values: ", paste(head(raw_first, 5), collapse=", "), "\n"))
+      cat(file=stderr(), paste0("[SNP-ANALYSIS] ", wt_col, " first 5 values: ", paste(head(raw_wt, 5), collapse=", "), "\n"))
+
+      # Clean data: remove commas, whitespace, convert to numeric
+      clean_numeric <- function(x) {
+        if (is.numeric(x)) return(x)
+        x <- as.character(x)
+        x <- gsub(",", "", x)  # Remove commas
+        x <- gsub("\\s+", "", x)  # Remove whitespace
+        x <- gsub("^\\s+|\\s+$", "", x)  # Trim
+        suppressWarnings(as.numeric(x))
+      }
+
+      first_col_values <- clean_numeric(raw_first)
+      wt_values <- clean_numeric(raw_wt)
+
+      n_valid_first <- sum(!is.na(first_col_values))
+      n_valid_wt <- sum(!is.na(wt_values))
+      cat(file=stderr(), paste0("[SNP-ANALYSIS] ", m_col, ": ", n_valid_first, "/", length(first_col_values), " valid numeric values\n"))
+      cat(file=stderr(), paste0("[SNP-ANALYSIS] ", wt_col, ": ", n_valid_wt, "/", length(wt_values), " valid numeric values\n"))
 
       # Handle different data formats
       if (locus_format == "dp_wt") {
@@ -21597,18 +21629,70 @@ server <- function(input, output, session) {
         mean_coverage = mean(total_coverage[has_data & !is.na(total_coverage)], na.rm = TRUE)
       )
 
+      # Calculate stats for ALL rows (full CSV)
+      n_all <- length(decision)
+
+      # Calculate stats for tree cells only if indices provided
+      if (!is.null(tree_row_indices)) {
+        valid_indices <- tree_row_indices[!is.na(tree_row_indices) & tree_row_indices > 0 & tree_row_indices <= n_all]
+        tree_decision <- decision[valid_indices]
+        tree_vaf <- vaf[valid_indices]
+        tree_coverage <- total_coverage[valid_indices]
+        tree_sufficient <- sufficient_coverage[valid_indices]
+        tree_has_data <- has_data[valid_indices]
+
+        n_tree <- length(tree_decision)
+        n_mutated_tree <- sum(tree_decision == "Mutated", na.rm = TRUE)
+        n_wt_tree <- sum(tree_decision == "WT", na.rm = TRUE)
+        n_nocall_tree <- sum(tree_decision == "No-call", na.rm = TRUE)
+        n_na_tree <- sum(tree_decision == "NA", na.rm = TRUE)
+        mean_vaf_tree <- mean(tree_vaf[tree_sufficient], na.rm = TRUE)
+        median_vaf_tree <- median(tree_vaf[tree_sufficient], na.rm = TRUE)
+        mean_coverage_tree <- mean(tree_coverage[tree_has_data & !is.na(tree_coverage)], na.rm = TRUE)
+      } else {
+        n_tree <- n_all
+        n_mutated_tree <- sum(decision == "Mutated", na.rm = TRUE)
+        n_wt_tree <- sum(decision == "WT", na.rm = TRUE)
+        n_nocall_tree <- sum(decision == "No-call", na.rm = TRUE)
+        n_na_tree <- sum(decision == "NA", na.rm = TRUE)
+        mean_vaf_tree <- mean(vaf[sufficient_coverage], na.rm = TRUE)
+        median_vaf_tree <- median(vaf[sufficient_coverage], na.rm = TRUE)
+        mean_coverage_tree <- mean(total_coverage[has_data & !is.na(total_coverage)], na.rm = TRUE)
+      }
+
+      results[[locus_name]] <- list(
+        locus_name = locus_name,
+        m_col = m_col,
+        wt_col = wt_col,
+        m_values = m_values,
+        wt_values = wt_values,
+        total_coverage = total_coverage,
+        vaf = vaf,
+        decision = decision,
+        # Summary stats (for tree cells only)
+        n_total = n_tree,
+        n_mutated = n_mutated_tree,
+        n_wt = n_wt_tree,
+        n_nocall = n_nocall_tree,
+        n_na = n_na_tree,
+        mean_vaf = mean_vaf_tree,
+        median_vaf = median_vaf_tree,
+        mean_coverage = mean_coverage_tree,
+        # Store tree indices for rendering
+        tree_row_indices = tree_row_indices
+      )
+
       cat(file=stderr(), paste0("[SNP-ANALYSIS] ", locus_name, ": ",
-                                results[[locus_name]]$n_mutated, " Mutated, ",
-                                results[[locus_name]]$n_wt, " WT, ",
-                                results[[locus_name]]$n_nocall, " No-call, ",
-                                results[[locus_name]]$n_na, " NA\n"))
+                                n_mutated_tree, " Mutated, ",
+                                n_wt_tree, " WT, ",
+                                n_nocall_tree, " No-call, ",
+                                n_na_tree, " NA (tree cells: ", n_tree, ")\n"))
     }
 
     return(results)
   }
 
   # Reactive to compute SNP analysis when inputs change
-  # Filters to only tree cells when a tree is loaded and ID column is set
   snp_analysis_results <- reactive({
     req(values$csv_data)
     req(values$snp_loci)
@@ -21623,18 +21707,19 @@ server <- function(input, output, session) {
     }
 
     # Get tree cell row indices if tree and ID column are available
-    row_indices <- NULL
+    tree_row_indices <- NULL
     if (!is.null(values$tree) && !is.null(input$id_column) && input$id_column != "" &&
         input$id_column %in% names(values$csv_data)) {
       # Get tree tip labels
       tree_tips <- values$tree$tip.label
       csv_ids <- as.character(values$csv_data[[input$id_column]])
-      # Find which CSV rows match tree tips
-      row_indices <- match(tree_tips, csv_ids)
-      cat(file=stderr(), paste0("[SNP-ANALYSIS] Filtering to ", sum(!is.na(row_indices)), " tree cells out of ", length(tree_tips), " tree tips\n"))
+      # Find which CSV rows match tree tips (returns indices into csv_ids)
+      tree_row_indices <- match(tree_tips, csv_ids)
+      n_matched <- sum(!is.na(tree_row_indices))
+      cat(file=stderr(), paste0("[SNP-ANALYSIS] Tree matching: ", n_matched, " of ", length(tree_tips), " tips matched to CSV\n"))
     }
 
-    func.compute.snp.analysis(values$csv_data, values$snp_loci, min_coverage, vaf_threshold, data_format, row_indices)
+    func.compute.snp.analysis(values$csv_data, values$snp_loci, min_coverage, vaf_threshold, data_format, tree_row_indices)
   })
 
   # ============================================================================
