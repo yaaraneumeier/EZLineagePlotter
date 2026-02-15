@@ -9732,13 +9732,28 @@ ui <- dashboardPage(
               width = 12,
               collapsible = TRUE,
 
+              # Data format selection
+              tags$h5(icon("database"), " Data Format"),
+              tags$p(class = "text-muted", "Select how your mutation data is formatted in the CSV"),
+
+              selectInput("snp_data_format", "Column Data Format",
+                          choices = c("M + WT (Mutant reads + Wild-type reads)" = "m_wt",
+                                      "DP + WT (Total depth + Wild-type reads)" = "dp_wt"),
+                          selected = "m_wt"),
+              tags$p(class = "text-muted small",
+                     id = "snp_format_hint",
+                     "M+WT: Mutant count and WT count columns. DP+WT: Total depth (M = DP - WT)"),
+
+              hr(),
+
               # Column pairing configuration
               tags$h5(icon("columns"), " Column Pairing"),
-              tags$p(class = "text-muted", "Specify suffixes to auto-detect M (mutant) and WT (wild-type) column pairs from the loaded CSV"),
+              tags$p(class = "text-muted", "Specify suffixes to auto-detect column pairs (case-insensitive matching)"),
 
               fluidRow(
                 column(6,
-                       textInput("snp_m_suffix", "Mutant Column Suffix", value = "_M")
+                       textInput("snp_m_suffix", "First Column Suffix", value = "_M",
+                                 placeholder = "e.g., _M or _DP")
                 ),
                 column(6,
                        textInput("snp_wt_suffix", "WT Column Suffix", value = "_WT")
@@ -9849,20 +9864,30 @@ ui <- dashboardPage(
 
               # Decision heatmap colors
               tags$h5("Decision Heatmap Colors"),
-              fluidRow(
-                column(6,
-                       colourInput("snp_color_mutated", "Mutated", value = "#E41A1C")
+              selectInput("snp_decision_palette", "Color Palette",
+                          choices = c("Default (Red/Blue/Orange/Gray)" = "default",
+                                      "Colorblind-friendly" = "colorblind",
+                                      "Pastel" = "pastel",
+                                      "High Contrast" = "high_contrast",
+                                      "Custom" = "custom"),
+                          selected = "default"),
+              conditionalPanel(
+                condition = "input.snp_decision_palette == 'custom'",
+                fluidRow(
+                  column(6,
+                         colourInput("snp_color_mutated", "Mutated", value = "#E41A1C")
+                  ),
+                  column(6,
+                         colourInput("snp_color_wt", "Wild-Type (WT)", value = "#377EB8")
+                  )
                 ),
-                column(6,
-                       colourInput("snp_color_wt", "Wild-Type (WT)", value = "#377EB8")
-                )
-              ),
-              fluidRow(
-                column(6,
-                       colourInput("snp_color_nocall", "No-call", value = "#FF7F00")
-                ),
-                column(6,
-                       colourInput("snp_color_na", "NA (No data)", value = "#999999")
+                fluidRow(
+                  column(6,
+                         colourInput("snp_color_nocall", "No-call", value = "#FF7F00")
+                  ),
+                  column(6,
+                         colourInput("snp_color_na", "NA (No data)", value = "#999999")
+                  )
                 )
               ),
 
@@ -9873,7 +9898,16 @@ ui <- dashboardPage(
               conditionalPanel(
                 condition = "input.snp_show_row_labels == true",
                 sliderInput("snp_row_label_size", "Label Font Size",
-                            min = 1, max = 10, value = 3, step = 0.5)
+                            min = 1, max = 10, value = 3, step = 0.5),
+                radioButtons("snp_row_label_position", "Label Position",
+                             choices = c("Right of heatmap" = "right",
+                                         "Left of heatmap" = "left"),
+                             selected = "right", inline = TRUE),
+                sliderInput("snp_row_label_distance", "Distance from Heatmap",
+                            min = 0, max = 2, value = 0.1, step = 0.05),
+                sliderInput("snp_row_label_angle", "Label Angle (degrees)",
+                            min = 0, max = 90, value = 90, step = 5),
+                tags$p(class = "text-muted small", "0° = horizontal, 90° = vertical")
               ),
 
               hr(),
@@ -19376,6 +19410,9 @@ server <- function(input, output, session) {
               loci_spacing <- if (!is.null(input$snp_loci_spacing)) input$snp_loci_spacing else 0.1
               heatmap_height <- if (!is.null(input$snp_heatmap_height)) input$snp_heatmap_height else 0.3
               row_label_size <- if (!is.null(input$snp_row_label_size)) input$snp_row_label_size else 3
+              row_label_position <- if (!is.null(input$snp_row_label_position)) input$snp_row_label_position else "right"
+              row_label_distance <- if (!is.null(input$snp_row_label_distance)) input$snp_row_label_distance else 0.1
+              row_label_angle <- if (!is.null(input$snp_row_label_angle)) input$snp_row_label_angle else 90
 
               # Get color palette
               raw_palette <- if (!is.null(input$snp_raw_palette)) input$snp_raw_palette else "white_red"
@@ -19395,11 +19432,45 @@ server <- function(input, output, session) {
                 list(low = "#FFFFFF", mid = "#FFCCCC", high = "#FF0000")  # default
               )
 
-              decision_colors <- list(
-                mutated = if (!is.null(input$snp_color_mutated)) input$snp_color_mutated else "#E41A1C",
-                wt = if (!is.null(input$snp_color_wt)) input$snp_color_wt else "#377EB8",
-                nocall = if (!is.null(input$snp_color_nocall)) input$snp_color_nocall else "#FF7F00",
-                na = if (!is.null(input$snp_color_na)) input$snp_color_na else "#999999"
+              # Get decision heatmap color palette
+              decision_palette <- if (!is.null(input$snp_decision_palette)) input$snp_decision_palette else "default"
+              decision_colors <- switch(decision_palette,
+                "default" = list(
+                  mutated = "#E41A1C",  # Red
+                  wt = "#377EB8",        # Blue
+                  nocall = "#FF7F00",    # Orange
+                  na = "#999999"         # Gray
+                ),
+                "colorblind" = list(
+                  mutated = "#D55E00",   # Vermillion
+                  wt = "#0072B2",        # Blue
+                  nocall = "#F0E442",    # Yellow
+                  na = "#CCCCCC"         # Light gray
+                ),
+                "pastel" = list(
+                  mutated = "#FB8072",   # Light coral
+                  wt = "#80B1D3",        # Light blue
+                  nocall = "#FDB462",    # Light orange
+                  na = "#D9D9D9"         # Light gray
+                ),
+                "high_contrast" = list(
+                  mutated = "#FF0000",   # Pure red
+                  wt = "#0000FF",        # Pure blue
+                  nocall = "#FFFF00",    # Yellow
+                  na = "#000000"         # Black
+                ),
+                "custom" = list(
+                  mutated = if (!is.null(input$snp_color_mutated)) input$snp_color_mutated else "#E41A1C",
+                  wt = if (!is.null(input$snp_color_wt)) input$snp_color_wt else "#377EB8",
+                  nocall = if (!is.null(input$snp_color_nocall)) input$snp_color_nocall else "#FF7F00",
+                  na = if (!is.null(input$snp_color_na)) input$snp_color_na else "#999999"
+                ),
+                list(  # default fallback
+                  mutated = "#E41A1C",
+                  wt = "#377EB8",
+                  nocall = "#FF7F00",
+                  na = "#999999"
+                )
               )
 
               show_borders <- isTRUE(input$snp_show_borders)
@@ -19464,11 +19535,18 @@ server <- function(input, output, session) {
 
                   # Add row label if enabled
                   if (show_row_labels) {
-                    label_x <- x_offset + heatmap_height / 2 + 0.1
+                    # Calculate label position based on settings
+                    if (row_label_position == "right") {
+                      label_x <- x_offset + heatmap_height / 2 + row_label_distance
+                      label_hjust <- 0
+                    } else {
+                      label_x <- x_offset - heatmap_height / 2 - row_label_distance
+                      label_hjust <- 1
+                    }
                     result <- result +
                       annotate("text", x = label_x, y = max(tip_data$y) + 0.5,
                                label = paste0(locus_name, " (VAF)"),
-                               size = row_label_size, hjust = 0, angle = 90)
+                               size = row_label_size, hjust = label_hjust, angle = row_label_angle)
                   }
 
                   x_offset <- x_offset + heatmap_height + loci_spacing / 2
@@ -19508,11 +19586,18 @@ server <- function(input, output, session) {
 
                   # Add row label if enabled
                   if (show_row_labels) {
-                    label_x <- x_offset + heatmap_height / 2 + 0.1
+                    # Calculate label position based on settings
+                    if (row_label_position == "right") {
+                      label_x <- x_offset + heatmap_height / 2 + row_label_distance
+                      label_hjust <- 0
+                    } else {
+                      label_x <- x_offset - heatmap_height / 2 - row_label_distance
+                      label_hjust <- 1
+                    }
                     result <- result +
                       annotate("text", x = label_x, y = max(tip_data$y) + 0.5,
                                label = paste0(locus_name, " (Call)"),
-                               size = row_label_size, hjust = 0, angle = 90)
+                               size = row_label_size, hjust = label_hjust, angle = row_label_angle)
                   }
 
                   x_offset <- x_offset + heatmap_height + loci_spacing / 2
@@ -21230,41 +21315,58 @@ server <- function(input, output, session) {
     cat(file=stderr(), "[SNP-ANALYSIS] CSV data available with ", length(csv_cols), " columns\n")
   })
 
-  # Detect column pairs based on suffixes
+  # Detect column pairs based on suffixes (case-insensitive matching)
   observeEvent(input$snp_detect_columns, {
     req(values$csv_data)
 
     m_suffix <- input$snp_m_suffix
     wt_suffix <- input$snp_wt_suffix
+    data_format <- if (!is.null(input$snp_data_format)) input$snp_data_format else "m_wt"
 
     if (is.null(m_suffix) || m_suffix == "" || is.null(wt_suffix) || wt_suffix == "") {
-      showNotification("Please specify both M and WT suffixes", type = "error")
+      showNotification("Please specify both column suffixes", type = "error")
       return()
     }
 
     csv_cols <- names(values$csv_data)
-    cat(file=stderr(), paste0("[SNP-ANALYSIS] Detecting column pairs with suffixes: M='", m_suffix, "', WT='", wt_suffix, "'\n"))
+    csv_cols_lower <- tolower(csv_cols)
+    m_suffix_lower <- tolower(m_suffix)
+    wt_suffix_lower <- tolower(wt_suffix)
 
-    # Find columns ending with M suffix
-    m_cols <- csv_cols[grepl(paste0(gsub("([.|()\\^{}+$*?]|\\[|\\])", "\\\\\\1", m_suffix), "$"), csv_cols)]
-    cat(file=stderr(), paste0("[SNP-ANALYSIS] Found ", length(m_cols), " columns with M suffix\n"))
+    format_label <- if (data_format == "dp_wt") "DP" else "M"
+    cat(file=stderr(), paste0("[SNP-ANALYSIS] Detecting column pairs with suffixes: ", format_label, "='", m_suffix, "', WT='", wt_suffix, "' (case-insensitive, format=", data_format, ")\n"))
 
-    # For each M column, look for matching WT column
+    # Find columns ending with first suffix (case-insensitive)
+    m_suffix_escaped <- gsub("([.|()\\^{}+$*?]|\\[|\\])", "\\\\\\1", m_suffix_lower)
+    m_col_indices <- which(grepl(paste0(m_suffix_escaped, "$"), csv_cols_lower))
+    m_cols <- csv_cols[m_col_indices]
+    cat(file=stderr(), paste0("[SNP-ANALYSIS] Found ", length(m_cols), " columns with first suffix\n"))
+
+    # For each first column, look for matching WT column (case-insensitive)
     detected_loci <- list()
     for (m_col in m_cols) {
-      # Get the prefix (everything before the M suffix)
-      prefix <- sub(paste0(gsub("([.|()\\^{}+$*?]|\\[|\\])", "\\\\\\1", m_suffix), "$"), "", m_col)
-      wt_col <- paste0(prefix, wt_suffix)
+      m_col_lower <- tolower(m_col)
+      # Get the prefix (everything before the suffix, case-insensitive)
+      prefix_lower <- sub(paste0(m_suffix_escaped, "$"), "", m_col_lower)
 
-      if (wt_col %in% csv_cols) {
+      # Find matching WT column (case-insensitive)
+      wt_suffix_escaped <- gsub("([.|()\\^{}+$*?]|\\[|\\])", "\\\\\\1", wt_suffix_lower)
+      wt_pattern <- paste0("^", gsub("([.|()\\^{}+$*?]|\\[|\\])", "\\\\\\1", prefix_lower), wt_suffix_escaped, "$")
+      wt_col_index <- which(grepl(wt_pattern, csv_cols_lower))
+
+      if (length(wt_col_index) > 0) {
+        wt_col <- csv_cols[wt_col_index[1]]  # Use first match
+        # Get original case prefix from m_col
+        prefix <- sub(paste0(gsub("([.|()\\^{}+$*?]|\\[|\\])", "\\\\\\1", m_suffix), "$"), "", m_col, ignore.case = TRUE)
         locus_name <- prefix
         detected_loci[[length(detected_loci) + 1]] <- list(
           name = locus_name,
           m_col = m_col,
           wt_col = wt_col,
-          include = TRUE
+          include = TRUE,
+          data_format = data_format  # Store the data format
         )
-        cat(file=stderr(), paste0("[SNP-ANALYSIS] Detected locus: ", locus_name, " (M: ", m_col, ", WT: ", wt_col, ")\n"))
+        cat(file=stderr(), paste0("[SNP-ANALYSIS] Detected locus: ", locus_name, " (", format_label, ": ", m_col, ", WT: ", wt_col, ")\n"))
       }
     }
 
@@ -21272,6 +21374,7 @@ server <- function(input, output, session) {
       showNotification("No matching column pairs found. Check your suffixes.", type = "warning")
     } else {
       values$snp_loci <- detected_loci
+      values$snp_data_format <- data_format  # Store format for computation
       showNotification(paste0("Detected ", length(detected_loci), " loci"), type = "message")
     }
   })
@@ -21388,7 +21491,7 @@ server <- function(input, output, session) {
   # ============================================================================
 
   # Function to compute SNP analysis results
-  func.compute.snp.analysis <- function(csv_data, loci, min_coverage, vaf_threshold) {
+  func.compute.snp.analysis <- function(csv_data, loci, min_coverage, vaf_threshold, data_format = "m_wt") {
     if (is.null(csv_data) || is.null(loci) || length(loci) == 0) {
       return(NULL)
     }
@@ -21400,7 +21503,7 @@ server <- function(input, output, session) {
     }
 
     cat(file=stderr(), paste0("[SNP-ANALYSIS] Computing analysis for ", length(included_loci), " loci\n"))
-    cat(file=stderr(), paste0("[SNP-ANALYSIS] Thresholds: min_coverage=", min_coverage, ", vaf_threshold=", vaf_threshold, "%\n"))
+    cat(file=stderr(), paste0("[SNP-ANALYSIS] Thresholds: min_coverage=", min_coverage, ", vaf_threshold=", vaf_threshold, "%, format=", data_format, "\n"))
 
     results <- list()
 
@@ -21408,17 +21511,32 @@ server <- function(input, output, session) {
       m_col <- locus$m_col
       wt_col <- locus$wt_col
       locus_name <- locus$name
+      # Use per-locus format if available, otherwise use global format
+      locus_format <- if (!is.null(locus$data_format)) locus$data_format else data_format
 
       if (!(m_col %in% names(csv_data)) || !(wt_col %in% names(csv_data))) {
         cat(file=stderr(), paste0("[SNP-ANALYSIS] WARNING: Columns not found for locus ", locus_name, "\n"))
         next
       }
 
-      m_values <- as.numeric(csv_data[[m_col]])
+      first_col_values <- as.numeric(csv_data[[m_col]])
       wt_values <- as.numeric(csv_data[[wt_col]])
 
-      # Calculate total coverage and VAF
-      total_coverage <- m_values + wt_values
+      # Handle different data formats
+      if (locus_format == "dp_wt") {
+        # DP + WT format: first column is total depth (DP), M = DP - WT
+        total_coverage <- first_col_values  # DP is already total coverage
+        m_values <- first_col_values - wt_values  # M = DP - WT
+        # Ensure no negative M values (can happen with data errors)
+        m_values <- pmax(m_values, 0, na.rm = FALSE)
+        cat(file=stderr(), paste0("[SNP-ANALYSIS] Using DP+WT format for ", locus_name, ": M = DP - WT\n"))
+      } else {
+        # M + WT format: standard mutant + wild-type columns
+        m_values <- first_col_values
+        total_coverage <- m_values + wt_values
+      }
+
+      # Calculate VAF
       vaf <- ifelse(total_coverage > 0, (m_values / total_coverage) * 100, NA)
 
       # Make decisions
@@ -21483,12 +21601,13 @@ server <- function(input, output, session) {
 
     min_coverage <- input$snp_min_coverage
     vaf_threshold <- input$snp_vaf_threshold
+    data_format <- if (!is.null(values$snp_data_format)) values$snp_data_format else "m_wt"
 
     if (is.null(min_coverage) || is.null(vaf_threshold)) {
       return(NULL)
     }
 
-    func.compute.snp.analysis(values$csv_data, values$snp_loci, min_coverage, vaf_threshold)
+    func.compute.snp.analysis(values$csv_data, values$snp_loci, min_coverage, vaf_threshold, data_format)
   })
 
   # ============================================================================
@@ -21713,11 +21832,13 @@ server <- function(input, output, session) {
     content = function(file) {
       config <- list(
         snp_analysis = list(
-          # Column pairing
+          # Data format and column pairing
+          data_format = input$snp_data_format,
           m_suffix = input$snp_m_suffix,
           wt_suffix = input$snp_wt_suffix,
           loci = lapply(values$snp_loci, function(l) {
-            list(name = l$name, m_col = l$m_col, wt_col = l$wt_col, include = l$include)
+            list(name = l$name, m_col = l$m_col, wt_col = l$wt_col, include = l$include,
+                 data_format = l$data_format)
           }),
 
           # Thresholds
@@ -21731,7 +21852,12 @@ server <- function(input, output, session) {
           distance_from_tree = input$snp_distance_from_tree,
           loci_spacing = input$snp_loci_spacing,
           heatmap_height = input$snp_heatmap_height,
+
+          # Row label settings
           row_label_size = input$snp_row_label_size,
+          row_label_position = input$snp_row_label_position,
+          row_label_distance = input$snp_row_label_distance,
+          row_label_angle = input$snp_row_label_angle,
 
           # Visual styling - raw heatmap
           raw_palette = input$snp_raw_palette,
@@ -21740,6 +21866,7 @@ server <- function(input, output, session) {
           raw_high_color = input$snp_raw_high_color,
 
           # Visual styling - decision heatmap
+          decision_palette = input$snp_decision_palette,
           color_mutated = input$snp_color_mutated,
           color_wt = input$snp_color_wt,
           color_nocall = input$snp_color_nocall,
@@ -21772,14 +21899,19 @@ server <- function(input, output, session) {
 
       snp <- config$snp_analysis
 
-      # Update column pairing
+      # Update data format and column pairing
+      if (!is.null(snp$data_format)) {
+        updateSelectInput(session, "snp_data_format", selected = snp$data_format)
+        values$snp_data_format <- snp$data_format
+      }
       if (!is.null(snp$m_suffix)) updateTextInput(session, "snp_m_suffix", value = snp$m_suffix)
       if (!is.null(snp$wt_suffix)) updateTextInput(session, "snp_wt_suffix", value = snp$wt_suffix)
 
       # Update loci
       if (!is.null(snp$loci)) {
         values$snp_loci <- lapply(snp$loci, function(l) {
-          list(name = l$name, m_col = l$m_col, wt_col = l$wt_col, include = isTRUE(l$include))
+          list(name = l$name, m_col = l$m_col, wt_col = l$wt_col, include = isTRUE(l$include),
+               data_format = l$data_format)
         })
       }
 
@@ -21794,13 +21926,19 @@ server <- function(input, output, session) {
       if (!is.null(snp$distance_from_tree)) updateSliderInput(session, "snp_distance_from_tree", value = snp$distance_from_tree)
       if (!is.null(snp$loci_spacing)) updateSliderInput(session, "snp_loci_spacing", value = snp$loci_spacing)
       if (!is.null(snp$heatmap_height)) updateSliderInput(session, "snp_heatmap_height", value = snp$heatmap_height)
+
+      # Update row label settings
       if (!is.null(snp$row_label_size)) updateSliderInput(session, "snp_row_label_size", value = snp$row_label_size)
+      if (!is.null(snp$row_label_position)) updateRadioButtons(session, "snp_row_label_position", selected = snp$row_label_position)
+      if (!is.null(snp$row_label_distance)) updateSliderInput(session, "snp_row_label_distance", value = snp$row_label_distance)
+      if (!is.null(snp$row_label_angle)) updateSliderInput(session, "snp_row_label_angle", value = snp$row_label_angle)
 
       # Update visual styling
       if (!is.null(snp$raw_palette)) updateSelectInput(session, "snp_raw_palette", selected = snp$raw_palette)
       if (!is.null(snp$raw_low_color)) updateColourInput(session, "snp_raw_low_color", value = snp$raw_low_color)
       if (!is.null(snp$raw_mid_color)) updateColourInput(session, "snp_raw_mid_color", value = snp$raw_mid_color)
       if (!is.null(snp$raw_high_color)) updateColourInput(session, "snp_raw_high_color", value = snp$raw_high_color)
+      if (!is.null(snp$decision_palette)) updateSelectInput(session, "snp_decision_palette", selected = snp$decision_palette)
       if (!is.null(snp$color_mutated)) updateColourInput(session, "snp_color_mutated", value = snp$color_mutated)
       if (!is.null(snp$color_wt)) updateColourInput(session, "snp_color_wt", value = snp$color_wt)
       if (!is.null(snp$color_nocall)) updateColourInput(session, "snp_color_nocall", value = snp$color_nocall)
