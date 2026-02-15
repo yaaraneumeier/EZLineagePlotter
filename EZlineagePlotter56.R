@@ -21732,9 +21732,9 @@ server <- function(input, output, session) {
     tree_row_indices <- NULL
     if (!is.null(values$tree) && !is.null(input$id_column) && input$id_column != "" &&
         input$id_column %in% names(values$csv_data)) {
-      # Get tree tip labels
-      tree_tips <- values$tree$tip.label
-      csv_ids <- as.character(values$csv_data[[input$id_column]])
+      # Get tree tip labels and csv IDs, trimmed of whitespace
+      tree_tips <- trimws(as.character(values$tree$tip.label))
+      csv_ids <- trimws(as.character(values$csv_data[[input$id_column]]))
       # Find which CSV rows match tree tips (returns indices into csv_ids)
       tree_row_indices <- match(tree_tips, csv_ids)
       n_matched <- sum(!is.na(tree_row_indices))
