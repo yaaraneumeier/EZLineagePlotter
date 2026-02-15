@@ -21746,6 +21746,23 @@ server <- function(input, output, session) {
       cat(file=stderr(), paste0("[SNP-ANALYSIS] First 5 csv_ids: ", paste(head(csv_ids, 5), collapse=", "), "\n"))
       cat(file=stderr(), paste0("[SNP-ANALYSIS] First 10 tree_row_indices: ", paste(head(tree_row_indices, 10), collapse=", "), "\n"))
 
+      # Check for duplicate IDs - match() returns first occurrence only
+      n_unique_ids <- length(unique(csv_ids))
+      n_total_ids <- length(csv_ids)
+      if (n_unique_ids < n_total_ids) {
+        cat(file=stderr(), paste0("[SNP-ANALYSIS] WARNING: CSV has ", n_total_ids - n_unique_ids, " duplicate IDs! match() uses first occurrence only.\n"))
+        # Check if tree tips have duplicates
+        dup_tree_tips <- tree_tips[duplicated(tree_tips)]
+        if (length(dup_tree_tips) > 0) {
+          cat(file=stderr(), paste0("[SNP-ANALYSIS] Duplicate tree tips: ", paste(head(unique(dup_tree_tips), 5), collapse=", "), "\n"))
+        }
+        # Show which CSV IDs have duplicates
+        dup_csv_ids <- csv_ids[duplicated(csv_ids)]
+        if (length(dup_csv_ids) > 0) {
+          cat(file=stderr(), paste0("[SNP-ANALYSIS] Sample duplicate csv_ids: ", paste(head(unique(dup_csv_ids), 5), collapse=", "), "\n"))
+        }
+      }
+
       # Check if SNP columns have data at the matched indices
       if (length(values$snp_loci) > 0) {
         first_locus <- values$snp_loci[[1]]
@@ -21756,6 +21773,40 @@ server <- function(input, output, session) {
             sample_values <- m_col_data[head(valid_indices, 10)]
             cat(file=stderr(), paste0("[SNP-ANALYSIS] ", first_locus$m_col, " values at first 10 matched rows: ",
                                       paste(sample_values, collapse=", "), "\n"))
+
+            # If there are duplicates and matched rows have NA, try to find rows with data
+            if (n_unique_ids < n_total_ids) {
+              # Check how many matched rows have NA in the SNP column
+              matched_vals <- m_col_data[valid_indices]
+              n_na_matched <- sum(is.na(matched_vals) | matched_vals == "" | matched_vals == "NA")
+              cat(file=stderr(), paste0("[SNP-ANALYSIS] Matched rows with NA in SNP data: ", n_na_matched, "/", length(valid_indices), "\n"))
+
+              # If many matched rows have NA, try smarter matching
+              if (n_na_matched > length(valid_indices) * 0.5) {
+                cat(file=stderr(), "[SNP-ANALYSIS] Attempting smart matching to find rows with SNP data...\n")
+
+                # For each tree tip, find ALL matching rows and prefer one with data
+                smart_indices <- sapply(tree_tips, function(tip) {
+                  all_matches <- which(csv_ids == tip)
+                  if (length(all_matches) == 0) return(NA_integer_)
+                  if (length(all_matches) == 1) return(all_matches)
+                  # Multiple matches - prefer row with valid SNP data
+                  snp_vals <- m_col_data[all_matches]
+                  valid_snp <- !is.na(snp_vals) & snp_vals != "" & snp_vals != "NA"
+                  if (any(valid_snp)) {
+                    return(all_matches[which(valid_snp)[1]])  # First row with valid data
+                  }
+                  return(all_matches[1])  # Fallback to first match
+                })
+                tree_row_indices <- as.integer(smart_indices)
+
+                n_matched_smart <- sum(!is.na(tree_row_indices))
+                matched_vals_smart <- m_col_data[tree_row_indices[!is.na(tree_row_indices)]]
+                n_na_smart <- sum(is.na(matched_vals_smart) | matched_vals_smart == "" | matched_vals_smart == "NA")
+                cat(file=stderr(), paste0("[SNP-ANALYSIS] Smart matching: ", n_matched_smart, " tips matched, ", n_na_smart, " still have NA\n"))
+                cat(file=stderr(), paste0("[SNP-ANALYSIS] Smart indices first 10: ", paste(head(tree_row_indices, 10), collapse=", "), "\n"))
+              }
+            }
           }
         }
       }
