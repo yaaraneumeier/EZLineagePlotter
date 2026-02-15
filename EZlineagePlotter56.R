@@ -19384,10 +19384,13 @@ server <- function(input, output, session) {
             tip_data <- tree_data[tree_data$isTip == TRUE, ]
 
             if (nrow(tip_data) > 0) {
-              # Get matching indices from CSV to tree tips
-              # Use the ID column that was set when matching tree with CSV
+              # Use filtered_csv if available (same as computation)
               id_column <- input$id_column
-              csv_data <- values$csv_data
+              csv_data <- if (!is.null(values$filtered_csv) && nrow(values$filtered_csv) > 0) {
+                values$filtered_csv
+              } else {
+                values$csv_data
+              }
               tip_labels <- tip_data$label
 
               # Create a lookup from CSV row to tree tip y position
@@ -19494,20 +19497,7 @@ server <- function(input, output, session) {
                   decision_values <- r$decision[tree_indices]
                   # Replace unmatched with NA
                   decision_values[is.na(decision_values)] <- "NA"
-                  cat(file=stderr(), paste0("[SNP-ANALYSIS] Locus ", locus_name, ": using stored indices, ", sum(!is.na(vaf_values)), "/", n_tips, " valid values\n"))
-
-                  # Detailed debug: show extraction
-                  cat(file=stderr(), paste0("[SNP-RENDER] r$vaf length: ", length(r$vaf), ", tree_indices length: ", length(tree_indices), "\n"))
-                  cat(file=stderr(), paste0("[SNP-RENDER] tree_indices first 10: ", paste(head(tree_indices, 10), collapse=", "), "\n"))
-                  cat(file=stderr(), paste0("[SNP-RENDER] r$vaf[tree_indices] first 10: ", paste(head(vaf_values, 10), collapse=", "), "\n"))
-                  cat(file=stderr(), paste0("[SNP-RENDER] decision_values first 10: ", paste(head(decision_values, 10), collapse=", "), "\n"))
-                  # Check if indices are within bounds
-                  valid_idx <- tree_indices[!is.na(tree_indices)]
-                  if (length(valid_idx) > 0) {
-                    max_idx <- max(valid_idx)
-                    min_idx <- min(valid_idx)
-                    cat(file=stderr(), paste0("[SNP-RENDER] tree_indices range: ", min_idx, " to ", max_idx, " (vaf length: ", length(r$vaf), ")\n"))
-                  }
+                  cat(file=stderr(), paste0("[SNP-ANALYSIS] Locus ", locus_name, ": ", sum(!is.na(vaf_values)), "/", n_tips, " valid values\n"))
                 } else if (!is.null(csv_to_tip_match)) {
                   # Fallback: Use the match computed in rendering
                   vaf_values <- r$vaf[csv_to_tip_match]
@@ -21559,10 +21549,6 @@ server <- function(input, output, session) {
       raw_first <- csv_data[[m_col]]
       raw_wt <- csv_data[[wt_col]]
 
-      # Debug: show data types and first few values
-      cat(file=stderr(), paste0("[SNP-ANALYSIS] ", m_col, " class: ", class(raw_first)[1], ", first 5 values: ", paste(head(raw_first, 5), collapse=", "), "\n"))
-      cat(file=stderr(), paste0("[SNP-ANALYSIS] ", wt_col, " class: ", class(raw_wt)[1], ", first 5 values: ", paste(head(raw_wt, 5), collapse=", "), "\n"))
-
       # Clean data: remove commas, whitespace, convert to numeric
       clean_numeric <- function(x) {
         if (is.numeric(x)) return(x)
@@ -21648,15 +21634,6 @@ server <- function(input, output, session) {
       # Calculate stats for tree cells only if indices provided
       if (!is.null(tree_row_indices)) {
         valid_indices <- tree_row_indices[!is.na(tree_row_indices) & tree_row_indices > 0 & tree_row_indices <= n_all]
-
-        # Debug: show what indices we're extracting and their values
-        cat(file=stderr(), paste0("[SNP-ANALYSIS] tree_row_indices first 5: ", paste(head(tree_row_indices, 5), collapse=", "), "\n"))
-        cat(file=stderr(), paste0("[SNP-ANALYSIS] Valid indices count: ", length(valid_indices), ", first 5: ", paste(head(valid_indices, 5), collapse=", "), "\n"))
-        cat(file=stderr(), paste0("[SNP-ANALYSIS] DP values at first 5 tree indices: ", paste(head(first_col_values[valid_indices], 5), collapse=", "), "\n"))
-        cat(file=stderr(), paste0("[SNP-ANALYSIS] WT values at first 5 tree indices: ", paste(head(wt_values[valid_indices], 5), collapse=", "), "\n"))
-        cat(file=stderr(), paste0("[SNP-ANALYSIS] VAF at first 5 tree indices: ", paste(head(vaf[valid_indices], 5), collapse=", "), "\n"))
-        cat(file=stderr(), paste0("[SNP-ANALYSIS] Decision at first 5 tree indices: ", paste(head(decision[valid_indices], 5), collapse=", "), "\n"))
-
         tree_decision <- decision[valid_indices]
         tree_vaf <- vaf[valid_indices]
         tree_coverage <- total_coverage[valid_indices]
@@ -21728,91 +21705,49 @@ server <- function(input, output, session) {
       return(NULL)
     }
 
-    # Get tree cell row indices if tree and ID column are available
+    # Use filtered_csv if available (contains only rows matching tree tips)
+    # This is the same approach used by the rest of the app for heatmaps
+    csv_to_use <- if (!is.null(values$filtered_csv) && nrow(values$filtered_csv) > 0) {
+      cat(file=stderr(), paste0("[SNP-ANALYSIS] Using filtered_csv (", nrow(values$filtered_csv), " rows matching tree tips)\n"))
+      values$filtered_csv
+    } else {
+      cat(file=stderr(), paste0("[SNP-ANALYSIS] Using full csv_data (", nrow(values$csv_data), " rows) - no filtered_csv available\n"))
+      values$csv_data
+    }
+
+    # Get tree tip labels for matching
+    tree_tips <- NULL
     tree_row_indices <- NULL
     if (!is.null(values$tree) && !is.null(input$id_column) && input$id_column != "" &&
-        input$id_column %in% names(values$csv_data)) {
-      # Get tree tip labels and csv IDs, trimmed of whitespace
+        input$id_column %in% names(csv_to_use)) {
       tree_tips <- trimws(as.character(values$tree$tip.label))
-      csv_ids <- trimws(as.character(values$csv_data[[input$id_column]]))
-      # Find which CSV rows match tree tips (returns indices into csv_ids)
+      csv_ids <- trimws(as.character(csv_to_use[[input$id_column]]))
+
+      # Match tree tips to filtered CSV rows
       tree_row_indices <- match(tree_tips, csv_ids)
       n_matched <- sum(!is.na(tree_row_indices))
-      cat(file=stderr(), paste0("[SNP-ANALYSIS] Tree matching: ", n_matched, " of ", length(tree_tips), " tips matched to CSV\n"))
-
-      # Detailed debug: show what we're matching
+      cat(file=stderr(), paste0("[SNP-ANALYSIS] Tree matching: ", n_matched, " of ", length(tree_tips), " tips matched\n"))
       cat(file=stderr(), paste0("[SNP-ANALYSIS] ID column: '", input$id_column, "'\n"))
       cat(file=stderr(), paste0("[SNP-ANALYSIS] First 5 tree tips: ", paste(head(tree_tips, 5), collapse=", "), "\n"))
       cat(file=stderr(), paste0("[SNP-ANALYSIS] First 5 csv_ids: ", paste(head(csv_ids, 5), collapse=", "), "\n"))
       cat(file=stderr(), paste0("[SNP-ANALYSIS] First 10 tree_row_indices: ", paste(head(tree_row_indices, 10), collapse=", "), "\n"))
 
-      # Check for duplicate IDs - match() returns first occurrence only
-      n_unique_ids <- length(unique(csv_ids))
-      n_total_ids <- length(csv_ids)
-      if (n_unique_ids < n_total_ids) {
-        cat(file=stderr(), paste0("[SNP-ANALYSIS] WARNING: CSV has ", n_total_ids - n_unique_ids, " duplicate IDs! match() uses first occurrence only.\n"))
-        # Check if tree tips have duplicates
-        dup_tree_tips <- tree_tips[duplicated(tree_tips)]
-        if (length(dup_tree_tips) > 0) {
-          cat(file=stderr(), paste0("[SNP-ANALYSIS] Duplicate tree tips: ", paste(head(unique(dup_tree_tips), 5), collapse=", "), "\n"))
-        }
-        # Show which CSV IDs have duplicates
-        dup_csv_ids <- csv_ids[duplicated(csv_ids)]
-        if (length(dup_csv_ids) > 0) {
-          cat(file=stderr(), paste0("[SNP-ANALYSIS] Sample duplicate csv_ids: ", paste(head(unique(dup_csv_ids), 5), collapse=", "), "\n"))
-        }
-      }
-
-      # Check if SNP columns have data at the matched indices
+      # Debug: check SNP data at matched rows
       if (length(values$snp_loci) > 0) {
         first_locus <- values$snp_loci[[1]]
-        if (!is.null(first_locus$m_col) && first_locus$m_col %in% names(values$csv_data)) {
-          m_col_data <- values$csv_data[[first_locus$m_col]]
+        if (!is.null(first_locus$m_col) && first_locus$m_col %in% names(csv_to_use)) {
+          m_col_data <- csv_to_use[[first_locus$m_col]]
           valid_indices <- tree_row_indices[!is.na(tree_row_indices)]
           if (length(valid_indices) > 0) {
             sample_values <- m_col_data[head(valid_indices, 10)]
             cat(file=stderr(), paste0("[SNP-ANALYSIS] ", first_locus$m_col, " values at first 10 matched rows: ",
                                       paste(sample_values, collapse=", "), "\n"))
-
-            # If there are duplicates and matched rows have NA, try to find rows with data
-            if (n_unique_ids < n_total_ids) {
-              # Check how many matched rows have NA in the SNP column
-              matched_vals <- m_col_data[valid_indices]
-              n_na_matched <- sum(is.na(matched_vals) | matched_vals == "" | matched_vals == "NA")
-              cat(file=stderr(), paste0("[SNP-ANALYSIS] Matched rows with NA in SNP data: ", n_na_matched, "/", length(valid_indices), "\n"))
-
-              # If many matched rows have NA, try smarter matching
-              if (n_na_matched > length(valid_indices) * 0.5) {
-                cat(file=stderr(), "[SNP-ANALYSIS] Attempting smart matching to find rows with SNP data...\n")
-
-                # For each tree tip, find ALL matching rows and prefer one with data
-                smart_indices <- sapply(tree_tips, function(tip) {
-                  all_matches <- which(csv_ids == tip)
-                  if (length(all_matches) == 0) return(NA_integer_)
-                  if (length(all_matches) == 1) return(all_matches)
-                  # Multiple matches - prefer row with valid SNP data
-                  snp_vals <- m_col_data[all_matches]
-                  valid_snp <- !is.na(snp_vals) & snp_vals != "" & snp_vals != "NA"
-                  if (any(valid_snp)) {
-                    return(all_matches[which(valid_snp)[1]])  # First row with valid data
-                  }
-                  return(all_matches[1])  # Fallback to first match
-                })
-                tree_row_indices <- as.integer(smart_indices)
-
-                n_matched_smart <- sum(!is.na(tree_row_indices))
-                matched_vals_smart <- m_col_data[tree_row_indices[!is.na(tree_row_indices)]]
-                n_na_smart <- sum(is.na(matched_vals_smart) | matched_vals_smart == "" | matched_vals_smart == "NA")
-                cat(file=stderr(), paste0("[SNP-ANALYSIS] Smart matching: ", n_matched_smart, " tips matched, ", n_na_smart, " still have NA\n"))
-                cat(file=stderr(), paste0("[SNP-ANALYSIS] Smart indices first 10: ", paste(head(tree_row_indices, 10), collapse=", "), "\n"))
-              }
-            }
           }
         }
       }
     }
 
-    func.compute.snp.analysis(values$csv_data, values$snp_loci, min_coverage, vaf_threshold, data_format, tree_row_indices)
+    func.compute.snp.analysis(csv_to_use, values$snp_loci, min_coverage, vaf_threshold, data_format, tree_row_indices)
   })
 
   # ============================================================================
