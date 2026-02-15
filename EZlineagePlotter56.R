@@ -21592,6 +21592,31 @@ server <- function(input, output, session) {
       # Calculate VAF
       vaf <- ifelse(total_coverage > 0, (m_values / total_coverage) * 100, NA)
 
+      # Debug: Show complete calculation pipeline for first 10 rows with data
+      cat(file=stderr(), paste0("[SNP-CALC] === ", locus_name, " Calculation Debug ===\n"))
+      # Find rows with valid data for debugging
+      valid_rows <- which(!is.na(first_col_values) & !is.na(wt_values))
+      if (length(valid_rows) > 0) {
+        debug_rows <- head(valid_rows, 10)
+        for (i in seq_along(debug_rows)) {
+          row_idx <- debug_rows[i]
+          cat(file=stderr(), paste0("[SNP-CALC] Row ", row_idx, ": ",
+                                    "DP=", first_col_values[row_idx], ", ",
+                                    "WT=", wt_values[row_idx], ", ",
+                                    "M=", m_values[row_idx], ", ",
+                                    "VAF=", round(vaf[row_idx], 2), "%\n"))
+        }
+      } else {
+        cat(file=stderr(), "[SNP-CALC] No rows with valid DP and WT values found\n")
+      }
+      # Show summary stats
+      valid_vaf <- vaf[!is.na(vaf)]
+      if (length(valid_vaf) > 0) {
+        cat(file=stderr(), paste0("[SNP-CALC] VAF summary: min=", round(min(valid_vaf), 2),
+                                  "%, max=", round(max(valid_vaf), 2),
+                                  "%, mean=", round(mean(valid_vaf), 2), "%\n"))
+      }
+
       # Make decisions
       decision <- rep(NA_character_, length(m_values))
 
