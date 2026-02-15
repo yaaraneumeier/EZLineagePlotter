@@ -19558,30 +19558,32 @@ server <- function(input, output, session) {
                   if (show_row_labels) {
                     # With coord_flip + scale_y_reverse:
                     # - y values control visual LEFT/RIGHT position
-                    # - y = 1 (min) is at visual LEFT, y = max_tips is at visual RIGHT
                     # - Lower y values = visually to the RIGHT (like regular heatmap labels)
                     # - Higher y values = visually to the LEFT
-                    # - x values control visual TOP/BOTTOM (not relevant for left/right positioning)
 
                     # Position label to the left or right of the heatmap column
                     # Account for tile_width/2 to get to edge of tiles, then add user distance
                     if (row_label_position == "right") {
                       # Right of heatmap: use lower y values (below min tip minus half tile width)
                       label_y <- min(tip_data$y) - (tile_width / 2) - row_label_distance
-                      label_hjust <- 1  # text ends at anchor (extends left toward heatmap)
+                      label_hjust <- 0  # text starts at anchor, extends away from heatmap
                     } else {
                       # Left of heatmap: use higher y values (above max tip plus half tile width)
                       label_y <- max(tip_data$y) + (tile_width / 2) + row_label_distance
-                      label_hjust <- 0  # text starts at anchor (extends right toward heatmap)
+                      label_hjust <- 1  # text ends at anchor, extends away from heatmap
                     }
 
                     # x position is the center of the heatmap column (controls vertical position)
                     label_x <- x_offset
 
+                    # For angled text, use vjust=1 to prevent text from extending into heatmap
+                    # (matching regular heatmap behavior)
+                    label_vjust <- if (row_label_angle == 0) 0.5 else 1
+
                     result <- result +
                       annotate("text", x = label_x, y = label_y,
                                label = paste0(locus_name, " (VAF)"),
-                               size = row_label_size, hjust = label_hjust, vjust = 0.5, angle = row_label_angle)
+                               size = row_label_size, hjust = label_hjust, vjust = label_vjust, angle = row_label_angle)
                   }
 
                   x_offset <- x_offset + heatmap_height + loci_spacing / 2
@@ -19631,20 +19633,24 @@ server <- function(input, output, session) {
                     if (row_label_position == "right") {
                       # Right of heatmap: use lower y values (below min tip minus half tile width)
                       label_y <- min(tip_data$y) - (tile_width / 2) - row_label_distance
-                      label_hjust <- 1  # text ends at anchor (extends left toward heatmap)
+                      label_hjust <- 0  # text starts at anchor, extends away from heatmap
                     } else {
                       # Left of heatmap: use higher y values (above max tip plus half tile width)
                       label_y <- max(tip_data$y) + (tile_width / 2) + row_label_distance
-                      label_hjust <- 0  # text starts at anchor (extends right toward heatmap)
+                      label_hjust <- 1  # text ends at anchor, extends away from heatmap
                     }
 
                     # x position is the center of the heatmap column (controls vertical position)
                     label_x <- x_offset
 
+                    # For angled text, use vjust=1 to prevent text from extending into heatmap
+                    # (matching regular heatmap behavior)
+                    label_vjust <- if (row_label_angle == 0) 0.5 else 1
+
                     result <- result +
                       annotate("text", x = label_x, y = label_y,
                                label = paste0(locus_name, " (Call)"),
-                               size = row_label_size, hjust = label_hjust, vjust = 0.5, angle = row_label_angle)
+                               size = row_label_size, hjust = label_hjust, vjust = label_vjust, angle = row_label_angle)
                   }
 
                   x_offset <- x_offset + heatmap_height + loci_spacing / 2
