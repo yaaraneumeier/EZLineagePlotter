@@ -21715,6 +21715,38 @@ server <- function(input, output, session) {
       values$csv_data
     }
 
+    # Debug: Check if SNP columns have data in filtered_csv vs full csv
+    if (length(values$snp_loci) > 0) {
+      first_locus <- values$snp_loci[[1]]
+      if (!is.null(first_locus$m_col)) {
+        # Check in filtered_csv
+        if (!is.null(values$filtered_csv) && first_locus$m_col %in% names(values$filtered_csv)) {
+          filtered_snp_data <- values$filtered_csv[[first_locus$m_col]]
+          n_valid_filtered <- sum(!is.na(filtered_snp_data) & filtered_snp_data != "" & filtered_snp_data != "#N/A")
+          cat(file=stderr(), paste0("[SNP-DEBUG] ", first_locus$m_col, " in filtered_csv: ", n_valid_filtered, "/", length(filtered_snp_data), " valid\n"))
+          # Show first 10 actual values
+          cat(file=stderr(), paste0("[SNP-DEBUG] filtered_csv first 10 values: ", paste(head(filtered_snp_data, 10), collapse=", "), "\n"))
+        }
+        # Check in full csv
+        if (first_locus$m_col %in% names(values$csv_data)) {
+          full_snp_data <- values$csv_data[[first_locus$m_col]]
+          n_valid_full <- sum(!is.na(full_snp_data) & full_snp_data != "" & full_snp_data != "#N/A")
+          cat(file=stderr(), paste0("[SNP-DEBUG] ", first_locus$m_col, " in full csv_data: ", n_valid_full, "/", length(full_snp_data), " valid\n"))
+
+          # Find which rows in full CSV have SNP data
+          rows_with_data <- which(!is.na(full_snp_data) & full_snp_data != "" & full_snp_data != "#N/A")
+          if (length(rows_with_data) > 0) {
+            cat(file=stderr(), paste0("[SNP-DEBUG] Full CSV rows with SNP data: first 10 row indices = ", paste(head(rows_with_data, 10), collapse=", "), "\n"))
+            # Show ID column values for those rows
+            if (!is.null(input$id_column) && input$id_column %in% names(values$csv_data)) {
+              snp_ids <- values$csv_data[[input$id_column]][rows_with_data]
+              cat(file=stderr(), paste0("[SNP-DEBUG] ID values for SNP data rows: ", paste(head(snp_ids, 10), collapse=", "), "\n"))
+            }
+          }
+        }
+      }
+    }
+
     # Get tree tip labels for matching
     tree_tips <- NULL
     tree_row_indices <- NULL
