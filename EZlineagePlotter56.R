@@ -19556,20 +19556,26 @@ server <- function(input, output, session) {
 
                   # Add row label if enabled
                   if (show_row_labels) {
-                    # For rotated tree (root above, leaves below with scale_y_reverse):
-                    # - min(tip_data$y) is visually at TOP of tree
-                    # - max(tip_data$y) is visually at BOTTOM of tree
-                    # Position label BELOW the heatmap (higher y = lower on plot)
-                    label_y <- max(tip_data$y) + 0.5 + row_label_distance
+                    # With coord_flip + scale_y_reverse:
+                    # - y values control visual LEFT/RIGHT position
+                    # - y = 1 (min) is at visual LEFT, y = max_tips is at visual RIGHT
+                    # - Lower y values = visually to the RIGHT (like regular heatmap labels)
+                    # - Higher y values = visually to the LEFT
+                    # - x values control visual TOP/BOTTOM (not relevant for left/right positioning)
 
-                    # left/right positioning: adjust x relative to heatmap column center
+                    # Position label to the left or right of the heatmap column
                     if (row_label_position == "right") {
-                      label_x <- x_offset + heatmap_height / 2 + 0.1
-                      label_hjust <- 0  # text extends to right
+                      # Right of heatmap: use lower y values (below min)
+                      label_y <- min(tip_data$y) - 0.5 - row_label_distance
+                      label_hjust <- 1  # text ends at anchor (extends left toward heatmap)
                     } else {
-                      label_x <- x_offset - heatmap_height / 2 - 0.1
-                      label_hjust <- 1  # text extends to left
+                      # Left of heatmap: use higher y values (above max)
+                      label_y <- max(tip_data$y) + 0.5 + row_label_distance
+                      label_hjust <- 0  # text starts at anchor (extends right toward heatmap)
                     }
+
+                    # x position is the center of the heatmap column (controls vertical position)
+                    label_x <- x_offset
 
                     result <- result +
                       annotate("text", x = label_x, y = label_y,
@@ -19614,18 +19620,24 @@ server <- function(input, output, session) {
 
                   # Add row label if enabled
                   if (show_row_labels) {
-                    # For rotated tree (root above, leaves below with scale_y_reverse):
-                    # Position label BELOW the heatmap (higher y = lower on plot)
-                    label_y <- max(tip_data$y) + 0.5 + row_label_distance
+                    # With coord_flip + scale_y_reverse:
+                    # - y values control visual LEFT/RIGHT position
+                    # - Lower y values = visually to the RIGHT
+                    # - Higher y values = visually to the LEFT
 
-                    # left/right positioning: adjust x relative to heatmap column center
+                    # Position label to the left or right of the heatmap column
                     if (row_label_position == "right") {
-                      label_x <- x_offset + heatmap_height / 2 + 0.1
-                      label_hjust <- 0  # text extends to right
+                      # Right of heatmap: use lower y values (below min)
+                      label_y <- min(tip_data$y) - 0.5 - row_label_distance
+                      label_hjust <- 1  # text ends at anchor (extends left toward heatmap)
                     } else {
-                      label_x <- x_offset - heatmap_height / 2 - 0.1
-                      label_hjust <- 1  # text extends to left
+                      # Left of heatmap: use higher y values (above max)
+                      label_y <- max(tip_data$y) + 0.5 + row_label_distance
+                      label_hjust <- 0  # text starts at anchor (extends right toward heatmap)
                     }
+
+                    # x position is the center of the heatmap column (controls vertical position)
+                    label_x <- x_offset
 
                     result <- result +
                       annotate("text", x = label_x, y = label_y,
