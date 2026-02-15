@@ -9787,7 +9787,7 @@ ui <- dashboardPage(
 
               # Minimum coverage threshold
               sliderInput("snp_min_coverage", "Minimum Coverage (M + WT reads)",
-                          min = 0, max = 500, value = 10, step = 1),
+                          min = 0, max = 500, value = 20, step = 1),
               tags$p(class = "text-muted small", "Cells with fewer total reads will be marked as 'No-call'"),
 
               hr(),
@@ -9939,27 +9939,6 @@ ui <- dashboardPage(
 
               # Overall summary
               uiOutput("snp_overall_summary_ui")
-            ),
-
-            # Save/Load Configuration Box
-            box(
-              title = tagList(icon("save"), " Save/Load Configuration"),
-              status = "info",
-              solidHeader = TRUE,
-              width = 12,
-              collapsible = TRUE,
-              collapsed = TRUE,
-
-              fluidRow(
-                column(6,
-                       downloadButton("snp_save_config", "Save to YAML", class = "btn-success btn-block")
-                ),
-                column(6,
-                       fileInput("snp_load_config", "Load YAML Config",
-                                 accept = c(".yml", ".yaml"),
-                                 buttonLabel = "Browse...")
-                )
-              )
             )
           )
         ),
@@ -19405,6 +19384,22 @@ server <- function(input, output, session) {
             tip_data <- tree_data[tree_data$isTip == TRUE, ]
 
             if (nrow(tip_data) > 0) {
+              # Get matching indices from CSV to tree tips
+              # Use the ID column that was set when matching tree with CSV
+              id_column <- input$id_column
+              csv_data <- values$csv_data
+              tip_labels <- tip_data$label
+
+              # Create a lookup from CSV row to tree tip y position
+              csv_to_tip_match <- NULL
+              if (!is.null(id_column) && id_column != "" && !is.null(csv_data) && id_column %in% names(csv_data)) {
+                csv_ids <- as.character(csv_data[[id_column]])
+                csv_to_tip_match <- match(tip_labels, csv_ids)
+                cat(file=stderr(), paste0("[SNP-ANALYSIS] Matching ", length(tip_labels), " tree tips to CSV using column '", id_column, "'\n"))
+                cat(file=stderr(), paste0("[SNP-ANALYSIS] Matched ", sum(!is.na(csv_to_tip_match)), " tips to CSV rows\n"))
+              } else {
+                cat(file=stderr(), "[SNP-ANALYSIS] WARNING: No ID column specified, using row order assumption\n")
+              }
               # Get styling parameters
               distance_from_tree <- if (!is.null(input$snp_distance_from_tree)) input$snp_distance_from_tree else 0.5
               loci_spacing <- if (!is.null(input$snp_loci_spacing)) input$snp_loci_spacing else 0.1
@@ -19489,19 +19484,26 @@ server <- function(input, output, session) {
               for (locus_name in names(snp_results)) {
                 r <- snp_results[[locus_name]]
 
-                # Match SNP data to tree tips
-                # Assuming same row order as CSV which matches tree tips
+                # Match SNP data to tree tips using the ID column match
                 n_tips <- nrow(tip_data)
-                n_snp <- length(r$vaf)
 
-                if (n_snp >= n_tips) {
-                  # Use first n_tips values
-                  vaf_values <- r$vaf[1:n_tips]
-                  decision_values <- r$decision[1:n_tips]
+                if (!is.null(csv_to_tip_match)) {
+                  # Use proper matching via ID column
+                  vaf_values <- r$vaf[csv_to_tip_match]
+                  decision_values <- r$decision[csv_to_tip_match]
+                  # Replace unmatched with NA
+                  decision_values[is.na(decision_values)] <- "NA"
+                  cat(file=stderr(), paste0("[SNP-ANALYSIS] Locus ", locus_name, ": matched ", sum(!is.na(vaf_values)), "/", n_tips, " values\n"))
                 } else {
-                  # Pad with NA
-                  vaf_values <- c(r$vaf, rep(NA, n_tips - n_snp))
-                  decision_values <- c(r$decision, rep("NA", n_tips - n_snp))
+                  # Fallback: assume same row order (legacy behavior)
+                  n_snp <- length(r$vaf)
+                  if (n_snp >= n_tips) {
+                    vaf_values <- r$vaf[1:n_tips]
+                    decision_values <- r$decision[1:n_tips]
+                  } else {
+                    vaf_values <- c(r$vaf, rep(NA, n_tips - n_snp))
+                    decision_values <- c(r$decision, rep("NA", n_tips - n_snp))
+                  }
                 }
 
                 # Raw VAF heatmap
@@ -19536,17 +19538,19 @@ server <- function(input, output, session) {
                   # Add row label if enabled
                   if (show_row_labels) {
                     # Calculate label position based on settings
+                    # For rotated text (angle=90), use vjust for horizontal centering
                     if (row_label_position == "right") {
                       label_x <- x_offset + heatmap_height / 2 + row_label_distance
-                      label_hjust <- 0
                     } else {
                       label_x <- x_offset - heatmap_height / 2 - row_label_distance
-                      label_hjust <- 1
                     }
+                    # With angle=90, hjust controls vertical text extension:
+                    # hjust=0 = text extends upward from anchor (for angle=90)
+                    # vjust=0.5 centers text baseline on the x position
                     result <- result +
                       annotate("text", x = label_x, y = max(tip_data$y) + 0.5,
                                label = paste0(locus_name, " (VAF)"),
-                               size = row_label_size, hjust = label_hjust, angle = row_label_angle)
+                               size = row_label_size, hjust = 0, vjust = 0.5, angle = row_label_angle)
                   }
 
                   x_offset <- x_offset + heatmap_height + loci_spacing / 2
@@ -19589,15 +19593,13 @@ server <- function(input, output, session) {
                     # Calculate label position based on settings
                     if (row_label_position == "right") {
                       label_x <- x_offset + heatmap_height / 2 + row_label_distance
-                      label_hjust <- 0
                     } else {
                       label_x <- x_offset - heatmap_height / 2 - row_label_distance
-                      label_hjust <- 1
                     }
                     result <- result +
                       annotate("text", x = label_x, y = max(tip_data$y) + 0.5,
                                label = paste0(locus_name, " (Call)"),
-                               size = row_label_size, hjust = label_hjust, angle = row_label_angle)
+                               size = row_label_size, hjust = 0, vjust = 0.5, angle = row_label_angle)
                   }
 
                   x_offset <- x_offset + heatmap_height + loci_spacing / 2
@@ -21491,7 +21493,7 @@ server <- function(input, output, session) {
   # ============================================================================
 
   # Function to compute SNP analysis results
-  func.compute.snp.analysis <- function(csv_data, loci, min_coverage, vaf_threshold, data_format = "m_wt") {
+  func.compute.snp.analysis <- function(csv_data, loci, min_coverage, vaf_threshold, data_format = "m_wt", row_indices = NULL) {
     if (is.null(csv_data) || is.null(loci) || length(loci) == 0) {
       return(NULL)
     }
@@ -21500,6 +21502,18 @@ server <- function(input, output, session) {
     included_loci <- loci[sapply(loci, function(l) isTRUE(l$include))]
     if (length(included_loci) == 0) {
       return(NULL)
+    }
+
+    # If row_indices provided, filter CSV data to only those rows (tree cells)
+    if (!is.null(row_indices)) {
+      # Remove NA indices and filter to valid rows
+      valid_indices <- row_indices[!is.na(row_indices) & row_indices > 0 & row_indices <= nrow(csv_data)]
+      if (length(valid_indices) == 0) {
+        cat(file=stderr(), "[SNP-ANALYSIS] WARNING: No valid row indices for tree matching\n")
+        return(NULL)
+      }
+      csv_data <- csv_data[valid_indices, , drop = FALSE]
+      cat(file=stderr(), paste0("[SNP-ANALYSIS] Filtered to ", nrow(csv_data), " tree cells\n"))
     }
 
     cat(file=stderr(), paste0("[SNP-ANALYSIS] Computing analysis for ", length(included_loci), " loci\n"))
@@ -21594,6 +21608,7 @@ server <- function(input, output, session) {
   }
 
   # Reactive to compute SNP analysis when inputs change
+  # Filters to only tree cells when a tree is loaded and ID column is set
   snp_analysis_results <- reactive({
     req(values$csv_data)
     req(values$snp_loci)
@@ -21607,7 +21622,19 @@ server <- function(input, output, session) {
       return(NULL)
     }
 
-    func.compute.snp.analysis(values$csv_data, values$snp_loci, min_coverage, vaf_threshold, data_format)
+    # Get tree cell row indices if tree and ID column are available
+    row_indices <- NULL
+    if (!is.null(values$tree) && !is.null(input$id_column) && input$id_column != "" &&
+        input$id_column %in% names(values$csv_data)) {
+      # Get tree tip labels
+      tree_tips <- values$tree$tip.label
+      csv_ids <- as.character(values$csv_data[[input$id_column]])
+      # Find which CSV rows match tree tips
+      row_indices <- match(tree_tips, csv_ids)
+      cat(file=stderr(), paste0("[SNP-ANALYSIS] Filtering to ", sum(!is.na(row_indices)), " tree cells out of ", length(tree_tips), " tree tips\n"))
+    }
+
+    func.compute.snp.analysis(values$csv_data, values$snp_loci, min_coverage, vaf_threshold, data_format, row_indices)
   })
 
   # ============================================================================
@@ -21818,144 +21845,6 @@ server <- function(input, output, session) {
     request_plot_update()
 
     showNotification("SNP analysis cleared", type = "message")
-  })
-
-  # ============================================================================
-  # SNP ANALYSIS - YAML Save/Load
-  # ============================================================================
-
-  # Save SNP configuration to YAML
-  output$snp_save_config <- downloadHandler(
-    filename = function() {
-      paste0("snp_analysis_config_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".yml")
-    },
-    content = function(file) {
-      config <- list(
-        snp_analysis = list(
-          # Data format and column pairing
-          data_format = input$snp_data_format,
-          m_suffix = input$snp_m_suffix,
-          wt_suffix = input$snp_wt_suffix,
-          loci = lapply(values$snp_loci, function(l) {
-            list(name = l$name, m_col = l$m_col, wt_col = l$wt_col, include = l$include,
-                 data_format = l$data_format)
-          }),
-
-          # Thresholds
-          min_coverage = input$snp_min_coverage,
-          vaf_threshold = input$snp_vaf_threshold,
-
-          # Display options
-          show_raw = input$snp_show_raw,
-          show_decision = input$snp_show_decision,
-          show_row_labels = input$snp_show_row_labels,
-          distance_from_tree = input$snp_distance_from_tree,
-          loci_spacing = input$snp_loci_spacing,
-          heatmap_height = input$snp_heatmap_height,
-
-          # Row label settings
-          row_label_size = input$snp_row_label_size,
-          row_label_position = input$snp_row_label_position,
-          row_label_distance = input$snp_row_label_distance,
-          row_label_angle = input$snp_row_label_angle,
-
-          # Visual styling - raw heatmap
-          raw_palette = input$snp_raw_palette,
-          raw_low_color = input$snp_raw_low_color,
-          raw_mid_color = input$snp_raw_mid_color,
-          raw_high_color = input$snp_raw_high_color,
-
-          # Visual styling - decision heatmap
-          decision_palette = input$snp_decision_palette,
-          color_mutated = input$snp_color_mutated,
-          color_wt = input$snp_color_wt,
-          color_nocall = input$snp_color_nocall,
-          color_na = input$snp_color_na,
-
-          # Other options
-          show_borders = input$snp_show_borders,
-          border_color = input$snp_border_color,
-          border_width = input$snp_border_width,
-          show_legend = input$snp_show_legend
-        )
-      )
-
-      yaml::write_yaml(config, file)
-      cat(file=stderr(), "[SNP-ANALYSIS] Configuration saved to YAML\n")
-    }
-  )
-
-  # Load SNP configuration from YAML
-  observeEvent(input$snp_load_config, {
-    req(input$snp_load_config)
-
-    tryCatch({
-      config <- yaml::read_yaml(input$snp_load_config$datapath)
-
-      if (is.null(config$snp_analysis)) {
-        showNotification("Invalid SNP configuration file", type = "error")
-        return()
-      }
-
-      snp <- config$snp_analysis
-
-      # Update data format and column pairing
-      if (!is.null(snp$data_format)) {
-        updateSelectInput(session, "snp_data_format", selected = snp$data_format)
-        values$snp_data_format <- snp$data_format
-      }
-      if (!is.null(snp$m_suffix)) updateTextInput(session, "snp_m_suffix", value = snp$m_suffix)
-      if (!is.null(snp$wt_suffix)) updateTextInput(session, "snp_wt_suffix", value = snp$wt_suffix)
-
-      # Update loci
-      if (!is.null(snp$loci)) {
-        values$snp_loci <- lapply(snp$loci, function(l) {
-          list(name = l$name, m_col = l$m_col, wt_col = l$wt_col, include = isTRUE(l$include),
-               data_format = l$data_format)
-        })
-      }
-
-      # Update thresholds
-      if (!is.null(snp$min_coverage)) updateSliderInput(session, "snp_min_coverage", value = snp$min_coverage)
-      if (!is.null(snp$vaf_threshold)) updateSliderInput(session, "snp_vaf_threshold", value = snp$vaf_threshold)
-
-      # Update display options
-      if (!is.null(snp$show_raw)) updateCheckboxInput(session, "snp_show_raw", value = snp$show_raw)
-      if (!is.null(snp$show_decision)) updateCheckboxInput(session, "snp_show_decision", value = snp$show_decision)
-      if (!is.null(snp$show_row_labels)) updateCheckboxInput(session, "snp_show_row_labels", value = snp$show_row_labels)
-      if (!is.null(snp$distance_from_tree)) updateSliderInput(session, "snp_distance_from_tree", value = snp$distance_from_tree)
-      if (!is.null(snp$loci_spacing)) updateSliderInput(session, "snp_loci_spacing", value = snp$loci_spacing)
-      if (!is.null(snp$heatmap_height)) updateSliderInput(session, "snp_heatmap_height", value = snp$heatmap_height)
-
-      # Update row label settings
-      if (!is.null(snp$row_label_size)) updateSliderInput(session, "snp_row_label_size", value = snp$row_label_size)
-      if (!is.null(snp$row_label_position)) updateRadioButtons(session, "snp_row_label_position", selected = snp$row_label_position)
-      if (!is.null(snp$row_label_distance)) updateSliderInput(session, "snp_row_label_distance", value = snp$row_label_distance)
-      if (!is.null(snp$row_label_angle)) updateSliderInput(session, "snp_row_label_angle", value = snp$row_label_angle)
-
-      # Update visual styling
-      if (!is.null(snp$raw_palette)) updateSelectInput(session, "snp_raw_palette", selected = snp$raw_palette)
-      if (!is.null(snp$raw_low_color)) updateColourInput(session, "snp_raw_low_color", value = snp$raw_low_color)
-      if (!is.null(snp$raw_mid_color)) updateColourInput(session, "snp_raw_mid_color", value = snp$raw_mid_color)
-      if (!is.null(snp$raw_high_color)) updateColourInput(session, "snp_raw_high_color", value = snp$raw_high_color)
-      if (!is.null(snp$decision_palette)) updateSelectInput(session, "snp_decision_palette", selected = snp$decision_palette)
-      if (!is.null(snp$color_mutated)) updateColourInput(session, "snp_color_mutated", value = snp$color_mutated)
-      if (!is.null(snp$color_wt)) updateColourInput(session, "snp_color_wt", value = snp$color_wt)
-      if (!is.null(snp$color_nocall)) updateColourInput(session, "snp_color_nocall", value = snp$color_nocall)
-      if (!is.null(snp$color_na)) updateColourInput(session, "snp_color_na", value = snp$color_na)
-
-      if (!is.null(snp$show_borders)) updateCheckboxInput(session, "snp_show_borders", value = snp$show_borders)
-      if (!is.null(snp$border_color)) updateColourInput(session, "snp_border_color", value = snp$border_color)
-      if (!is.null(snp$border_width)) updateSliderInput(session, "snp_border_width", value = snp$border_width)
-      if (!is.null(snp$show_legend)) updateCheckboxInput(session, "snp_show_legend", value = snp$show_legend)
-
-      showNotification("SNP configuration loaded successfully", type = "message")
-      cat(file=stderr(), "[SNP-ANALYSIS] Configuration loaded from YAML\n")
-
-    }, error = function(e) {
-      showNotification(paste0("Error loading config: ", e$message), type = "error")
-      cat(file=stderr(), paste0("[SNP-ANALYSIS] Error loading config: ", e$message, "\n"))
-    })
   })
 
   # ============================================================================
