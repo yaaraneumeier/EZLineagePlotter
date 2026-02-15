@@ -231,7 +231,7 @@ options(shiny.maxRequestSize = 100*1024^2)
 #       - Layer reordering now happens ONCE at the end in generate_plot()
 # S1.2: Fixed undefined x_range_min in func_highlight causing "Problem while
 #       computing aesthetics" error when adding 2+ highlights with a heatmap.
-VERSION <- "S2.292dev"
+VERSION <- "S3.1"
 
 # Debug output control - set to TRUE to enable verbose console logging
 # For production/stable use, keep this FALSE for better performance
@@ -3944,7 +3944,9 @@ func.print.lineage.tree <- function(conf_yaml_path,
               param['low'] <- ll
               param['mid'] <- mm
               param['high'] <- hh
-              param['midpoint']<- .02
+              # S2.9-FIX8: Default midpoint to 2 for RData CNV (diploid baseline), 0.02 otherwise
+              is_rdata_heatmap_here <- 'data_source' %in% names(heat_map_i_def) && heat_map_i_def$data_source == "rdata"
+              param['midpoint'] <- if (is_rdata_heatmap_here) 2 else 0.02
               
               #print("param is")
               #print(param)
@@ -6297,12 +6299,28 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     # v53: cat(file=stderr(), "Ã°Å¸â€Â Ã¢Å“â€œ ADDING NODE NUMBERS with size:", node_number_font_size, "\n")
     # v53: debug_cat("================================================\n\n")
     
+    # S2.9-FIX6: Fixed node numbers not displaying when heatmaps are present.
+    # Issues fixed:
+    # 1. Removed colour from aes() - it created a mapped aesthetic that conflicted
+    #    with classification color scales
+    # 2. Added inherit.aes = FALSE to prevent inheriting fill/colour aesthetics from
+    #    heatmap layers that use new_scale_fill()
+    # 3. Explicitly provide the tree data to ensure correct x/y coordinates
+    cat(file=stderr(), "[NODE-NUMBERS] Adding node numbers layer\n")
+    node_data <- pr440_short_tips_TRY_new_with_boot_more1$data
+    cat(file=stderr(), paste0("[NODE-NUMBERS] Using data with ", nrow(node_data), " nodes\n"))
     pr440_short_tips_TRY_new_with_boot_more1 <- pr440_short_tips_TRY_new_with_boot_more1 +
       geom_text(
-        aes(label = node, angle = 90, colour = "black"), 
-        hjust = -0.5, vjust = -0.4, size = node_number_font_size,
-        show.legend = FALSE, colour = "black"
+        data = node_data,
+        aes(x = x, y = y, label = node),
+        angle = 90, hjust = -0.5, vjust = -0.4,
+        size = node_number_font_size,
+        colour = "black",
+        show.legend = FALSE,
+        inherit.aes = FALSE
       )
+    cat(file=stderr(), paste0("[NODE-NUMBERS] Layer added. Total layers: ",
+                              length(pr440_short_tips_TRY_new_with_boot_more1$layers), "\n"))
   } else {
     # v53: cat(file=stderr(), "Ã°Å¸â€Â Ã¢Å“â€” NODE NUMBERS NOT ENABLED\n")
     # v53: debug_cat("================================================\n\n")
@@ -6685,6 +6703,10 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
                                heat_param[['cnv_display_mode']] == "detailed"
           cat(file=stderr(), paste0("[S2.8-DEBUG] is_rdata_detailed: ", is_rdata_detailed, "\n"))
 
+          # S2.9-FIX4: Define heatmap_title and na_color BEFORE detailed mode section uses them
+          heatmap_title <- if (heat_idx <= length(heat_map_title_list)) heat_map_title_list[[heat_idx]] else paste0("Heatmap ", heat_idx)
+          na_color <- if (!is.null(heat_param[['na_color']])) heat_param[['na_color']] else "grey90"
+
           if (is_rdata_detailed) {
             debug_cat(paste0("\n=== S2.8: DETAILED MODE (geom_tile with pre-computed colors like pheatmap) ===\n"))
             cat(file=stderr(), "[HEATMAP-RENDER] Using DETAILED mode with geom_tile + pre-computed colors (pheatmap-style)\n")
@@ -6739,17 +6761,44 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
             # S2.9-PERF: Use cached colors if available, otherwise compute
             if (use_cached_colors && !is.null(cached_tile_df)) {
-              # Use cached tile_df with pre-computed fill_color
-              tile_df <- cached_tile_df
-              value_min <- cached_value_range$min
-              value_max <- cached_value_range$max
-              cat(file=stderr(), paste0("[S2.9-CACHE] Using cached tile_df with ", nrow(tile_df), " tiles\n"))
+              # S2.9-FIX: Only copy fill_color from cache, keep fresh x/y coordinates
+              # The fresh tile_df has correct x/y coordinates based on current_heatmap_x_start
+              # The cached_tile_df may have stale coordinates from a previous render
 
-              # Still need to create palette for legend
-              colors_below <- colorRampPalette(c(low_color, mid_color))(999)
-              colors_above <- colorRampPalette(c(mid_color, high_color))(1000)[-1]
-              detailed_palette <- c(colors_below, colors_above)
-            } else {
+              # S2.9-FIX2: Validate cached data has required columns and values
+              cache_valid <- nrow(tile_df) == nrow(cached_tile_df) &&
+                             "fill_color" %in% names(cached_tile_df) &&
+                             !is.null(cached_value_range$min) &&
+                             !is.null(cached_value_range$max)
+
+              if (cache_valid) {
+                # Safe to copy fill_color - same number of tiles and valid cache
+                tile_df$fill_color <- cached_tile_df$fill_color
+                value_min <- cached_value_range$min
+                value_max <- cached_value_range$max
+                cat(file=stderr(), paste0("[S2.9-CACHE] Using cached fill colors for ", nrow(tile_df), " tiles (fresh coordinates preserved)\n"))
+              } else {
+                # Cache invalid - force recomputation
+                reason <- if (nrow(tile_df) != nrow(cached_tile_df)) {
+                  paste0("row count mismatch (fresh=", nrow(tile_df), " vs cached=", nrow(cached_tile_df), ")")
+                } else if (!"fill_color" %in% names(cached_tile_df)) {
+                  "missing fill_color column in cache"
+                } else {
+                  "missing value_range in cache"
+                }
+                cat(file=stderr(), paste0("[S2.9-CACHE] WARNING: Cache invalid (", reason, ") - recomputing colors\n"))
+                use_cached_colors <- FALSE
+              }
+
+              # Still need to create palette for legend (only if cache was valid)
+              if (use_cached_colors) {
+                colors_below <- colorRampPalette(c(low_color, mid_color))(999)
+                colors_above <- colorRampPalette(c(mid_color, high_color))(1000)[-1]
+                detailed_palette <- c(colors_below, colors_above)
+              }
+            }
+
+            if (!use_cached_colors) {
               # Create fine-grained color palette like pheatmap (1998 colors)
               colors_below <- colorRampPalette(c(low_color, mid_color))(999)
               colors_above <- colorRampPalette(c(mid_color, high_color))(1000)[-1]
@@ -6766,31 +6815,69 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
                 data_min <- min(data_values, na.rm = TRUE)
                 data_max <- max(data_values, na.rm = TRUE)
 
-                range_below <- midpoint - min(data_min, 0)
-                range_above <- max(data_max, midpoint + 2) - midpoint
-                max_range <- max(range_below, range_above, 2)
+                # S2.9-FIX7: Use actual data range for legend instead of artificially extended symmetric range
+                # The old code forced symmetric extension around midpoint which showed wrong values (e.g., -2.5 to 5)
+                # Now we use the actual data range, ensuring the legend accurately reflects the data
 
-                value_min <- midpoint - max_range
-                value_max <- midpoint + max_range
+                # For color mapping, we still center the color gradient around the midpoint
+                # but the legend shows actual data values
+                value_min <- data_min
+                value_max <- data_max
+
+                # Add small buffer only if range is too small (prevents division by zero)
+                if (abs(value_max - value_min) < 0.01) {
+                  value_min <- value_min - 0.5
+                  value_max <- value_max + 0.5
+                }
 
                 debug_cat(paste0("  S2.8 Data range: [", round(data_min, 2), ", ", round(data_max, 2), "]\n"))
-                debug_cat(paste0("  S2.8 Color range: [", round(value_min, 2), ", ", round(value_max, 2), "]\n"))
+                debug_cat(paste0("  S2.8 Color range (legend): [", round(value_min, 2), ", ", round(value_max, 2), "]\n"))
+                debug_cat(paste0("  S2.8 Midpoint: ", midpoint, "\n"))
 
-                # Pre-compute colors for each tile (like pheatmap does)
-                # Normalize values to 0-1 range, then map to palette indices
-                normalized_values <- (tile_df$value - value_min) / (value_max - value_min)
-                normalized_values[normalized_values < 0] <- 0
-                normalized_values[normalized_values > 1] <- 1
+                # S2.9-FIX7: Pre-compute colors with proper midpoint handling
+                # The palette has 1998 colors: indices 1-999 are low->mid, 999-1998 are mid->high
+                # Map values relative to midpoint to ensure midpoint gets mid_color
+                n_colors_half <- 999
+                color_indices <- numeric(length(tile_df$value))
 
-                # Convert to color indices (1 to 1998)
-                color_indices <- round(normalized_values * (length(detailed_palette) - 1)) + 1
+                for (idx in seq_along(tile_df$value)) {
+                  val <- tile_df$value[idx]
+                  if (is.na(val)) {
+                    color_indices[idx] <- NA
+                  } else if (val <= midpoint) {
+                    # Map values below or at midpoint to colors 1-999 (low to mid)
+                    if (value_min >= midpoint) {
+                      # All data is at or above midpoint
+                      color_indices[idx] <- n_colors_half
+                    } else {
+                      # Normalize to 0-1 within below-midpoint range
+                      norm_val <- (val - value_min) / (midpoint - value_min)
+                      norm_val <- max(0, min(1, norm_val))
+                      color_indices[idx] <- round(norm_val * (n_colors_half - 1)) + 1
+                    }
+                  } else {
+                    # Map values above midpoint to colors 1000-1998 (mid to high)
+                    if (value_max <= midpoint) {
+                      # All data is at or below midpoint
+                      color_indices[idx] <- n_colors_half
+                    } else {
+                      # Normalize to 0-1 within above-midpoint range
+                      norm_val <- (val - midpoint) / (value_max - midpoint)
+                      norm_val <- max(0, min(1, norm_val))
+                      color_indices[idx] <- n_colors_half + round(norm_val * (n_colors_half - 1))
+                    }
+                  }
+                }
 
-                # Assign pre-computed colors
-                tile_df$fill_color <- detailed_palette[color_indices]
+                # Assign pre-computed colors (handle NA indices safely)
+                valid_indices <- !is.na(color_indices)
+                tile_df$fill_color <- na_color  # Default to NA color
+                tile_df$fill_color[valid_indices] <- detailed_palette[color_indices[valid_indices]]
                 tile_df$fill_color[is.na(tile_df$value)] <- na_color
 
                 cat(file=stderr(), paste0("[S2.8-DETAILED] Pre-computed colors for ", nrow(tile_df), " tiles\n"))
                 cat(file=stderr(), paste0("[S2.8-DETAILED] Unique colors: ", length(unique(tile_df$fill_color)), "\n"))
+                cat(file=stderr(), paste0("[S2.8-DETAILED] Legend will show actual data range: ", round(value_min, 2), " to ", round(value_max, 2), "\n"))
 
                 # S2.9-PERF: Store in cache for future use
                 if (!exists("updated_heatmap_cache")) {
@@ -7092,7 +7179,11 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
           # v123: new_scale_fill() is now added BEFORE geom_tile (see line ~4993)
 
-          if (is_discrete) {
+          # S2.9-FIX3: Skip color scale section for detailed mode - it handles its own colors and legend
+          # Detailed mode uses scale_fill_identity() for tiles and scale_fill_gradientn() for legend
+          # Adding scale_fill_gradient2() here would conflict with the pre-computed colors
+          if (!is_rdata_detailed) {
+            if (is_discrete) {
             debug_cat(paste0("  Adding discrete color scale\n"))
 
             # v100: Check for custom colors from user
@@ -7188,7 +7279,10 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             low_color <- if (!is.null(heat_param[['low']]) && !is.na(heat_param[['low']])) heat_param[['low']] else "beige"
             mid_color <- if (!is.null(heat_param[['mid']]) && !is.na(heat_param[['mid']])) heat_param[['mid']] else "seashell2"
             high_color <- if (!is.null(heat_param[['high']]) && !is.na(heat_param[['high']])) heat_param[['high']] else "firebrick4"
-            midpoint <- if (!is.null(heat_param[['midpoint']]) && !is.na(heat_param[['midpoint']])) as.numeric(heat_param[['midpoint']]) else 0.02
+            # S2.9-FIX8: Default midpoint to 2 for RData CNV (diploid baseline), 0.02 for other heatmaps
+            is_rdata_source <- !is.null(heat_param[['data_source']]) && heat_param[['data_source']] == "rdata"
+            default_midpoint <- if (is_rdata_source) 2 else 0.02
+            midpoint <- if (!is.null(heat_param[['midpoint']]) && !is.na(heat_param[['midpoint']])) as.numeric(heat_param[['midpoint']]) else default_midpoint
             limits <- heat_param[['limits']]
 
             # v113: Debug output for continuous scale colors including NA color
@@ -7217,6 +7311,10 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
                 na.value = na_color
               )
             }
+          }
+          } else {
+            # S2.9-FIX3: Detailed mode - colors already handled
+            debug_cat(paste0("  Skipping color scale (detailed mode already has pre-computed colors)\n"))
           }
 
           debug_cat(paste0("  Color scale added successfully\n"))
@@ -7434,7 +7532,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
               chr_line_color <- if (!is.null(heat_param[['cnv_chr_line_color']])) heat_param[['cnv_chr_line_color']] else "#000000"
               chr_line_size <- if (!is.null(heat_param[['cnv_chr_line_size']])) as.numeric(heat_param[['cnv_chr_line_size']]) else 0.5
               chr_label_size <- if (!is.null(heat_param[['cnv_chr_label_size']])) as.numeric(heat_param[['cnv_chr_label_size']]) else 2.5
-              chr_label_position <- if (!is.null(heat_param[['cnv_chr_label_position']])) heat_param[['cnv_chr_label_position']] else "right"
+              chr_label_position <- if (!is.null(heat_param[['cnv_chr_label_position']])) heat_param[['cnv_chr_label_position']] else "left"
               chr_label_angle <- if (!is.null(heat_param[['cnv_chr_label_angle']])) as.numeric(heat_param[['cnv_chr_label_angle']]) else 90
               chr_label_prefix <- if (!is.null(heat_param[['cnv_chr_label_prefix']])) heat_param[['cnv_chr_label_prefix']] else ""
 
@@ -7555,6 +7653,8 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
           p_with_tiles
 
         }, error = function(e) {
+          cat(file=stderr(), paste0("[HEATMAP-ERROR] Error adding heatmap: ", e$message, "\n"))
+          cat(file=stderr(), paste0("[HEATMAP-ERROR] Call: ", deparse(e$call), "\n"))
           debug_cat(paste0("  ERROR adding heatmap: ", e$message, "\n"))
           debug_cat(paste0("  Returning tree without heatmap\n"))
           p
@@ -7967,6 +8067,10 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       # Apply correct coloring scale based on heatmap type
       if (heat_param['is_discrete'] == FALSE) {
         limits <- heat_param[['limits']]
+        # S2.9-FIX8: Use midpoint from heat_param, default to 2 for RData CNV, 0.02 otherwise
+        is_rdata_source <- !is.null(heat_param[['data_source']]) && heat_param[['data_source']] == "rdata"
+        default_midpoint <- if (is_rdata_source) 2 else 0.02
+        current_midpoint <- if (!is.null(heat_param[['midpoint']]) && !is.na(heat_param[['midpoint']])) as.numeric(heat_param[['midpoint']]) else default_midpoint
 
         if (is.na(limits[1]) == TRUE) {
           pr440_short_tips_TRY_heat <- pr440_short_tips_TRY_heat +
@@ -7974,7 +8078,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
               low = heat_param['low'],
               mid = heat_param['mid'],
               high = heat_param['high'],
-              midpoint = .02,
+              midpoint = current_midpoint,
               name = heat_map_title_list[[j1]],
               na.value = "white"
             )
@@ -7984,7 +8088,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
               low = heat_param['low'],
               mid = heat_param['mid'],
               high = heat_param['high'],
-              midpoint = .02,
+              midpoint = current_midpoint,
               name = heat_map_title_list[[j1]],
               limits = limits,
               na.value = "white"
@@ -8232,13 +8336,17 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       } else {
         # Apply coloring for additional heatmaps
         if (heat_param['is_discrete'] == FALSE) {
+          # S2.9-FIX8: Use midpoint from heat_param, default to 2 for RData CNV
+          is_rdata_source2 <- !is.null(heat_param[['data_source']]) && heat_param[['data_source']] == "rdata"
+          default_midpoint2 <- if (is_rdata_source2) 2 else 0.02
+          current_midpoint2 <- if (!is.null(heat_param[['midpoint']]) && !is.na(heat_param[['midpoint']])) as.numeric(heat_param[['midpoint']]) else default_midpoint2
           pr440_short_tips_TRY_heat <- pr440_short_tips_TRY_heat +
             scale_fill_gradient2(
-              low = heat_param['low'], 
-              mid = heat_param['mid'], 
-              high = heat_param['high'], 
-              midpoint = .02,
-              name = heat_map_title_list[[j1]]       
+              low = heat_param['low'],
+              mid = heat_param['mid'],
+              high = heat_param['high'],
+              midpoint = current_midpoint2,
+              name = heat_map_title_list[[j1]]
             )
         } else {
           if (j == 2) {
@@ -8948,6 +9056,7 @@ ui <- dashboardPage(
       menuItem("Bootstrap Values", tabName = "bootstrap", icon = icon("percentage")),
       menuItem("Highlighting", tabName = "highlighting", icon = icon("highlighter")),
       menuItem("Heatmap", tabName = "heatmap", icon = icon("th")),
+      menuItem("SNP Analysis", tabName = "snp_analysis", icon = icon("dna")),
       menuItem("Legend", tabName = "legend", icon = icon("list")),
       menuItem("Extra", tabName = "extra", icon = icon("plus-circle")),  # v130: New tab for title, text, images
       menuItem("Download", tabName = "download", icon = icon("download")),
@@ -8983,21 +9092,25 @@ ui <- dashboardPage(
         tabName = "data_upload",
         fluidRow(
           box(
-            title = "EZLineagePlotter - Development Version",
-            status = "warning",
+            title = "EZLineagePlotter - Stable Release",
+            status = "success",
             solidHeader = TRUE,
             width = 12,
             collapsible = TRUE,
-            tags$div(style = "background: #fff3cd; padding: 15px; border-radius: 5px; border: 2px solid #856404;",
-                     tags$h4(style = "color: #856404; margin: 0;", "Version S2.292dev"),
-                     tags$p(style = "margin: 10px 0 0 0; color: #856404;",
-                            tags$strong("New in S2.292dev:"),
+            tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #155724;",
+                     tags$h4(style = "color: #155724; margin: 0;", "Version S3.1 Stable"),
+                     tags$p(style = "margin: 10px 0 0 0; color: #155724;",
+                            tags$strong("New in S3.1:"),
                             tags$ul(
+                              tags$li("SNP Analysis Tab: exploratory mutation analysis with VAF heatmaps and classification calls"),
+                              tags$li("Chromosome boundary lines and labels for RData CNV heatmaps"),
+                              tags$li("Separate chromosome mapping RData file upload"),
+                              tags$li("Detailed display mode for RData CNV heatmaps (per-cell resolution)"),
+                              tags$li("Rotated tree Newick download"),
                               tags$li("Manual RGB/Hex color input for heatmap colors"),
-                              tags$li("Font type selection for legend text"),
-                              tags$li("Sync between color picker and hex text input")
+                              tags$li("Google Fonts support for legend text")
                             ),
-                            tags$strong("From S2.9 (stable):"),
+                            tags$strong("From S2.9:"),
                             tags$ul(
                               tags$li("Configurable two-stage CNV downsampling (import & render)"),
                               tags$li("Height Scale control for detailed RData heatmaps"),
@@ -9602,6 +9715,280 @@ ui <- dashboardPage(
             solidHeader = TRUE,
             width = 12,
             imageOutput("heatmap_preview", height = "auto")
+          )
+        )
+      ),
+
+      # ============================================================================
+      # SNP ANALYSIS TAB
+      # Exploratory analysis of SNP mutation data with interactive threshold tuning
+      # ============================================================================
+      tabItem(
+        tabName = "snp_analysis",
+        fluidRow(
+          # Left column - Configuration
+          column(6,
+            # Data Selection Box
+            box(
+              title = tagList(icon("database"), " Data Selection"),
+              status = "primary",
+              solidHeader = TRUE,
+              width = 12,
+              collapsible = TRUE,
+
+              # Data format selection
+              tags$h5(icon("database"), " Data Format"),
+              tags$p(class = "text-muted", "Select how your mutation data is formatted in the CSV"),
+
+              selectInput("snp_data_format", "Column Data Format",
+                          choices = c("M + WT (Mutant reads + Wild-type reads)" = "m_wt",
+                                      "DP + WT (Total depth + Wild-type reads)" = "dp_wt"),
+                          selected = "m_wt"),
+              tags$p(class = "text-muted small",
+                     id = "snp_format_hint",
+                     "M+WT: Mutant count and WT count columns. DP+WT: Total depth (M = DP - WT)"),
+
+              hr(),
+
+              # Column pairing configuration
+              tags$h5(icon("columns"), " Column Pairing"),
+              tags$p(class = "text-muted", "Specify suffixes to auto-detect column pairs (case-insensitive matching)"),
+
+              fluidRow(
+                column(6,
+                       textInput("snp_m_suffix", "First Column Suffix", value = "_M",
+                                 placeholder = "e.g., _M or _DP")
+                ),
+                column(6,
+                       textInput("snp_wt_suffix", "WT Column Suffix", value = "_WT")
+                )
+              ),
+
+              actionButton("snp_detect_columns", "Detect Column Pairs",
+                           icon = icon("search"), class = "btn-info"),
+
+              hr(),
+
+              # Detected loci table
+              tags$h5(icon("list-check"), " Detected Loci"),
+              uiOutput("snp_loci_table_ui"),
+
+              # Manual add option
+              actionButton("snp_add_manual_locus", "Add Locus Manually",
+                           icon = icon("plus"), class = "btn-default btn-sm",
+                           style = "margin-top: 10px;")
+            ),
+
+            # Threshold Controls Box
+            box(
+              title = tagList(icon("sliders-h"), " Threshold Controls"),
+              status = "warning",
+              solidHeader = TRUE,
+              width = 12,
+              collapsible = TRUE,
+
+              tags$p(class = "text-muted", "Adjust thresholds to see real-time changes in mutation calls"),
+
+              # Minimum coverage threshold
+              sliderInput("snp_min_coverage", "Minimum Coverage (M + WT reads)",
+                          min = 0, max = 500, value = 20, step = 1),
+              tags$p(class = "text-muted small", "Cells with fewer total reads will be marked as 'No-call'"),
+
+              hr(),
+
+              # VAF threshold
+              sliderInput("snp_vaf_threshold", "VAF Threshold (%)",
+                          min = 0, max = 100, value = 20, step = 1),
+              tags$p(class = "text-muted small", "VAF = M/(M+WT). Cells with VAF ≥ threshold are marked as 'Mutated'")
+            ),
+
+            # Display Options Box
+            box(
+              title = tagList(icon("eye"), " Display Options"),
+              status = "info",
+              solidHeader = TRUE,
+              width = 12,
+              collapsible = TRUE,
+
+              tags$h5("What to Display"),
+              checkboxInput("snp_show_raw", "Show Raw Data Heatmap (VAF %)", value = TRUE),
+              checkboxInput("snp_show_decision", "Show Decision Heatmap", value = TRUE),
+              checkboxInput("snp_show_row_labels", "Show Row Labels (Locus Names)", value = FALSE),
+
+              hr(),
+
+              # Layout options
+              tags$h5("Layout"),
+              sliderInput("snp_distance_from_tree", "Distance from Tree",
+                          min = 0, max = 2, value = 0.5, step = 0.05),
+              sliderInput("snp_loci_spacing", "Spacing Between Loci",
+                          min = 0, max = 1, value = 0.1, step = 0.01),
+              sliderInput("snp_heatmap_height", "Heatmap Height",
+                          min = 0.01, max = 1, value = 0.3, step = 0.01)
+            )
+          ),
+
+          # Right column - Visual styling and stats
+          column(6,
+            # Visual Styling Box
+            box(
+              title = tagList(icon("palette"), " Visual Styling"),
+              status = "success",
+              solidHeader = TRUE,
+              width = 12,
+              collapsible = TRUE,
+              collapsed = TRUE,
+
+              # Raw heatmap color palette
+              tags$h5("Raw Data Heatmap Colors"),
+              selectInput("snp_raw_palette", "Color Palette",
+                          choices = c("White to Red" = "white_red",
+                                      "White to Blue" = "white_blue",
+                                      "Yellow to Red" = "yellow_red",
+                                      "Blue to Red" = "blue_red",
+                                      "Viridis" = "viridis",
+                                      "Custom" = "custom"),
+                          selected = "white_red"),
+              conditionalPanel(
+                condition = "input.snp_raw_palette == 'custom'",
+                fluidRow(
+                  column(4,
+                         colourInput("snp_raw_low_color", "Low VAF (0%)", value = "#FFFFFF")
+                  ),
+                  column(4,
+                         colourInput("snp_raw_mid_color", "Mid VAF (50%)", value = "#FFCCCC")
+                  ),
+                  column(4,
+                         colourInput("snp_raw_high_color", "High VAF (100%)", value = "#FF0000")
+                  )
+                )
+              ),
+
+              hr(),
+
+              # Decision heatmap colors
+              tags$h5("Decision Heatmap Colors"),
+              selectInput("snp_decision_palette", "Color Palette",
+                          choices = c("Default (Red/Blue/Orange/Gray)" = "default",
+                                      "Colorblind-friendly" = "colorblind",
+                                      "Pastel" = "pastel",
+                                      "High Contrast" = "high_contrast",
+                                      "Custom" = "custom"),
+                          selected = "default"),
+              conditionalPanel(
+                condition = "input.snp_decision_palette == 'custom'",
+                fluidRow(
+                  column(6,
+                         colourInput("snp_color_mutated", "Mutated", value = "#E41A1C")
+                  ),
+                  column(6,
+                         colourInput("snp_color_wt", "Wild-Type (WT)", value = "#377EB8")
+                  )
+                ),
+                fluidRow(
+                  column(6,
+                         colourInput("snp_color_nocall", "No-call", value = "#FF7F00")
+                  ),
+                  column(6,
+                         colourInput("snp_color_na", "NA (No data)", value = "#999999")
+                  )
+                )
+              ),
+
+              hr(),
+
+              # Row labels options
+              tags$h5("Row Labels"),
+              conditionalPanel(
+                condition = "input.snp_show_row_labels == true",
+                sliderInput("snp_row_label_size", "Label Font Size",
+                            min = 1, max = 10, value = 3, step = 0.5),
+                radioButtons("snp_row_label_position", "Label Position",
+                             choices = c("Right of heatmap" = "right",
+                                         "Left of heatmap" = "left"),
+                             selected = "right", inline = TRUE),
+                sliderInput("snp_row_label_distance", "Distance from Heatmap",
+                            min = 0, max = 2, value = 0.1, step = 0.05),
+                sliderInput("snp_row_label_angle", "Label Angle (degrees)",
+                            min = 0, max = 90, value = 90, step = 5),
+                tags$p(class = "text-muted small", "0° = horizontal, 90° = vertical")
+              ),
+
+              hr(),
+
+              # Border and legend options
+              tags$h5("Other Options"),
+              checkboxInput("snp_show_borders", "Show tile borders", value = FALSE),
+              conditionalPanel(
+                condition = "input.snp_show_borders == true",
+                colourInput("snp_border_color", "Border Color", value = "#000000"),
+                sliderInput("snp_border_width", "Border Width", min = 0.1, max = 2, value = 0.5, step = 0.1)
+              ),
+              checkboxInput("snp_show_legend", "Show Legend", value = TRUE)
+            ),
+
+            # Summary Statistics Box
+            box(
+              title = tagList(icon("chart-bar"), " Summary Statistics"),
+              status = "primary",
+              solidHeader = TRUE,
+              width = 12,
+              collapsible = TRUE,
+
+              tags$p(class = "text-muted", "Statistics update in real-time as thresholds change"),
+
+              uiOutput("snp_summary_stats_ui"),
+
+              hr(),
+
+              # Overall summary
+              uiOutput("snp_overall_summary_ui")
+            )
+          )
+        ),
+
+        # Action buttons row
+        fluidRow(
+          column(12,
+            box(
+              width = 12,
+              status = "primary",
+              fluidRow(
+                column(6,
+                       actionButton("snp_apply_to_tree", "Apply to Tree",
+                                    icon = icon("check"), class = "btn-primary btn-lg btn-block")
+                ),
+                column(6,
+                       actionButton("snp_clear_all", "Clear All",
+                                    icon = icon("trash"), class = "btn-danger btn-lg btn-block")
+                )
+              )
+            )
+          )
+        ),
+
+        # Preview row
+        fluidRow(
+          box(
+            title = tagList(
+              "Preview ",
+              span(id = "snp_status_waiting",
+                style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #f8f9fa; color: #6c757d; font-size: 12px;",
+                icon("clock"), " Waiting for data"
+              ),
+              span(id = "snp_status_processing",
+                style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #6c757d; color: #ffffff; font-size: 12px; font-weight: bold;",
+                icon("spinner", class = "fa-spin"), " Processing..."
+              ),
+              span(id = "snp_status_ready",
+                style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #28a745; color: #ffffff; font-size: 12px; font-weight: bold;",
+                icon("check-circle"), " Ready"
+              )
+            ),
+            status = "primary",
+            solidHeader = TRUE,
+            width = 12,
+            imageOutput("snp_preview", height = "auto")
           )
         )
       ),
@@ -10257,7 +10644,13 @@ server <- function(input, output, session) {
     # On Apply, we compare the current config hash with the cached hash.
     # If unchanged, we reuse the cached data instead of expensive regeneration.
     heatmap_cache = list(),           # Named list: heatmap_index -> list(tile_df, hash, ...)
-    heatmap_cache_max_age = 5         # Clear cache entries older than N regenerations
+    heatmap_cache_max_age = 5,        # Clear cache entries older than N regenerations
+
+    # SNP Analysis Tab - exploratory mutation analysis
+    snp_loci = list(),                # List of configured loci: list(name, m_col, wt_col, include)
+    snp_analysis_data = NULL,         # Processed SNP analysis results (decisions, VAF, etc.)
+    snp_heatmap_data = NULL,          # Prepared heatmap data for rendering
+    snp_applied = FALSE               # Whether SNP analysis has been applied to tree
   )
 
   classification_loading <- reactiveVal(FALSE)
@@ -11427,7 +11820,7 @@ server <- function(input, output, session) {
           cnv_chr_line_color = if (!is.null(h$cnv_chr_line_color)) h$cnv_chr_line_color else "#000000",
           cnv_chr_line_size = if (!is.null(h$cnv_chr_line_size)) as.numeric(h$cnv_chr_line_size) else 0.5,
           cnv_chr_label_size = if (!is.null(h$cnv_chr_label_size)) as.numeric(h$cnv_chr_label_size) else 2.5,
-          cnv_chr_label_position = if (!is.null(h$cnv_chr_label_position)) h$cnv_chr_label_position else "right",
+          cnv_chr_label_position = if (!is.null(h$cnv_chr_label_position)) h$cnv_chr_label_position else "left",
           cnv_chr_label_angle = if (!is.null(h$cnv_chr_label_angle)) as.numeric(h$cnv_chr_label_angle) else 90,
           cnv_chr_label_prefix = if (!is.null(h$cnv_chr_label_prefix)) h$cnv_chr_label_prefix else ""
         )
@@ -12561,7 +12954,7 @@ server <- function(input, output, session) {
               heatmap_item[[as.character(j)]]$cnv_chr_line_color <- if (!is.null(heatmap_entry$cnv_chr_line_color)) heatmap_entry$cnv_chr_line_color else "#000000"
               heatmap_item[[as.character(j)]]$cnv_chr_line_size <- if (!is.null(heatmap_entry$cnv_chr_line_size)) heatmap_entry$cnv_chr_line_size else 0.5
               heatmap_item[[as.character(j)]]$cnv_chr_label_size <- if (!is.null(heatmap_entry$cnv_chr_label_size)) heatmap_entry$cnv_chr_label_size else 2.5
-              heatmap_item[[as.character(j)]]$cnv_chr_label_position <- if (!is.null(heatmap_entry$cnv_chr_label_position)) heatmap_entry$cnv_chr_label_position else "right"
+              heatmap_item[[as.character(j)]]$cnv_chr_label_position <- if (!is.null(heatmap_entry$cnv_chr_label_position)) heatmap_entry$cnv_chr_label_position else "left"
               heatmap_item[[as.character(j)]]$cnv_chr_label_angle <- if (!is.null(heatmap_entry$cnv_chr_label_angle)) heatmap_entry$cnv_chr_label_angle else 90
               heatmap_item[[as.character(j)]]$cnv_chr_label_prefix <- if (!is.null(heatmap_entry$cnv_chr_label_prefix)) heatmap_entry$cnv_chr_label_prefix else ""
               # S2.0: Store mapping column for sample name matching
@@ -12835,7 +13228,7 @@ server <- function(input, output, session) {
             heatmap_item[[as.character(j)]]$cnv_chr_line_color <- if (!is.null(heatmap_entry$cnv_chr_line_color)) heatmap_entry$cnv_chr_line_color else "#000000"
             heatmap_item[[as.character(j)]]$cnv_chr_line_size <- if (!is.null(heatmap_entry$cnv_chr_line_size)) heatmap_entry$cnv_chr_line_size else 0.5
             heatmap_item[[as.character(j)]]$cnv_chr_label_size <- if (!is.null(heatmap_entry$cnv_chr_label_size)) heatmap_entry$cnv_chr_label_size else 2.5
-            heatmap_item[[as.character(j)]]$cnv_chr_label_position <- if (!is.null(heatmap_entry$cnv_chr_label_position)) heatmap_entry$cnv_chr_label_position else "right"
+            heatmap_item[[as.character(j)]]$cnv_chr_label_position <- if (!is.null(heatmap_entry$cnv_chr_label_position)) heatmap_entry$cnv_chr_label_position else "left"
             heatmap_item[[as.character(j)]]$cnv_chr_label_angle <- if (!is.null(heatmap_entry$cnv_chr_label_angle)) heatmap_entry$cnv_chr_label_angle else 90
             heatmap_item[[as.character(j)]]$cnv_chr_label_prefix <- if (!is.null(heatmap_entry$cnv_chr_label_prefix)) heatmap_entry$cnv_chr_label_prefix else ""
             # S2.0: Store mapping column for sample name matching
@@ -14972,8 +15365,8 @@ server <- function(input, output, session) {
                    conditionalPanel(
                      condition = paste0("input.heatmap_cnv_chr_labels_", i),
                      selectInput(paste0("heatmap_cnv_chr_label_position_", i), "Label Position",
-                                 choices = c("Right" = "right", "Left" = "left"),
-                                 selected = if (!is.null(cfg$cnv_chr_label_position)) cfg$cnv_chr_label_position else "right")
+                                 choices = c("Left" = "right", "Right" = "left"),
+                                 selected = if (!is.null(cfg$cnv_chr_label_position)) cfg$cnv_chr_label_position else "left")
                    )
             )
           ),
@@ -15408,6 +15801,16 @@ server <- function(input, output, session) {
       observeEvent(input[[paste0("heatmap_remove_", i)]], {
         if (i <= length(values$heatmap_configs)) {
           values$heatmap_configs <- values$heatmap_configs[-i]
+
+          # S2.9-FIX5: Also clear values$heatmaps so the plot updates immediately
+          # Without this, the removed heatmap stays visible until "Apply Heatmaps" is clicked
+          if (!is.null(values$heatmaps) && length(values$heatmaps) >= i) {
+            values$heatmaps <- values$heatmaps[-i]
+            cat(file=stderr(), paste0("[HEATMAP-REMOVE] Removed heatmap ", i, " from values$heatmaps\n"))
+          }
+
+          # S2.9-FIX5: Trigger plot regeneration so removed heatmap disappears
+          request_plot_update()
 
           # S2.9-FIX: Set inhibit flag before UI rebuild
           inhibit_color_save(TRUE)
@@ -17428,7 +17831,7 @@ server <- function(input, output, session) {
           cnv_chr_line_color = if (!is.null(input[[paste0("heatmap_cnv_chr_line_color_", i)]])) input[[paste0("heatmap_cnv_chr_line_color_", i)]] else "#000000",
           cnv_chr_line_size = if (!is.null(input[[paste0("heatmap_cnv_chr_line_size_", i)]])) input[[paste0("heatmap_cnv_chr_line_size_", i)]] else 0.5,
           cnv_chr_label_size = if (!is.null(input[[paste0("heatmap_cnv_chr_label_size_", i)]])) input[[paste0("heatmap_cnv_chr_label_size_", i)]] else 2.5,
-          cnv_chr_label_position = if (!is.null(input[[paste0("heatmap_cnv_chr_label_position_", i)]])) input[[paste0("heatmap_cnv_chr_label_position_", i)]] else "right",
+          cnv_chr_label_position = if (!is.null(input[[paste0("heatmap_cnv_chr_label_position_", i)]])) input[[paste0("heatmap_cnv_chr_label_position_", i)]] else "left",
           cnv_chr_label_angle = if (!is.null(input[[paste0("heatmap_cnv_chr_label_angle_", i)]])) input[[paste0("heatmap_cnv_chr_label_angle_", i)]] else 90,
           cnv_chr_label_prefix = if (!is.null(input[[paste0("heatmap_cnv_chr_label_prefix_", i)]])) input[[paste0("heatmap_cnv_chr_label_prefix_", i)]] else "",
           # S2.0: Store mapping column for sample name matching
@@ -18965,6 +19368,310 @@ server <- function(input, output, session) {
     # If we got a valid result
     if (!is.null(result)) {
       # v53: cat(file=stderr(), "=== Attempting to save plot ===\n")
+
+      # ========================================================================
+      # SNP ANALYSIS HEATMAP RENDERING
+      # Add SNP analysis heatmaps to the plot if configured
+      # ========================================================================
+      if (isTRUE(values$snp_applied) && !is.null(values$snp_analysis_data)) {
+        cat(file=stderr(), "[SNP-ANALYSIS] Adding SNP heatmaps to plot\n")
+
+        tryCatch({
+          snp_results <- values$snp_analysis_data
+          show_raw <- isTRUE(input$snp_show_raw)
+          show_decision <- isTRUE(input$snp_show_decision)
+          show_row_labels <- isTRUE(input$snp_show_row_labels)
+
+          if (show_raw || show_decision) {
+            # Get tree tip data for positioning
+            tree_data <- result$data
+            tip_data <- tree_data[tree_data$isTip == TRUE, ]
+
+            if (nrow(tip_data) > 0) {
+              # Use filtered_csv if available (same as computation)
+              id_column <- input$id_column
+              csv_data <- if (!is.null(values$filtered_csv) && nrow(values$filtered_csv) > 0) {
+                values$filtered_csv
+              } else {
+                values$csv_data
+              }
+              tip_labels <- tip_data$label
+
+              # Create a lookup from CSV row to tree tip y position
+              csv_to_tip_match <- NULL
+              if (!is.null(id_column) && id_column != "" && !is.null(csv_data) && id_column %in% names(csv_data)) {
+                csv_ids <- as.character(csv_data[[id_column]])
+                csv_to_tip_match <- match(tip_labels, csv_ids)
+                cat(file=stderr(), paste0("[SNP-ANALYSIS] Matching ", length(tip_labels), " tree tips to CSV using column '", id_column, "'\n"))
+                cat(file=stderr(), paste0("[SNP-ANALYSIS] Matched ", sum(!is.na(csv_to_tip_match)), " tips to CSV rows\n"))
+              } else {
+                cat(file=stderr(), "[SNP-ANALYSIS] WARNING: No ID column specified, using row order assumption\n")
+              }
+              # Get styling parameters
+              distance_from_tree <- if (!is.null(input$snp_distance_from_tree)) input$snp_distance_from_tree else 0.5
+              loci_spacing <- if (!is.null(input$snp_loci_spacing)) input$snp_loci_spacing else 0.1
+              heatmap_height <- if (!is.null(input$snp_heatmap_height)) input$snp_heatmap_height else 0.3
+              row_label_size <- if (!is.null(input$snp_row_label_size)) input$snp_row_label_size else 3
+              row_label_position <- if (!is.null(input$snp_row_label_position)) input$snp_row_label_position else "right"
+              row_label_distance <- if (!is.null(input$snp_row_label_distance)) input$snp_row_label_distance else 0.1
+              row_label_angle <- if (!is.null(input$snp_row_label_angle)) input$snp_row_label_angle else 90
+
+              # Get color palette
+              raw_palette <- if (!is.null(input$snp_raw_palette)) input$snp_raw_palette else "white_red"
+
+              # Determine raw heatmap colors based on palette
+              raw_colors <- switch(raw_palette,
+                "white_red" = list(low = "#FFFFFF", mid = "#FFCCCC", high = "#FF0000"),
+                "white_blue" = list(low = "#FFFFFF", mid = "#CCCCFF", high = "#0000FF"),
+                "yellow_red" = list(low = "#FFFF00", mid = "#FF8800", high = "#FF0000"),
+                "blue_red" = list(low = "#0000FF", mid = "#FFFFFF", high = "#FF0000"),
+                "viridis" = list(low = "#440154", mid = "#21918C", high = "#FDE725"),
+                "custom" = list(
+                  low = if (!is.null(input$snp_raw_low_color)) input$snp_raw_low_color else "#FFFFFF",
+                  mid = if (!is.null(input$snp_raw_mid_color)) input$snp_raw_mid_color else "#FFCCCC",
+                  high = if (!is.null(input$snp_raw_high_color)) input$snp_raw_high_color else "#FF0000"
+                ),
+                list(low = "#FFFFFF", mid = "#FFCCCC", high = "#FF0000")  # default
+              )
+
+              # Get decision heatmap color palette
+              decision_palette <- if (!is.null(input$snp_decision_palette)) input$snp_decision_palette else "default"
+              decision_colors <- switch(decision_palette,
+                "default" = list(
+                  mutated = "#E41A1C",  # Red
+                  wt = "#377EB8",        # Blue
+                  nocall = "#FF7F00",    # Orange
+                  na = "#999999"         # Gray
+                ),
+                "colorblind" = list(
+                  mutated = "#D55E00",   # Vermillion
+                  wt = "#0072B2",        # Blue
+                  nocall = "#F0E442",    # Yellow
+                  na = "#CCCCCC"         # Light gray
+                ),
+                "pastel" = list(
+                  mutated = "#FB8072",   # Light coral
+                  wt = "#80B1D3",        # Light blue
+                  nocall = "#FDB462",    # Light orange
+                  na = "#D9D9D9"         # Light gray
+                ),
+                "high_contrast" = list(
+                  mutated = "#FF0000",   # Pure red
+                  wt = "#0000FF",        # Pure blue
+                  nocall = "#FFFF00",    # Yellow
+                  na = "#000000"         # Black
+                ),
+                "custom" = list(
+                  mutated = if (!is.null(input$snp_color_mutated)) input$snp_color_mutated else "#E41A1C",
+                  wt = if (!is.null(input$snp_color_wt)) input$snp_color_wt else "#377EB8",
+                  nocall = if (!is.null(input$snp_color_nocall)) input$snp_color_nocall else "#FF7F00",
+                  na = if (!is.null(input$snp_color_na)) input$snp_color_na else "#999999"
+                ),
+                list(  # default fallback
+                  mutated = "#E41A1C",
+                  wt = "#377EB8",
+                  nocall = "#FF7F00",
+                  na = "#999999"
+                )
+              )
+
+              show_borders <- isTRUE(input$snp_show_borders)
+              border_color <- if (!is.null(input$snp_border_color)) input$snp_border_color else "#000000"
+              border_width <- if (!is.null(input$snp_border_width)) input$snp_border_width else 0.5
+
+              # Calculate starting x position (after tree + distance)
+              x_start <- max(tip_data$x, na.rm = TRUE) + distance_from_tree
+              tile_width <- 0.8  # Width of each tile (matching tree tip spacing)
+
+              # Add new fill scale for SNP heatmaps
+              result <- result + ggnewscale::new_scale_fill()
+
+              x_offset <- x_start
+
+              for (locus_name in names(snp_results)) {
+                r <- snp_results[[locus_name]]
+
+                # Get tree_row_indices from results (computed during SNP analysis)
+                tree_indices <- r$tree_row_indices
+                n_tips <- nrow(tip_data)
+
+                if (!is.null(tree_indices) && length(tree_indices) == n_tips) {
+                  # Use stored tree indices to extract values in correct order
+                  vaf_values <- r$vaf[tree_indices]
+                  decision_values <- r$decision[tree_indices]
+                  # Replace unmatched with NA
+                  decision_values[is.na(decision_values)] <- "NA"
+                  cat(file=stderr(), paste0("[SNP-ANALYSIS] Locus ", locus_name, ": ", sum(!is.na(vaf_values)), "/", n_tips, " valid values\n"))
+                } else if (!is.null(csv_to_tip_match)) {
+                  # Fallback: Use the match computed in rendering
+                  vaf_values <- r$vaf[csv_to_tip_match]
+                  decision_values <- r$decision[csv_to_tip_match]
+                  decision_values[is.na(decision_values)] <- "NA"
+                  cat(file=stderr(), paste0("[SNP-ANALYSIS] Locus ", locus_name, ": using csv_to_tip_match, ", sum(!is.na(vaf_values)), "/", n_tips, " valid values\n"))
+                } else {
+                  # Final fallback: assume same row order (legacy behavior)
+                  n_snp <- length(r$vaf)
+                  if (n_snp >= n_tips) {
+                    vaf_values <- r$vaf[1:n_tips]
+                    decision_values <- r$decision[1:n_tips]
+                  } else {
+                    vaf_values <- c(r$vaf, rep(NA, n_tips - n_snp))
+                    decision_values <- c(r$decision, rep("NA", n_tips - n_snp))
+                  }
+                  cat(file=stderr(), paste0("[SNP-ANALYSIS] Locus ", locus_name, ": using row order fallback\n"))
+                }
+
+                # Raw VAF heatmap
+                if (show_raw) {
+                  # Debug: show VAF value distribution
+                  valid_vaf <- vaf_values[!is.na(vaf_values)]
+                  if (length(valid_vaf) > 0) {
+                    cat(file=stderr(), paste0("[SNP-RENDER] ", locus_name, " VAF range: ",
+                                              round(min(valid_vaf), 1), "% to ", round(max(valid_vaf), 1), "%",
+                                              ", mean=", round(mean(valid_vaf), 1), "%\n"))
+                  }
+
+                  raw_df <- data.frame(
+                    x = rep(x_offset, n_tips),
+                    y = tip_data$y,
+                    value = vaf_values,
+                    stringsAsFactors = FALSE
+                  )
+
+                  result <- result +
+                    geom_tile(
+                      data = raw_df,
+                      aes(x = x, y = y, fill = value),
+                      width = heatmap_height,
+                      height = tile_width,
+                      color = if (show_borders) border_color else NA,
+                      linewidth = if (show_borders) border_width else 0,
+                      inherit.aes = FALSE
+                    ) +
+                    scale_fill_gradient2(
+                      low = raw_colors$low,
+                      mid = raw_colors$mid,
+                      high = raw_colors$high,
+                      midpoint = 50,
+                      limits = c(0, 100),
+                      name = paste0(locus_name, "\nVAF (%)"),
+                      na.value = decision_colors$na
+                    )
+
+                  # Add row label if enabled
+                  if (show_row_labels) {
+                    # With coord_flip + scale_y_reverse:
+                    # - y values control visual LEFT/RIGHT position
+                    # - Lower y values = visually to the RIGHT (like regular heatmap labels)
+                    # - Higher y values = visually to the LEFT
+
+                    # Position label to the left or right of the heatmap column
+                    # Account for tile_width/2 to get to edge of tiles, then add user distance
+                    if (row_label_position == "right") {
+                      # Right of heatmap: use lower y values (below min tip minus half tile width)
+                      label_y <- min(tip_data$y) - (tile_width / 2) - row_label_distance
+                      label_hjust <- 0  # text starts at anchor, extends away from heatmap
+                    } else {
+                      # Left of heatmap: use higher y values (above max tip plus half tile width)
+                      label_y <- max(tip_data$y) + (tile_width / 2) + row_label_distance
+                      label_hjust <- 1  # text ends at anchor, extends away from heatmap
+                    }
+
+                    # x position is the center of the heatmap column (controls vertical position)
+                    label_x <- x_offset
+
+                    # For angled text, use vjust=1 to prevent text from extending into heatmap
+                    # (matching regular heatmap behavior)
+                    label_vjust <- if (row_label_angle == 0) 0.5 else 1
+
+                    result <- result +
+                      annotate("text", x = label_x, y = label_y,
+                               label = paste0(locus_name, " (VAF)"),
+                               size = row_label_size, hjust = label_hjust, vjust = label_vjust, angle = row_label_angle)
+                  }
+
+                  x_offset <- x_offset + heatmap_height + loci_spacing / 2
+                  result <- result + ggnewscale::new_scale_fill()
+                }
+
+                # Decision heatmap
+                if (show_decision) {
+                  decision_df <- data.frame(
+                    x = rep(x_offset, n_tips),
+                    y = tip_data$y,
+                    decision = factor(decision_values, levels = c("Mutated", "WT", "No-call", "NA")),
+                    stringsAsFactors = FALSE
+                  )
+
+                  result <- result +
+                    geom_tile(
+                      data = decision_df,
+                      aes(x = x, y = y, fill = decision),
+                      width = heatmap_height,
+                      height = tile_width,
+                      color = if (show_borders) border_color else NA,
+                      linewidth = if (show_borders) border_width else 0,
+                      inherit.aes = FALSE
+                    ) +
+                    scale_fill_manual(
+                      values = c(
+                        "Mutated" = decision_colors$mutated,
+                        "WT" = decision_colors$wt,
+                        "No-call" = decision_colors$nocall,
+                        "NA" = decision_colors$na
+                      ),
+                      name = paste0(locus_name, "\nCall"),
+                      na.value = decision_colors$na,
+                      drop = FALSE
+                    )
+
+                  # Add row label if enabled
+                  if (show_row_labels) {
+                    # With coord_flip + scale_y_reverse:
+                    # - y values control visual LEFT/RIGHT position
+                    # - Lower y values = visually to the RIGHT
+                    # - Higher y values = visually to the LEFT
+
+                    # Position label to the left or right of the heatmap column
+                    # Account for tile_width/2 to get to edge of tiles, then add user distance
+                    if (row_label_position == "right") {
+                      # Right of heatmap: use lower y values (below min tip minus half tile width)
+                      label_y <- min(tip_data$y) - (tile_width / 2) - row_label_distance
+                      label_hjust <- 0  # text starts at anchor, extends away from heatmap
+                    } else {
+                      # Left of heatmap: use higher y values (above max tip plus half tile width)
+                      label_y <- max(tip_data$y) + (tile_width / 2) + row_label_distance
+                      label_hjust <- 1  # text ends at anchor, extends away from heatmap
+                    }
+
+                    # x position is the center of the heatmap column (controls vertical position)
+                    label_x <- x_offset
+
+                    # For angled text, use vjust=1 to prevent text from extending into heatmap
+                    # (matching regular heatmap behavior)
+                    label_vjust <- if (row_label_angle == 0) 0.5 else 1
+
+                    result <- result +
+                      annotate("text", x = label_x, y = label_y,
+                               label = paste0(locus_name, " (Call)"),
+                               size = row_label_size, hjust = label_hjust, vjust = label_vjust, angle = row_label_angle)
+                  }
+
+                  x_offset <- x_offset + heatmap_height + loci_spacing / 2
+                  result <- result + ggnewscale::new_scale_fill()
+                }
+
+                # Add spacing between loci
+                x_offset <- x_offset + loci_spacing / 2
+              }
+
+              cat(file=stderr(), paste0("[SNP-ANALYSIS] Added heatmaps for ", length(snp_results), " loci\n"))
+            }
+          }
+        }, error = function(e) {
+          cat(file=stderr(), paste0("[SNP-ANALYSIS] Error adding heatmaps: ", e$message, "\n"))
+        })
+      }
 
       # v121: Apply legend settings from the Legend tab
       # v180: Enhanced with key dimensions, byrow, box background, margin controls
@@ -20652,6 +21359,715 @@ server <- function(input, output, session) {
   settings_to_yaml <- function(settings) {
     yaml::as.yaml(settings, indent.mapping.sequence = TRUE)
   }
+
+  # ============================================================================
+  # SNP ANALYSIS TAB OBSERVERS
+  # Exploratory analysis of SNP mutation data with interactive threshold tuning
+  # ============================================================================
+
+  # Log when CSV data is available for SNP analysis
+  observe({
+    req(values$csv_data)
+    csv_cols <- names(values$csv_data)
+    cat(file=stderr(), "[SNP-ANALYSIS] CSV data available with ", length(csv_cols), " columns\n")
+  })
+
+  # Detect column pairs based on suffixes (case-insensitive matching)
+  observeEvent(input$snp_detect_columns, {
+    req(values$csv_data)
+
+    m_suffix <- input$snp_m_suffix
+    wt_suffix <- input$snp_wt_suffix
+    data_format <- if (!is.null(input$snp_data_format)) input$snp_data_format else "m_wt"
+
+    if (is.null(m_suffix) || m_suffix == "" || is.null(wt_suffix) || wt_suffix == "") {
+      showNotification("Please specify both column suffixes", type = "error")
+      return()
+    }
+
+    csv_cols <- names(values$csv_data)
+    csv_cols_lower <- tolower(csv_cols)
+    m_suffix_lower <- tolower(m_suffix)
+    wt_suffix_lower <- tolower(wt_suffix)
+
+    format_label <- if (data_format == "dp_wt") "DP" else "M"
+    cat(file=stderr(), paste0("[SNP-ANALYSIS] Detecting column pairs with suffixes: ", format_label, "='", m_suffix, "', WT='", wt_suffix, "' (case-insensitive, format=", data_format, ")\n"))
+
+    # Find columns ending with first suffix (case-insensitive)
+    m_suffix_escaped <- gsub("([.|()\\^{}+$*?]|\\[|\\])", "\\\\\\1", m_suffix_lower)
+    m_col_indices <- which(grepl(paste0(m_suffix_escaped, "$"), csv_cols_lower))
+    m_cols <- csv_cols[m_col_indices]
+    cat(file=stderr(), paste0("[SNP-ANALYSIS] Found ", length(m_cols), " columns with first suffix\n"))
+
+    # For each first column, look for matching WT column (case-insensitive)
+    detected_loci <- list()
+    for (m_col in m_cols) {
+      m_col_lower <- tolower(m_col)
+      # Get the prefix (everything before the suffix, case-insensitive)
+      prefix_lower <- sub(paste0(m_suffix_escaped, "$"), "", m_col_lower)
+
+      # Find matching WT column (case-insensitive)
+      wt_suffix_escaped <- gsub("([.|()\\^{}+$*?]|\\[|\\])", "\\\\\\1", wt_suffix_lower)
+      wt_pattern <- paste0("^", gsub("([.|()\\^{}+$*?]|\\[|\\])", "\\\\\\1", prefix_lower), wt_suffix_escaped, "$")
+      wt_col_index <- which(grepl(wt_pattern, csv_cols_lower))
+
+      if (length(wt_col_index) > 0) {
+        wt_col <- csv_cols[wt_col_index[1]]  # Use first match
+        # Get original case prefix from m_col
+        prefix <- sub(paste0(gsub("([.|()\\^{}+$*?]|\\[|\\])", "\\\\\\1", m_suffix), "$"), "", m_col, ignore.case = TRUE)
+        locus_name <- prefix
+        detected_loci[[length(detected_loci) + 1]] <- list(
+          name = locus_name,
+          m_col = m_col,
+          wt_col = wt_col,
+          include = TRUE,
+          data_format = data_format  # Store the data format
+        )
+        cat(file=stderr(), paste0("[SNP-ANALYSIS] Detected locus: ", locus_name, " (", format_label, ": ", m_col, ", WT: ", wt_col, ")\n"))
+      }
+    }
+
+    if (length(detected_loci) == 0) {
+      showNotification("No matching column pairs found. Check your suffixes.", type = "warning")
+    } else {
+      values$snp_loci <- detected_loci
+      values$snp_data_format <- data_format  # Store format for computation
+      showNotification(paste0("Detected ", length(detected_loci), " loci"), type = "message")
+    }
+  })
+
+  # Render the loci table
+  output$snp_loci_table_ui <- renderUI({
+    loci <- values$snp_loci
+
+    if (is.null(loci) || length(loci) == 0) {
+      return(tags$p(class = "text-muted", "No loci detected yet. Click 'Detect Column Pairs' above."))
+    }
+
+    # Create a table showing detected loci
+    loci_rows <- lapply(seq_along(loci), function(i) {
+      locus <- loci[[i]]
+      tags$tr(
+        tags$td(checkboxInput(paste0("snp_locus_include_", i),
+                              label = NULL, value = locus$include)),
+        tags$td(locus$name),
+        tags$td(tags$code(locus$m_col)),
+        tags$td(tags$code(locus$wt_col)),
+        tags$td(
+          actionButton(paste0("snp_locus_remove_", i), "",
+                       icon = icon("trash"), class = "btn-danger btn-xs")
+        )
+      )
+    })
+
+    tags$table(
+      class = "table table-condensed table-hover",
+      tags$thead(
+        tags$tr(
+          tags$th("Include", style = "width: 60px;"),
+          tags$th("Locus Name"),
+          tags$th("M Column"),
+          tags$th("WT Column"),
+          tags$th("", style = "width: 50px;")
+        )
+      ),
+      tags$tbody(loci_rows)
+    )
+  })
+
+  # Add manual locus observer
+  observeEvent(input$snp_add_manual_locus, {
+    req(values$csv_data)
+
+    showModal(modalDialog(
+      title = "Add Locus Manually",
+      selectInput("snp_manual_m_col", "Mutant (M) Column",
+                  choices = c("", names(values$csv_data))),
+      selectInput("snp_manual_wt_col", "Wild-Type (WT) Column",
+                  choices = c("", names(values$csv_data))),
+      textInput("snp_manual_locus_name", "Locus Name", value = ""),
+      footer = tagList(
+        modalButton("Cancel"),
+        actionButton("snp_manual_locus_confirm", "Add Locus", class = "btn-primary")
+      )
+    ))
+  })
+
+  observeEvent(input$snp_manual_locus_confirm, {
+    m_col <- input$snp_manual_m_col
+    wt_col <- input$snp_manual_wt_col
+    locus_name <- input$snp_manual_locus_name
+
+    if (is.null(m_col) || m_col == "" || is.null(wt_col) || wt_col == "") {
+      showNotification("Please select both M and WT columns", type = "error")
+      return()
+    }
+
+    if (is.null(locus_name) || locus_name == "") {
+      # Auto-generate name from M column
+      locus_name <- sub("_[^_]+$", "", m_col)
+    }
+
+    new_locus <- list(
+      name = locus_name,
+      m_col = m_col,
+      wt_col = wt_col,
+      include = TRUE
+    )
+
+    values$snp_loci <- c(values$snp_loci, list(new_locus))
+    removeModal()
+    showNotification(paste0("Added locus: ", locus_name), type = "message")
+  })
+
+  # Create observers for locus include checkboxes and remove buttons
+  observe({
+    loci <- values$snp_loci
+    if (is.null(loci) || length(loci) == 0) return()
+
+    lapply(seq_along(loci), function(i) {
+      # Include checkbox observer
+      observeEvent(input[[paste0("snp_locus_include_", i)]], {
+        if (i <= length(values$snp_loci)) {
+          values$snp_loci[[i]]$include <- input[[paste0("snp_locus_include_", i)]]
+        }
+      }, ignoreInit = TRUE, ignoreNULL = TRUE)
+
+      # Remove button observer
+      observeEvent(input[[paste0("snp_locus_remove_", i)]], {
+        if (i <= length(values$snp_loci)) {
+          values$snp_loci <- values$snp_loci[-i]
+          showNotification("Locus removed", type = "message")
+        }
+      }, ignoreInit = TRUE)
+    })
+  })
+
+  # ============================================================================
+  # SNP ANALYSIS - Core computation functions
+  # ============================================================================
+
+  # Function to compute SNP analysis results
+  # Computes for ALL rows in CSV, stores tree_row_indices for filtering at display time
+  func.compute.snp.analysis <- function(csv_data, loci, min_coverage, vaf_threshold, data_format = "m_wt", tree_row_indices = NULL) {
+    if (is.null(csv_data) || is.null(loci) || length(loci) == 0) {
+      return(NULL)
+    }
+
+    # Get only included loci
+    included_loci <- loci[sapply(loci, function(l) isTRUE(l$include))]
+    if (length(included_loci) == 0) {
+      return(NULL)
+    }
+
+    cat(file=stderr(), paste0("[SNP-ANALYSIS] Computing analysis for ", length(included_loci), " loci (all ", nrow(csv_data), " CSV rows)\n"))
+    cat(file=stderr(), paste0("[SNP-ANALYSIS] Thresholds: min_coverage=", min_coverage, ", vaf_threshold=", vaf_threshold, "%, format=", data_format, "\n"))
+
+    results <- list()
+
+    for (locus in included_loci) {
+      m_col <- locus$m_col
+      wt_col <- locus$wt_col
+      locus_name <- locus$name
+      # Use per-locus format if available, otherwise use global format
+      locus_format <- if (!is.null(locus$data_format)) locus$data_format else data_format
+
+      if (!(m_col %in% names(csv_data)) || !(wt_col %in% names(csv_data))) {
+        cat(file=stderr(), paste0("[SNP-ANALYSIS] WARNING: Columns not found for locus ", locus_name, "\n"))
+        next
+      }
+
+      # Get column values and clean them for numeric conversion
+      raw_first <- csv_data[[m_col]]
+      raw_wt <- csv_data[[wt_col]]
+
+      # Clean data: remove commas, whitespace, convert to numeric
+      clean_numeric <- function(x) {
+        if (is.numeric(x)) return(x)
+        x <- as.character(x)
+        x <- gsub(",", "", x)  # Remove commas
+        x <- gsub("\\s+", "", x)  # Remove whitespace
+        x <- gsub("^\\s+|\\s+$", "", x)  # Trim
+        suppressWarnings(as.numeric(x))
+      }
+
+      first_col_values <- clean_numeric(raw_first)
+      wt_values <- clean_numeric(raw_wt)
+
+      n_valid_first <- sum(!is.na(first_col_values))
+      n_valid_wt <- sum(!is.na(wt_values))
+      cat(file=stderr(), paste0("[SNP-ANALYSIS] ", m_col, ": ", n_valid_first, "/", length(first_col_values), " valid numeric values\n"))
+      cat(file=stderr(), paste0("[SNP-ANALYSIS] ", wt_col, ": ", n_valid_wt, "/", length(wt_values), " valid numeric values\n"))
+
+      # Handle different data formats
+      if (locus_format == "dp_wt") {
+        # DP + WT format: first column is total depth (DP), M = DP - WT
+        total_coverage <- first_col_values  # DP is already total coverage
+        m_values <- first_col_values - wt_values  # M = DP - WT
+        # Ensure no negative M values (can happen with data errors)
+        m_values <- pmax(m_values, 0, na.rm = FALSE)
+        cat(file=stderr(), paste0("[SNP-ANALYSIS] Using DP+WT format for ", locus_name, ": M = DP - WT\n"))
+      } else {
+        # M + WT format: standard mutant + wild-type columns
+        m_values <- first_col_values
+        total_coverage <- m_values + wt_values
+      }
+
+      # Calculate VAF
+      vaf <- ifelse(total_coverage > 0, (m_values / total_coverage) * 100, NA)
+
+      # Debug: Show complete calculation pipeline for first 10 rows with data
+      cat(file=stderr(), paste0("[SNP-CALC] === ", locus_name, " Calculation Debug ===\n"))
+      # Find rows with valid data for debugging
+      valid_rows <- which(!is.na(first_col_values) & !is.na(wt_values))
+      if (length(valid_rows) > 0) {
+        debug_rows <- head(valid_rows, 10)
+        for (i in seq_along(debug_rows)) {
+          row_idx <- debug_rows[i]
+          cat(file=stderr(), paste0("[SNP-CALC] Row ", row_idx, ": ",
+                                    "DP=", first_col_values[row_idx], ", ",
+                                    "WT=", wt_values[row_idx], ", ",
+                                    "M=", m_values[row_idx], ", ",
+                                    "VAF=", round(vaf[row_idx], 2), "%\n"))
+        }
+      } else {
+        cat(file=stderr(), "[SNP-CALC] No rows with valid DP and WT values found\n")
+      }
+      # Show summary stats
+      valid_vaf <- vaf[!is.na(vaf)]
+      if (length(valid_vaf) > 0) {
+        cat(file=stderr(), paste0("[SNP-CALC] VAF summary: min=", round(min(valid_vaf), 2),
+                                  "%, max=", round(max(valid_vaf), 2),
+                                  "%, mean=", round(mean(valid_vaf), 2), "%\n"))
+      }
+
+      # Make decisions
+      decision <- rep(NA_character_, length(m_values))
+
+      # NA: No data at all (both M and WT are NA)
+      is_na <- is.na(m_values) & is.na(wt_values)
+
+      # No-call: Data exists but insufficient coverage
+      has_data <- !is.na(m_values) | !is.na(wt_values)
+      insufficient_coverage <- has_data & (is.na(total_coverage) | total_coverage < min_coverage)
+
+      # Sufficient coverage cases
+      sufficient_coverage <- has_data & !is.na(total_coverage) & total_coverage >= min_coverage
+
+      # Mutated: VAF >= threshold
+      is_mutated <- sufficient_coverage & !is.na(vaf) & vaf >= vaf_threshold
+
+      # WT: VAF < threshold
+      is_wt <- sufficient_coverage & !is.na(vaf) & vaf < vaf_threshold
+
+      decision[is_na] <- "NA"
+      decision[insufficient_coverage] <- "No-call"
+      decision[is_mutated] <- "Mutated"
+      decision[is_wt] <- "WT"
+
+      results[[locus_name]] <- list(
+        locus_name = locus_name,
+        m_col = m_col,
+        wt_col = wt_col,
+        m_values = m_values,
+        wt_values = wt_values,
+        total_coverage = total_coverage,
+        vaf = vaf,
+        decision = decision,
+        # Summary stats
+        n_total = length(decision),
+        n_mutated = sum(decision == "Mutated", na.rm = TRUE),
+        n_wt = sum(decision == "WT", na.rm = TRUE),
+        n_nocall = sum(decision == "No-call", na.rm = TRUE),
+        n_na = sum(decision == "NA", na.rm = TRUE),
+        mean_vaf = mean(vaf[sufficient_coverage], na.rm = TRUE),
+        median_vaf = median(vaf[sufficient_coverage], na.rm = TRUE),
+        mean_coverage = mean(total_coverage[has_data & !is.na(total_coverage)], na.rm = TRUE)
+      )
+
+      # Calculate stats for ALL rows (full CSV)
+      n_all <- length(decision)
+
+      # Calculate stats for tree cells only if indices provided
+      if (!is.null(tree_row_indices)) {
+        valid_indices <- tree_row_indices[!is.na(tree_row_indices) & tree_row_indices > 0 & tree_row_indices <= n_all]
+        tree_decision <- decision[valid_indices]
+        tree_vaf <- vaf[valid_indices]
+        tree_coverage <- total_coverage[valid_indices]
+        tree_sufficient <- sufficient_coverage[valid_indices]
+        tree_has_data <- has_data[valid_indices]
+
+        n_tree <- length(tree_decision)
+        n_mutated_tree <- sum(tree_decision == "Mutated", na.rm = TRUE)
+        n_wt_tree <- sum(tree_decision == "WT", na.rm = TRUE)
+        n_nocall_tree <- sum(tree_decision == "No-call", na.rm = TRUE)
+        n_na_tree <- sum(tree_decision == "NA", na.rm = TRUE)
+        mean_vaf_tree <- mean(tree_vaf[tree_sufficient], na.rm = TRUE)
+        median_vaf_tree <- median(tree_vaf[tree_sufficient], na.rm = TRUE)
+        mean_coverage_tree <- mean(tree_coverage[tree_has_data & !is.na(tree_coverage)], na.rm = TRUE)
+      } else {
+        n_tree <- n_all
+        n_mutated_tree <- sum(decision == "Mutated", na.rm = TRUE)
+        n_wt_tree <- sum(decision == "WT", na.rm = TRUE)
+        n_nocall_tree <- sum(decision == "No-call", na.rm = TRUE)
+        n_na_tree <- sum(decision == "NA", na.rm = TRUE)
+        mean_vaf_tree <- mean(vaf[sufficient_coverage], na.rm = TRUE)
+        median_vaf_tree <- median(vaf[sufficient_coverage], na.rm = TRUE)
+        mean_coverage_tree <- mean(total_coverage[has_data & !is.na(total_coverage)], na.rm = TRUE)
+      }
+
+      results[[locus_name]] <- list(
+        locus_name = locus_name,
+        m_col = m_col,
+        wt_col = wt_col,
+        m_values = m_values,
+        wt_values = wt_values,
+        total_coverage = total_coverage,
+        vaf = vaf,
+        decision = decision,
+        # Summary stats (for tree cells only)
+        n_total = n_tree,
+        n_mutated = n_mutated_tree,
+        n_wt = n_wt_tree,
+        n_nocall = n_nocall_tree,
+        n_na = n_na_tree,
+        mean_vaf = mean_vaf_tree,
+        median_vaf = median_vaf_tree,
+        mean_coverage = mean_coverage_tree,
+        # Store tree indices for rendering
+        tree_row_indices = tree_row_indices
+      )
+
+      cat(file=stderr(), paste0("[SNP-ANALYSIS] ", locus_name, ": ",
+                                n_mutated_tree, " Mutated, ",
+                                n_wt_tree, " WT, ",
+                                n_nocall_tree, " No-call, ",
+                                n_na_tree, " NA (tree cells: ", n_tree, ")\n"))
+    }
+
+    return(results)
+  }
+
+  # Reactive to compute SNP analysis when inputs change
+  snp_analysis_results <- reactive({
+    req(values$csv_data)
+    req(values$snp_loci)
+    req(length(values$snp_loci) > 0)
+
+    min_coverage <- input$snp_min_coverage
+    vaf_threshold <- input$snp_vaf_threshold
+    data_format <- if (!is.null(values$snp_data_format)) values$snp_data_format else "m_wt"
+
+    if (is.null(min_coverage) || is.null(vaf_threshold)) {
+      return(NULL)
+    }
+
+    # Use filtered_csv if available (contains only rows matching tree tips)
+    # This is the same approach used by the rest of the app for heatmaps
+    csv_to_use <- if (!is.null(values$filtered_csv) && nrow(values$filtered_csv) > 0) {
+      cat(file=stderr(), paste0("[SNP-ANALYSIS] Using filtered_csv (", nrow(values$filtered_csv), " rows matching tree tips)\n"))
+      values$filtered_csv
+    } else {
+      cat(file=stderr(), paste0("[SNP-ANALYSIS] Using full csv_data (", nrow(values$csv_data), " rows) - no filtered_csv available\n"))
+      values$csv_data
+    }
+
+    # Debug: Check if SNP columns have data in filtered_csv vs full csv
+    if (length(values$snp_loci) > 0) {
+      first_locus <- values$snp_loci[[1]]
+      if (!is.null(first_locus$m_col)) {
+        # Check in filtered_csv
+        if (!is.null(values$filtered_csv) && first_locus$m_col %in% names(values$filtered_csv)) {
+          filtered_snp_data <- values$filtered_csv[[first_locus$m_col]]
+          n_valid_filtered <- sum(!is.na(filtered_snp_data) & filtered_snp_data != "" & filtered_snp_data != "#N/A")
+          cat(file=stderr(), paste0("[SNP-DEBUG] ", first_locus$m_col, " in filtered_csv: ", n_valid_filtered, "/", length(filtered_snp_data), " valid\n"))
+          # Show first 10 actual values
+          cat(file=stderr(), paste0("[SNP-DEBUG] filtered_csv first 10 values: ", paste(head(filtered_snp_data, 10), collapse=", "), "\n"))
+        }
+        # Check in full csv
+        if (first_locus$m_col %in% names(values$csv_data)) {
+          full_snp_data <- values$csv_data[[first_locus$m_col]]
+          n_valid_full <- sum(!is.na(full_snp_data) & full_snp_data != "" & full_snp_data != "#N/A")
+          cat(file=stderr(), paste0("[SNP-DEBUG] ", first_locus$m_col, " in full csv_data: ", n_valid_full, "/", length(full_snp_data), " valid\n"))
+
+          # Find which rows in full CSV have SNP data
+          rows_with_data <- which(!is.na(full_snp_data) & full_snp_data != "" & full_snp_data != "#N/A")
+          if (length(rows_with_data) > 0) {
+            cat(file=stderr(), paste0("[SNP-DEBUG] Full CSV rows with SNP data: first 10 row indices = ", paste(head(rows_with_data, 10), collapse=", "), "\n"))
+            # Show ID column values for those rows
+            if (!is.null(input$id_column) && input$id_column %in% names(values$csv_data)) {
+              snp_ids <- values$csv_data[[input$id_column]][rows_with_data]
+              cat(file=stderr(), paste0("[SNP-DEBUG] ID values for SNP data rows: ", paste(head(snp_ids, 10), collapse=", "), "\n"))
+            }
+          }
+        }
+      }
+    }
+
+    # Get tree tip labels for matching
+    tree_tips <- NULL
+    tree_row_indices <- NULL
+    if (!is.null(values$tree) && !is.null(input$id_column) && input$id_column != "" &&
+        input$id_column %in% names(csv_to_use)) {
+      tree_tips <- trimws(as.character(values$tree$tip.label))
+      csv_ids <- trimws(as.character(csv_to_use[[input$id_column]]))
+
+      # Match tree tips to filtered CSV rows
+      tree_row_indices <- match(tree_tips, csv_ids)
+      n_matched <- sum(!is.na(tree_row_indices))
+      cat(file=stderr(), paste0("[SNP-ANALYSIS] Tree matching: ", n_matched, " of ", length(tree_tips), " tips matched\n"))
+      cat(file=stderr(), paste0("[SNP-ANALYSIS] ID column: '", input$id_column, "'\n"))
+      cat(file=stderr(), paste0("[SNP-ANALYSIS] First 5 tree tips: ", paste(head(tree_tips, 5), collapse=", "), "\n"))
+      cat(file=stderr(), paste0("[SNP-ANALYSIS] First 5 csv_ids: ", paste(head(csv_ids, 5), collapse=", "), "\n"))
+      cat(file=stderr(), paste0("[SNP-ANALYSIS] First 10 tree_row_indices: ", paste(head(tree_row_indices, 10), collapse=", "), "\n"))
+
+      # Debug: check SNP data at matched rows
+      if (length(values$snp_loci) > 0) {
+        first_locus <- values$snp_loci[[1]]
+        if (!is.null(first_locus$m_col) && first_locus$m_col %in% names(csv_to_use)) {
+          m_col_data <- csv_to_use[[first_locus$m_col]]
+          valid_indices <- tree_row_indices[!is.na(tree_row_indices)]
+          if (length(valid_indices) > 0) {
+            sample_values <- m_col_data[head(valid_indices, 10)]
+            cat(file=stderr(), paste0("[SNP-ANALYSIS] ", first_locus$m_col, " values at first 10 matched rows: ",
+                                      paste(sample_values, collapse=", "), "\n"))
+          }
+        }
+      }
+    }
+
+    func.compute.snp.analysis(csv_to_use, values$snp_loci, min_coverage, vaf_threshold, data_format, tree_row_indices)
+  })
+
+  # ============================================================================
+  # SNP ANALYSIS - Summary Statistics UI
+  # ============================================================================
+
+  output$snp_summary_stats_ui <- renderUI({
+    results <- snp_analysis_results()
+
+    if (is.null(results) || length(results) == 0) {
+      return(tags$p(class = "text-muted", "Configure loci and thresholds to see statistics"))
+    }
+
+    # Build summary table
+    rows <- lapply(names(results), function(locus_name) {
+      r <- results[[locus_name]]
+      pct <- function(n) paste0(round(n / r$n_total * 100, 1), "%")
+
+      tags$tr(
+        tags$td(tags$strong(locus_name)),
+        tags$td(paste0(r$n_mutated, " (", pct(r$n_mutated), ")")),
+        tags$td(paste0(r$n_wt, " (", pct(r$n_wt), ")")),
+        tags$td(paste0(r$n_nocall, " (", pct(r$n_nocall), ")")),
+        tags$td(paste0(r$n_na, " (", pct(r$n_na), ")")),
+        tags$td(paste0(round(r$mean_vaf, 1), "%")),
+        tags$td(paste0(round(r$median_vaf, 1), "%")),
+        tags$td(round(r$mean_coverage, 0))
+      )
+    })
+
+    tags$table(
+      class = "table table-condensed table-striped",
+      style = "font-size: 12px;",
+      tags$thead(
+        tags$tr(
+          tags$th("Locus"),
+          tags$th("Mutated"),
+          tags$th("WT"),
+          tags$th("No-call"),
+          tags$th("NA"),
+          tags$th("Mean VAF"),
+          tags$th("Median VAF"),
+          tags$th("Mean Cov.")
+        )
+      ),
+      tags$tbody(rows)
+    )
+  })
+
+  output$snp_overall_summary_ui <- renderUI({
+    results <- snp_analysis_results()
+
+    if (is.null(results) || length(results) == 0) {
+      return(NULL)
+    }
+
+    # Calculate overall statistics
+    total_cells <- if (length(results) > 0) results[[1]]$n_total else 0
+
+    # Count cells with at least one mutation across all loci
+    if (total_cells > 0 && length(results) > 0) {
+      mutation_matrix <- sapply(results, function(r) r$decision == "Mutated")
+      if (is.matrix(mutation_matrix)) {
+        cells_with_mutation <- sum(rowSums(mutation_matrix, na.rm = TRUE) > 0)
+      } else {
+        cells_with_mutation <- sum(mutation_matrix, na.rm = TRUE)
+      }
+      cells_no_mutation <- total_cells - cells_with_mutation
+    } else {
+      cells_with_mutation <- 0
+      cells_no_mutation <- 0
+    }
+
+    tags$div(
+      class = "well well-sm",
+      tags$h5(icon("chart-pie"), " Overall Summary"),
+      tags$ul(
+        tags$li(paste0("Total cells: ", total_cells)),
+        tags$li(paste0("Cells with ≥1 mutation: ", cells_with_mutation,
+                       " (", round(cells_with_mutation / max(total_cells, 1) * 100, 1), "%)")),
+        tags$li(paste0("Cells with no mutations: ", cells_no_mutation,
+                       " (", round(cells_no_mutation / max(total_cells, 1) * 100, 1), "%)"))
+      )
+    )
+  })
+
+  # ============================================================================
+  # SNP ANALYSIS - Heatmap rendering
+  # ============================================================================
+
+  # Function to create SNP heatmap data for rendering
+  func.create.snp.heatmap.data <- function(results, tree_data, show_raw, show_decision,
+                                           raw_colors, decision_colors, loci_spacing, heatmap_width) {
+    if (is.null(results) || length(results) == 0 || is.null(tree_data)) {
+      return(NULL)
+    }
+
+    # Get tip data from tree
+    tip_data <- tree_data[tree_data$isTip == TRUE, ]
+    if (nrow(tip_data) == 0) {
+      return(NULL)
+    }
+
+    heatmap_list <- list()
+    x_offset <- max(tip_data$x, na.rm = TRUE) + 0.5  # Start position after tree
+
+    for (locus_name in names(results)) {
+      r <- results[[locus_name]]
+
+      # Match results to tree tips by row order (assuming same order as CSV)
+      # TODO: Add proper ID matching if needed
+
+      if (show_raw) {
+        # Create raw VAF heatmap data
+        raw_df <- data.frame(
+          y = tip_data$y,
+          x = x_offset,
+          value = r$vaf,
+          type = "raw",
+          locus = locus_name,
+          stringsAsFactors = FALSE
+        )
+        heatmap_list[[paste0(locus_name, "_raw")]] <- list(
+          data = raw_df,
+          type = "raw",
+          locus = locus_name,
+          colors = raw_colors,
+          x_position = x_offset,
+          width = heatmap_width
+        )
+        x_offset <- x_offset + heatmap_width + loci_spacing / 2
+      }
+
+      if (show_decision) {
+        # Create decision heatmap data
+        decision_df <- data.frame(
+          y = tip_data$y,
+          x = x_offset,
+          value = r$decision,
+          type = "decision",
+          locus = locus_name,
+          stringsAsFactors = FALSE
+        )
+        heatmap_list[[paste0(locus_name, "_decision")]] <- list(
+          data = decision_df,
+          type = "decision",
+          locus = locus_name,
+          colors = decision_colors,
+          x_position = x_offset,
+          width = heatmap_width
+        )
+        x_offset <- x_offset + heatmap_width + loci_spacing / 2
+      }
+
+      # Add spacing between loci
+      x_offset <- x_offset + loci_spacing / 2
+    }
+
+    return(heatmap_list)
+  }
+
+  # Apply SNP analysis to tree
+  observeEvent(input$snp_apply_to_tree, {
+    results <- snp_analysis_results()
+
+    if (is.null(results) || length(results) == 0) {
+      showNotification("No SNP analysis results to apply. Configure loci first.", type = "warning")
+      return()
+    }
+
+    # Update status indicator to processing
+    shinyjs::hide("snp_status_waiting")
+    shinyjs::hide("snp_status_ready")
+    shinyjs::show("snp_status_processing")
+
+    # Store the analysis data for rendering
+    values$snp_analysis_data <- results
+    values$snp_applied <- TRUE
+
+    # Trigger plot regeneration
+    request_plot_update()
+
+    showNotification("SNP analysis applied to tree", type = "message")
+    cat(file=stderr(), "[SNP-ANALYSIS] Applied to tree\n")
+  })
+
+  # Update SNP status to ready when plot is ready
+  observe({
+    req(values$plot_ready)
+    if (isTRUE(values$snp_applied)) {
+      shinyjs::hide("snp_status_waiting")
+      shinyjs::hide("snp_status_processing")
+      shinyjs::show("snp_status_ready")
+    }
+  })
+
+  # Clear all SNP analysis
+  observeEvent(input$snp_clear_all, {
+    values$snp_loci <- list()
+    values$snp_analysis_data <- NULL
+    values$snp_applied <- FALSE
+
+    # Reset status indicator
+    shinyjs::show("snp_status_waiting")
+    shinyjs::hide("snp_status_processing")
+    shinyjs::hide("snp_status_ready")
+
+    request_plot_update()
+
+    showNotification("SNP analysis cleared", type = "message")
+  })
+
+  # ============================================================================
+  # SNP ANALYSIS - Preview rendering
+  # ============================================================================
+
+  output$snp_preview <- renderImage({
+    # Use the same temp file mechanism as other previews
+    req(values$temp_plot_file, values$plot_counter)
+
+    if (!file.exists(values$temp_plot_file)) {
+      return(NULL)
+    }
+
+    list(
+      src = values$temp_plot_file,
+      contentType = "image/svg+xml",
+      width = "100%",
+      alt = "SNP Analysis preview"
+    )
+  }, deleteFile = FALSE)
 
 } # End of server function
 
