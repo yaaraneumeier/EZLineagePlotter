@@ -9748,9 +9748,9 @@ ui <- dashboardPage(
               tags$p(class = "text-muted", "Select how your mutation data is formatted in the CSV"),
 
               selectInput("snp_data_format", "Column Data Format",
-                          choices = c("M + WT (Mutant reads + Wild-type reads)" = "m_wt",
-                                      "DP + WT (Total depth + Wild-type reads)" = "dp_wt"),
-                          selected = "m_wt"),
+                          choices = c("DP + WT (Total depth + Wild-type reads)" = "dp_wt",
+                                      "M + WT (Mutant reads + Wild-type reads)" = "m_wt"),
+                          selected = "dp_wt"),
               tags$p(class = "text-muted small",
                      id = "snp_format_hint",
                      "M+WT: Mutant count and WT count columns. DP+WT: Total depth (M = DP - WT)"),
@@ -9763,11 +9763,11 @@ ui <- dashboardPage(
 
               fluidRow(
                 column(6,
-                       textInput("snp_m_suffix", "First Column Suffix", value = "_M",
+                       textInput("snp_m_suffix", "First Column Suffix", value = "dp",
                                  placeholder = "e.g., _M or _DP")
                 ),
                 column(6,
-                       textInput("snp_wt_suffix", "WT Column Suffix", value = "_WT")
+                       textInput("snp_wt_suffix", "WT Column Suffix", value = "ref")
                 )
               ),
 
@@ -9827,11 +9827,11 @@ ui <- dashboardPage(
               # Layout options
               tags$h5("Layout"),
               sliderInput("snp_distance_from_tree", "Distance from Tree",
-                          min = 0, max = 2, value = 0.5, step = 0.05),
+                          min = 0, max = 10, value = 0.5, step = 0.01),
               sliderInput("snp_loci_spacing", "Spacing Between Loci",
                           min = 0, max = 1, value = 0.1, step = 0.01),
               sliderInput("snp_heatmap_height", "Heatmap Height",
-                          min = 0.01, max = 1, value = 0.3, step = 0.01)
+                          min = 0.005, max = 1, value = 0.15, step = 0.005)
             )
           ),
 
