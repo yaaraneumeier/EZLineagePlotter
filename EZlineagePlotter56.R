@@ -4235,14 +4235,21 @@ func.print.lineage.tree <- function(conf_yaml_path,
                 # Apply downsampling if specified in heatmap config
                 # Default is 0 (no additional downsampling during render)
                 # Check for new field name first, fall back to old name for backwards compatibility
-                cnv_downsample <- if ('cnv_render_downsample' %in% names(heat_map_i_def)) {
+                # Skip downsampling in detailed mode - detailed needs full resolution data
+                is_detailed_display <- 'cnv_display_mode' %in% names(heat_map_i_def) &&
+                                       !is.null(heat_map_i_def$cnv_display_mode) &&
+                                       heat_map_i_def$cnv_display_mode == "detailed"
+                cnv_downsample <- if (is_detailed_display) {
+                  0
+                } else if ('cnv_render_downsample' %in% names(heat_map_i_def)) {
                   as.numeric(heat_map_i_def$cnv_render_downsample)
                 } else if ('cnv_downsample' %in% names(heat_map_i_def)) {
                   as.numeric(heat_map_i_def$cnv_downsample)
                 } else {
                   0
                 }
-                cat(file=stderr(), paste0("[RDATA-CNV] Using render downsample factor: ", cnv_downsample, "\n"))
+                cat(file=stderr(), paste0("[RDATA-CNV] Using render downsample factor: ", cnv_downsample,
+                    if (is_detailed_display) " (detailed mode - no downsampling)" else "", "\n"))
                 cat(file=stderr(), paste0("[RDATA-CNV] heat_map_i_def fields: ", paste(names(heat_map_i_def), collapse=", "), "\n"))
                 cat(file=stderr(), paste0("[RDATA-CNV] cnv_render_downsample in heat_map_i_def: ",
                     ifelse('cnv_render_downsample' %in% names(heat_map_i_def),
