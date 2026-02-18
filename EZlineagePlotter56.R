@@ -231,7 +231,7 @@ options(shiny.maxRequestSize = 100*1024^2)
 #       - Layer reordering now happens ONCE at the end in generate_plot()
 # S1.2: Fixed undefined x_range_min in func_highlight causing "Problem while
 #       computing aesthetics" error when adding 2+ highlights with a heatmap.
-VERSION <- "S3.1"
+VERSION <- "S3.11"
 
 # Debug output control - set to TRUE to enable verbose console logging
 # For production/stable use, keep this FALSE for better performance
@@ -9105,9 +9105,9 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #155724;",
-                     tags$h4(style = "color: #155724; margin: 0;", "Version S3.1 Stable"),
+                     tags$h4(style = "color: #155724; margin: 0;", "Version S3.11 Stable"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
-                            tags$strong("New in S3.1:"),
+                            tags$strong("New in S3.11:"),
                             tags$ul(
                               tags$li("SNP Analysis Tab: exploratory mutation analysis with VAF heatmaps and classification calls"),
                               tags$li("Chromosome boundary lines and labels for RData CNV heatmaps"),
