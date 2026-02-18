@@ -231,7 +231,7 @@ options(shiny.maxRequestSize = 100*1024^2)
 #       - Layer reordering now happens ONCE at the end in generate_plot()
 # S1.2: Fixed undefined x_range_min in func_highlight causing "Problem while
 #       computing aesthetics" error when adding 2+ highlights with a heatmap.
-VERSION <- "S3.1"
+VERSION <- "S3.11"
 
 # Debug output control - set to TRUE to enable verbose console logging
 # For production/stable use, keep this FALSE for better performance
@@ -4235,14 +4235,21 @@ func.print.lineage.tree <- function(conf_yaml_path,
                 # Apply downsampling if specified in heatmap config
                 # Default is 0 (no additional downsampling during render)
                 # Check for new field name first, fall back to old name for backwards compatibility
-                cnv_downsample <- if ('cnv_render_downsample' %in% names(heat_map_i_def)) {
+                # Skip downsampling in detailed mode - detailed needs full resolution data
+                is_detailed_display <- 'cnv_display_mode' %in% names(heat_map_i_def) &&
+                                       !is.null(heat_map_i_def$cnv_display_mode) &&
+                                       heat_map_i_def$cnv_display_mode == "detailed"
+                cnv_downsample <- if (is_detailed_display) {
+                  0
+                } else if ('cnv_render_downsample' %in% names(heat_map_i_def)) {
                   as.numeric(heat_map_i_def$cnv_render_downsample)
                 } else if ('cnv_downsample' %in% names(heat_map_i_def)) {
                   as.numeric(heat_map_i_def$cnv_downsample)
                 } else {
                   0
                 }
-                cat(file=stderr(), paste0("[RDATA-CNV] Using render downsample factor: ", cnv_downsample, "\n"))
+                cat(file=stderr(), paste0("[RDATA-CNV] Using render downsample factor: ", cnv_downsample,
+                    if (is_detailed_display) " (detailed mode - no downsampling)" else "", "\n"))
                 cat(file=stderr(), paste0("[RDATA-CNV] heat_map_i_def fields: ", paste(names(heat_map_i_def), collapse=", "), "\n"))
                 cat(file=stderr(), paste0("[RDATA-CNV] cnv_render_downsample in heat_map_i_def: ",
                     ifelse('cnv_render_downsample' %in% names(heat_map_i_def),
@@ -9098,9 +9105,9 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #155724;",
-                     tags$h4(style = "color: #155724; margin: 0;", "Version S3.1 Stable"),
+                     tags$h4(style = "color: #155724; margin: 0;", "Version S3.11 Stable"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
-                            tags$strong("New in S3.1:"),
+                            tags$strong("New in S3.11:"),
                             tags$ul(
                               tags$li("SNP Analysis Tab: exploratory mutation analysis with VAF heatmaps and classification calls"),
                               tags$li("Chromosome boundary lines and labels for RData CNV heatmaps"),
@@ -9741,9 +9748,9 @@ ui <- dashboardPage(
               tags$p(class = "text-muted", "Select how your mutation data is formatted in the CSV"),
 
               selectInput("snp_data_format", "Column Data Format",
-                          choices = c("M + WT (Mutant reads + Wild-type reads)" = "m_wt",
-                                      "DP + WT (Total depth + Wild-type reads)" = "dp_wt"),
-                          selected = "m_wt"),
+                          choices = c("DP + WT (Total depth + Wild-type reads)" = "dp_wt",
+                                      "M + WT (Mutant reads + Wild-type reads)" = "m_wt"),
+                          selected = "dp_wt"),
               tags$p(class = "text-muted small",
                      id = "snp_format_hint",
                      "M+WT: Mutant count and WT count columns. DP+WT: Total depth (M = DP - WT)"),
@@ -9756,11 +9763,11 @@ ui <- dashboardPage(
 
               fluidRow(
                 column(6,
-                       textInput("snp_m_suffix", "First Column Suffix", value = "_M",
+                       textInput("snp_m_suffix", "First Column Suffix", value = "dp",
                                  placeholder = "e.g., _M or _DP")
                 ),
                 column(6,
-                       textInput("snp_wt_suffix", "WT Column Suffix", value = "_WT")
+                       textInput("snp_wt_suffix", "WT Column Suffix", value = "ref")
                 )
               ),
 
@@ -9820,11 +9827,11 @@ ui <- dashboardPage(
               # Layout options
               tags$h5("Layout"),
               sliderInput("snp_distance_from_tree", "Distance from Tree",
-                          min = 0, max = 2, value = 0.5, step = 0.05),
+                          min = 0, max = 10, value = 0.5, step = 0.01),
               sliderInput("snp_loci_spacing", "Spacing Between Loci",
                           min = 0, max = 1, value = 0.1, step = 0.01),
               sliderInput("snp_heatmap_height", "Heatmap Height",
-                          min = 0.01, max = 1, value = 0.3, step = 0.01)
+                          min = 0.005, max = 1, value = 0.15, step = 0.005)
             )
           ),
 
