@@ -18128,6 +18128,7 @@ server <- function(input, output, session) {
       heatmap_entry <- list(
         title = cfg$title,
         is_discrete = (actual_type == "discrete"),
+        data_source = "csv",  # Explicitly mark as CSV source
         columns = cfg$columns,  # v56: Now supports multiple columns
         show_colnames = cfg$show_colnames,
         colnames_angle = if (!is.null(cfg$colnames_angle)) cfg$colnames_angle else 45,
