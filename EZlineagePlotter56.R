@@ -8157,6 +8157,29 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
         }
         debug_cat(paste0("========================================\n"))
 
+        # DEBUG: Show per-column values for discrete heatmaps to verify legend entries
+        if (heat_param[['is_discrete']] == TRUE && !is.null(dxdf440_for_heat[[j1]])) {
+          cat(file=stderr(), paste0("\n[DISCRETE-LEGEND-DEBUG] Heatmap ", j1, " per-column values for tree-matched rows:\n"))
+          heat_df <- dxdf440_for_heat[[j1]]
+          for (ci in seq_len(ncol(heat_df))) {
+            col_name <- colnames(heat_df)[ci]
+            col_vals <- as.character(heat_df[, ci])
+            col_unique <- sort(unique(na.omit(col_vals)))
+            col_unique_no_empty <- col_unique[col_unique != ""]
+            cat(file=stderr(), paste0("[DISCRETE-LEGEND-DEBUG]   Column '", col_name,
+                "': unique values = [", paste(col_unique_no_empty, collapse=", "),
+                "] (n=", length(col_unique_no_empty), ", total rows=", length(col_vals), ")\n"))
+            # Count per value
+            val_counts <- table(col_vals, useNA = "ifany")
+            cat(file=stderr(), paste0("[DISCRETE-LEGEND-DEBUG]     Value counts: ",
+                paste(paste0(names(val_counts), "=", val_counts), collapse=", "), "\n"))
+          }
+          cat(file=stderr(), paste0("[DISCRETE-LEGEND-DEBUG]   ALL columns combined unique: [",
+              paste(sort(unique(na.omit(unlist(lapply(seq_len(ncol(heat_df)), function(ci) {
+                as.character(heat_df[, ci])
+              }))))), collapse=", "), "]\n"))
+        }
+
         if (heat_param['man'] == FALSE) {
           if (heat_param['man_define_colors'] == FALSE) {
             # v67: SIMPLIFIED - color_scale_option is now directly a palette name string (e.g., "Set1")
