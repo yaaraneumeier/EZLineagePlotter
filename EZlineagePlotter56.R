@@ -4904,21 +4904,42 @@ func.print.lineage.tree <- function(conf_yaml_path,
           # FIX-NA-STRINGS: Convert common NA-like string values to real R NA
           # Excel exports may contain "#N/A", "#N/A!", "N/A", "#VALUE!", "#REF!", etc.
           # These should be treated as missing data, not discrete legend entries.
+          # Also handles stray numeric values in columns that are primarily non-numeric
+          # (e.g., a "2" in a column with mostly "M"/"WT" mutation status values).
           if (!is.null(dxdf440_for_heat[[indx_for_sav]])) {
             na_like_strings <- c("#N/A", "#N/A!", "N/A", "#NA", "#VALUE!", "#REF!", "#DIV/0!", "#NULL!", "#NAME?", "#NUM!")
             na_converted_count <- 0
+            numeric_converted_count <- 0
             for (fix_col_idx in seq_len(ncol(dxdf440_for_heat[[indx_for_sav]]))) {
               col_vals <- as.character(dxdf440_for_heat[[indx_for_sav]][, fix_col_idx])
+              # Step 1: Convert NA-like strings
               na_mask <- col_vals %in% na_like_strings
               if (any(na_mask)) {
                 na_converted_count <- na_converted_count + sum(na_mask)
                 col_vals[na_mask] <- NA
-                dxdf440_for_heat[[indx_for_sav]][, fix_col_idx] <- col_vals
               }
+              # Step 2: For columns with mixed numeric/non-numeric values,
+              # convert stray numeric values to NA (e.g., "2" in a M/WT column)
+              # This only applies when numeric values are the MINORITY (<50%)
+              non_na_vals <- col_vals[!is.na(col_vals) & col_vals != ""]
+              if (length(non_na_vals) > 0) {
+                is_numeric <- !is.na(suppressWarnings(as.numeric(non_na_vals)))
+                pct_numeric <- sum(is_numeric) / length(non_na_vals)
+                if (pct_numeric > 0 && pct_numeric < 0.5) {
+                  numeric_mask <- !is.na(col_vals) & !is.na(suppressWarnings(as.numeric(col_vals)))
+                  if (any(numeric_mask)) {
+                    numeric_converted_count <- numeric_converted_count + sum(numeric_mask)
+                    col_vals[numeric_mask] <- NA
+                  }
+                }
+              }
+              dxdf440_for_heat[[indx_for_sav]][, fix_col_idx] <- col_vals
             }
-            if (na_converted_count > 0) {
+            if (na_converted_count > 0 || numeric_converted_count > 0) {
               cat(file=stderr(), paste0("[FIX-NA-STRINGS] Heatmap ", indx_for_sav,
-                  ": converted ", na_converted_count, " NA-like string values to real NA\n"))
+                  ": converted ", na_converted_count, " NA-like strings",
+                  if (numeric_converted_count > 0) paste0(" and ", numeric_converted_count, " stray numeric values") else "",
+                  " to real NA\n"))
             }
           }
 
@@ -17425,12 +17446,22 @@ server <- function(input, output, session) {
         }
 
         # FIX-DISCRETE-LEGEND: Gather unique values from ALL selected columns
-        # FIX-NA-STRINGS: Also exclude NA-like strings from color pickers
+        # FIX-NA-STRINGS: Also exclude NA-like strings and stray numeric values per-column
         na_like_strings <- c("#N/A", "#N/A!", "N/A", "#NA", "#VALUE!", "#REF!", "#DIV/0!", "#NULL!", "#NAME?", "#NUM!")
         unique_vals <- sort(unique(na.omit(unlist(lapply(valid_cols, function(col) {
-          as.character(filtered_data[[col]])
+          col_vals <- as.character(filtered_data[[col]])
+          col_vals[col_vals %in% na_like_strings] <- NA
+          col_vals[col_vals == ""] <- NA
+          # Per-column: if majority of values are non-numeric, treat numeric values as NA
+          non_na <- col_vals[!is.na(col_vals)]
+          if (length(non_na) > 0) {
+            is_num <- !is.na(suppressWarnings(as.numeric(non_na)))
+            if (sum(is_num) > 0 && sum(is_num) / length(non_na) < 0.5) {
+              col_vals[!is.na(col_vals) & !is.na(suppressWarnings(as.numeric(col_vals)))] <- NA
+            }
+          }
+          col_vals
         })))))
-        unique_vals <- unique_vals[!unique_vals %in% na_like_strings & unique_vals != ""]
         cat(file=stderr(), paste0("[FIX-DISCRETE-LEGEND] Color picker UI for heatmap ", i,
             ": values from ALL ", length(valid_cols), " columns: [",
             paste(unique_vals, collapse=", "), "] (n=", length(unique_vals), ")\n"))
@@ -17661,12 +17692,21 @@ server <- function(input, output, session) {
                   }
                 }
                 # FIX: Gather unique values from ALL selected columns (same as renderUI and Apply handler)
-                # FIX-NA-STRINGS: Exclude NA-like strings
+                # FIX-NA-STRINGS: Exclude NA-like strings and stray numeric values per-column
                 na_like_strings <- c("#N/A", "#N/A!", "N/A", "#NA", "#VALUE!", "#REF!", "#DIV/0!", "#NULL!", "#NAME?", "#NUM!")
                 unique_vals <- sort(unique(na.omit(unlist(lapply(valid_cols, function(col) {
-                  as.character(filtered_data[[col]])
+                  col_vals <- as.character(filtered_data[[col]])
+                  col_vals[col_vals %in% na_like_strings] <- NA
+                  col_vals[col_vals == ""] <- NA
+                  non_na <- col_vals[!is.na(col_vals)]
+                  if (length(non_na) > 0) {
+                    is_num <- !is.na(suppressWarnings(as.numeric(non_na)))
+                    if (sum(is_num) > 0 && sum(is_num) / length(non_na) < 0.5) {
+                      col_vals[!is.na(col_vals) & !is.na(suppressWarnings(as.numeric(col_vals)))] <- NA
+                    }
+                  }
+                  col_vals
                 })))))
-                unique_vals <- unique_vals[!unique_vals %in% na_like_strings & unique_vals != ""]
 
                 if (j <= length(unique_vals)) {
                   # Initialize custom_colors if needed
@@ -18259,12 +18299,21 @@ server <- function(input, output, session) {
           }
 
           # FIX-DISCRETE-LEGEND: Gather unique values from ALL selected columns
-          # FIX-NA-STRINGS: Exclude NA-like strings from color assignments
+          # FIX-NA-STRINGS: Exclude NA-like strings and stray numeric values per-column
           na_like_strings <- c("#N/A", "#N/A!", "N/A", "#NA", "#VALUE!", "#REF!", "#DIV/0!", "#NULL!", "#NAME?", "#NUM!")
           unique_vals <- sort(unique(na.omit(unlist(lapply(valid_cols, function(col) {
-            as.character(filtered_data[[col]])
+            col_vals <- as.character(filtered_data[[col]])
+            col_vals[col_vals %in% na_like_strings] <- NA
+            col_vals[col_vals == ""] <- NA
+            non_na <- col_vals[!is.na(col_vals)]
+            if (length(non_na) > 0) {
+              is_num <- !is.na(suppressWarnings(as.numeric(non_na)))
+              if (sum(is_num) > 0 && sum(is_num) / length(non_na) < 0.5) {
+                col_vals[!is.na(col_vals) & !is.na(suppressWarnings(as.numeric(col_vals)))] <- NA
+              }
+            }
+            col_vals
           })))))
-          unique_vals <- unique_vals[!unique_vals %in% na_like_strings & unique_vals != ""]
           cat(file=stderr(), paste0("[FIX-DISCRETE-LEGEND] Apply Heatmaps color collection for heatmap ", i,
               ": values from ALL ", length(valid_cols), " columns: [",
               paste(unique_vals, collapse=", "), "] (n=", length(unique_vals), ")\n"))
