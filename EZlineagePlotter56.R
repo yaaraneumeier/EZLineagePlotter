@@ -7902,6 +7902,33 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
           debug_cat(paste0("  Converted to factor with ", length(unique_vals), " levels\n"))
         }
         debug_cat(paste0("================================\n"))
+
+        # DIAGNOSTIC: Check if factor levels are consistent across columns
+        cat(file=stderr(), paste0("\n[DIAG-DISCRETE-BUG] Heatmap ", j1, " factor level check:\n"))
+        all_values_across_cols <- c()
+        for (diag_col_idx in 1:ncol(dxdf440_for_heat[[j1]])) {
+          col_vals_diag <- dxdf440_for_heat[[j1]][, diag_col_idx]
+          col_name_diag <- colnames(dxdf440_for_heat[[j1]])[diag_col_idx]
+          if (is.factor(col_vals_diag)) {
+            col_levels <- levels(col_vals_diag)
+            cat(file=stderr(), paste0("  Column '", col_name_diag, "' factor levels: [", paste(col_levels, collapse=", "), "]\n"))
+          } else {
+            col_levels <- as.character(sort(unique(na.omit(col_vals_diag))))
+            cat(file=stderr(), paste0("  Column '", col_name_diag, "' unique values (not factor): [", paste(col_levels, collapse=", "), "]\n"))
+          }
+          all_values_across_cols <- c(all_values_across_cols, col_levels)
+        }
+        all_unique_values <- sort(unique(all_values_across_cols))
+        cat(file=stderr(), paste0("  ALL unique values across ALL columns: [", paste(all_unique_values, collapse=", "), "]\n"))
+        cat(file=stderr(), paste0("  Total unique values: ", length(all_unique_values), "\n"))
+        col1_only <- if (is.factor(dxdf440_for_heat[[j1]][,1])) levels(dxdf440_for_heat[[j1]][,1]) else sort(unique(na.omit(dxdf440_for_heat[[j1]][,1])))
+        missing_from_col1 <- setdiff(all_unique_values, col1_only)
+        if (length(missing_from_col1) > 0) {
+          cat(file=stderr(), paste0("  *** BUG WARNING: Values present in other columns but NOT in column 1: [", paste(missing_from_col1, collapse=", "), "]\n"))
+          cat(file=stderr(), paste0("  *** This will cause incorrect legend labeling!\n"))
+        } else {
+          cat(file=stderr(), paste0("  OK: Column 1 contains all values\n"))
+        }
       }
 
       # Create the heatmap
@@ -8139,14 +8166,28 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             if (!is.null(palette_name) && is.character(palette_name) &&
                 palette_name %in% rownames(RColorBrewer::brewer.pal.info)) {
               # Get unique values to determine number of colors needed
+              # NOTE: This currently only looks at column 1! See DIAG below.
               heat_data_vals <- unique(na.omit(dxdf440_for_heat[[j1]][,1]))
               n_vals <- length(heat_data_vals)
               max_colors <- RColorBrewer::brewer.pal.info[palette_name, "maxcolors"]
               n_colors <- min(n_vals, max_colors)
 
+              # DIAGNOSTIC: Check if column 1 captures all values
+              all_cols_vals <- unique(na.omit(unlist(lapply(1:ncol(dxdf440_for_heat[[j1]]), function(ci) {
+                v <- dxdf440_for_heat[[j1]][, ci]
+                if (is.factor(v)) levels(v) else as.character(v)
+              }))))
+              cat(file=stderr(), paste0("[DIAG-PALETTE-BUG] Palette color count check for heatmap ", j1, ":\n"))
+              cat(file=stderr(), paste0("  Values from column 1 only: [", paste(heat_data_vals, collapse=", "), "] (n=", n_vals, ")\n"))
+              cat(file=stderr(), paste0("  Values from ALL columns:   [", paste(sort(all_cols_vals), collapse=", "), "] (n=", length(all_cols_vals), ")\n"))
+              if (length(all_cols_vals) > n_vals) {
+                cat(file=stderr(), paste0("  *** BUG: scale_fill_brewer will only get ", n_vals, " values but data has ", length(all_cols_vals), " unique values!\n"))
+                cat(file=stderr(), paste0("  *** Missing values: [", paste(setdiff(all_cols_vals, as.character(heat_data_vals)), collapse=", "), "]\n"))
+              }
+
               debug_cat(paste0("\n=== v67: Applying discrete palette ===\n"))
               debug_cat(paste0("  Palette: ", palette_name, "\n"))
-              debug_cat(paste0("  Number of unique values: ", n_vals, "\n"))
+              debug_cat(paste0("  Number of unique values (col 1 only!): ", n_vals, "\n"))
               debug_cat(paste0("  Colors to use: ", n_colors, "\n"))
               debug_cat(paste0("================================\n"))
 
