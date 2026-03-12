@@ -15926,6 +15926,10 @@ server <- function(input, output, session) {
       observeEvent(input[[paste0("heatmap_columns_", i)]], {
         if (i <= length(values$heatmap_configs)) {
           values$heatmap_configs[[i]]$columns <- input[[paste0("heatmap_columns_", i)]]
+          # FIX: Inhibit color saves during column changes to prevent race conditions
+          # When columns change, color picker UI rebuilds and old pickers fire stale values
+          inhibit_color_save(TRUE)
+          shinyjs::delay(2500, { inhibit_color_save(FALSE) })
         }
       }, ignoreInit = TRUE)
       
@@ -17592,11 +17596,12 @@ server <- function(input, output, session) {
           }
 
           if (i <= length(values$heatmap_configs)) {
-            # Get current column to know the unique values
+            # Get current columns to know the unique values
             cols_selected <- input[[paste0("heatmap_columns_", i)]]
             if (!is.null(cols_selected) && length(cols_selected) > 0 && !is.null(values$csv_data)) {
-              first_col <- cols_selected[1]
-              if (first_col %in% names(values$csv_data)) {
+              # FIX: Use ALL selected columns (matching renderUI logic) not just first column
+              valid_cols <- cols_selected[cols_selected %in% names(values$csv_data)]
+              if (length(valid_cols) > 0) {
                 # Get filtered unique values (same logic as renderUI)
                 filtered_data <- values$csv_data
                 if (!is.null(values$tree) && !is.null(input$id_column) && input$id_column %in% names(values$csv_data)) {
@@ -17607,7 +17612,10 @@ server <- function(input, output, session) {
                     filtered_data <- values$csv_data[matching_rows, , drop = FALSE]
                   }
                 }
-                unique_vals <- sort(unique(na.omit(filtered_data[[first_col]])))
+                # FIX: Gather unique values from ALL selected columns (same as renderUI and Apply handler)
+                unique_vals <- sort(unique(na.omit(unlist(lapply(valid_cols, function(col) {
+                  as.character(filtered_data[[col]])
+                })))))
 
                 if (j <= length(unique_vals)) {
                   # Initialize custom_colors if needed
