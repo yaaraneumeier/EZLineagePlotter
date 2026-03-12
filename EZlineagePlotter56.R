@@ -4900,6 +4900,28 @@ func.print.lineage.tree <- function(conf_yaml_path,
 
             heat_display_vec <- c(heat_display_vec, FALSE)
           }
+
+          # FIX-NA-STRINGS: Convert common NA-like string values to real R NA
+          # Excel exports may contain "#N/A", "#N/A!", "N/A", "#VALUE!", "#REF!", etc.
+          # These should be treated as missing data, not discrete legend entries.
+          if (!is.null(dxdf440_for_heat[[indx_for_sav]])) {
+            na_like_strings <- c("#N/A", "#N/A!", "N/A", "#NA", "#VALUE!", "#REF!", "#DIV/0!", "#NULL!", "#NAME?", "#NUM!")
+            na_converted_count <- 0
+            for (fix_col_idx in seq_len(ncol(dxdf440_for_heat[[indx_for_sav]]))) {
+              col_vals <- as.character(dxdf440_for_heat[[indx_for_sav]][, fix_col_idx])
+              na_mask <- col_vals %in% na_like_strings
+              if (any(na_mask)) {
+                na_converted_count <- na_converted_count + sum(na_mask)
+                col_vals[na_mask] <- NA
+                dxdf440_for_heat[[indx_for_sav]][, fix_col_idx] <- col_vals
+              }
+            }
+            if (na_converted_count > 0) {
+              cat(file=stderr(), paste0("[FIX-NA-STRINGS] Heatmap ", indx_for_sav,
+                  ": converted ", na_converted_count, " NA-like string values to real NA\n"))
+            }
+          }
+
           temp <- dxdf440_for_heat[[indx_for_sav]]
           
           #print("B17")                 
@@ -8158,7 +8180,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
         debug_cat(paste0("========================================\n"))
 
         # DEBUG: Show per-column values for discrete heatmaps to verify legend entries
-        if (heat_param[['is_discrete']] == TRUE && !is.null(dxdf440_for_heat[[j1]])) {
+        if (isTRUE(heat_param[['is_discrete']]) && !is.null(dxdf440_for_heat[[j1]])) {
           cat(file=stderr(), paste0("\n[DISCRETE-LEGEND-DEBUG] Heatmap ", j1, " per-column values for tree-matched rows:\n"))
           heat_df <- dxdf440_for_heat[[j1]]
           for (ci in seq_len(ncol(heat_df))) {
@@ -17403,9 +17425,12 @@ server <- function(input, output, session) {
         }
 
         # FIX-DISCRETE-LEGEND: Gather unique values from ALL selected columns
+        # FIX-NA-STRINGS: Also exclude NA-like strings from color pickers
+        na_like_strings <- c("#N/A", "#N/A!", "N/A", "#NA", "#VALUE!", "#REF!", "#DIV/0!", "#NULL!", "#NAME?", "#NUM!")
         unique_vals <- sort(unique(na.omit(unlist(lapply(valid_cols, function(col) {
           as.character(filtered_data[[col]])
         })))))
+        unique_vals <- unique_vals[!unique_vals %in% na_like_strings & unique_vals != ""]
         cat(file=stderr(), paste0("[FIX-DISCRETE-LEGEND] Color picker UI for heatmap ", i,
             ": values from ALL ", length(valid_cols), " columns: [",
             paste(unique_vals, collapse=", "), "] (n=", length(unique_vals), ")\n"))
@@ -17636,9 +17661,12 @@ server <- function(input, output, session) {
                   }
                 }
                 # FIX: Gather unique values from ALL selected columns (same as renderUI and Apply handler)
+                # FIX-NA-STRINGS: Exclude NA-like strings
+                na_like_strings <- c("#N/A", "#N/A!", "N/A", "#NA", "#VALUE!", "#REF!", "#DIV/0!", "#NULL!", "#NAME?", "#NUM!")
                 unique_vals <- sort(unique(na.omit(unlist(lapply(valid_cols, function(col) {
                   as.character(filtered_data[[col]])
                 })))))
+                unique_vals <- unique_vals[!unique_vals %in% na_like_strings & unique_vals != ""]
 
                 if (j <= length(unique_vals)) {
                   # Initialize custom_colors if needed
@@ -18231,9 +18259,12 @@ server <- function(input, output, session) {
           }
 
           # FIX-DISCRETE-LEGEND: Gather unique values from ALL selected columns
+          # FIX-NA-STRINGS: Exclude NA-like strings from color assignments
+          na_like_strings <- c("#N/A", "#N/A!", "N/A", "#NA", "#VALUE!", "#REF!", "#DIV/0!", "#NULL!", "#NAME?", "#NUM!")
           unique_vals <- sort(unique(na.omit(unlist(lapply(valid_cols, function(col) {
             as.character(filtered_data[[col]])
           })))))
+          unique_vals <- unique_vals[!unique_vals %in% na_like_strings & unique_vals != ""]
           cat(file=stderr(), paste0("[FIX-DISCRETE-LEGEND] Apply Heatmaps color collection for heatmap ", i,
               ": values from ALL ", length(valid_cols), " columns: [",
               paste(unique_vals, collapse=", "), "] (n=", length(unique_vals), ")\n"))
