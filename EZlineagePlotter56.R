@@ -4681,6 +4681,13 @@ func.print.lineage.tree <- function(conf_yaml_path,
             debug_cat(paste0("  l_titles_for_heat: ", paste(l_titles_for_heat, collapse=", "), "\n"))
             debug_cat(paste0("  Available CSV columns: ", paste(head(names(readfile440), 10), collapse=", "), "...\n"))
 
+            # Filter l_titles_for_heat to only columns that exist in the CSV
+            missing_cols <- l_titles_for_heat[!l_titles_for_heat %in% names(readfile440)]
+            if (length(missing_cols) > 0) {
+              cat(file=stderr(), paste0("[WARN-COLUMNS] Heatmap ", indx_for_sav,
+                  ": skipping missing columns: ", paste(missing_cols, collapse=", "), "\n"))
+              l_titles_for_heat <- l_titles_for_heat[l_titles_for_heat %in% names(readfile440)]
+            }
             valid_columns <- c(title.id, l_titles_for_heat)
             valid_columns <- valid_columns[valid_columns %in% names(readfile440)]
             debug_cat(paste0("  Valid columns (after filtering): ", paste(valid_columns, collapse=", "), "\n"))
