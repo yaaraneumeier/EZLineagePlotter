@@ -4681,6 +4681,13 @@ func.print.lineage.tree <- function(conf_yaml_path,
             debug_cat(paste0("  l_titles_for_heat: ", paste(l_titles_for_heat, collapse=", "), "\n"))
             debug_cat(paste0("  Available CSV columns: ", paste(head(names(readfile440), 10), collapse=", "), "...\n"))
 
+            # Filter l_titles_for_heat to only columns that exist in the CSV
+            missing_cols <- l_titles_for_heat[!l_titles_for_heat %in% names(readfile440)]
+            if (length(missing_cols) > 0) {
+              cat(file=stderr(), paste0("[WARN-COLUMNS] Heatmap ", indx_for_sav,
+                  ": skipping missing columns: ", paste(missing_cols, collapse=", "), "\n"))
+              l_titles_for_heat <- l_titles_for_heat[l_titles_for_heat %in% names(readfile440)]
+            }
             valid_columns <- c(title.id, l_titles_for_heat)
             valid_columns <- valid_columns[valid_columns %in% names(readfile440)]
             debug_cat(paste0("  Valid columns (after filtering): ", paste(valid_columns, collapse=", "), "\n"))
@@ -4900,6 +4907,49 @@ func.print.lineage.tree <- function(conf_yaml_path,
 
             heat_display_vec <- c(heat_display_vec, FALSE)
           }
+
+          # FIX-NA-STRINGS: Convert common NA-like string values to real R NA
+          # Excel exports may contain "#N/A", "#N/A!", "N/A", "#VALUE!", "#REF!", etc.
+          # These should be treated as missing data, not discrete legend entries.
+          # Also handles stray numeric values in columns that are primarily non-numeric
+          # (e.g., a "2" in a column with mostly "M"/"WT" mutation status values).
+          if (!is.null(dxdf440_for_heat[[indx_for_sav]])) {
+            na_like_strings <- c("#N/A", "#N/A!", "N/A", "#NA", "#VALUE!", "#REF!", "#DIV/0!", "#NULL!", "#NAME?", "#NUM!")
+            na_converted_count <- 0
+            numeric_converted_count <- 0
+            for (fix_col_idx in seq_len(ncol(dxdf440_for_heat[[indx_for_sav]]))) {
+              col_vals <- as.character(dxdf440_for_heat[[indx_for_sav]][, fix_col_idx])
+              # Step 1: Convert NA-like strings
+              na_mask <- col_vals %in% na_like_strings
+              if (any(na_mask)) {
+                na_converted_count <- na_converted_count + sum(na_mask)
+                col_vals[na_mask] <- NA
+              }
+              # Step 2: For columns with mixed numeric/non-numeric values,
+              # convert stray numeric values to NA (e.g., "2" in a M/WT column)
+              # This only applies when numeric values are the MINORITY (<50%)
+              non_na_vals <- col_vals[!is.na(col_vals) & col_vals != ""]
+              if (length(non_na_vals) > 0) {
+                is_numeric <- !is.na(suppressWarnings(as.numeric(non_na_vals)))
+                pct_numeric <- sum(is_numeric) / length(non_na_vals)
+                if (pct_numeric > 0 && pct_numeric < 0.5) {
+                  numeric_mask <- !is.na(col_vals) & !is.na(suppressWarnings(as.numeric(col_vals)))
+                  if (any(numeric_mask)) {
+                    numeric_converted_count <- numeric_converted_count + sum(numeric_mask)
+                    col_vals[numeric_mask] <- NA
+                  }
+                }
+              }
+              dxdf440_for_heat[[indx_for_sav]][, fix_col_idx] <- col_vals
+            }
+            if (na_converted_count > 0 || numeric_converted_count > 0) {
+              cat(file=stderr(), paste0("[FIX-NA-STRINGS] Heatmap ", indx_for_sav,
+                  ": converted ", na_converted_count, " NA-like strings",
+                  if (numeric_converted_count > 0) paste0(" and ", numeric_converted_count, " stray numeric values") else "",
+                  " to real NA\n"))
+            }
+          }
+
           temp <- dxdf440_for_heat[[indx_for_sav]]
           
           #print("B17")                 
@@ -7890,18 +7940,54 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
       # Without factors, "Problem while setting up geom" errors occur during rendering.
       if (!is.null(heat_param) && heat_param['is_discrete'] == TRUE) {
         debug_cat(paste0("\n=== v89: Converting discrete heatmap to factors ===\n"))
+        # FIX-DISCRETE-LEGEND: Collect ALL unique values across ALL columns FIRST
+        # so every column shares the same factor levels. Previously each column got
+        # its own levels, so if column 1 had [A,B] and column 2 had [A,B,C], the
+        # legend would only show colors for [A,B] and C would be mislabeled.
+        all_unique_vals_across_cols <- sort(unique(na.omit(unlist(lapply(1:ncol(dxdf440_for_heat[[j1]]), function(ci) {
+          as.character(dxdf440_for_heat[[j1]][, ci])
+        })))))
+        cat(file=stderr(), paste0("\n[FIX-DISCRETE-LEGEND] Heatmap ", j1, ": unified factor levels across all columns: [",
+            paste(all_unique_vals_across_cols, collapse=", "), "] (n=", length(all_unique_vals_across_cols), ")\n"))
         for (col_idx in 1:ncol(dxdf440_for_heat[[j1]])) {
           col_name <- colnames(dxdf440_for_heat[[j1]])[col_idx]
           col_vals <- dxdf440_for_heat[[j1]][, col_idx]
-          unique_vals <- sort(unique(na.omit(col_vals)))
-          debug_cat(paste0("  Column '", col_name, "': ", length(unique_vals), " unique values\n"))
-          debug_cat(paste0("  Unique values: ", paste(head(unique_vals, 10), collapse=", "),
-                                    if(length(unique_vals) > 10) "..." else "", "\n"))
-          # v89: RESTORED - Convert to factor with sorted levels (REQUIRED for discrete heatmaps)
-          dxdf440_for_heat[[j1]][, col_idx] <- factor(col_vals, levels = unique_vals)
-          debug_cat(paste0("  Converted to factor with ", length(unique_vals), " levels\n"))
+          per_col_unique <- sort(unique(na.omit(col_vals)))
+          debug_cat(paste0("  Column '", col_name, "': ", length(per_col_unique), " unique values\n"))
+          debug_cat(paste0("  Unique values: ", paste(head(per_col_unique, 10), collapse=", "),
+                                    if(length(per_col_unique) > 10) "..." else "", "\n"))
+          # FIX-DISCRETE-LEGEND: Use unified levels from ALL columns (not just this column's values)
+          dxdf440_for_heat[[j1]][, col_idx] <- factor(col_vals, levels = all_unique_vals_across_cols)
+          debug_cat(paste0("  Converted to factor with ", length(all_unique_vals_across_cols), " unified levels\n"))
         }
         debug_cat(paste0("================================\n"))
+
+        # DIAGNOSTIC: Check if factor levels are consistent across columns
+        cat(file=stderr(), paste0("\n[DIAG-DISCRETE-BUG] Heatmap ", j1, " factor level check:\n"))
+        all_values_across_cols <- c()
+        for (diag_col_idx in 1:ncol(dxdf440_for_heat[[j1]])) {
+          col_vals_diag <- dxdf440_for_heat[[j1]][, diag_col_idx]
+          col_name_diag <- colnames(dxdf440_for_heat[[j1]])[diag_col_idx]
+          if (is.factor(col_vals_diag)) {
+            col_levels <- levels(col_vals_diag)
+            cat(file=stderr(), paste0("  Column '", col_name_diag, "' factor levels: [", paste(col_levels, collapse=", "), "]\n"))
+          } else {
+            col_levels <- as.character(sort(unique(na.omit(col_vals_diag))))
+            cat(file=stderr(), paste0("  Column '", col_name_diag, "' unique values (not factor): [", paste(col_levels, collapse=", "), "]\n"))
+          }
+          all_values_across_cols <- c(all_values_across_cols, col_levels)
+        }
+        all_unique_values <- sort(unique(all_values_across_cols))
+        cat(file=stderr(), paste0("  ALL unique values across ALL columns: [", paste(all_unique_values, collapse=", "), "]\n"))
+        cat(file=stderr(), paste0("  Total unique values: ", length(all_unique_values), "\n"))
+        col1_only <- if (is.factor(dxdf440_for_heat[[j1]][,1])) levels(dxdf440_for_heat[[j1]][,1]) else sort(unique(na.omit(dxdf440_for_heat[[j1]][,1])))
+        missing_from_col1 <- setdiff(all_unique_values, col1_only)
+        if (length(missing_from_col1) > 0) {
+          cat(file=stderr(), paste0("  *** BUG WARNING: Values present in other columns but NOT in column 1: [", paste(missing_from_col1, collapse=", "), "]\n"))
+          cat(file=stderr(), paste0("  *** This will cause incorrect legend labeling!\n"))
+        } else {
+          cat(file=stderr(), paste0("  OK: Column 1 contains all values\n"))
+        }
       }
 
       # Create the heatmap
@@ -8121,6 +8207,29 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
         }
         debug_cat(paste0("========================================\n"))
 
+        # DEBUG: Show per-column values for discrete heatmaps to verify legend entries
+        if (isTRUE(heat_param[['is_discrete']]) && !is.null(dxdf440_for_heat[[j1]])) {
+          cat(file=stderr(), paste0("\n[DISCRETE-LEGEND-DEBUG] Heatmap ", j1, " per-column values for tree-matched rows:\n"))
+          heat_df <- dxdf440_for_heat[[j1]]
+          for (ci in seq_len(ncol(heat_df))) {
+            col_name <- colnames(heat_df)[ci]
+            col_vals <- as.character(heat_df[, ci])
+            col_unique <- sort(unique(na.omit(col_vals)))
+            col_unique_no_empty <- col_unique[col_unique != ""]
+            cat(file=stderr(), paste0("[DISCRETE-LEGEND-DEBUG]   Column '", col_name,
+                "': unique values = [", paste(col_unique_no_empty, collapse=", "),
+                "] (n=", length(col_unique_no_empty), ", total rows=", length(col_vals), ")\n"))
+            # Count per value
+            val_counts <- table(col_vals, useNA = "ifany")
+            cat(file=stderr(), paste0("[DISCRETE-LEGEND-DEBUG]     Value counts: ",
+                paste(paste0(names(val_counts), "=", val_counts), collapse=", "), "\n"))
+          }
+          cat(file=stderr(), paste0("[DISCRETE-LEGEND-DEBUG]   ALL columns combined unique: [",
+              paste(sort(unique(na.omit(unlist(lapply(seq_len(ncol(heat_df)), function(ci) {
+                as.character(heat_df[, ci])
+              }))))), collapse=", "), "]\n"))
+        }
+
         if (heat_param['man'] == FALSE) {
           if (heat_param['man_define_colors'] == FALSE) {
             # v67: SIMPLIFIED - color_scale_option is now directly a palette name string (e.g., "Set1")
@@ -8138,15 +8247,22 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             # v67: Use RColorBrewer palette if available, otherwise use default hue
             if (!is.null(palette_name) && is.character(palette_name) &&
                 palette_name %in% rownames(RColorBrewer::brewer.pal.info)) {
-              # Get unique values to determine number of colors needed
-              heat_data_vals <- unique(na.omit(dxdf440_for_heat[[j1]][,1]))
+              # FIX-DISCRETE-LEGEND: Get unique values from ALL columns (not just column 1)
+              # Previously only column 1 was used, causing wrong color count when other columns had extra values
+              heat_data_vals <- sort(unique(na.omit(unlist(lapply(1:ncol(dxdf440_for_heat[[j1]]), function(ci) {
+                v <- dxdf440_for_heat[[j1]][, ci]
+                if (is.factor(v)) levels(v) else as.character(v)
+              })))))
               n_vals <- length(heat_data_vals)
               max_colors <- RColorBrewer::brewer.pal.info[palette_name, "maxcolors"]
               n_colors <- min(n_vals, max_colors)
 
+              cat(file=stderr(), paste0("[FIX-DISCRETE-LEGEND] scale_fill_brewer for heatmap ", j1, ":\n"))
+              cat(file=stderr(), paste0("  Values from ALL columns: [", paste(heat_data_vals, collapse=", "), "] (n=", n_vals, ")\n"))
+
               debug_cat(paste0("\n=== v67: Applying discrete palette ===\n"))
               debug_cat(paste0("  Palette: ", palette_name, "\n"))
-              debug_cat(paste0("  Number of unique values: ", n_vals, "\n"))
+              debug_cat(paste0("  Number of unique values (all columns): ", n_vals, "\n"))
               debug_cat(paste0("  Colors to use: ", n_colors, "\n"))
               debug_cat(paste0("================================\n"))
 
@@ -15883,6 +15999,10 @@ server <- function(input, output, session) {
       observeEvent(input[[paste0("heatmap_columns_", i)]], {
         if (i <= length(values$heatmap_configs)) {
           values$heatmap_configs[[i]]$columns <- input[[paste0("heatmap_columns_", i)]]
+          # FIX: Inhibit color saves during column changes to prevent race conditions
+          # When columns change, color picker UI rebuilds and old pickers fire stale values
+          inhibit_color_save(TRUE)
+          shinyjs::delay(2500, { inhibit_color_save(FALSE) })
         }
       }, ignoreInit = TRUE)
       
@@ -17310,11 +17430,14 @@ server <- function(input, output, session) {
           return(tags$p(class = "text-muted", "Select column(s) first to see value-color mappings"))
         }
 
-        # Get unique values from first column (for discrete coloring)
-        first_col <- cols_selected[1]
-        if (!(first_col %in% names(values$csv_data))) {
+        # FIX-DISCRETE-LEGEND: Get unique values from ALL selected columns (not just first)
+        # Previously only first column was used, so if other columns had extra values,
+        # no color pickers were created for them, causing wrong legend colors.
+        valid_cols <- cols_selected[cols_selected %in% names(values$csv_data)]
+        if (length(valid_cols) == 0) {
           return(tags$p(class = "text-muted", "Column not found"))
         }
+        first_col <- valid_cols[1]  # Keep for reference
 
         # v125: Filter to only patient-specific data (rows matching tree tips)
         # This prevents "Too many unique values" error when CSV has more values than tree tips
@@ -17329,7 +17452,26 @@ server <- function(input, output, session) {
           }
         }
 
-        unique_vals <- sort(unique(na.omit(filtered_data[[first_col]])))
+        # FIX-DISCRETE-LEGEND: Gather unique values from ALL selected columns
+        # FIX-NA-STRINGS: Also exclude NA-like strings and stray numeric values per-column
+        na_like_strings <- c("#N/A", "#N/A!", "N/A", "#NA", "#VALUE!", "#REF!", "#DIV/0!", "#NULL!", "#NAME?", "#NUM!")
+        unique_vals <- sort(unique(na.omit(unlist(lapply(valid_cols, function(col) {
+          col_vals <- as.character(filtered_data[[col]])
+          col_vals[col_vals %in% na_like_strings] <- NA
+          col_vals[col_vals == ""] <- NA
+          # Per-column: if majority of values are non-numeric, treat numeric values as NA
+          non_na <- col_vals[!is.na(col_vals)]
+          if (length(non_na) > 0) {
+            is_num <- !is.na(suppressWarnings(as.numeric(non_na)))
+            if (sum(is_num) > 0 && sum(is_num) / length(non_na) < 0.5) {
+              col_vals[!is.na(col_vals) & !is.na(suppressWarnings(as.numeric(col_vals)))] <- NA
+            }
+          }
+          col_vals
+        })))))
+        cat(file=stderr(), paste0("[FIX-DISCRETE-LEGEND] Color picker UI for heatmap ", i,
+            ": values from ALL ", length(valid_cols), " columns: [",
+            paste(unique_vals, collapse=", "), "] (n=", length(unique_vals), ")\n"))
         n_vals <- length(unique_vals)
 
         if (n_vals == 0) {
@@ -17540,11 +17682,12 @@ server <- function(input, output, session) {
           }
 
           if (i <= length(values$heatmap_configs)) {
-            # Get current column to know the unique values
+            # Get current columns to know the unique values
             cols_selected <- input[[paste0("heatmap_columns_", i)]]
             if (!is.null(cols_selected) && length(cols_selected) > 0 && !is.null(values$csv_data)) {
-              first_col <- cols_selected[1]
-              if (first_col %in% names(values$csv_data)) {
+              # FIX: Use ALL selected columns (matching renderUI logic) not just first column
+              valid_cols <- cols_selected[cols_selected %in% names(values$csv_data)]
+              if (length(valid_cols) > 0) {
                 # Get filtered unique values (same logic as renderUI)
                 filtered_data <- values$csv_data
                 if (!is.null(values$tree) && !is.null(input$id_column) && input$id_column %in% names(values$csv_data)) {
@@ -17555,7 +17698,22 @@ server <- function(input, output, session) {
                     filtered_data <- values$csv_data[matching_rows, , drop = FALSE]
                   }
                 }
-                unique_vals <- sort(unique(na.omit(filtered_data[[first_col]])))
+                # FIX: Gather unique values from ALL selected columns (same as renderUI and Apply handler)
+                # FIX-NA-STRINGS: Exclude NA-like strings and stray numeric values per-column
+                na_like_strings <- c("#N/A", "#N/A!", "N/A", "#NA", "#VALUE!", "#REF!", "#DIV/0!", "#NULL!", "#NAME?", "#NUM!")
+                unique_vals <- sort(unique(na.omit(unlist(lapply(valid_cols, function(col) {
+                  col_vals <- as.character(filtered_data[[col]])
+                  col_vals[col_vals %in% na_like_strings] <- NA
+                  col_vals[col_vals == ""] <- NA
+                  non_na <- col_vals[!is.na(col_vals)]
+                  if (length(non_na) > 0) {
+                    is_num <- !is.na(suppressWarnings(as.numeric(non_na)))
+                    if (sum(is_num) > 0 && sum(is_num) / length(non_na) < 0.5) {
+                      col_vals[!is.na(col_vals) & !is.na(suppressWarnings(as.numeric(col_vals)))] <- NA
+                    }
+                  }
+                  col_vals
+                })))))
 
                 if (j <= length(unique_vals)) {
                   # Initialize custom_colors if needed
@@ -17700,11 +17858,16 @@ server <- function(input, output, session) {
           return()
         }
 
-        # Get unique values
-        first_col <- cols_selected[1]
-        if (!(first_col %in% names(values$csv_data))) return()
+        # FIX-DISCRETE-LEGEND: Get unique values from ALL selected columns (not just first)
+        valid_cols <- cols_selected[cols_selected %in% names(values$csv_data)]
+        if (length(valid_cols) == 0) return()
 
-        unique_vals <- sort(unique(na.omit(values$csv_data[[first_col]])))
+        unique_vals <- sort(unique(na.omit(unlist(lapply(valid_cols, function(col) {
+          as.character(values$csv_data[[col]])
+        })))))
+        cat(file=stderr(), paste0("[FIX-DISCRETE-LEGEND] Apply Palette for heatmap ", i,
+            ": values from ALL ", length(valid_cols), " columns: [",
+            paste(unique_vals, collapse=", "), "] (n=", length(unique_vals), ")\n"))
         n_vals <- length(unique_vals)
 
         if (n_vals == 0 || n_vals > 30) return()
@@ -18071,6 +18234,7 @@ server <- function(input, output, session) {
       heatmap_entry <- list(
         title = cfg$title,
         is_discrete = (actual_type == "discrete"),
+        data_source = "csv",  # Explicitly mark as CSV source
         columns = cfg$columns,  # v56: Now supports multiple columns
         show_colnames = cfg$show_colnames,
         colnames_angle = if (!is.null(cfg$colnames_angle)) cfg$colnames_angle else 45,
@@ -18126,11 +18290,10 @@ server <- function(input, output, session) {
         cat(file=stderr(), paste0("[S2.11-DEBUG] Heatmap ", i, " first_col in names: ", first_col %in% names(values$csv_data), "\n"))
 
         # v69: Collect custom colors if they've been set
-        # S2.1-FIX: Use filtered data (matching tree tips) to match renderUI color picker creation
-        # Bug fix: Previously used unfiltered values$csv_data which caused wrong value-color mappings
-        if (!is.null(values$csv_data) && first_col %in% names(values$csv_data)) {
+        # FIX-DISCRETE-LEGEND: Use ALL selected columns (not just first) to match renderUI color picker creation
+        valid_cols <- cfg$columns[cfg$columns %in% names(values$csv_data)]
+        if (!is.null(values$csv_data) && length(valid_cols) > 0) {
           # S2.1-FIX: Filter to only patient-specific data (rows matching tree tips)
-          # This MUST match the filtering in heatmap_discrete_colors_ui renderUI (lines 15342-15353)
           filtered_data <- values$csv_data
           if (!is.null(values$tree) && !is.null(input$id_column) && input$id_column %in% names(values$csv_data)) {
             tree_tips <- values$tree$tip.label
@@ -18142,7 +18305,25 @@ server <- function(input, output, session) {
             }
           }
 
-          unique_vals <- sort(unique(na.omit(filtered_data[[first_col]])))
+          # FIX-DISCRETE-LEGEND: Gather unique values from ALL selected columns
+          # FIX-NA-STRINGS: Exclude NA-like strings and stray numeric values per-column
+          na_like_strings <- c("#N/A", "#N/A!", "N/A", "#NA", "#VALUE!", "#REF!", "#DIV/0!", "#NULL!", "#NAME?", "#NUM!")
+          unique_vals <- sort(unique(na.omit(unlist(lapply(valid_cols, function(col) {
+            col_vals <- as.character(filtered_data[[col]])
+            col_vals[col_vals %in% na_like_strings] <- NA
+            col_vals[col_vals == ""] <- NA
+            non_na <- col_vals[!is.na(col_vals)]
+            if (length(non_na) > 0) {
+              is_num <- !is.na(suppressWarnings(as.numeric(non_na)))
+              if (sum(is_num) > 0 && sum(is_num) / length(non_na) < 0.5) {
+                col_vals[!is.na(col_vals) & !is.na(suppressWarnings(as.numeric(col_vals)))] <- NA
+              }
+            }
+            col_vals
+          })))))
+          cat(file=stderr(), paste0("[FIX-DISCRETE-LEGEND] Apply Heatmaps color collection for heatmap ", i,
+              ": values from ALL ", length(valid_cols), " columns: [",
+              paste(unique_vals, collapse=", "), "] (n=", length(unique_vals), ")\n"))
           n_vals <- length(unique_vals)
 
           # S2.11-DEBUG: Trace unique values
