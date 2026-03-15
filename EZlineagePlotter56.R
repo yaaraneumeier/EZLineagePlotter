@@ -9221,9 +9221,18 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #155724;",
-                     tags$h4(style = "color: #155724; margin: 0;", "Version S3.11 Stable"),
+                     tags$h4(style = "color: #155724; margin: 0;", "Version S3.12 Stable"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
-                            tags$strong("New in S3.11:"),
+                            tags$strong("New in S3.12:"),
+                            tags$ul(
+                              tags$li("Fix crash when YAML references CSV columns that don't exist"),
+                              tags$li("Filter stray numeric values from discrete heatmap legends"),
+                              tags$li("Fix legend showing #N/A and other Excel NA-like strings as discrete values"),
+                              tags$li("Fix discrete color corruption during column changes and UI rebuilds"),
+                              tags$li("Fix CSV heatmaps losing data_source after Apply Heatmaps"),
+                              tags$li("Fix discrete heatmap legend mislabeling when columns have different value sets")
+                            ),
+                            tags$strong("From S3.11:"),
                             tags$ul(
                               tags$li("SNP Analysis Tab: exploratory mutation analysis with VAF heatmaps and classification calls"),
                               tags$li("Chromosome boundary lines and labels for RData CNV heatmaps"),
@@ -9232,13 +9241,6 @@ ui <- dashboardPage(
                               tags$li("Rotated tree Newick download"),
                               tags$li("Manual RGB/Hex color input for heatmap colors"),
                               tags$li("Google Fonts support for legend text")
-                            ),
-                            tags$strong("From S2.9:"),
-                            tags$ul(
-                              tags$li("Configurable two-stage CNV downsampling (import & render)"),
-                              tags$li("Height Scale control for detailed RData heatmaps"),
-                              tags$li("Heatmap caching to avoid regenerating unchanged heatmaps"),
-                              tags$li("RData sample mapping column now properly saved to YAML")
                             ),
                             tags$strong("Core Features:"),
                             tags$ul(
