@@ -9200,8 +9200,15 @@ ui <- dashboardPage(
     conditionalPanel(
       condition = "input.app_mode == 'Multiple Trees'",
       sidebarMenu(id = "sidebar_multi",
-        menuItem("Multiple Trees", tabName = "mt_mode", icon = icon("layer-group"),
-                 selected = TRUE)
+        menuItem("Upload Data", tabName = "mt_upload", icon = icon("upload")),
+        menuItem("Tree Display", tabName = "mt_tree_display", icon = icon("tree")),
+        menuItem("Classification", tabName = "mt_classification", icon = icon("palette")),
+        menuItem("Bootstrap Values", tabName = "mt_bootstrap", icon = icon("percentage")),
+        menuItem("Highlighting", tabName = "mt_highlighting", icon = icon("highlighter")),
+        menuItem("Legend", tabName = "mt_legend", icon = icon("list")),
+        menuItem("Extra", tabName = "mt_extra", icon = icon("plus-circle")),
+        menuItem("Configuration", tabName = "mt_config", icon = icon("cogs")),
+        menuItem("Download", tabName = "mt_download", icon = icon("download"))
       )
     )
   ),
@@ -10675,8 +10682,16 @@ ui <- dashboardPage(
         )
       ),
 
-      # === MULTI-TREE MODE: Tab item ===
-      mt_tabItem()
+      # === MULTI-TREE MODE: Tab items (one per sidebar menuItem) ===
+      mt_tabItem_upload(),
+      mt_tabItem_tree_display(),
+      mt_tabItem_classification(),
+      mt_tabItem_bootstrap(),
+      mt_tabItem_highlighting(),
+      mt_tabItem_legend(),
+      mt_tabItem_extra(),
+      mt_tabItem_config(),
+      mt_tabItem_download()
     )
   )
 )
@@ -22290,7 +22305,7 @@ server <- function(input, output, session) {
   # === MULTI-TREE MODE: Mode switching + server logic ===
   observeEvent(input$app_mode, {
     if (input$app_mode == "Multiple Trees") {
-      updateTabItems(session, "sidebar_multi", selected = "mt_mode")
+      updateTabItems(session, "sidebar_multi", selected = "mt_upload")
     } else {
       updateTabItems(session, "sidebar_single", selected = "data_upload")
     }

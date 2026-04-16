@@ -5,265 +5,213 @@
 # All Shiny input IDs prefixed with "mt_".
 # ================================================================
 
-# --- Sidebar menu item ---
-mt_menuItem <- function() {
-  menuItem("Multiple Trees Mode", tabName = "mt_mode", icon = icon("layer-group"))
-}
+# (Old mt_ui_*_tab and mt_menuItem functions removed — content is now
+#  inline in the mt_tabItem_*() functions below)
 
-# --- Upload tab ---
-mt_ui_upload_tab <- function() {
-  tabPanel(
-    "Upload",
-    icon = icon("upload"),
-    tags$h4("Upload Data (Multiple Trees)"),
-    tags$hr(),
-    fileInput("mt_tree_files", "Upload Newick Files",
-              multiple = TRUE,
-              accept = c(".nwk", ".newick", ".tree", ".nw", ".txt")),
-    tags$hr(),
-    fileInput("mt_csv_file", "Upload CSV File",
-              accept = c(".csv", ".tsv", ".txt")),
-    tags$hr(),
-    selectInput("mt_id_column", "ID Column:", choices = NULL),
-    selectInput("mt_individual_column", "Individual Column:", choices = NULL),
-    selectizeInput("mt_individual_value", "Individual Value:", choices = NULL),
-    checkboxInput("mt_use_all_data", "Use all data (ignore individual filter)", value = FALSE),
-    tags$hr(),
-    actionButton("mt_process_data", "Process & Match IDs",
-                 class = "btn-primary btn-block",
-                 icon = icon("check")),
-    tags$hr(),
-    tags$h5("Optional: Import YAML Configuration"),
-    fileInput("mt_yaml_config", "Import YAML",
-              accept = c(".yaml", ".yml")),
-    tags$p(class = "text-muted",
-           tags$small("Import a single-mode YAML to pre-fill shared settings (classification, legend, etc.). Heatmap/SNP blocks are ignored."))
-  )
-}
+# --- Individual tabItem functions (one per sidebar menuItem) ---
 
-# --- Tree Display tab ---
-mt_ui_tree_display_tab <- function() {
-  tabPanel(
-    "Tree Display",
-    icon = icon("tree"),
-    tags$h4("Tree Display Settings"),
-    tags$p(class = "text-muted", "These settings apply to all trees."),
-    tags$hr(),
-    sliderInput("mt_tip_font_size", "Tip Font Size:",
-                min = 0.5, max = 20, value = 3, step = 0.5),
-    sliderInput("mt_edge_width", "Edge Width:",
-                min = 0.1, max = 5, value = 1, step = 0.1),
-    checkboxInput("mt_display_node_numbers", "Display Node Numbers", value = FALSE),
-    conditionalPanel(
-      condition = "input.mt_display_node_numbers == true",
-      sliderInput("mt_node_number_font_size", "Node Number Font Size:",
-                  min = 0.5, max = 10, value = 3.5, step = 0.5)
+mt_tabItem_upload <- function() {
+  tabItem(tabName = "mt_upload", fluidRow(
+    box(title = "Upload Data (Multiple Trees)", status = "primary",
+        solidHeader = TRUE, width = 4,
+        fileInput("mt_tree_files", "Upload Newick Files",
+                  multiple = TRUE,
+                  accept = c(".nwk", ".newick", ".tree", ".nw", ".txt")),
+        tags$hr(),
+        fileInput("mt_csv_file", "Upload CSV File",
+                  accept = c(".csv", ".tsv", ".txt")),
+        tags$hr(),
+        selectInput("mt_id_column", "ID Column:", choices = NULL),
+        selectInput("mt_individual_column", "Individual Column:", choices = NULL),
+        selectizeInput("mt_individual_value", "Individual Value:", choices = NULL),
+        checkboxInput("mt_use_all_data", "Use all data (ignore individual filter)", value = FALSE),
+        tags$hr(),
+        actionButton("mt_process_data", "Process & Match IDs",
+                     class = "btn-primary btn-block", icon = icon("check")),
+        tags$hr(),
+        tags$h5("Optional: Import YAML Configuration"),
+        fileInput("mt_yaml_config", "Import YAML", accept = c(".yaml", ".yml")),
+        tags$p(class = "text-muted",
+               tags$small("Import a YAML to pre-fill shared settings. Heatmap/SNP blocks are ignored."))
     ),
-    sliderInput("mt_tip_length", "Tip Length:",
-                min = 0, max = 1, value = 0.05, step = 0.01),
-    checkboxInput("mt_ladderize", "Ladderize Tree", value = TRUE),
-    checkboxInput("mt_trim_tips", "Trim Tips", value = TRUE),
-    tags$hr(),
-    tags$h5("Per-Tree: Rotation"),
-    tags$p(class = "text-muted", "Select a tree to set rotation nodes."),
-    selectInput("mt_tree_selector", "Select Tree:", choices = NULL),
-    textInput("mt_nodes_to_rotate", "Nodes to Rotate (comma-separated):",
-              value = "", placeholder = "e.g. 15, 23, 42")
-  )
-}
-
-# --- Classification tab ---
-mt_ui_classification_tab <- function() {
-  tabPanel(
-    "Classification",
-    icon = icon("palette"),
-    tags$h4("Classification Settings"),
-    tags$p(class = "text-muted", "Classification applies identically to all trees."),
-    tags$hr(),
-    selectInput("mt_classification_column", "Classification Column:", choices = NULL),
-    numericInput("mt_fdr_perc", "FDR Percentage:", value = 0.1, min = 0, max = 1, step = 0.01),
-    textInput("mt_classification_title", "Classification Title:", value = "Cell type"),
-    checkboxInput("mt_no_cluster_color", "Gray for unclassified", value = TRUE),
-    tags$hr(),
-    uiOutput("mt_classification_preview")
-  )
-}
-
-# --- Bootstrap tab ---
-mt_ui_bootstrap_tab <- function() {
-  tabPanel(
-    "Bootstrap",
-    icon = icon("percentage"),
-    tags$h4("Bootstrap Settings"),
-    tags$p(class = "text-muted", "Shared across all trees."),
-    tags$hr(),
-    checkboxInput("mt_enable_bootstrap", "Enable Bootstrap Display", value = TRUE),
-    conditionalPanel(
-      condition = "input.mt_enable_bootstrap == true",
-      selectInput("mt_bootstrap_format", "Bootstrap Format:",
-                  choices = c("triangles", "circles"), selected = "triangles"),
-      numericInput("mt_bootstrap_param", "Bootstrap Parameter:", value = 1, min = 0, max = 100),
-      sliderInput("mt_bootstrap_label_size", "Bootstrap Label Size:",
-                  min = 0.5, max = 10, value = 1.5, step = 0.5),
-      sliderInput("mt_man_boot_x_offset", "Bootstrap X Offset:",
-                  min = -0.1, max = 0.1, value = 0, step = 0.001)
+    box(title = "Multi-Tree Preview", status = "primary",
+        solidHeader = TRUE, width = 8,
+        actionButton("mt_update_preview", "Update Preview",
+                     class = "btn-primary", icon = icon("refresh")),
+        tags$hr(),
+        imageOutput("mt_combined_plot", height = "auto"),
+        tags$hr(),
+        verbatimTextOutput("mt_log")
     )
-  )
+  ))
 }
 
-# --- Highlighting tab ---
-mt_ui_highlighting_tab <- function() {
-  tabPanel(
-    "Highlighting",
-    icon = icon("highlighter"),
-    tags$h4("Highlighting Settings"),
-    tags$p(class = "text-muted", "Highlight definitions are shared. Ellipse size can be adjusted per tree."),
-    tags$hr(),
-    checkboxInput("mt_enable_highlight", "Enable Highlighting", value = FALSE),
-    conditionalPanel(
-      condition = "input.mt_enable_highlight == true",
-      selectInput("mt_highlight_column", "Highlight Column:", choices = NULL),
-      selectizeInput("mt_highlight_values", "Values to Highlight:",
-                     choices = NULL, multiple = TRUE),
-      textInput("mt_highlight_title", "Highlight Title:", value = "Highlight"),
-      numericInput("mt_highlight_offset", "Highlight Offset:", value = 0, step = 0.1),
-      sliderInput("mt_highlight_vertical_offset", "Vertical Offset:",
-                  min = -5, max = 5, value = 0, step = 0.1),
-      sliderInput("mt_highlight_adjust_height", "Ellipse Height:",
-                  min = 0.1, max = 10, value = 1, step = 0.1),
-      sliderInput("mt_highlight_adjust_width", "Ellipse Width:",
-                  min = 0.1, max = 10, value = 1.5, step = 0.1),
-      tags$hr(),
-      tags$h5("Per-Tree Ellipse Adjustments"),
-      tags$p(class = "text-muted", "Use the tree selector from Tree Display tab."),
-      uiOutput("mt_per_tree_highlight_ui")
+mt_tabItem_tree_display <- function() {
+  tabItem(tabName = "mt_tree_display", fluidRow(
+    box(title = "Tree Display Settings", status = "primary",
+        solidHeader = TRUE, width = 4,
+        tags$p(class = "text-muted", "These settings apply to all trees."),
+        sliderInput("mt_tip_font_size", "Tip Font Size:",
+                    min = 0.5, max = 20, value = 3, step = 0.5),
+        sliderInput("mt_edge_width", "Edge Width:",
+                    min = 0.1, max = 5, value = 1, step = 0.1),
+        checkboxInput("mt_display_node_numbers", "Display Node Numbers", value = FALSE),
+        conditionalPanel(
+          condition = "input.mt_display_node_numbers == true",
+          sliderInput("mt_node_number_font_size", "Node Number Font Size:",
+                      min = 0.5, max = 10, value = 3.5, step = 0.5)
+        ),
+        sliderInput("mt_tip_length", "Tip Length:",
+                    min = 0, max = 1, value = 0.05, step = 0.01),
+        checkboxInput("mt_ladderize", "Ladderize Tree", value = TRUE),
+        checkboxInput("mt_trim_tips", "Trim Tips", value = TRUE),
+        tags$hr(),
+        tags$h5("Per-Tree: Rotation"),
+        selectInput("mt_tree_selector", "Select Tree:", choices = NULL),
+        textInput("mt_nodes_to_rotate", "Nodes to Rotate (comma-separated):",
+                  value = "", placeholder = "e.g. 15, 23, 42")
     )
-  )
+  ))
 }
 
-# --- Legend tab ---
-mt_ui_legend_tab <- function() {
-  tabPanel(
-    "Legend",
-    icon = icon("list"),
-    tags$h4("Legend Settings"),
-    tags$p(class = "text-muted", "Shared across all trees."),
-    tags$hr(),
-    selectInput("mt_legend_position", "Legend Position:",
-                choices = c("right", "left", "bottom", "top", "none"), selected = "right"),
-    checkboxInput("mt_legend_show_classification", "Show Classification Legend", value = TRUE),
-    checkboxInput("mt_legend_show_highlight", "Show Highlight Legend", value = TRUE),
-    checkboxInput("mt_legend_show_bootstrap", "Show Bootstrap Legend", value = TRUE),
-    tags$hr(),
-    sliderInput("mt_legend_title_size", "Title Size:", min = 4, max = 30, value = 12, step = 1),
-    sliderInput("mt_legend_text_size", "Text Size:", min = 4, max = 30, value = 10, step = 1),
-    selectInput("mt_legend_font_family", "Font Family:",
-                choices = c("sans", "serif", "mono"), selected = "sans"),
-    sliderInput("mt_legend_key_size", "Key Size:", min = 0.1, max = 3, value = 1, step = 0.1),
-    sliderInput("mt_legend_spacing", "Spacing:", min = 0, max = 2, value = 0.3, step = 0.05),
-    checkboxInput("mt_legend_reverse_order", "Reverse Legend Order", value = FALSE)
-  )
-}
-
-# --- Extra tab ---
-mt_ui_extra_tab <- function() {
-  tabPanel(
-    "Extra",
-    icon = icon("plus-circle"),
-    tags$h4("Extra Settings"),
-    tags$hr(),
-    tags$h5("Page Layout"),
-    checkboxInput("mt_a4_output", "A4 Page Format (297x210mm)", value = FALSE),
-    colourpicker::colourInput("mt_background_color", "Page Background:", value = "#FFFFFF"),
-    tags$hr(),
-    tags$h5("Per-Tree Settings"),
-    tags$p(class = "text-muted", "Use the tree selector from Tree Display tab."),
-    uiOutput("mt_per_tree_extra_ui"),
-    tags$hr(),
-    tags$h5("Page Title"),
-    checkboxInput("mt_enable_page_title", "Enable Page Title", value = FALSE),
-    conditionalPanel(
-      condition = "input.mt_enable_page_title == true",
-      textInput("mt_page_title_text", "Title Text:", value = ""),
-      sliderInput("mt_page_title_size", "Title Size:", min = 5, max = 30, value = 14, step = 1)
+mt_tabItem_classification <- function() {
+  tabItem(tabName = "mt_classification", fluidRow(
+    box(title = "Classification Settings", status = "primary",
+        solidHeader = TRUE, width = 12,
+        tags$p(class = "text-muted", "Classification applies identically to all trees."),
+        selectInput("mt_classification_column", "Classification Column:", choices = NULL),
+        numericInput("mt_fdr_perc", "FDR Percentage:", value = 0.1, min = 0, max = 1, step = 0.01),
+        textInput("mt_classification_title", "Classification Title:", value = "Cell type"),
+        checkboxInput("mt_no_cluster_color", "Gray for unclassified", value = TRUE),
+        tags$hr(),
+        uiOutput("mt_classification_preview")
     )
-  )
+  ))
 }
 
-# --- Configuration tab ---
-mt_ui_config_tab <- function() {
-  tabPanel(
-    "Config",
-    icon = icon("cogs"),
-    tags$h4("Configuration"),
-    tags$p("Current multi-tree configuration:"),
-    verbatimTextOutput("mt_yaml_output"),
-    downloadButton("mt_download_yaml", "Download Configuration", class = "btn-success")
-  )
-}
-
-# --- Download tab ---
-mt_ui_download_tab <- function() {
-  tabPanel(
-    "Download",
-    icon = icon("download"),
-    tags$h4("Download Multi-Tree Plot"),
-    tags$hr(),
-    textInput("mt_individual_name", "Individual Name:", value = "Sample1"),
-    selectInput("mt_output_format", "Output Format:",
-                choices = c("pdf", "png", "svg", "tiff"), selected = "pdf"),
-    numericInput("mt_output_width", "Width:", value = 29.7, min = 1, max = 200),
-    numericInput("mt_output_height", "Height:", value = 42, min = 1, max = 200),
-    selectInput("mt_output_units", "Units:",
-                choices = c("cm", "mm", "in"), selected = "cm"),
-    tags$hr(),
-    checkboxInput("mt_replace_name", "Use Custom Filename", value = FALSE),
-    conditionalPanel(
-      condition = "input.mt_replace_name == true",
-      textInput("mt_custom_name", "Custom Filename:", value = "multi_tree_plot")
-    ),
-    textInput("mt_prefix_text", "Prefix:", value = "MultiTree__"),
-    textInput("mt_suffix_text", "Suffix:", value = ""),
-    tags$hr(),
-    downloadButton("mt_download_plot", "Download Plot", class = "btn-primary btn-block")
-  )
-}
-
-# --- Assemble the full tabItem ---
-mt_tabItem <- function() {
-  tabItem(
-    tabName = "mt_mode",
-    fluidRow(
-      column(
-        width = 4,
-        tabBox(
-          id = "mt_tabset", width = 12,
-          mt_ui_upload_tab(),
-          mt_ui_tree_display_tab(),
-          mt_ui_classification_tab(),
-          mt_ui_bootstrap_tab(),
-          mt_ui_highlighting_tab(),
-          mt_ui_legend_tab(),
-          mt_ui_extra_tab(),
-          mt_ui_config_tab(),
-          mt_ui_download_tab()
+mt_tabItem_bootstrap <- function() {
+  tabItem(tabName = "mt_bootstrap", fluidRow(
+    box(title = "Bootstrap Settings", status = "primary",
+        solidHeader = TRUE, width = 12,
+        checkboxInput("mt_enable_bootstrap", "Enable Bootstrap Display", value = TRUE),
+        conditionalPanel(
+          condition = "input.mt_enable_bootstrap == true",
+          selectInput("mt_bootstrap_format", "Bootstrap Format:",
+                      choices = c("triangles", "circles"), selected = "triangles"),
+          numericInput("mt_bootstrap_param", "Bootstrap Parameter:", value = 1, min = 0, max = 100),
+          sliderInput("mt_bootstrap_label_size", "Bootstrap Label Size:",
+                      min = 0.5, max = 10, value = 1.5, step = 0.5),
+          sliderInput("mt_man_boot_x_offset", "Bootstrap X Offset:",
+                      min = -0.1, max = 0.1, value = 0, step = 0.001)
         )
-      ),
-      column(
-        width = 8,
-        box(
-          title = "Multi-Tree Preview", width = 12,
-          status = "primary", solidHeader = TRUE,
-          actionButton("mt_update_preview", "Update Preview",
-                       class = "btn-primary", icon = icon("refresh")),
-          tags$hr(),
-          plotOutput("mt_combined_plot", height = "700px"),
-          tags$hr(),
-          verbatimTextOutput("mt_log")
-        )
-      )
     )
-  )
+  ))
+}
+
+mt_tabItem_highlighting <- function() {
+  tabItem(tabName = "mt_highlighting", fluidRow(
+    box(title = "Highlighting Settings", status = "primary",
+        solidHeader = TRUE, width = 12,
+        checkboxInput("mt_enable_highlight", "Enable Highlighting", value = FALSE),
+        conditionalPanel(
+          condition = "input.mt_enable_highlight == true",
+          selectInput("mt_highlight_column", "Highlight Column:", choices = NULL),
+          selectizeInput("mt_highlight_values", "Values to Highlight:",
+                         choices = NULL, multiple = TRUE),
+          textInput("mt_highlight_title", "Highlight Title:", value = "Highlight"),
+          numericInput("mt_highlight_offset", "Highlight Offset:", value = 0, step = 0.1),
+          sliderInput("mt_highlight_vertical_offset", "Vertical Offset:",
+                      min = -5, max = 5, value = 0, step = 0.1),
+          sliderInput("mt_highlight_adjust_height", "Ellipse Height:",
+                      min = 0.1, max = 10, value = 1, step = 0.1),
+          sliderInput("mt_highlight_adjust_width", "Ellipse Width:",
+                      min = 0.1, max = 10, value = 1.5, step = 0.1),
+          tags$hr(),
+          tags$h5("Per-Tree Ellipse Adjustments"),
+          uiOutput("mt_per_tree_highlight_ui")
+        )
+    )
+  ))
+}
+
+mt_tabItem_legend <- function() {
+  tabItem(tabName = "mt_legend", fluidRow(
+    box(title = "Legend Settings", status = "primary",
+        solidHeader = TRUE, width = 12,
+        selectInput("mt_legend_position", "Legend Position:",
+                    choices = c("right", "left", "bottom", "top", "none"), selected = "right"),
+        checkboxInput("mt_legend_show_classification", "Show Classification Legend", value = TRUE),
+        checkboxInput("mt_legend_show_highlight", "Show Highlight Legend", value = TRUE),
+        checkboxInput("mt_legend_show_bootstrap", "Show Bootstrap Legend", value = TRUE),
+        tags$hr(),
+        sliderInput("mt_legend_title_size", "Title Size:", min = 4, max = 30, value = 12, step = 1),
+        sliderInput("mt_legend_text_size", "Text Size:", min = 4, max = 30, value = 10, step = 1),
+        selectInput("mt_legend_font_family", "Font Family:",
+                    choices = c("sans", "serif", "mono"), selected = "sans"),
+        sliderInput("mt_legend_key_size", "Key Size:", min = 0.1, max = 3, value = 1, step = 0.1),
+        sliderInput("mt_legend_spacing", "Spacing:", min = 0, max = 2, value = 0.3, step = 0.05),
+        checkboxInput("mt_legend_reverse_order", "Reverse Legend Order", value = FALSE)
+    )
+  ))
+}
+
+mt_tabItem_extra <- function() {
+  tabItem(tabName = "mt_extra", fluidRow(
+    box(title = "Extra Settings", status = "primary",
+        solidHeader = TRUE, width = 12,
+        tags$h5("Page Layout"),
+        checkboxInput("mt_a4_output", "A4 Page Format (297x210mm)", value = FALSE),
+        colourpicker::colourInput("mt_background_color", "Page Background:", value = "#FFFFFF"),
+        tags$hr(),
+        tags$h5("Per-Tree Settings"),
+        tags$p(class = "text-muted", "Select tree from Tree Display tab's tree selector."),
+        uiOutput("mt_per_tree_extra_ui"),
+        tags$hr(),
+        tags$h5("Page Title"),
+        checkboxInput("mt_enable_page_title", "Enable Page Title", value = FALSE),
+        conditionalPanel(
+          condition = "input.mt_enable_page_title == true",
+          textInput("mt_page_title_text", "Title Text:", value = ""),
+          sliderInput("mt_page_title_size", "Title Size:", min = 5, max = 30, value = 14, step = 1)
+        )
+    )
+  ))
+}
+
+mt_tabItem_config <- function() {
+  tabItem(tabName = "mt_config", fluidRow(
+    box(title = "Configuration", status = "primary",
+        solidHeader = TRUE, width = 12,
+        tags$p("Current multi-tree YAML configuration:"),
+        verbatimTextOutput("mt_yaml_output"),
+        downloadButton("mt_download_yaml", "Download Configuration", class = "btn-success")
+    )
+  ))
+}
+
+mt_tabItem_download <- function() {
+  tabItem(tabName = "mt_download", fluidRow(
+    box(title = "Download Multi-Tree Plot", status = "primary",
+        solidHeader = TRUE, width = 12,
+        textInput("mt_individual_name", "Individual Name:", value = "Sample1"),
+        selectInput("mt_output_format", "Output Format:",
+                    choices = c("pdf", "png", "svg", "tiff"), selected = "pdf"),
+        numericInput("mt_output_width", "Width:", value = 29.7, min = 1, max = 200),
+        numericInput("mt_output_height", "Height:", value = 42, min = 1, max = 200),
+        selectInput("mt_output_units", "Units:",
+                    choices = c("cm", "mm", "in"), selected = "cm"),
+        tags$hr(),
+        checkboxInput("mt_replace_name", "Use Custom Filename", value = FALSE),
+        conditionalPanel(
+          condition = "input.mt_replace_name == true",
+          textInput("mt_custom_name", "Custom Filename:", value = "multi_tree_plot")
+        ),
+        textInput("mt_prefix_text", "Prefix:", value = "MultiTree__"),
+        textInput("mt_suffix_text", "Suffix:", value = ""),
+        tags$hr(),
+        downloadButton("mt_download_plot", "Download Plot", class = "btn-primary btn-block")
+    )
+  ))
 }
 
 # ================================================================
@@ -873,10 +821,27 @@ mt_install_server <- function(input, output, session) {
     result
   })
 
-  # --- Plot output ---
-  output$mt_combined_plot <- renderPlot({
-    mt_render_plot()
-  })
+  # --- Plot output (renderImage to match imageOutput) ---
+  output$mt_combined_plot <- renderImage({
+    result <- mt_render_plot()
+    if (is.null(result)) {
+      return(list(src = "", alt = "No plot yet. Upload data, process, and click Update Preview."))
+    }
+    tmp <- tempfile(fileext = ".png")
+    w <- if (isTRUE(input$mt_a4_output)) 297 else {
+      if (!is.null(input$mt_output_width)) input$mt_output_width else 29.7
+    }
+    h <- if (isTRUE(input$mt_a4_output)) 210 else {
+      if (!is.null(input$mt_output_height)) input$mt_output_height else 42
+    }
+    u <- if (isTRUE(input$mt_a4_output)) "mm" else {
+      if (!is.null(input$mt_output_units)) input$mt_output_units else "cm"
+    }
+    ggplot2::ggsave(tmp, plot = result, width = w, height = h, units = u,
+                    limitsize = FALSE, dpi = 150)
+    list(src = tmp, contentType = "image/png", width = "100%",
+         alt = "Multi-tree combined plot")
+  }, deleteFile = TRUE)
 
   # --- Log output ---
   output$mt_log <- renderText({
