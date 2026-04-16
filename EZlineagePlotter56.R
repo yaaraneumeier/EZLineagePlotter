@@ -62,6 +62,9 @@ options(shiny.reactlog = TRUE)
 # v146: Increase max upload size for Shiny server deployments (100MB)
 options(shiny.maxRequestSize = 100*1024^2)
 
+# === MULTI-TREE MODE: Source separate module ===
+source(file.path(getwd(), "EZlineagePlotter56_mt.R"), local = FALSE)
+
 # v147: Fixed ellipse x0 positioning in heatmap mode (was using incorrect -15.4 multiplier)
 #       Added debug output for PLOT ellipse alpha to compare with legend ellipse alpha
 #       Improved legend coordinate output with coordinate system explanations
@@ -9173,6 +9176,8 @@ ui <- dashboardPage(
   dashboardSidebar(
     width = 300,
     sidebarMenu(
+      mt_menuItem(),
+      tags$hr(),
       menuItem("Upload Data", tabName = "data_upload", icon = icon("upload")),
       menuItem("Tree Display", tabName = "tree_display", icon = icon("tree")),
       menuItem("Classification", tabName = "classification", icon = icon("palette")),
@@ -9221,9 +9226,15 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #155724;",
-                     tags$h4(style = "color: #155724; margin: 0;", "Version S3.12 Stable"),
+                     tags$h4(style = "color: #155724; margin: 0;", "Version S3.13 Stable"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
-                            tags$strong("New in S3.12:"),
+                            tags$strong("New in S3.13:"),
+                            tags$ul(
+                              tags$li("Multiple Trees Mode: plot several trees on one page with shared classification coloring"),
+                              tags$li("Per-tree rotation, background color, and display titles"),
+                              tags$li("YAML import support for multi-tree shared settings")
+                            ),
+                            tags$strong("From S3.12:"),
                             tags$ul(
                               tags$li("Fix crash when YAML references CSV columns that don't exist"),
                               tags$li("Filter stray numeric values from discrete heatmap legends"),
@@ -10648,7 +10659,10 @@ ui <- dashboardPage(
             downloadButton("download_yaml_config", "Download Configuration", class = "btn-success")
           )
         )
-      )
+      ),
+
+      # === MULTI-TREE MODE: Tab item ===
+      mt_tabItem()
     )
   )
 )
@@ -22258,6 +22272,9 @@ server <- function(input, output, session) {
       alt = "SNP Analysis preview"
     )
   }, deleteFile = FALSE)
+
+  # === MULTI-TREE MODE: Install server logic ===
+  mt_install_server(input, output, session)
 
 } # End of server function
 
