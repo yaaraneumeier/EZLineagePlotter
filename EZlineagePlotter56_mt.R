@@ -14,10 +14,17 @@ mt_tabItem_upload <- function() {
   tabItem(tabName = "mt_upload", fluidRow(
     box(title = "Upload Data (Multiple Trees)", status = "primary",
         solidHeader = TRUE, width = 4,
-        fileInput("mt_tree_files", "Upload Newick Files",
-                  multiple = TRUE,
+        tags$h5("Newick Trees"),
+        fileInput("mt_add_tree_file", "Select Newick File",
+                  multiple = FALSE,
                   accept = c(".nwk", ".newick", ".tree", ".nw", ".txt")),
+        actionButton("mt_add_tree_btn", "Add Tree",
+                     class = "btn-success", icon = icon("plus")),
         tags$hr(),
+        tags$h5("Uploaded Trees"),
+        uiOutput("mt_tree_list_ui"),
+        tags$hr(),
+        tags$h5("CSV Data"),
         fileInput("mt_csv_file", "Upload CSV File",
                   accept = c(".csv", ".tsv", ".txt")),
         tags$hr(),
@@ -448,32 +455,100 @@ mt_install_server <- function(input, output, session) {
     mt_values$log_messages <- paste0(mt_values$log_messages, "[", ts, "] ", msg, "\n")
   }
 
-  # --- Newick upload observer ---
-  observeEvent(input$mt_tree_files, {
-    req(input$mt_tree_files)
-    files <- input$mt_tree_files
-    mt_values$newick_paths <- files$datapath
-    # Strip extension for display names
-    mt_values$newick_names <- tools::file_path_sans_ext(files$name)
-    mt_log(paste0("Uploaded ", nrow(files), " newick file(s): ",
-                  paste(files$name, collapse = ", ")))
+  # --- Add Tree button: serial newick upload ---
+  observeEvent(input$mt_add_tree_btn, {
+    req(input$mt_add_tree_file)
+    file_info <- input$mt_add_tree_file
+    tn <- tools::file_path_sans_ext(file_info$name)
 
-    # Initialize per-tree state
-    mt_values$per_tree <- list()
-    for (tn in mt_values$newick_names) {
-      mt_values$per_tree[[tn]] <- list(
-        rotate = NULL,
-        highlight_adjust_height = 1,
-        highlight_adjust_width = 1.5,
-        title = tn,
-        bg_color = "#FFFFFF"
-      )
+    # Copy to a persistent temp file (Shiny may clean the upload temp)
+    perm_path <- file.path(tempdir(), paste0("mt_", tn, "_", basename(file_info$datapath)))
+    file.copy(file_info$datapath, perm_path, overwrite = TRUE)
+
+    # Ensure unique name if duplicate
+    if (tn %in% mt_values$newick_names) {
+      suffix <- 2
+      while (paste0(tn, "_", suffix) %in% mt_values$newick_names) suffix <- suffix + 1
+      tn <- paste0(tn, "_", suffix)
     }
 
-    # Update tree selector dropdown
+    # Append to lists
+    mt_values$newick_paths <- c(mt_values$newick_paths, perm_path)
+    mt_values$newick_names <- c(mt_values$newick_names, tn)
+
+    # Initialize per-tree state for new tree
+    mt_values$per_tree[[tn]] <- list(
+      rotate = NULL,
+      highlight_adjust_height = 1,
+      highlight_adjust_width = 1.5,
+      title = tn,
+      bg_color = "#FFFFFF"
+    )
+
+    mt_log(paste0("Added tree '", tn, "' (", file_info$name, "). Total: ",
+                  length(mt_values$newick_names), " trees"))
+
+    # Update tree selector
     updateSelectInput(session, "mt_tree_selector",
                       choices = mt_values$newick_names,
-                      selected = mt_values$newick_names[1])
+                      selected = tn)
+
+    showNotification(paste0("Added: ", tn), type = "message", duration = 3)
+  })
+
+  # --- Remove tree handler (triggered by dynamic remove buttons) ---
+  mt_remove_observer_ids <- reactiveVal(character(0))
+
+  observe({
+    req(mt_values$newick_names)
+    # Create observers for any new remove buttons
+    current_names <- mt_values$newick_names
+    existing <- mt_remove_observer_ids()
+    new_names <- setdiff(current_names, existing)
+    for (tn in new_names) {
+      local({
+        local_tn <- tn
+        btn_id <- paste0("mt_remove_tree_", gsub("[^A-Za-z0-9]", "_", local_tn))
+        observeEvent(input[[btn_id]], {
+          idx <- which(mt_values$newick_names == local_tn)
+          if (length(idx) > 0) {
+            mt_values$newick_paths <- mt_values$newick_paths[-idx]
+            mt_values$newick_names <- mt_values$newick_names[-idx]
+            mt_values$per_tree[[local_tn]] <- NULL
+            mt_log(paste0("Removed tree '", local_tn, "'. Remaining: ",
+                          length(mt_values$newick_names)))
+            if (length(mt_values$newick_names) > 0) {
+              updateSelectInput(session, "mt_tree_selector",
+                                choices = mt_values$newick_names,
+                                selected = mt_values$newick_names[1])
+            } else {
+              updateSelectInput(session, "mt_tree_selector", choices = NULL)
+            }
+          }
+        }, ignoreInit = TRUE, once = TRUE)
+      })
+    }
+    mt_remove_observer_ids(current_names)
+  })
+
+  # --- Tree list UI (shows uploaded trees with remove buttons) ---
+  output$mt_tree_list_ui <- renderUI({
+    names <- mt_values$newick_names
+    if (is.null(names) || length(names) == 0) {
+      return(tags$p(class = "text-muted", tags$em("No trees uploaded yet.")))
+    }
+    tree_items <- lapply(seq_along(names), function(i) {
+      tn <- names[i]
+      btn_id <- paste0("mt_remove_tree_", gsub("[^A-Za-z0-9]", "_", tn))
+      tags$div(
+        style = "display: flex; align-items: center; justify-content: space-between;
+                 padding: 4px 8px; margin: 2px 0; background: #f0f0f0; border-radius: 4px;",
+        tags$span(paste0(i, ". ", tn)),
+        actionButton(btn_id, "", icon = icon("times"),
+                     class = "btn-xs btn-danger", style = "padding: 1px 6px;")
+      )
+    })
+    tagList(tree_items)
   })
 
   # --- CSV upload observer ---

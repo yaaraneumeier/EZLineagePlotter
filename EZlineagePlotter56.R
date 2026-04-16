@@ -9207,8 +9207,8 @@ ui <- dashboardPage(
         menuItem("Highlighting", tabName = "mt_highlighting", icon = icon("highlighter")),
         menuItem("Legend", tabName = "mt_legend", icon = icon("list")),
         menuItem("Extra", tabName = "mt_extra", icon = icon("plus-circle")),
-        menuItem("Configuration", tabName = "mt_config", icon = icon("cogs")),
-        menuItem("Download", tabName = "mt_download", icon = icon("download"))
+        menuItem("Download", tabName = "mt_download", icon = icon("download")),
+        menuItem("Configuration", tabName = "mt_config", icon = icon("cogs"))
       )
     )
   ),
@@ -10690,8 +10690,8 @@ ui <- dashboardPage(
       mt_tabItem_highlighting(),
       mt_tabItem_legend(),
       mt_tabItem_extra(),
-      mt_tabItem_config(),
-      mt_tabItem_download()
+      mt_tabItem_download(),
+      mt_tabItem_config()
     )
   )
 )
