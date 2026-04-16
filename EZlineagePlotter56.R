@@ -9175,20 +9175,34 @@ ui <- dashboardPage(
   
   dashboardSidebar(
     width = 300,
-    sidebarMenu(
-      mt_menuItem(),
-      tags$hr(),
-      menuItem("Upload Data", tabName = "data_upload", icon = icon("upload")),
-      menuItem("Tree Display", tabName = "tree_display", icon = icon("tree")),
-      menuItem("Classification", tabName = "classification", icon = icon("palette")),
-      menuItem("Bootstrap Values", tabName = "bootstrap", icon = icon("percentage")),
-      menuItem("Highlighting", tabName = "highlighting", icon = icon("highlighter")),
-      menuItem("Heatmap", tabName = "heatmap", icon = icon("th")),
-      menuItem("SNP Analysis", tabName = "snp_analysis", icon = icon("dna")),
-      menuItem("Legend", tabName = "legend", icon = icon("list")),
-      menuItem("Extra", tabName = "extra", icon = icon("plus-circle")),  # v130: New tab for title, text, images
-      menuItem("Download", tabName = "download", icon = icon("download")),
-      menuItem("Configuration", tabName = "config", icon = icon("cogs"))
+    tags$div(style = "padding: 10px 15px;",
+      selectInput("app_mode", "Mode:",
+                  choices = c("Single Tree", "Multiple Trees"),
+                  selected = "Single Tree", width = "100%")
+    ),
+    tags$hr(style = "margin: 0;"),
+    conditionalPanel(
+      condition = "input.app_mode == 'Single Tree'",
+      sidebarMenu(id = "sidebar_single",
+        menuItem("Upload Data", tabName = "data_upload", icon = icon("upload")),
+        menuItem("Tree Display", tabName = "tree_display", icon = icon("tree")),
+        menuItem("Classification", tabName = "classification", icon = icon("palette")),
+        menuItem("Bootstrap Values", tabName = "bootstrap", icon = icon("percentage")),
+        menuItem("Highlighting", tabName = "highlighting", icon = icon("highlighter")),
+        menuItem("Heatmap", tabName = "heatmap", icon = icon("th")),
+        menuItem("SNP Analysis", tabName = "snp_analysis", icon = icon("dna")),
+        menuItem("Legend", tabName = "legend", icon = icon("list")),
+        menuItem("Extra", tabName = "extra", icon = icon("plus-circle")),
+        menuItem("Download", tabName = "download", icon = icon("download")),
+        menuItem("Configuration", tabName = "config", icon = icon("cogs"))
+      )
+    ),
+    conditionalPanel(
+      condition = "input.app_mode == 'Multiple Trees'",
+      sidebarMenu(id = "sidebar_multi",
+        menuItem("Multiple Trees", tabName = "mt_mode", icon = icon("layer-group"),
+                 selected = TRUE)
+      )
     )
   ),
   
@@ -22273,7 +22287,14 @@ server <- function(input, output, session) {
     )
   }, deleteFile = FALSE)
 
-  # === MULTI-TREE MODE: Install server logic ===
+  # === MULTI-TREE MODE: Mode switching + server logic ===
+  observeEvent(input$app_mode, {
+    if (input$app_mode == "Multiple Trees") {
+      updateTabItems(session, "sidebar_multi", selected = "mt_mode")
+    } else {
+      updateTabItems(session, "sidebar_single", selected = "data_upload")
+    }
+  })
   mt_install_server(input, output, session)
 
 } # End of server function
