@@ -11,41 +11,146 @@
 # --- Individual tabItem functions (one per sidebar menuItem) ---
 
 mt_tabItem_upload <- function() {
-  tabItem(tabName = "mt_upload", fluidRow(
-    box(title = "Upload Data (Multiple Trees)", status = "primary",
-        solidHeader = TRUE, width = 4,
-        tags$h5("Newick Trees"),
+  tabItem(
+    tabName = "mt_upload",
+
+    # Row 1: Version bar (same as single mode)
+    fluidRow(
+      box(
+        title = "EZLineagePlotter - Multiple Trees Mode",
+        status = "success",
+        solidHeader = TRUE,
+        width = 12,
+        collapsible = TRUE,
+        collapsed = TRUE,
+        tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #155724;",
+                 tags$h4(style = "color: #155724; margin: 0;", "Version S3.13 Stable"),
+                 tags$p(style = "margin: 10px 0 0 0; color: #155724;",
+                        tags$strong("Multiple Trees Mode:"),
+                        tags$ul(
+                          tags$li("Plot several trees on one page with shared classification coloring"),
+                          tags$li("Per-tree rotation, background color, and display titles"),
+                          tags$li("Per-tree individual mapping (each tree matches its own CSV subset)"),
+                          tags$li("YAML import support for shared settings")
+                        )
+                 )
+        )
+      )
+    ),
+
+    # Row 2: Tree Files (left) + Classification Data (right)
+    fluidRow(
+      box(
+        title = "Tree Files",
+        status = "primary",
+        solidHeader = TRUE,
+        width = 6,
+        tags$p(class = "text-muted", tags$small(
+          "Upload one or more newick files. Click '+ Add another tree' to add a new upload slot.")),
         uiOutput("mt_tree_upload_slots"),
         actionButton("mt_add_upload_slot", "+ Add another tree",
                      class = "btn-success btn-sm", icon = icon("plus")),
-        tags$hr(),
-        tags$h5("CSV Data"),
-        fileInput("mt_csv_file", "Upload CSV File",
+        tags$br(), tags$br(),
+        verbatimTextOutput("mt_tree_summary")
+      ),
+
+      box(
+        title = "Classification Data",
+        status = "primary",
+        solidHeader = TRUE,
+        width = 6,
+        fileInput("mt_csv_file", "Upload CSV Classification File",
                   accept = c(".csv", ".tsv", ".txt")),
-        tags$hr(),
-        selectInput("mt_id_column", "ID Column:", choices = NULL),
-        selectInput("mt_individual_column", "Individual Column:", choices = NULL),
-        selectizeInput("mt_individual_value", "Individual Value:", choices = NULL),
-        checkboxInput("mt_use_all_data", "Use all data (ignore individual filter)", value = FALSE),
-        tags$hr(),
-        actionButton("mt_process_data", "Process & Match IDs",
-                     class = "btn-primary btn-block", icon = icon("check")),
-        tags$hr(),
-        tags$h5("Optional: Import YAML Configuration"),
-        fileInput("mt_yaml_config", "Import YAML", accept = c(".yaml", ".yml")),
-        tags$p(class = "text-muted",
-               tags$small("Import a YAML to pre-fill shared settings. Heatmap/SNP blocks are ignored."))
+        selectInput("mt_id_column", "Select ID Column", choices = NULL),
+        selectInput("mt_individual_column", "Select Individual Column",
+                    choices = NULL),
+        checkboxInput("mt_use_all_data",
+                      "Use all data (ignore individual filtering)",
+                      value = FALSE),
+        verbatimTextOutput("mt_csv_summary"),
+        br(),
+        conditionalPanel(
+          condition = "output.mt_files_loaded == 'TRUE'",
+          actionButton("mt_process_data", "Process Data & Match IDs",
+                       class = "btn-success btn-lg",
+                       icon = icon("check-circle"),
+                       style = "width: 100%;")
+        )
+      )
     ),
-    box(title = "Multi-Tree Preview", status = "primary",
-        solidHeader = TRUE, width = 8,
+
+    # Row 3: Per-tree individual mapping (only when individual_column is selected)
+    conditionalPanel(
+      condition = "input.mt_individual_column != null && input.mt_individual_column != '' && input.mt_use_all_data == false",
+      fluidRow(
+        box(
+          title = "Tree-to-Individual Mapping",
+          status = "warning",
+          solidHeader = TRUE,
+          width = 12,
+          tags$div(
+            style = "background: #fff3cd; padding: 10px; border-radius: 5px; margin-bottom: 10px;",
+            tags$p(style = "margin: 0; color: #856404;",
+                   icon("info-circle"),
+                   " Each tree must be matched to an individual in the CSV.",
+                   tags$br(),
+                   tags$small("Select which individual value each uploaded tree corresponds to. Use 'Auto-match by filename' to match tree names against individual names automatically."))
+          ),
+          actionButton("mt_auto_match_individuals", "Auto-match by filename",
+                       icon = icon("magic"), class = "btn-info btn-sm"),
+          tags$hr(),
+          uiOutput("mt_per_tree_individual_ui")
+        )
+      )
+    ),
+
+    # Row 4: Matching status
+    fluidRow(
+      box(
+        title = "Matching Status",
+        status = "info",
+        solidHeader = TRUE,
+        width = 12,
+        verbatimTextOutput("mt_log")
+      )
+    ),
+
+    # Row 5: Optional YAML import
+    fluidRow(
+      box(
+        title = "Import Saved Settings (Optional)",
+        status = "warning",
+        solidHeader = TRUE,
+        width = 12,
+        collapsible = TRUE,
+        collapsed = TRUE,
+        tags$div(
+          style = "background: #fff3cd; padding: 10px; border-radius: 5px; margin-bottom: 10px;",
+          tags$p(style = "margin: 0; color: #856404;",
+                 icon("info-circle"),
+                 " Load shared visual settings from a previously saved YAML configuration.",
+                 tags$br(),
+                 tags$small("This applies classification, bootstrap, highlighting, legend, and extra settings. Heatmap/SNP blocks are ignored."))
+        ),
+        fileInput("mt_yaml_config", "Choose YAML Configuration File",
+                  accept = c(".yaml", ".yml"))
+      )
+    ),
+
+    # Row 6: Preview
+    fluidRow(
+      box(
+        title = "Multi-Tree Preview",
+        status = "primary",
+        solidHeader = TRUE,
+        width = 12,
         actionButton("mt_update_preview", "Update Preview",
                      class = "btn-primary", icon = icon("refresh")),
         tags$hr(),
-        imageOutput("mt_combined_plot", height = "auto"),
-        tags$hr(),
-        verbatimTextOutput("mt_log")
+        imageOutput("mt_combined_plot", height = "auto")
+      )
     )
-  ))
+  )
 }
 
 mt_tabItem_tree_display <- function() {
@@ -355,10 +460,15 @@ func.multiple.trees.one.page.in.app <- function(
 
     # Build YAML for this tree
     per_tree <- if (!is.null(per_tree_list[[tn]])) per_tree_list[[tn]] else list()
+    # Override Individual name per-tree if set (each tree can match a different CSV individual)
+    tree_shared <- shared_settings
+    if (!is.null(per_tree$individual_value) && nzchar(per_tree$individual_value)) {
+      tree_shared$individual_name <- per_tree$individual_value
+    }
     yaml_data <- mt_build_yaml_data(
       newick_path = newick_paths[i],
       csv_path = csv_path,
-      shared = shared_settings,
+      shared = tree_shared,
       per_tree = per_tree
     )
 
@@ -437,6 +547,7 @@ mt_install_server <- function(input, output, session) {
     csv_path = NULL,            # single temp file path
     csv_data = NULL,            # data.frame
     trees = list(),             # list of treedata objects per newick
+    matched_per_tree = list(),  # list[[tree_name]] = filtered CSV subset for that tree
     per_tree = list(),          # list[[tree_name]] = list(rotate, highlight_adjust_height, highlight_adjust_width, title, bg_color)
     man_params = list(),        # man_* params from YAML import
     highlight_yaml = NULL,      # shared highlight YAML block
@@ -571,7 +682,8 @@ mt_install_server <- function(input, output, session) {
       if (is.null(mt_values$per_tree[[tn]])) {
         mt_values$per_tree[[tn]] <- list(
           rotate = NULL, highlight_adjust_height = 1,
-          highlight_adjust_width = 1.5, title = tn, bg_color = "#FFFFFF"
+          highlight_adjust_width = 1.5, title = tn, bg_color = "#FFFFFF",
+          individual_value = NULL
         )
       }
     }
@@ -607,14 +719,124 @@ mt_install_server <- function(input, output, session) {
     }
   })
 
-  # --- Individual column observer ---
-  observeEvent(input$mt_individual_column, {
-    req(input$mt_individual_column, mt_values$csv_data)
-    if (input$mt_individual_column != "") {
-      vals <- unique(mt_values$csv_data[[input$mt_individual_column]])
-      updateSelectizeInput(session, "mt_individual_value",
-                           choices = vals, selected = vals[1])
+  # --- Individual column observer: populate per-tree individual dropdowns ---
+  mt_individual_choices <- reactive({
+    req(mt_values$csv_data, input$mt_individual_column)
+    if (input$mt_individual_column == "") return(character(0))
+    as.character(sort(unique(na.omit(mt_values$csv_data[[input$mt_individual_column]]))))
+  })
+
+  # Per-tree individual mapping UI
+  output$mt_per_tree_individual_ui <- renderUI({
+    req(mt_values$newick_names, input$mt_individual_column)
+    if (input$mt_individual_column == "") {
+      return(tags$p(class = "text-muted",
+                    tags$em("Select an Individual Column first.")))
     }
+    choices <- mt_individual_choices()
+    if (length(choices) == 0) {
+      return(tags$p(class = "text-muted",
+                    tags$em("No individual values found in CSV.")))
+    }
+    names <- mt_values$newick_names
+    if (is.null(names) || length(names) == 0) {
+      return(tags$p(class = "text-muted",
+                    tags$em("Upload trees first.")))
+    }
+    rows <- lapply(seq_along(names), function(i) {
+      tn <- names[i]
+      sel_id <- paste0("mt_tree_indiv_", i)
+      current_val <- mt_values$per_tree[[tn]]$individual_value
+      tags$div(
+        style = "display: flex; align-items: center; gap: 10px; padding: 5px;",
+        tags$span(style = "min-width: 200px; font-weight: bold;", paste0(i, ". ", tn)),
+        tags$span(" → "),
+        tags$div(style = "flex: 1;",
+          selectInput(sel_id, NULL,
+                      choices = c("(none)" = "", choices),
+                      selected = if (!is.null(current_val)) current_val else "",
+                      width = "100%")
+        )
+      )
+    })
+    tagList(rows)
+  })
+
+  # Observer: watch each per-tree individual dropdown
+  observe({
+    names <- mt_values$newick_names
+    if (is.null(names)) return()
+    for (i in seq_along(names)) {
+      local({
+        local_i <- i
+        local_tn <- names[local_i]
+        sel_id <- paste0("mt_tree_indiv_", local_i)
+        observeEvent(input[[sel_id]], {
+          val <- input[[sel_id]]
+          if (!is.null(mt_values$per_tree[[local_tn]])) {
+            mt_values$per_tree[[local_tn]]$individual_value <-
+              if (is.null(val) || val == "") NULL else val
+          }
+        }, ignoreInit = TRUE)
+      })
+    }
+  })
+
+  # Auto-match individuals by filename
+  observeEvent(input$mt_auto_match_individuals, {
+    req(mt_values$newick_names, mt_values$csv_data, input$mt_individual_column)
+    if (input$mt_individual_column == "") return()
+    choices <- mt_individual_choices()
+    matched <- 0
+    for (i in seq_along(mt_values$newick_names)) {
+      tn <- mt_values$newick_names[i]
+      # Try exact match first
+      match_val <- NULL
+      if (tn %in% choices) {
+        match_val <- tn
+      } else {
+        # Partial match: individual value contained in tree name or vice versa
+        for (cv in choices) {
+          if (grepl(cv, tn, fixed = TRUE) || grepl(tn, cv, fixed = TRUE)) {
+            match_val <- cv
+            break
+          }
+        }
+      }
+      if (!is.null(match_val)) {
+        mt_values$per_tree[[tn]]$individual_value <- match_val
+        sel_id <- paste0("mt_tree_indiv_", i)
+        updateSelectInput(session, sel_id, selected = match_val)
+        matched <- matched + 1
+      }
+    }
+    mt_log(paste0("Auto-matched ", matched, "/", length(mt_values$newick_names),
+                  " trees to individuals"))
+    showNotification(paste0("Auto-matched ", matched, " trees"),
+                     type = if (matched > 0) "message" else "warning")
+  })
+
+  # --- files_loaded output: TRUE when at least one tree + CSV are loaded ---
+  output$mt_files_loaded <- reactive({
+    !is.null(mt_values$newick_paths) && length(mt_values$newick_paths) > 0 &&
+      !is.null(mt_values$csv_data)
+  })
+  outputOptions(output, "mt_files_loaded", suspendWhenHidden = FALSE)
+
+  # --- Tree summary output ---
+  output$mt_tree_summary <- renderText({
+    if (is.null(mt_values$newick_names) || length(mt_values$newick_names) == 0) {
+      return("No trees uploaded.")
+    }
+    paste0(length(mt_values$newick_names), " tree(s) uploaded: ",
+           paste(mt_values$newick_names, collapse = ", "))
+  })
+
+  # --- CSV summary output ---
+  output$mt_csv_summary <- renderText({
+    if (is.null(mt_values$csv_data)) return("No CSV loaded.")
+    paste0("CSV: ", nrow(mt_values$csv_data), " rows, ",
+           ncol(mt_values$csv_data), " columns")
   })
 
   # --- Highlight column observer ---
@@ -628,21 +850,19 @@ mt_install_server <- function(input, output, session) {
   # --- Process & Match IDs ---
   observeEvent(input$mt_process_data, {
     req(mt_values$csv_data, mt_values$newick_paths)
-    mt_log("Processing and matching IDs...")
+    mt_log("Processing and matching IDs for each tree...")
 
-    csv <- mt_values$csv_data
+    csv_full <- mt_values$csv_data
     id_col <- input$mt_id_column
+    indiv_col <- input$mt_individual_column
+    use_all <- isTRUE(input$mt_use_all_data)
 
-    # Filter by individual if needed
-    if (!isTRUE(input$mt_use_all_data) && !is.null(input$mt_individual_column) &&
-        input$mt_individual_column != "" && !is.null(input$mt_individual_value)) {
-      csv <- csv[csv[[input$mt_individual_column]] == input$mt_individual_value, , drop = FALSE]
-      mt_log(paste0("Filtered to individual '", input$mt_individual_value,
-                    "': ", nrow(csv), " rows"))
-    }
-
-    # Read each newick and match tips
+    # Read each newick and match against its own CSV subset
     mt_values$trees <- list()
+    mt_values$matched_per_tree <- list()
+    total_ok <- 0
+    total_missing <- 0
+
     for (i in seq_along(mt_values$newick_paths)) {
       tn <- mt_values$newick_names[i]
       tree <- tryCatch(
@@ -652,20 +872,37 @@ mt_install_server <- function(input, output, session) {
           NULL
         }
       )
-      if (!is.null(tree)) {
-        mt_values$trees[[tn]] <- tree
-        tip_labels <- tree@phylo$tip.label
-        matched <- sum(tip_labels %in% csv[[id_col]])
-        mt_log(paste0("Tree '", tn, "': ", length(tip_labels), " tips, ",
-                      matched, " matched to CSV"))
+      if (is.null(tree)) next
+      mt_values$trees[[tn]] <- tree
+
+      # Determine CSV subset for this tree
+      if (use_all || is.null(indiv_col) || indiv_col == "") {
+        csv_sub <- csv_full
+        subset_note <- "all rows"
+      } else {
+        iv <- mt_values$per_tree[[tn]]$individual_value
+        if (is.null(iv) || iv == "") {
+          mt_log(paste0("Tree '", tn, "': no individual selected, skipping"))
+          total_missing <- total_missing + 1
+          next
+        }
+        csv_sub <- csv_full[csv_full[[indiv_col]] == iv, , drop = FALSE]
+        subset_note <- paste0("individual '", iv, "' (", nrow(csv_sub), " rows)")
       }
+
+      mt_values$matched_per_tree[[tn]] <- csv_sub
+
+      tip_labels <- tree@phylo$tip.label
+      matched <- sum(tip_labels %in% csv_sub[[id_col]])
+      mt_log(paste0("Tree '", tn, "': ", length(tip_labels), " tips, ",
+                    matched, " matched to ", subset_note))
+      total_ok <- total_ok + 1
     }
 
-    # Auto-generate classification groups from the CSV
+    # Auto-generate classification groups from full CSV (shared across trees)
     if (!is.null(input$mt_classification_column) && input$mt_classification_column != "") {
       class_col <- input$mt_classification_column
-      unique_vals <- sort(unique(na.omit(csv[[class_col]])))
-      # Generate colors
+      unique_vals <- sort(unique(na.omit(csv_full[[class_col]])))
       n_colors <- max(3, length(unique_vals))
       palette <- tryCatch(
         RColorBrewer::brewer.pal(min(n_colors, 12), "Set3"),
@@ -683,10 +920,17 @@ mt_install_server <- function(input, output, session) {
         )
       }
       mt_values$classification_groups <- groups
-      mt_log(paste0("Classification: ", length(unique_vals), " groups from column '", class_col, "'"))
+      mt_log(paste0("Classification: ", length(unique_vals),
+                    " groups from column '", class_col, "'"))
     }
 
-    showNotification("Multi-tree processing complete!", type = "message")
+    if (total_missing > 0) {
+      showNotification(paste0("Processed ", total_ok, " trees. ",
+                              total_missing, " trees missing individual mapping."),
+                       type = "warning", duration = 5)
+    } else {
+      showNotification("Multi-tree processing complete!", type = "message")
+    }
   })
 
   # --- Tree selector: save/load per-tree state ---
