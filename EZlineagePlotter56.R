@@ -63,7 +63,7 @@ options(shiny.reactlog = TRUE)
 options(shiny.maxRequestSize = 100*1024^2)
 
 # === MULTI-TREE MODE: Source separate module ===
-source(file.path(getwd(), "EZlineagePlotter56_mt.R"), local = FALSE)
+source(file.path(getwd(), "EZlineagePlotter56_mt.R"), local = TRUE)
 
 # v147: Fixed ellipse x0 positioning in heatmap mode (was using incorrect -15.4 multiplier)
 #       Added debug output for PLOT ellipse alpha to compare with legend ellipse alpha

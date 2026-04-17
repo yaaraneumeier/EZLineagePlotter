@@ -501,11 +501,8 @@ func.multiple.trees.one.page.in.app <- function(
     temp_yaml <- tempfile(fileext = ".yaml")
     writeLines(yaml::as.yaml(yaml_data, indent.mapping.sequence = TRUE), temp_yaml)
 
-    # Look up func.print.lineage.tree from global env (defined in main file after this module is sourced)
-    render_fn <- get("func.print.lineage.tree", envir = globalenv())
-
     treesi <- tryCatch({
-      suppressWarnings(render_fn(
+      suppressWarnings(func.print.lineage.tree(
         conf_yaml_path = temp_yaml,
         csv_path_bash = csv_path,
         width = shared_settings$output_width,
