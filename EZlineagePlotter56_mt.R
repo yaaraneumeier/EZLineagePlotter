@@ -746,23 +746,23 @@ mt_install_server <- function(input, output, session) {
   })
 
   # --- Individual column observer: populate per-tree individual dropdowns ---
+  # Mirrors single-mode logic from lines 12434-12479 of main file.
   mt_individual_choices <- reactive({
     req(mt_values$csv_data, input$mt_individual_column)
     if (input$mt_individual_column == "") return(character(0))
-    as.character(sort(unique(na.omit(mt_values$csv_data[[input$mt_individual_column]]))))
+    col <- input$mt_individual_column
+    if (!(col %in% names(mt_values$csv_data))) return(character(0))
+    vals <- unique(mt_values$csv_data[[col]])
+    vals <- vals[!is.na(vals)]
+    as.character(sort(vals))
   })
 
-  # Per-tree individual mapping UI
+  # Per-tree individual mapping UI — uses selectizeInput like single mode
   output$mt_per_tree_individual_ui <- renderUI({
     req(mt_values$newick_names, input$mt_individual_column)
     if (input$mt_individual_column == "") {
       return(tags$p(class = "text-muted",
                     tags$em("Select an Individual Column first.")))
-    }
-    choices <- mt_individual_choices()
-    if (length(choices) == 0) {
-      return(tags$p(class = "text-muted",
-                    tags$em("No individual values found in CSV.")))
     }
     names <- mt_values$newick_names
     if (is.null(names) || length(names) == 0) {
@@ -772,40 +772,70 @@ mt_install_server <- function(input, output, session) {
     rows <- lapply(seq_along(names), function(i) {
       tn <- names[i]
       sel_id <- paste0("mt_tree_indiv_", i)
-      current_val <- mt_values$per_tree[[tn]]$individual_value
       tags$div(
         style = "display: flex; align-items: center; gap: 10px; padding: 5px;",
         tags$span(style = "min-width: 200px; font-weight: bold;", paste0(i, ". ", tn)),
-        tags$span(" → "),
+        tags$span(style = "font-size: 16px;", HTML("&rarr;")),
         tags$div(style = "flex: 1;",
-          selectInput(sel_id, NULL,
-                      choices = c("(none)" = "", choices),
-                      selected = if (!is.null(current_val)) current_val else "",
-                      width = "100%")
+          selectizeInput(sel_id, NULL,
+                         choices = NULL,
+                         selected = NULL,
+                         width = "100%",
+                         options = list(placeholder = "Select an individual..."))
         )
       )
     })
     tagList(rows)
   })
 
-  # Observer: watch each per-tree individual dropdown
+  # After the per-tree UI renders, populate each selectizeInput with server-side choices
+  # (mirrors single mode's updateSelectizeInput with server = TRUE)
+  mt_indiv_observers_installed <- reactiveVal(integer(0))
+
   observe({
+    req(mt_values$newick_names, input$mt_individual_column)
     names <- mt_values$newick_names
-    if (is.null(names)) return()
+    choices <- mt_individual_choices()
+    if (length(choices) == 0) return()
+
     for (i in seq_along(names)) {
       local({
         local_i <- i
         local_tn <- names[local_i]
         sel_id <- paste0("mt_tree_indiv_", local_i)
+        current_val <- mt_values$per_tree[[local_tn]]$individual_value
+        updateSelectizeInput(session, sel_id,
+                             choices = choices,
+                             selected = if (!is.null(current_val) && current_val %in% choices) current_val else NULL,
+                             server = TRUE)
+      })
+    }
+  })
+
+  # Observer: watch each per-tree individual dropdown and save selection
+  observe({
+    names <- mt_values$newick_names
+    if (is.null(names)) return()
+    already <- mt_indiv_observers_installed()
+    new_indices <- setdiff(seq_along(names), already)
+    for (i in new_indices) {
+      local({
+        local_i <- i
+        sel_id <- paste0("mt_tree_indiv_", local_i)
         observeEvent(input[[sel_id]], {
-          val <- input[[sel_id]]
-          if (!is.null(mt_values$per_tree[[local_tn]])) {
-            mt_values$per_tree[[local_tn]]$individual_value <-
-              if (is.null(val) || val == "") NULL else val
+          nn <- mt_values$newick_names
+          if (local_i <= length(nn)) {
+            tn <- nn[local_i]
+            val <- input[[sel_id]]
+            if (!is.null(mt_values$per_tree[[tn]])) {
+              mt_values$per_tree[[tn]]$individual_value <-
+                if (is.null(val) || val == "") NULL else val
+            }
           }
         }, ignoreInit = TRUE)
       })
     }
+    mt_indiv_observers_installed(union(already, new_indices))
   })
 
   # Auto-match individuals by filename
@@ -813,6 +843,11 @@ mt_install_server <- function(input, output, session) {
     req(mt_values$newick_names, mt_values$csv_data, input$mt_individual_column)
     if (input$mt_individual_column == "") return()
     choices <- mt_individual_choices()
+    mt_log(paste0("Auto-match: ", length(choices), " individual values in CSV column '",
+                  input$mt_individual_column, "'"))
+    mt_log(paste0("  First 10 values: ", paste(head(choices, 10), collapse = ", ")))
+    mt_log(paste0("  Tree names: ", paste(mt_values$newick_names, collapse = ", ")))
+
     matched <- 0
     for (i in seq_along(mt_values$newick_names)) {
       tn <- mt_values$newick_names[i]
@@ -823,9 +858,8 @@ mt_install_server <- function(input, output, session) {
         match_val <- tn
       }
 
-      # 2. CSV value is a substring of the tree name (handles suffixes like _bootstrapped_rerooted)
+      # 2. CSV value is a substring of the tree name
       if (is.null(match_val)) {
-        # Sort choices longest-first so we prefer the most specific match
         sorted_choices <- choices[order(nchar(choices), decreasing = TRUE)]
         for (cv in sorted_choices) {
           if (nzchar(cv) && grepl(cv, tn, fixed = TRUE)) {
@@ -835,17 +869,42 @@ mt_install_server <- function(input, output, session) {
         }
       }
 
-      # 3. Tree name (stripped of common suffixes) matches a CSV value
+      # 3. Tree name is a substring of a CSV value
+      if (is.null(match_val)) {
+        for (cv in choices) {
+          if (nzchar(cv) && grepl(tn, cv, fixed = TRUE)) {
+            match_val <- cv
+            break
+          }
+        }
+      }
+
+      # 4. Strip common suffixes and retry
       if (is.null(match_val)) {
         tn_stripped <- gsub("_bootstrapped.*$|_rerooted.*$|_rooted.*$", "", tn, ignore.case = TRUE)
-        tn_stripped <- sub("\\(\\d+\\)$", "", tn_stripped)  # strip trailing (1), (2), etc.
-        if (tn_stripped %in% choices) {
-          match_val <- tn_stripped
-        } else {
-          for (cv in choices) {
-            if (nzchar(cv) && grepl(cv, tn_stripped, fixed = TRUE)) {
-              match_val <- cv
-              break
+        tn_stripped <- sub("\\(\\d+\\)$", "", tn_stripped)
+        tn_stripped <- trimws(tn_stripped)
+        if (tn_stripped != tn) {
+          mt_log(paste0("  Stripped tree name: '", tn, "' -> '", tn_stripped, "'"))
+          if (tn_stripped %in% choices) {
+            match_val <- tn_stripped
+          } else {
+            # CSV value substring of stripped name
+            sorted_choices <- choices[order(nchar(choices), decreasing = TRUE)]
+            for (cv in sorted_choices) {
+              if (nzchar(cv) && grepl(cv, tn_stripped, fixed = TRUE)) {
+                match_val <- cv
+                break
+              }
+            }
+          }
+          # Stripped name substring of CSV value
+          if (is.null(match_val)) {
+            for (cv in choices) {
+              if (nzchar(cv) && grepl(tn_stripped, cv, fixed = TRUE)) {
+                match_val <- cv
+                break
+              }
             }
           }
         }
@@ -854,7 +913,10 @@ mt_install_server <- function(input, output, session) {
       if (!is.null(match_val)) {
         mt_values$per_tree[[tn]]$individual_value <- match_val
         sel_id <- paste0("mt_tree_indiv_", i)
-        updateSelectInput(session, sel_id, selected = match_val)
+        updateSelectizeInput(session, sel_id,
+                             choices = choices,
+                             selected = match_val,
+                             server = TRUE)
         matched <- matched + 1
         mt_log(paste0("  Matched tree '", tn, "' -> individual '", match_val, "'"))
       } else {
