@@ -14,24 +14,50 @@ mt_tabItem_upload <- function() {
   tabItem(
     tabName = "mt_upload",
 
-    # Row 1: Version bar (same as single mode)
+    # Row 1: Version bar (identical to single mode)
     fluidRow(
       box(
-        title = "EZLineagePlotter - Multiple Trees Mode",
+        title = "EZLineagePlotter - Stable Release",
         status = "success",
         solidHeader = TRUE,
         width = 12,
         collapsible = TRUE,
-        collapsed = TRUE,
         tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #155724;",
                  tags$h4(style = "color: #155724; margin: 0;", "Version S3.13 Stable"),
                  tags$p(style = "margin: 10px 0 0 0; color: #155724;",
-                        tags$strong("Multiple Trees Mode:"),
+                        tags$strong("New in S3.13:"),
                         tags$ul(
-                          tags$li("Plot several trees on one page with shared classification coloring"),
+                          tags$li("Multiple Trees Mode: plot several trees on one page with shared classification coloring"),
                           tags$li("Per-tree rotation, background color, and display titles"),
-                          tags$li("Per-tree individual mapping (each tree matches its own CSV subset)"),
-                          tags$li("YAML import support for shared settings")
+                          tags$li("YAML import support for multi-tree shared settings")
+                        ),
+                        tags$strong("From S3.12:"),
+                        tags$ul(
+                          tags$li("Fix crash when YAML references CSV columns that don't exist"),
+                          tags$li("Filter stray numeric values from discrete heatmap legends"),
+                          tags$li("Fix legend showing #N/A and other Excel NA-like strings as discrete values"),
+                          tags$li("Fix discrete color corruption during column changes and UI rebuilds"),
+                          tags$li("Fix CSV heatmaps losing data_source after Apply Heatmaps"),
+                          tags$li("Fix discrete heatmap legend mislabeling when columns have different value sets")
+                        ),
+                        tags$strong("From S3.11:"),
+                        tags$ul(
+                          tags$li("SNP Analysis Tab: exploratory mutation analysis with VAF heatmaps and classification calls"),
+                          tags$li("Chromosome boundary lines and labels for RData CNV heatmaps"),
+                          tags$li("Separate chromosome mapping RData file upload"),
+                          tags$li("Detailed display mode for RData CNV heatmaps (per-cell resolution)"),
+                          tags$li("Rotated tree Newick download"),
+                          tags$li("Manual RGB/Hex color input for heatmap colors"),
+                          tags$li("Google Fonts support for legend text")
+                        ),
+                        tags$strong("Core Features:"),
+                        tags$ul(
+                          tags$li("RData CNV heatmaps from QDNAseq/scIMPACT pipelines"),
+                          tags$li("Multiple heatmaps with discrete/continuous color scales"),
+                          tags$li("Tree visualization with classification coloring"),
+                          tags$li("Highlight regions with customizable ellipses"),
+                          tags$li("Bootstrap value display and flexible legend styling"),
+                          tags$li("Export to PDF/PNG with custom dimensions")
                         )
                  )
         )
@@ -96,10 +122,10 @@ mt_tabItem_upload <- function() {
                    tags$br(),
                    tags$small("Select which individual value each uploaded tree corresponds to. Use 'Auto-match by filename' to match tree names against individual names automatically."))
           ),
-          actionButton("mt_auto_match_individuals", "Auto-match by filename",
-                       icon = icon("magic"), class = "btn-info btn-sm"),
+          uiOutput("mt_per_tree_individual_ui"),
           tags$hr(),
-          uiOutput("mt_per_tree_individual_ui")
+          actionButton("mt_auto_match_individuals", "Auto-match by filename",
+                       icon = icon("magic"), class = "btn-info btn-sm")
         )
       )
     ),
@@ -790,29 +816,55 @@ mt_install_server <- function(input, output, session) {
     matched <- 0
     for (i in seq_along(mt_values$newick_names)) {
       tn <- mt_values$newick_names[i]
-      # Try exact match first
       match_val <- NULL
+
+      # 1. Exact match
       if (tn %in% choices) {
         match_val <- tn
-      } else {
-        # Partial match: individual value contained in tree name or vice versa
-        for (cv in choices) {
-          if (grepl(cv, tn, fixed = TRUE) || grepl(tn, cv, fixed = TRUE)) {
+      }
+
+      # 2. CSV value is a substring of the tree name (handles suffixes like _bootstrapped_rerooted)
+      if (is.null(match_val)) {
+        # Sort choices longest-first so we prefer the most specific match
+        sorted_choices <- choices[order(nchar(choices), decreasing = TRUE)]
+        for (cv in sorted_choices) {
+          if (nzchar(cv) && grepl(cv, tn, fixed = TRUE)) {
             match_val <- cv
             break
           }
         }
       }
+
+      # 3. Tree name (stripped of common suffixes) matches a CSV value
+      if (is.null(match_val)) {
+        tn_stripped <- gsub("_bootstrapped.*$|_rerooted.*$|_rooted.*$", "", tn, ignore.case = TRUE)
+        tn_stripped <- sub("\\(\\d+\\)$", "", tn_stripped)  # strip trailing (1), (2), etc.
+        if (tn_stripped %in% choices) {
+          match_val <- tn_stripped
+        } else {
+          for (cv in choices) {
+            if (nzchar(cv) && grepl(cv, tn_stripped, fixed = TRUE)) {
+              match_val <- cv
+              break
+            }
+          }
+        }
+      }
+
       if (!is.null(match_val)) {
         mt_values$per_tree[[tn]]$individual_value <- match_val
         sel_id <- paste0("mt_tree_indiv_", i)
         updateSelectInput(session, sel_id, selected = match_val)
         matched <- matched + 1
+        mt_log(paste0("  Matched tree '", tn, "' -> individual '", match_val, "'"))
+      } else {
+        mt_log(paste0("  No match for tree '", tn, "'"))
       }
     }
     mt_log(paste0("Auto-matched ", matched, "/", length(mt_values$newick_names),
                   " trees to individuals"))
-    showNotification(paste0("Auto-matched ", matched, " trees"),
+    showNotification(paste0("Auto-matched ", matched, "/",
+                            length(mt_values$newick_names), " trees"),
                      type = if (matched > 0) "message" else "warning")
   })
 
