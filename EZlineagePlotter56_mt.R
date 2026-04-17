@@ -15,14 +15,9 @@ mt_tabItem_upload <- function() {
     box(title = "Upload Data (Multiple Trees)", status = "primary",
         solidHeader = TRUE, width = 4,
         tags$h5("Newick Trees"),
-        fileInput("mt_add_tree_file", "Select Newick File",
-                  multiple = FALSE,
-                  accept = c(".nwk", ".newick", ".tree", ".nw", ".txt")),
-        actionButton("mt_add_tree_btn", "Add Tree",
-                     class = "btn-success", icon = icon("plus")),
-        tags$hr(),
-        tags$h5("Uploaded Trees"),
-        uiOutput("mt_tree_list_ui"),
+        uiOutput("mt_tree_upload_slots"),
+        actionButton("mt_add_upload_slot", "+ Add another tree",
+                     class = "btn-success btn-sm", icon = icon("plus")),
         tags$hr(),
         tags$h5("CSV Data"),
         fileInput("mt_csv_file", "Upload CSV File",
@@ -438,6 +433,7 @@ mt_install_server <- function(input, output, session) {
   mt_values <- reactiveValues(
     newick_paths = NULL,        # character vector of temp file paths
     newick_names = NULL,        # character vector of original filenames (sans extension)
+    slot_files = list(),        # list keyed by slot number, each = list(name, path, tree_name)
     csv_path = NULL,            # single temp file path
     csv_data = NULL,            # data.frame
     trees = list(),             # list of treedata objects per newick
@@ -455,101 +451,139 @@ mt_install_server <- function(input, output, session) {
     mt_values$log_messages <- paste0(mt_values$log_messages, "[", ts, "] ", msg, "\n")
   }
 
-  # --- Add Tree button: serial newick upload ---
-  observeEvent(input$mt_add_tree_btn, {
-    req(input$mt_add_tree_file)
-    file_info <- input$mt_add_tree_file
-    tn <- tools::file_path_sans_ext(file_info$name)
+  # --- Dynamic upload slots for newick trees ---
+  mt_slot_count <- reactiveVal(1)
+  mt_observed_slots <- reactiveVal(integer(0))
 
-    # Copy to a persistent temp file (Shiny may clean the upload temp)
-    perm_path <- file.path(tempdir(), paste0("mt_", tn, "_", basename(file_info$datapath)))
-    file.copy(file_info$datapath, perm_path, overwrite = TRUE)
-
-    # Ensure unique name if duplicate
-    if (tn %in% mt_values$newick_names) {
-      suffix <- 2
-      while (paste0(tn, "_", suffix) %in% mt_values$newick_names) suffix <- suffix + 1
-      tn <- paste0(tn, "_", suffix)
-    }
-
-    # Append to lists
-    mt_values$newick_paths <- c(mt_values$newick_paths, perm_path)
-    mt_values$newick_names <- c(mt_values$newick_names, tn)
-
-    # Initialize per-tree state for new tree
-    mt_values$per_tree[[tn]] <- list(
-      rotate = NULL,
-      highlight_adjust_height = 1,
-      highlight_adjust_width = 1.5,
-      title = tn,
-      bg_color = "#FFFFFF"
-    )
-
-    mt_log(paste0("Added tree '", tn, "' (", file_info$name, "). Total: ",
-                  length(mt_values$newick_names), " trees"))
-
-    # Update tree selector
-    updateSelectInput(session, "mt_tree_selector",
-                      choices = mt_values$newick_names,
-                      selected = tn)
-
-    showNotification(paste0("Added: ", tn), type = "message", duration = 3)
+  # "+ Add another tree" button adds a new upload widget
+  observeEvent(input$mt_add_upload_slot, {
+    mt_slot_count(mt_slot_count() + 1)
   })
 
-  # --- Remove tree handler (triggered by dynamic remove buttons) ---
-  mt_remove_observer_ids <- reactiveVal(character(0))
-
-  observe({
-    req(mt_values$newick_names)
-    # Create observers for any new remove buttons
-    current_names <- mt_values$newick_names
-    existing <- mt_remove_observer_ids()
-    new_names <- setdiff(current_names, existing)
-    for (tn in new_names) {
-      local({
-        local_tn <- tn
-        btn_id <- paste0("mt_remove_tree_", gsub("[^A-Za-z0-9]", "_", local_tn))
-        observeEvent(input[[btn_id]], {
-          idx <- which(mt_values$newick_names == local_tn)
-          if (length(idx) > 0) {
-            mt_values$newick_paths <- mt_values$newick_paths[-idx]
-            mt_values$newick_names <- mt_values$newick_names[-idx]
-            mt_values$per_tree[[local_tn]] <- NULL
-            mt_log(paste0("Removed tree '", local_tn, "'. Remaining: ",
-                          length(mt_values$newick_names)))
-            if (length(mt_values$newick_names) > 0) {
-              updateSelectInput(session, "mt_tree_selector",
-                                choices = mt_values$newick_names,
-                                selected = mt_values$newick_names[1])
-            } else {
-              updateSelectInput(session, "mt_tree_selector", choices = NULL)
-            }
-          }
-        }, ignoreInit = TRUE, once = TRUE)
-      })
-    }
-    mt_remove_observer_ids(current_names)
-  })
-
-  # --- Tree list UI (shows uploaded trees with remove buttons) ---
-  output$mt_tree_list_ui <- renderUI({
-    names <- mt_values$newick_names
-    if (is.null(names) || length(names) == 0) {
-      return(tags$p(class = "text-muted", tags$em("No trees uploaded yet.")))
-    }
-    tree_items <- lapply(seq_along(names), function(i) {
-      tn <- names[i]
-      btn_id <- paste0("mt_remove_tree_", gsub("[^A-Za-z0-9]", "_", tn))
+  # Render the file input slots
+  output$mt_tree_upload_slots <- renderUI({
+    n <- mt_slot_count()
+    slot_uis <- lapply(seq_len(n), function(i) {
+      file_id <- paste0("mt_tree_slot_", i)
+      remove_id <- paste0("mt_remove_slot_", i)
+      # Check if this slot already has a file loaded
+      loaded_name <- NULL
+      if (!is.null(mt_values$slot_files[[as.character(i)]])) {
+        loaded_name <- mt_values$slot_files[[as.character(i)]]$name
+      }
       tags$div(
-        style = "display: flex; align-items: center; justify-content: space-between;
-                 padding: 4px 8px; margin: 2px 0; background: #f0f0f0; border-radius: 4px;",
-        tags$span(paste0(i, ". ", tn)),
-        actionButton(btn_id, "", icon = icon("times"),
-                     class = "btn-xs btn-danger", style = "padding: 1px 6px;")
+        style = "display: flex; align-items: flex-start; gap: 5px; margin-bottom: 5px;",
+        tags$div(style = "flex: 1;",
+          if (!is.null(loaded_name)) {
+            tags$div(
+              style = "padding: 8px 12px; background: #d4edda; border-radius: 4px; border: 1px solid #c3e6cb;",
+              tags$span(style = "color: #155724;", icon("check"), paste0(" ", loaded_name))
+            )
+          } else {
+            fileInput(file_id, NULL, multiple = FALSE,
+                      accept = c(".nwk", ".newick", ".tree", ".nw", ".txt"),
+                      width = "100%")
+          }
+        ),
+        if (!is.null(loaded_name)) {
+          actionButton(remove_id, "", icon = icon("times"),
+                       class = "btn-xs btn-danger", style = "margin-top: 8px; padding: 2px 7px;")
+        }
       )
     })
-    tagList(tree_items)
+    tagList(slot_uis)
   })
+
+  # Watch each slot's fileInput for uploads
+  observe({
+    n <- mt_slot_count()
+    already <- mt_observed_slots()
+    new_slots <- setdiff(seq_len(n), already)
+    for (i in new_slots) {
+      local({
+        local_i <- i
+        file_id <- paste0("mt_tree_slot_", local_i)
+        remove_id <- paste0("mt_remove_slot_", local_i)
+
+        # File upload observer
+        observeEvent(input[[file_id]], {
+          file_info <- input[[file_id]]
+          req(file_info)
+          tn <- tools::file_path_sans_ext(file_info$name)
+
+          # Copy to persistent temp
+          perm_path <- file.path(tempdir(), paste0("mt_slot", local_i, "_", basename(file_info$datapath)))
+          file.copy(file_info$datapath, perm_path, overwrite = TRUE)
+
+          # Ensure unique name
+          existing_names <- mt_values$newick_names
+          if (tn %in% existing_names) {
+            suffix <- 2
+            while (paste0(tn, "_", suffix) %in% existing_names) suffix <- suffix + 1
+            tn <- paste0(tn, "_", suffix)
+          }
+
+          # Store in slot_files for UI rendering
+          sf <- mt_values$slot_files
+          sf[[as.character(local_i)]] <- list(name = file_info$name, path = perm_path, tree_name = tn)
+          mt_values$slot_files <- sf
+
+          # Rebuild newick paths/names from all slots
+          mt_rebuild_from_slots()
+
+          mt_log(paste0("Uploaded tree '", tn, "' in slot ", local_i,
+                        ". Total: ", length(mt_values$newick_names), " trees"))
+        }, ignoreInit = TRUE)
+
+        # Remove button observer
+        observeEvent(input[[remove_id]], {
+          sf <- mt_values$slot_files
+          old_tn <- sf[[as.character(local_i)]]$tree_name
+          sf[[as.character(local_i)]] <- NULL
+          mt_values$slot_files <- sf
+          if (!is.null(old_tn)) mt_values$per_tree[[old_tn]] <- NULL
+          mt_rebuild_from_slots()
+          mt_log(paste0("Removed tree from slot ", local_i,
+                        ". Remaining: ", length(mt_values$newick_names)))
+        }, ignoreInit = TRUE)
+      })
+    }
+    mt_observed_slots(seq_len(n))
+  })
+
+  # Rebuild newick_paths/newick_names from slot_files
+  mt_rebuild_from_slots <- function() {
+    sf <- mt_values$slot_files
+    paths <- c()
+    names <- c()
+    for (key in sort(as.numeric(names(sf)))) {
+      entry <- sf[[as.character(key)]]
+      if (!is.null(entry)) {
+        paths <- c(paths, entry$path)
+        names <- c(names, entry$tree_name)
+      }
+    }
+    mt_values$newick_paths <- if (length(paths) > 0) paths else NULL
+    mt_values$newick_names <- if (length(names) > 0) names else NULL
+
+    # Init per-tree state for any new names
+    for (tn in names) {
+      if (is.null(mt_values$per_tree[[tn]])) {
+        mt_values$per_tree[[tn]] <- list(
+          rotate = NULL, highlight_adjust_height = 1,
+          highlight_adjust_width = 1.5, title = tn, bg_color = "#FFFFFF"
+        )
+      }
+    }
+
+    # Update tree selector
+    if (length(names) > 0) {
+      updateSelectInput(session, "mt_tree_selector",
+                        choices = names, selected = names[length(names)])
+    } else {
+      updateSelectInput(session, "mt_tree_selector", choices = NULL)
+    }
+  }
 
   # --- CSV upload observer ---
   observeEvent(input$mt_csv_file, {
