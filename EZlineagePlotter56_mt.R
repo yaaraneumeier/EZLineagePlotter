@@ -370,6 +370,18 @@ mt_build_yaml_data <- function(newick_path, csv_path, shared, per_tree) {
     }
   }
 
+  # Must have at least one according entry (matches single-mode default from line 12972)
+  if (length(according_list) == 0) {
+    default_acc <- list()
+    default_acc[["1"]] <- list(
+      title1 = if (!is.null(shared$id_column) && nzchar(shared$id_column)) shared$id_column else "ID",
+      value1 = list("Default"),
+      display_name = "Default",
+      color = "gray"
+    )
+    according_list <- list(default_acc)
+  }
+
   # Build classification block
   classification_entry <- list()
   classification_entry[["1"]] <- list(
@@ -520,7 +532,9 @@ func.multiple.trees.one.page.in.app <- function(
         legend_settings = shared_settings$legend_settings
       ))
     }, error = function(e) {
+      tb <- paste(capture.output(traceback(4)), collapse = "\n")
       log_fn(paste0("ERROR rendering tree ", tn, ": ", e$message))
+      log_fn(paste0("Traceback:\n", tb))
       NULL
     })
 
