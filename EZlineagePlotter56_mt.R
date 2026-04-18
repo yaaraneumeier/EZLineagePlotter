@@ -194,6 +194,12 @@ mt_tabItem_tree_display <- function() {
           sliderInput("mt_node_number_font_size", "Node Number Font Size:",
                       min = 0.5, max = 10, value = 3.5, step = 0.5)
         ),
+        checkboxInput("mt_use_pvalues", "Use P-values for Branch Width", value = TRUE),
+        conditionalPanel(
+          condition = "input.mt_use_pvalues == true",
+          sliderInput("mt_fdr_perc", "FDR Percentage:",
+                      min = 0.01, max = 0.25, value = 0.1, step = 0.01)
+        ),
         sliderInput("mt_tip_length", "Tip Length:",
                     min = 0, max = 1, value = 0.05, step = 0.01),
         checkboxInput("mt_ladderize", "Ladderize Tree", value = TRUE),
@@ -208,18 +214,46 @@ mt_tabItem_tree_display <- function() {
 }
 
 mt_tabItem_classification <- function() {
-  tabItem(tabName = "mt_classification", fluidRow(
-    box(title = "Classification Settings", status = "primary",
-        solidHeader = TRUE, width = 12,
-        tags$p(class = "text-muted", "Classification applies identically to all trees."),
-        selectInput("mt_classification_column", "Classification Column:", choices = NULL),
-        numericInput("mt_fdr_perc", "FDR Percentage:", value = 0.1, min = 0, max = 1, step = 0.01),
-        textInput("mt_classification_title", "Classification Title:", value = "Cell type"),
-        checkboxInput("mt_no_cluster_color", "Gray for unclassified", value = TRUE),
-        tags$hr(),
-        uiOutput("mt_classification_preview")
+  tabItem(tabName = "mt_classification",
+    fluidRow(
+      box(
+        title = "Classification Settings",
+        status = "primary",
+        solidHeader = TRUE,
+        width = 4,
+        selectInput("mt_classification_column", "Select Classification Column:",
+                    choices = NULL, selected = character(0)),
+        textInput("mt_classification_title", "Legend Title:", value = "Cell type"),
+        selectInput("mt_no_cluster_color", "No Cluster Color:",
+                    choices = c("gray", "black", "white", "red"), selected = "gray"),
+        actionButton("mt_update_classification_preview", "Update Preview",
+                     icon = icon("eye"), class = "btn-info"),
+        actionButton("mt_add_classification", "Save Classification",
+                     icon = icon("save"), class = "btn-success"),
+        actionButton("mt_remove_classification", "Remove Selected",
+                     icon = icon("minus"), class = "btn-danger"),
+        hr(),
+        h4("Saved Classifications:"),
+        uiOutput("mt_classifications_list_ui")
+      ),
+      box(
+        title = "Classification Values",
+        status = "primary",
+        solidHeader = TRUE,
+        width = 8,
+        uiOutput("mt_classification_values_ui")
+      )
+    ),
+    fluidRow(
+      box(
+        title = "Preview",
+        status = "primary",
+        solidHeader = TRUE,
+        width = 12,
+        imageOutput("mt_classification_preview_plot", height = "auto")
+      )
     )
-  ))
+  )
 }
 
 mt_tabItem_bootstrap <- function() {
@@ -590,7 +624,10 @@ mt_install_server <- function(input, output, session) {
     per_tree = list(),          # list[[tree_name]] = list(rotate, highlight_adjust_height, highlight_adjust_width, title, bg_color)
     man_params = list(),        # man_* params from YAML import
     highlight_yaml = NULL,      # shared highlight YAML block
-    classification_groups = list(), # auto-generated classification groups
+    classification_groups = list(), # classification groups for YAML builder
+    classifications = list(),   # saved classification definitions
+    active_classification_index = NULL, # which saved classification is active
+    temp_classification_preview = NULL, # temp classification for preview
     last_plot = NULL,           # last rendered gtable
     log_messages = ""           # log text for mt_log output
   )
@@ -1139,7 +1176,7 @@ mt_install_server <- function(input, output, session) {
       classification_column = input$mt_classification_column,
       classification_title = if (!is.null(input$mt_classification_title)) input$mt_classification_title else "Cell type",
       fdr_perc = if (!is.null(input$mt_fdr_perc)) input$mt_fdr_perc else 0.1,
-      no_cluster_color = isTRUE(input$mt_no_cluster_color),
+      no_cluster_color = if (!is.null(input$mt_no_cluster_color)) (input$mt_no_cluster_color == "gray") else TRUE,
       classification_groups = mt_values$classification_groups,
       enable_bootstrap = isTRUE(input$mt_enable_bootstrap),
       bootstrap_format = if (!is.null(input$mt_bootstrap_format)) input$mt_bootstrap_format else "triangles",
@@ -1297,23 +1334,300 @@ mt_install_server <- function(input, output, session) {
     mt_values$log_messages
   })
 
-  # --- Classification preview ---
-  output$mt_classification_preview <- renderUI({
-    grps <- mt_values$classification_groups
-    if (is.null(grps) || length(grps) == 0) {
-      return(tags$p(class = "text-muted", "No classification groups yet. Upload CSV and press Process."))
+  # ================================================================
+  # CLASSIFICATION TAB SERVER LOGIC
+  # Mirrors single-mode classification workflow (lines 13907-18780)
+  # ================================================================
+
+  # --- Classification values UI: color pickers for each unique value ---
+  output$mt_classification_values_ui <- renderUI({
+    req(input$mt_classification_column)
+    csv_data <- isolate(mt_values$csv_data)
+    column <- isolate(input$mt_classification_column)
+    if (is.null(csv_data) || is.null(column) || column == "" || !(column %in% names(csv_data))) {
+      return(tags$p(class = "text-muted", "Select a classification column."))
     }
-    tags$div(
-      tags$h5(paste0(length(grps), " groups:")),
-      lapply(grps, function(g) {
-        tags$div(
-          style = paste0("padding: 2px 8px; margin: 2px; display: inline-block; ",
-                         "background-color: ", g$color, "; border-radius: 4px;"),
-          g$display_name
+    unique_values <- unique(csv_data[[column]])
+    unique_values <- unique_values[!is.na(unique_values)]
+    if (length(unique_values) > 100) {
+      return(tags$div(
+        style = "padding: 20px; background-color: #fff3cd; border: 1px solid #ffc107; border-radius: 5px;",
+        tags$h5("Too many unique values!", style = "color: #856404;"),
+        tags$p(paste("Column has", length(unique_values), "values. Select a column with fewer (< 100)."))
+      ))
+    }
+    palette_ui <- fluidRow(
+      column(12, tags$div(
+        style = "background-color: #f8f9fa; padding: 10px; margin-bottom: 15px; border-radius: 5px;",
+        tags$h5("Quick Palette Options:", style = "margin-top: 0;"),
+        fluidRow(
+          column(6, selectInput("mt_color_palette_choice", "Apply Color Palette:",
+                                choices = c("Rainbow" = "rainbow", "Heat Colors" = "heat.colors",
+                                            "Terrain Colors" = "terrain.colors", "Topo Colors" = "topo.colors",
+                                            "Viridis" = "viridis", "Plasma" = "plasma",
+                                            "Inferno" = "inferno", "Magma" = "magma"),
+                                selected = "rainbow")),
+          column(6, style = "padding-top: 25px;",
+                 actionButton("mt_apply_palette", "Apply Palette to All",
+                              icon = icon("palette"), class = "btn-primary btn-sm"))
         )
-      })
+      ))
+    )
+    default_colors <- rainbow(length(unique_values))
+    class_values <- lapply(seq_along(unique_values), function(i) {
+      value <- unique_values[i]
+      fluidRow(
+        column(4, tags$b(as.character(value))),
+        column(4, colourpicker::colourInput(
+          inputId = paste0("mt_class_color_", i),
+          label = NULL,
+          value = default_colors[i],
+          allowTransparent = FALSE
+        )),
+        column(4, selectInput(
+          inputId = paste0("mt_class_color_name_", i),
+          label = NULL,
+          choices = c("Custom" = "", "red", "blue", "green", "yellow", "orange", "purple",
+                      "pink", "brown", "gray", "black", "cyan", "magenta", "gold",
+                      "darkred", "darkblue", "darkgreen", "darkorange", "darkviolet",
+                      "lightblue", "lightgreen", "lightpink", "steelblue", "skyblue",
+                      "navy", "maroon", "olive", "teal", "coral", "tomato", "salmon",
+                      "forestgreen", "limegreen", "royalblue", "dodgerblue",
+                      "crimson", "firebrick", "hotpink", "violet", "indigo",
+                      "goldenrod", "turquoise", "aquamarine"),
+          selected = ""
+        ))
+      )
+    })
+    tagList(palette_ui, tags$h5("Individual Colors:"), class_values)
+  })
+
+  # Color name dropdown → update color picker
+  observe({
+    req(input$mt_classification_column, mt_values$csv_data)
+    csv_data <- mt_values$csv_data
+    column <- input$mt_classification_column
+    if (!(column %in% names(csv_data))) return()
+    unique_values <- unique(csv_data[[column]])
+    unique_values <- unique_values[!is.na(unique_values)]
+    lapply(seq_along(unique_values), function(i) {
+      observeEvent(input[[paste0("mt_class_color_name_", i)]], {
+        cn <- input[[paste0("mt_class_color_name_", i)]]
+        if (!is.null(cn) && cn != "") {
+          colourpicker::updateColourInput(session, paste0("mt_class_color_", i), value = cn)
+        }
+      }, ignoreInit = TRUE)
+    })
+  })
+
+  # Apply palette button
+  observeEvent(input$mt_apply_palette, {
+    req(mt_values$csv_data, input$mt_classification_column, input$mt_color_palette_choice)
+    csv_data <- mt_values$csv_data
+    column <- input$mt_classification_column
+    if (!(column %in% names(csv_data))) return()
+    unique_values <- unique(csv_data[[column]])
+    unique_values <- unique_values[!is.na(unique_values)]
+    n <- length(unique_values)
+    colors <- tryCatch(
+      switch(input$mt_color_palette_choice,
+             "rainbow" = rainbow(n), "heat.colors" = heat.colors(n),
+             "terrain.colors" = terrain.colors(n), "topo.colors" = topo.colors(n),
+             "viridis" = viridisLite::viridis(n), "plasma" = viridisLite::plasma(n),
+             "inferno" = viridisLite::inferno(n), "magma" = viridisLite::magma(n),
+             rainbow(n)),
+      error = function(e) rainbow(n)
+    )
+    lapply(seq_along(unique_values), function(i) {
+      colourpicker::updateColourInput(session, paste0("mt_class_color_", i), value = colors[i])
+    })
+    showNotification(paste("Applied", input$mt_color_palette_choice, "palette"), type = "message", duration = 2)
+  })
+
+  # Helper: gather current classification from UI inputs
+  mt_gather_classification <- function() {
+    req(input$mt_classification_column, mt_values$csv_data)
+    csv_data <- mt_values$csv_data
+    column <- input$mt_classification_column
+    if (!(column %in% names(csv_data))) return(NULL)
+    unique_values <- unique(csv_data[[column]])
+    unique_values <- unique_values[!is.na(unique_values)]
+    classes <- lapply(seq_along(unique_values), function(i) {
+      color_val <- input[[paste0("mt_class_color_", i)]]
+      if (is.null(color_val)) color_val <- rainbow(length(unique_values))[i]
+      list(
+        column = column,
+        value = unique_values[i],
+        display_name = as.character(unique_values[i]),
+        color = color_val
+      )
+    })
+    list(
+      title = if (!is.null(input$mt_classification_title)) input$mt_classification_title else "Cell type",
+      column = column,
+      classes = classes,
+      fdr = if (!is.null(input$mt_fdr_perc)) input$mt_fdr_perc else 0.1,
+      no_cluster_title = "No cluster",
+      no_cluster_color = if (!is.null(input$mt_no_cluster_color)) input$mt_no_cluster_color else "gray",
+      highlight = list(enabled = FALSE)
+    )
+  }
+
+  # Save Classification button
+  observeEvent(input$mt_add_classification, {
+    cls <- mt_gather_classification()
+    if (is.null(cls)) return()
+    mt_values$classifications <- c(mt_values$classifications, list(cls))
+    mt_values$active_classification_index <- length(mt_values$classifications)
+    mt_update_classification_groups()
+    showNotification("Classification saved", type = "message")
+  })
+
+  # Remove Selected Classification button
+  observeEvent(input$mt_remove_classification, {
+    req(mt_values$classifications, length(mt_values$classifications) > 0)
+    idx <- mt_values$active_classification_index
+    if (is.null(idx) || idx < 1 || idx > length(mt_values$classifications)) return()
+    mt_values$classifications <- mt_values$classifications[-idx]
+    if (length(mt_values$classifications) > 0) {
+      mt_values$active_classification_index <- min(idx, length(mt_values$classifications))
+    } else {
+      mt_values$active_classification_index <- NULL
+    }
+    mt_update_classification_groups()
+    showNotification("Classification removed", type = "warning")
+  })
+
+  # Radio button selection for active classification
+  observeEvent(input$mt_selected_classification_index, {
+    req(input$mt_selected_classification_index)
+    mt_values$active_classification_index <- as.numeric(input$mt_selected_classification_index)
+    mt_update_classification_groups()
+  })
+
+  # Update classification_groups from the active classification
+  mt_update_classification_groups <- function() {
+    idx <- mt_values$active_classification_index
+    if (is.null(idx) || is.null(mt_values$classifications) ||
+        idx < 1 || idx > length(mt_values$classifications)) {
+      mt_values$classification_groups <- list()
+      return()
+    }
+    cls <- mt_values$classifications[[idx]]
+    grps <- lapply(cls$classes, function(entry) {
+      list(
+        values = list(entry$value),
+        display_name = entry$display_name,
+        color = entry$color
+      )
+    })
+    mt_values$classification_groups <- grps
+  }
+
+  # Saved classifications list UI
+  output$mt_classifications_list_ui <- renderUI({
+    if (is.null(mt_values$classifications) || length(mt_values$classifications) == 0) {
+      return(tags$p(style = "color: gray; font-style: italic;", "No classifications saved yet"))
+    }
+    choices <- setNames(seq_along(mt_values$classifications),
+                        sapply(seq_along(mt_values$classifications), function(i) {
+                          cls <- mt_values$classifications[[i]]
+                          nv <- if (!is.null(cls$classes)) length(cls$classes) else 0
+                          paste0(cls$title, " (", cls$column, ", ", nv, " values)")
+                        }))
+    selected_idx <- if (!is.null(mt_values$active_classification_index)) {
+      mt_values$active_classification_index
+    } else {
+      length(mt_values$classifications)
+    }
+    tagList(
+      radioButtons("mt_selected_classification_index", "Active Classification:",
+                   choices = choices, selected = selected_idx)
     )
   })
+
+  # Update Preview button: saves temp classification and re-renders
+  observeEvent(input$mt_update_classification_preview, {
+    cls <- mt_gather_classification()
+    if (is.null(cls)) return()
+    mt_values$temp_classification_preview <- cls
+    mt_values$classification_groups <- lapply(cls$classes, function(entry) {
+      list(values = list(entry$value), display_name = entry$display_name, color = entry$color)
+    })
+    showNotification("Classification preview updated. Click 'Update Preview' on the Upload tab to see trees.",
+                     type = "message", duration = 4)
+  })
+
+  # Classification preview image (render first tree with current classification)
+  output$mt_classification_preview_plot <- renderImage({
+    req(mt_values$newick_paths, mt_values$csv_path)
+    cls <- NULL
+    if (!is.null(mt_values$temp_classification_preview)) {
+      cls <- mt_values$temp_classification_preview
+    } else if (!is.null(mt_values$active_classification_index) &&
+               !is.null(mt_values$classifications) &&
+               mt_values$active_classification_index <= length(mt_values$classifications)) {
+      cls <- mt_values$classifications[[mt_values$active_classification_index]]
+    }
+    if (is.null(cls)) {
+      return(list(src = "", alt = "Configure classification and click Update Preview."))
+    }
+
+    shared <- mt_gather_shared()
+    shared$classification_groups <- lapply(cls$classes, function(entry) {
+      list(values = list(entry$value), display_name = entry$display_name, color = entry$color)
+    })
+    shared$classification_title <- cls$title
+    shared$no_cluster_color <- (cls$no_cluster_color == "gray")
+
+    tn <- mt_values$newick_names[1]
+    per_tree <- if (!is.null(mt_values$per_tree[[tn]])) mt_values$per_tree[[tn]] else list()
+
+    yaml_data <- mt_build_yaml_data(
+      newick_path = mt_values$newick_paths[1],
+      csv_path = mt_values$csv_path,
+      shared = shared,
+      per_tree = per_tree
+    )
+    temp_yaml <- tempfile(fileext = ".yaml")
+    writeLines(yaml::as.yaml(yaml_data, indent.mapping.sequence = TRUE), temp_yaml)
+
+    treesi <- tryCatch({
+      suppressWarnings(func.print.lineage.tree(
+        conf_yaml_path = temp_yaml,
+        csv_path_bash = mt_values$csv_path,
+        width = shared$output_width,
+        height = shared$output_height,
+        units_out = shared$output_units,
+        debug_mode = FALSE,
+        compare_two_trees = FALSE,
+        list_nodes_to_rotate = if (!is.null(per_tree$rotate) && length(per_tree$rotate) > 0) per_tree$rotate else NA,
+        flag_display_nod_number_on_tree = isTRUE(shared$display_node_numbers),
+        node_number_font_size = shared$node_number_font_size,
+        bootstrap_label_size = shared$bootstrap_label_size,
+        man_boot_x_offset = shared$man_boot_x_offset,
+        heatmap_tree_distance = 0.02,
+        heatmap_global_gap = 0.05,
+        legend_settings = shared$legend_settings
+      ))
+    }, error = function(e) {
+      mt_log(paste0("Classification preview error: ", e$message))
+      NULL
+    })
+    if (is.null(treesi)) {
+      return(list(src = "", alt = "Error rendering preview."))
+    }
+    one_plot <- if (!is.null(treesi$plots) && length(treesi$plots) > 0) treesi$plots[[1]] else treesi[[1]]
+    if (is.null(one_plot)) {
+      return(list(src = "", alt = "No plot extracted."))
+    }
+    tmp <- tempfile(fileext = ".png")
+    ggplot2::ggsave(tmp, plot = one_plot, width = shared$output_width,
+                    height = shared$output_height, units = shared$output_units,
+                    limitsize = FALSE, dpi = 100)
+    list(src = tmp, contentType = "image/png", alt = "Classification Preview",
+         width = "100%")
+  }, deleteFile = TRUE)
 
   # --- Configuration YAML output ---
   output$mt_yaml_output <- renderText({
