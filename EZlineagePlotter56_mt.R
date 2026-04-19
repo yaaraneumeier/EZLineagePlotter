@@ -581,6 +581,7 @@ func.multiple.trees.one.page.in.app <- function(
         units_out = shared_settings$output_units,
         debug_mode = FALSE,
         compare_two_trees = FALSE,
+        flag_csv_read_func = "fread",
         list_nodes_to_rotate = if (!is.null(per_tree$rotate) && length(per_tree$rotate) > 0) per_tree$rotate else NA,
         flag_display_nod_number_on_tree = isTRUE(shared_settings$display_node_numbers),
         node_number_font_size = shared_settings$node_number_font_size,
