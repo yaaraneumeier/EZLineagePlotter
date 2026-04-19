@@ -798,17 +798,32 @@ mt_install_server <- function(input, output, session) {
   }
 
   # --- CSV upload observer ---
+  # Mirrors single-mode CSV read (lines 12346-12373): fread + column filtering
   observeEvent(input$mt_csv_file, {
     req(input$mt_csv_file)
     mt_values$csv_path <- input$mt_csv_file$datapath
-    mt_values$csv_data <- tryCatch(
-      read.csv(input$mt_csv_file$datapath, stringsAsFactors = FALSE, check.names = FALSE),
-      error = function(e) {
-        mt_log(paste0("ERROR reading CSV: ", e$message))
-        NULL
+    csv_data_raw <- tryCatch({
+      dt <- data.table::fread(input$mt_csv_file$datapath, data.table = FALSE)
+      names(dt) <- make.names(names(dt), unique = TRUE)
+      dt
+    }, error = function(e) {
+      mt_log(paste0("ERROR reading CSV: ", e$message))
+      NULL
+    })
+    if (!is.null(csv_data_raw)) {
+      # Filter out empty/auto-generated columns (matches single-mode lines 12358-12373)
+      col_names <- names(csv_data_raw)
+      valid_cols <- !grepl("^V\\d+$", col_names) &
+                    !grepl("^\\.\\.\\.", col_names) &
+                    !grepl("^X(\\.\\d+)?$", col_names) &
+                    col_names != "" & !is.na(col_names)
+      removed_count <- sum(!valid_cols)
+      if (removed_count > 0) {
+        mt_log(paste0("Removed ", removed_count, " empty/auto-named columns (keeping ", sum(valid_cols), ")"))
+        csv_data_raw <- csv_data_raw[, valid_cols, drop = FALSE]
       }
-    )
-    if (!is.null(mt_values$csv_data)) {
+      mt_values$csv_data <- csv_data_raw
+
       cols <- names(mt_values$csv_data)
       mt_log(paste0("CSV loaded: ", nrow(mt_values$csv_data), " rows, ",
                     length(cols), " columns"))
