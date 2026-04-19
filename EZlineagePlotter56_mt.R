@@ -87,9 +87,11 @@ mt_tabItem_upload <- function() {
         width = 6,
         fileInput("mt_csv_file", "Upload CSV Classification File",
                   accept = c(".csv", ".tsv", ".txt")),
-        selectInput("mt_id_column", "Select ID Column", choices = NULL),
-        selectInput("mt_individual_column", "Select Individual Column",
-                    choices = NULL),
+        selectizeInput("mt_id_column", "Select ID Column", choices = NULL,
+                       options = list(placeholder = "Select...")),
+        selectizeInput("mt_individual_column", "Select Individual Column",
+                       choices = NULL,
+                       options = list(placeholder = "Select...")),
         checkboxInput("mt_use_all_data",
                       "Use all data (ignore individual filtering)",
                       value = FALSE),
@@ -221,8 +223,17 @@ mt_tabItem_classification <- function() {
         status = "primary",
         solidHeader = TRUE,
         width = 4,
-        selectInput("mt_classification_column", "Select Classification Column:",
-                    choices = NULL, selected = character(0)),
+        radioButtons("mt_classification_scope", "Apply classification to:",
+                     choices = c("All trees" = "all", "Per tree" = "per_tree"),
+                     selected = "all", inline = TRUE),
+        conditionalPanel(
+          condition = "input.mt_classification_scope == 'per_tree'",
+          selectInput("mt_classification_tree_selector", "Select Tree:",
+                      choices = NULL)
+        ),
+        selectizeInput("mt_classification_column", "Select Classification Column:",
+                      choices = NULL,
+                      options = list(placeholder = "Select column...")),
         textInput("mt_classification_title", "Legend Title:", value = "Cell type"),
         selectInput("mt_no_cluster_color", "No Cluster Color:",
                     choices = c("gray", "black", "white", "red"), selected = "gray"),
@@ -282,7 +293,8 @@ mt_tabItem_highlighting <- function() {
         checkboxInput("mt_enable_highlight", "Enable Highlighting", value = FALSE),
         conditionalPanel(
           condition = "input.mt_enable_highlight == true",
-          selectInput("mt_highlight_column", "Highlight Column:", choices = NULL),
+          selectizeInput("mt_highlight_column", "Highlight Column:", choices = NULL,
+                        options = list(placeholder = "Select column...")),
           selectizeInput("mt_highlight_values", "Values to Highlight:",
                          choices = NULL, multiple = TRUE),
           textInput("mt_highlight_title", "Highlight Title:", value = "Highlight"),
@@ -532,10 +544,19 @@ func.multiple.trees.one.page.in.app <- function(
 
     # Build YAML for this tree
     per_tree <- if (!is.null(per_tree_list[[tn]])) per_tree_list[[tn]] else list()
-    # Override Individual name per-tree if set (each tree can match a different CSV individual)
+    # Override per-tree settings (individual, classification)
     tree_shared <- shared_settings
     if (!is.null(per_tree$individual_value) && nzchar(per_tree$individual_value)) {
       tree_shared$individual_name <- per_tree$individual_value
+    }
+    if (!is.null(per_tree$classification_groups) && length(per_tree$classification_groups) > 0) {
+      tree_shared$classification_groups <- per_tree$classification_groups
+    }
+    if (!is.null(per_tree$classification_title)) {
+      tree_shared$classification_title <- per_tree$classification_title
+    }
+    if (!is.null(per_tree$no_cluster_color)) {
+      tree_shared$no_cluster_color <- (per_tree$no_cluster_color == "gray")
     }
     yaml_data <- mt_build_yaml_data(
       newick_path = newick_paths[i],
@@ -788,10 +809,14 @@ mt_install_server <- function(input, output, session) {
       cols <- names(mt_values$csv_data)
       mt_log(paste0("CSV loaded: ", nrow(mt_values$csv_data), " rows, ",
                     length(cols), " columns"))
-      updateSelectInput(session, "mt_id_column", choices = cols, selected = cols[1])
-      updateSelectInput(session, "mt_individual_column", choices = c("", cols))
-      updateSelectInput(session, "mt_classification_column", choices = cols)
-      updateSelectInput(session, "mt_highlight_column", choices = cols)
+      updateSelectizeInput(session, "mt_id_column", choices = cols,
+                           selected = cols[1], server = TRUE)
+      updateSelectizeInput(session, "mt_individual_column", choices = c("", cols),
+                           server = TRUE)
+      updateSelectizeInput(session, "mt_classification_column", choices = cols,
+                           server = TRUE)
+      updateSelectizeInput(session, "mt_highlight_column", choices = cols,
+                           server = TRUE)
     }
   })
 
@@ -1339,6 +1364,15 @@ mt_install_server <- function(input, output, session) {
   # Mirrors single-mode classification workflow (lines 13907-18780)
   # ================================================================
 
+  # Keep classification tree selector in sync with uploaded trees
+  observe({
+    nn <- mt_values$newick_names
+    if (!is.null(nn) && length(nn) > 0) {
+      updateSelectInput(session, "mt_classification_tree_selector",
+                        choices = nn, selected = nn[1])
+    }
+  })
+
   # --- Classification values UI: color pickers for each unique value ---
   output$mt_classification_values_ui <- renderUI({
     req(input$mt_classification_column)
@@ -1477,10 +1511,22 @@ mt_install_server <- function(input, output, session) {
   observeEvent(input$mt_add_classification, {
     cls <- mt_gather_classification()
     if (is.null(cls)) return()
+    scope <- if (!is.null(input$mt_classification_scope)) input$mt_classification_scope else "all"
+    cls$scope <- scope
+    if (scope == "per_tree" && !is.null(input$mt_classification_tree_selector)) {
+      cls$target_tree <- input$mt_classification_tree_selector
+    } else {
+      cls$target_tree <- NULL
+    }
     mt_values$classifications <- c(mt_values$classifications, list(cls))
     mt_values$active_classification_index <- length(mt_values$classifications)
     mt_update_classification_groups()
-    showNotification("Classification saved", type = "message")
+    label <- if (scope == "per_tree" && !is.null(cls$target_tree)) {
+      paste0("Classification saved for tree: ", cls$target_tree)
+    } else {
+      "Classification saved for all trees"
+    }
+    showNotification(label, type = "message")
   })
 
   # Remove Selected Classification button
@@ -1505,23 +1551,32 @@ mt_install_server <- function(input, output, session) {
     mt_update_classification_groups()
   })
 
-  # Update classification_groups from the active classification
-  mt_update_classification_groups <- function() {
-    idx <- mt_values$active_classification_index
-    if (is.null(idx) || is.null(mt_values$classifications) ||
-        idx < 1 || idx > length(mt_values$classifications)) {
-      mt_values$classification_groups <- list()
-      return()
-    }
-    cls <- mt_values$classifications[[idx]]
-    grps <- lapply(cls$classes, function(entry) {
-      list(
-        values = list(entry$value),
-        display_name = entry$display_name,
-        color = entry$color
-      )
+  # Build classification groups list from a classification definition
+  mt_cls_to_groups <- function(cls) {
+    lapply(cls$classes, function(entry) {
+      list(values = list(entry$value), display_name = entry$display_name, color = entry$color)
     })
-    mt_values$classification_groups <- grps
+  }
+
+  # Update classification_groups from saved classifications
+  # Sets mt_values$classification_groups (shared) and per-tree overrides
+  mt_update_classification_groups <- function() {
+    mt_values$classification_groups <- list()
+    if (is.null(mt_values$classifications) || length(mt_values$classifications) == 0) return()
+    # Apply all saved classifications: "all" sets shared, "per_tree" sets per-tree override
+    for (cls in mt_values$classifications) {
+      grps <- mt_cls_to_groups(cls)
+      if (!is.null(cls$scope) && cls$scope == "per_tree" && !is.null(cls$target_tree)) {
+        tn <- cls$target_tree
+        if (!is.null(mt_values$per_tree[[tn]])) {
+          mt_values$per_tree[[tn]]$classification_groups <- grps
+          mt_values$per_tree[[tn]]$classification_title <- cls$title
+          mt_values$per_tree[[tn]]$no_cluster_color <- cls$no_cluster_color
+        }
+      } else {
+        mt_values$classification_groups <- grps
+      }
+    }
   }
 
   # Saved classifications list UI
@@ -1533,7 +1588,10 @@ mt_install_server <- function(input, output, session) {
                         sapply(seq_along(mt_values$classifications), function(i) {
                           cls <- mt_values$classifications[[i]]
                           nv <- if (!is.null(cls$classes)) length(cls$classes) else 0
-                          paste0(cls$title, " (", cls$column, ", ", nv, " values)")
+                          scope_label <- if (!is.null(cls$scope) && cls$scope == "per_tree" && !is.null(cls$target_tree)) {
+                            paste0(" [", cls$target_tree, "]")
+                          } else { " [all]" }
+                          paste0(cls$title, " (", cls$column, ", ", nv, " values)", scope_label)
                         }))
     selected_idx <- if (!is.null(mt_values$active_classification_index)) {
       mt_values$active_classification_index
