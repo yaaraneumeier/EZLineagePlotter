@@ -650,6 +650,7 @@ mt_install_server <- function(input, output, session) {
     classifications = list(),   # saved classification definitions
     active_classification_index = NULL, # which saved classification is active
     temp_classification_preview = NULL, # temp classification for preview
+    classification_preview_file = NULL, # path to pre-rendered classification preview PNG
     last_plot = NULL,           # last rendered gtable
     log_messages = ""           # log text for mt_log output
   )
@@ -1606,51 +1607,37 @@ mt_install_server <- function(input, output, session) {
     )
   })
 
-  # Update Preview button: saves temp classification and re-renders
+  # Update Preview button: does the actual render and saves to temp file
+  # Mirrors single-mode pattern: button triggers compute, renderImage is passive
   observeEvent(input$mt_update_classification_preview, ignoreInit = TRUE, {
     mt_classification_loading(TRUE)
-    on.exit(mt_classification_loading(FALSE))
+
     cls <- mt_gather_classification()
-    if (is.null(cls)) return()
+    if (is.null(cls)) {
+      mt_classification_loading(FALSE)
+      return()
+    }
     mt_values$temp_classification_preview <- cls
     mt_values$classification_groups <- lapply(cls$classes, function(entry) {
       list(values = list(entry$value), display_name = entry$display_name, color = entry$color)
     })
-    showNotification("Classification preview updated. Click 'Update Preview' on the Upload tab to see trees.",
-                     type = "message", duration = 4)
-  })
 
-  # Classification preview image (render first tree with current classification)
-  output$mt_classification_preview_plot <- renderImage({
-    if (isTRUE(mt_classification_loading())) {
-      return(list(src = "", alt = "Loading classification..."))
-    }
     req(mt_values$newick_paths, mt_values$csv_path)
-    cls <- NULL
-    if (!is.null(mt_values$temp_classification_preview)) {
-      cls <- mt_values$temp_classification_preview
-    } else if (!is.null(mt_values$active_classification_index) &&
-               !is.null(mt_values$classifications) &&
-               mt_values$active_classification_index <= length(mt_values$classifications)) {
-      cls <- mt_values$classifications[[mt_values$active_classification_index]]
-    }
-    if (is.null(cls)) {
-      return(list(src = "", alt = "Configure classification and click Update Preview."))
-    }
+    showNotification("Rendering classification preview...", type = "message", duration = 2)
 
-    shared <- mt_gather_shared()
+    shared <- isolate(mt_gather_shared())
     shared$classification_groups <- lapply(cls$classes, function(entry) {
       list(values = list(entry$value), display_name = entry$display_name, color = entry$color)
     })
     shared$classification_title <- cls$title
     shared$no_cluster_color <- (cls$no_cluster_color == "gray")
 
-    tn <- mt_values$newick_names[1]
-    per_tree <- if (!is.null(mt_values$per_tree[[tn]])) mt_values$per_tree[[tn]] else list()
+    tn <- isolate(mt_values$newick_names[1])
+    per_tree <- isolate(if (!is.null(mt_values$per_tree[[tn]])) mt_values$per_tree[[tn]] else list())
 
     yaml_data <- mt_build_yaml_data(
-      newick_path = mt_values$newick_paths[1],
-      csv_path = mt_values$csv_path,
+      newick_path = isolate(mt_values$newick_paths[1]),
+      csv_path = isolate(mt_values$csv_path),
       shared = shared,
       per_tree = per_tree
     )
@@ -1660,7 +1647,7 @@ mt_install_server <- function(input, output, session) {
     treesi <- tryCatch({
       suppressWarnings(func.print.lineage.tree(
         conf_yaml_path = temp_yaml,
-        csv_path_bash = mt_values$csv_path,
+        csv_path_bash = isolate(mt_values$csv_path),
         width = shared$output_width,
         height = shared$output_height,
         units_out = shared$output_units,
@@ -1679,20 +1666,33 @@ mt_install_server <- function(input, output, session) {
       mt_log(paste0("Classification preview error: ", e$message))
       NULL
     })
-    if (is.null(treesi)) {
-      return(list(src = "", alt = "Error rendering preview."))
+
+    if (!is.null(treesi)) {
+      one_plot <- if (!is.null(treesi$plots) && length(treesi$plots) > 0) treesi$plots[[1]] else treesi[[1]]
+      if (!is.null(one_plot)) {
+        tmp <- tempfile(fileext = ".png")
+        ggplot2::ggsave(tmp, plot = one_plot, width = shared$output_width,
+                        height = shared$output_height, units = shared$output_units,
+                        limitsize = FALSE, dpi = 100)
+        mt_values$classification_preview_file <- tmp
+        showNotification("Classification preview ready!", type = "message", duration = 3)
+      } else {
+        mt_log("WARNING: No plot extracted from classification preview render")
+      }
     }
-    one_plot <- if (!is.null(treesi$plots) && length(treesi$plots) > 0) treesi$plots[[1]] else treesi[[1]]
-    if (is.null(one_plot)) {
-      return(list(src = "", alt = "No plot extracted."))
+
+    mt_classification_loading(FALSE)
+  })
+
+  # Classification preview image: passive display of pre-rendered file
+  output$mt_classification_preview_plot <- renderImage({
+    pf <- mt_values$classification_preview_file
+    if (is.null(pf) || !file.exists(pf)) {
+      return(list(src = "", alt = "Configure classification and click Update Preview."))
     }
-    tmp <- tempfile(fileext = ".png")
-    ggplot2::ggsave(tmp, plot = one_plot, width = shared$output_width,
-                    height = shared$output_height, units = shared$output_units,
-                    limitsize = FALSE, dpi = 100)
-    list(src = tmp, contentType = "image/png", alt = "Classification Preview",
+    list(src = pf, contentType = "image/png", alt = "Classification Preview",
          width = "100%")
-  }, deleteFile = TRUE)
+  }, deleteFile = FALSE)
 
   # --- Configuration YAML output ---
   output$mt_yaml_output <- renderText({
