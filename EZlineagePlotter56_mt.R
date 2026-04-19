@@ -1377,7 +1377,7 @@ mt_install_server <- function(input, output, session) {
   output$mt_classification_values_ui <- renderUI({
     req(input$mt_classification_column)
     csv_data <- isolate(mt_values$csv_data)
-    column <- isolate(input$mt_classification_column)
+    column <- input$mt_classification_column
     if (is.null(csv_data) || is.null(column) || column == "" || !(column %in% names(csv_data))) {
       return(tags$p(class = "text-muted", "Select a classification column."))
     }
@@ -1390,68 +1390,38 @@ mt_install_server <- function(input, output, session) {
         tags$p(paste("Column has", length(unique_values), "values. Select a column with fewer (< 100)."))
       ))
     }
-    palette_ui <- fluidRow(
-      column(12, tags$div(
-        style = "background-color: #f8f9fa; padding: 10px; margin-bottom: 15px; border-radius: 5px;",
-        tags$h5("Quick Palette Options:", style = "margin-top: 0;"),
-        fluidRow(
-          column(6, selectInput("mt_color_palette_choice", "Apply Color Palette:",
-                                choices = c("Rainbow" = "rainbow", "Heat Colors" = "heat.colors",
-                                            "Terrain Colors" = "terrain.colors", "Topo Colors" = "topo.colors",
-                                            "Viridis" = "viridis", "Plasma" = "plasma",
-                                            "Inferno" = "inferno", "Magma" = "magma"),
-                                selected = "rainbow")),
-          column(6, style = "padding-top: 25px;",
-                 actionButton("mt_apply_palette", "Apply Palette to All",
-                              icon = icon("palette"), class = "btn-primary btn-sm"))
-        )
-      ))
+    if (length(unique_values) == 0) {
+      return(tags$p(class = "text-muted", "No values found in selected column."))
+    }
+    palette_ui <- tags$div(
+      style = "background-color: #f8f9fa; padding: 10px; margin-bottom: 15px; border-radius: 5px;",
+      tags$h5("Quick Palette Options:", style = "margin-top: 0;"),
+      fluidRow(
+        column(6, selectInput("mt_color_palette_choice", "Apply Color Palette:",
+                              choices = c("Rainbow" = "rainbow", "Heat Colors" = "heat.colors",
+                                          "Terrain Colors" = "terrain.colors", "Topo Colors" = "topo.colors",
+                                          "Viridis" = "viridis", "Plasma" = "plasma",
+                                          "Inferno" = "inferno", "Magma" = "magma"),
+                              selected = "rainbow")),
+        column(6, style = "padding-top: 25px;",
+               actionButton("mt_apply_palette", "Apply Palette to All",
+                            icon = icon("palette"), class = "btn-primary btn-sm"))
+      )
     )
     default_colors <- rainbow(length(unique_values))
     class_values <- lapply(seq_along(unique_values), function(i) {
-      value <- unique_values[i]
-      fluidRow(
-        column(4, tags$b(as.character(value))),
-        column(4, colourpicker::colourInput(
+      tags$div(
+        style = "display: flex; align-items: center; gap: 10px; padding: 3px 0;",
+        tags$span(style = "min-width: 120px; font-weight: bold;", as.character(unique_values[i])),
+        colourpicker::colourInput(
           inputId = paste0("mt_class_color_", i),
           label = NULL,
           value = default_colors[i],
           allowTransparent = FALSE
-        )),
-        column(4, selectInput(
-          inputId = paste0("mt_class_color_name_", i),
-          label = NULL,
-          choices = c("Custom" = "", "red", "blue", "green", "yellow", "orange", "purple",
-                      "pink", "brown", "gray", "black", "cyan", "magenta", "gold",
-                      "darkred", "darkblue", "darkgreen", "darkorange", "darkviolet",
-                      "lightblue", "lightgreen", "lightpink", "steelblue", "skyblue",
-                      "navy", "maroon", "olive", "teal", "coral", "tomato", "salmon",
-                      "forestgreen", "limegreen", "royalblue", "dodgerblue",
-                      "crimson", "firebrick", "hotpink", "violet", "indigo",
-                      "goldenrod", "turquoise", "aquamarine"),
-          selected = ""
-        ))
+        )
       )
     })
-    tagList(palette_ui, tags$h5("Individual Colors:"), class_values)
-  })
-
-  # Color name dropdown → update color picker
-  observe({
-    req(input$mt_classification_column, mt_values$csv_data)
-    csv_data <- mt_values$csv_data
-    column <- input$mt_classification_column
-    if (!(column %in% names(csv_data))) return()
-    unique_values <- unique(csv_data[[column]])
-    unique_values <- unique_values[!is.na(unique_values)]
-    lapply(seq_along(unique_values), function(i) {
-      observeEvent(input[[paste0("mt_class_color_name_", i)]], {
-        cn <- input[[paste0("mt_class_color_name_", i)]]
-        if (!is.null(cn) && cn != "") {
-          colourpicker::updateColourInput(session, paste0("mt_class_color_", i), value = cn)
-        }
-      }, ignoreInit = TRUE)
-    })
+    tagList(palette_ui, tags$h5(paste0("Colors (", length(unique_values), " values):")), class_values)
   })
 
   # Apply palette button
