@@ -223,29 +223,29 @@ mt_tabItem_classification <- function() {
         status = "primary",
         solidHeader = TRUE,
         width = 4,
-        radioButtons("mt_classification_scope", "Apply classification to:",
-                     choices = c("All trees" = "all", "Per tree" = "per_tree"),
-                     selected = "all", inline = TRUE),
-        conditionalPanel(
-          condition = "input.mt_classification_scope == 'per_tree'",
-          selectInput("mt_classification_tree_selector", "Select Tree:",
-                      choices = NULL)
-        ),
         selectizeInput("mt_classification_column", "Select Classification Column:",
                       choices = NULL,
                       options = list(placeholder = "Select column...")),
         textInput("mt_classification_title", "Legend Title:", value = "Cell type"),
         selectInput("mt_no_cluster_color", "No Cluster Color:",
                     choices = c("gray", "black", "white", "red"), selected = "gray"),
-        actionButton("mt_update_classification_preview", "Update Preview",
-                     icon = icon("eye"), class = "btn-info"),
-        actionButton("mt_add_classification", "Save Classification",
-                     icon = icon("save"), class = "btn-success"),
-        actionButton("mt_remove_classification", "Remove Selected",
-                     icon = icon("minus"), class = "btn-danger"),
-        hr(),
-        h4("Saved Classifications:"),
-        uiOutput("mt_classifications_list_ui")
+        tags$hr(),
+        radioButtons("mt_classification_scope", "Apply to:",
+                     choices = c("All trees" = "all", "Single tree" = "per_tree"),
+                     selected = "all", inline = TRUE),
+        conditionalPanel(
+          condition = "input.mt_classification_scope == 'per_tree'",
+          selectInput("mt_classification_tree_selector", "Which tree:",
+                      choices = NULL),
+          tags$p(class = "text-muted", style = "font-size: 12px;",
+                 "This will override the shared classification for the selected tree only.")
+        ),
+        tags$hr(),
+        actionButton("mt_update_classification_preview", "Apply & Preview",
+                     icon = icon("eye"), class = "btn-primary btn-block"),
+        tags$br(),
+        actionButton("mt_remove_classification", "Reset Classification",
+                     icon = icon("undo"), class = "btn-warning btn-block btn-sm")
       ),
       box(
         title = "Classification Values",
@@ -261,8 +261,6 @@ mt_tabItem_classification <- function() {
         status = "primary",
         solidHeader = TRUE,
         width = 12,
-        tags$p(class = "text-muted",
-               "Click 'Update Preview' above to render trees with the current classification."),
         imageOutput("mt_combined_plot_class", height = "auto")
       )
     )
@@ -514,6 +512,10 @@ mt_build_yaml_data <- function(newick_path, csv_path, shared, per_tree) {
         heat_map_legend = 3.8
       ),
       compare_two_trees = "no",
+      simulate_p_value = "yes",
+      flag_calc_scores_for_tree = "no",
+      flag_make_newick_file = "no",
+      debug_mode = "no",
       id_tip_trim_flag = shared$trim_tips,
       id_tip_trim_start = 1,
       id_tip_trim_end = 100,
@@ -650,8 +652,6 @@ mt_install_server <- function(input, output, session) {
     man_params = list(),        # man_* params from YAML import
     highlight_yaml = NULL,      # shared highlight YAML block
     classification_groups = list(), # classification groups for YAML builder
-    classifications = list(),   # saved classification definitions
-    active_classification_index = NULL, # which saved classification is active
     temp_classification_preview = NULL, # temp classification for preview
     last_plot = NULL,           # last rendered gtable
     log_messages = ""           # log text for mt_log output
@@ -1550,107 +1550,22 @@ mt_install_server <- function(input, output, session) {
     )
   }
 
-  # Save Classification button
-  observeEvent(input$mt_add_classification, ignoreInit = TRUE, {
-    cls <- mt_gather_classification()
-    if (is.null(cls)) return()
-    scope <- if (!is.null(input$mt_classification_scope)) input$mt_classification_scope else "all"
-    cls$scope <- scope
-    if (scope == "per_tree" && !is.null(input$mt_classification_tree_selector)) {
-      cls$target_tree <- input$mt_classification_tree_selector
-    } else {
-      cls$target_tree <- NULL
-    }
-    mt_values$classifications <- c(mt_values$classifications, list(cls))
-    mt_values$active_classification_index <- length(mt_values$classifications)
-    mt_update_classification_groups()
-    label <- if (scope == "per_tree" && !is.null(cls$target_tree)) {
-      paste0("Classification saved for tree: ", cls$target_tree)
-    } else {
-      "Classification saved for all trees"
-    }
-    showNotification(label, type = "message")
-  })
-
-  # Remove Selected Classification button
+  # Reset Classification: clear all classification state
   observeEvent(input$mt_remove_classification, ignoreInit = TRUE, {
-    req(mt_values$classifications, length(mt_values$classifications) > 0)
-    idx <- mt_values$active_classification_index
-    if (is.null(idx) || idx < 1 || idx > length(mt_values$classifications)) return()
-    mt_values$classifications <- mt_values$classifications[-idx]
-    if (length(mt_values$classifications) > 0) {
-      mt_values$active_classification_index <- min(idx, length(mt_values$classifications))
-    } else {
-      mt_values$active_classification_index <- NULL
-    }
-    mt_update_classification_groups()
-    showNotification("Classification removed", type = "warning")
-  })
-
-  # Radio button selection for active classification
-  observeEvent(input$mt_selected_classification_index, {
-    req(input$mt_selected_classification_index)
-    mt_values$active_classification_index <- as.numeric(input$mt_selected_classification_index)
-    mt_update_classification_groups()
-  })
-
-  # Build classification groups list from a classification definition
-  mt_cls_to_groups <- function(cls) {
-    lapply(cls$classes, function(entry) {
-      list(values = list(entry$value), display_name = entry$display_name, color = entry$color)
-    })
-  }
-
-  # Update classification_groups from saved classifications
-  # Sets mt_values$classification_groups (shared) and per-tree overrides
-  mt_update_classification_groups <- function() {
     mt_values$classification_groups <- list()
-    if (is.null(mt_values$classifications) || length(mt_values$classifications) == 0) return()
-    # Apply all saved classifications: "all" sets shared, "per_tree" sets per-tree override
-    for (cls in mt_values$classifications) {
-      grps <- mt_cls_to_groups(cls)
-      if (!is.null(cls$scope) && cls$scope == "per_tree" && !is.null(cls$target_tree)) {
-        tn <- cls$target_tree
-        if (!is.null(mt_values$per_tree[[tn]])) {
-          mt_values$per_tree[[tn]]$classification_groups <- grps
-          mt_values$per_tree[[tn]]$classification_title <- cls$title
-          mt_values$per_tree[[tn]]$no_cluster_color <- cls$no_cluster_color
-        }
-      } else {
-        mt_values$classification_groups <- grps
-      }
+    mt_values$temp_classification_preview <- NULL
+    # Clear per-tree overrides
+    for (tn in names(mt_values$per_tree)) {
+      mt_values$per_tree[[tn]]$classification_groups <- NULL
+      mt_values$per_tree[[tn]]$classification_title <- NULL
+      mt_values$per_tree[[tn]]$no_cluster_color <- NULL
     }
-  }
-
-  # Saved classifications list UI
-  output$mt_classifications_list_ui <- renderUI({
-    if (is.null(mt_values$classifications) || length(mt_values$classifications) == 0) {
-      return(tags$p(style = "color: gray; font-style: italic;", "No classifications saved yet"))
-    }
-    choices <- setNames(seq_along(mt_values$classifications),
-                        sapply(seq_along(mt_values$classifications), function(i) {
-                          cls <- mt_values$classifications[[i]]
-                          nv <- if (!is.null(cls$classes)) length(cls$classes) else 0
-                          scope_label <- if (!is.null(cls$scope) && cls$scope == "per_tree" && !is.null(cls$target_tree)) {
-                            paste0(" [", cls$target_tree, "]")
-                          } else { " [all]" }
-                          paste0(cls$title, " (", cls$column, ", ", nv, " values)", scope_label)
-                        }))
-    selected_idx <- if (!is.null(mt_values$active_classification_index)) {
-      mt_values$active_classification_index
-    } else {
-      length(mt_values$classifications)
-    }
-    tagList(
-      radioButtons("mt_selected_classification_index", "Active Classification:",
-                   choices = choices, selected = selected_idx)
-    )
+    showNotification("Classification reset", type = "warning")
   })
 
-  # Update Preview button: save classification and trigger main plot re-render
-  # Mirrors single-mode pattern (line 18618): does NOT render a separate tree.
-  # Just saves temp classification, updates classification_groups, and re-renders
-  # the main combined plot via the existing render pipeline.
+  # (Classification groups are now set directly by Apply & Preview button above)
+
+  # Apply & Preview: save classification (respecting scope) and trigger main render
   observeEvent(input$mt_update_classification_preview, ignoreInit = TRUE, {
     mt_classification_loading(TRUE)
 
@@ -1659,17 +1574,30 @@ mt_install_server <- function(input, output, session) {
       mt_classification_loading(FALSE)
       return()
     }
-    mt_values$temp_classification_preview <- cls
-    mt_values$classification_groups <- lapply(cls$classes, function(entry) {
+
+    scope <- if (!is.null(input$mt_classification_scope)) input$mt_classification_scope else "all"
+    grps <- lapply(cls$classes, function(entry) {
       list(values = list(entry$value), display_name = entry$display_name, color = entry$color)
     })
 
+    if (scope == "per_tree" && !is.null(input$mt_classification_tree_selector)) {
+      tn <- input$mt_classification_tree_selector
+      if (!is.null(mt_values$per_tree[[tn]])) {
+        mt_values$per_tree[[tn]]$classification_groups <- grps
+        mt_values$per_tree[[tn]]$classification_title <- cls$title
+        mt_values$per_tree[[tn]]$no_cluster_color <- cls$no_cluster_color
+      }
+      showNotification(paste0("Classification applied to tree: ", tn), type = "message", duration = 3)
+    } else {
+      mt_values$classification_groups <- grps
+      mt_values$temp_classification_preview <- cls
+      showNotification("Classification applied to all trees", type = "message", duration = 3)
+    }
+
     mt_classification_loading(FALSE)
 
-    # Trigger main render (same as clicking "Update Preview" on upload tab)
+    # Trigger main render
     shinyjs::click("mt_update_preview")
-
-    showNotification("Classification applied. Rendering preview...", type = "message", duration = 3)
   })
 
   # Classification preview: mirrors the main combined plot
