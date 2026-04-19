@@ -654,6 +654,7 @@ mt_install_server <- function(input, output, session) {
     classification_groups = list(), # classification groups for YAML builder
     temp_classification_preview = NULL, # temp classification for preview
     last_plot = NULL,           # last rendered gtable
+    last_plot_file = NULL,      # path to cached PNG of last render
     log_messages = ""           # log text for mt_log output
   )
 
@@ -1384,31 +1385,35 @@ mt_install_server <- function(input, output, session) {
     if (!is.null(result)) {
       mt_values$last_plot <- result
       mt_log("Render complete!")
+
+      # Save to persistent temp file (both plot outputs read from this)
+      tmp <- tempfile(fileext = ".png")
+      w <- if (isTRUE(input$mt_a4_output)) 297 else {
+        if (!is.null(input$mt_output_width)) input$mt_output_width else 29.7
+      }
+      h <- if (isTRUE(input$mt_a4_output)) 210 else {
+        if (!is.null(input$mt_output_height)) input$mt_output_height else 42
+      }
+      u <- if (isTRUE(input$mt_a4_output)) "mm" else {
+        if (!is.null(input$mt_output_units)) input$mt_output_units else "cm"
+      }
+      ggplot2::ggsave(tmp, plot = result, width = w, height = h, units = u,
+                      limitsize = FALSE, dpi = 150)
+      mt_values$last_plot_file <- tmp
     }
     result
   })
 
-  # --- Plot output (renderImage to match imageOutput) ---
+  # --- Plot output: both upload and classification tabs show the same cached image ---
   output$mt_combined_plot <- renderImage({
-    result <- mt_render_plot()
-    if (is.null(result)) {
+    mt_render_plot()  # establish reactive dependency
+    pf <- mt_values$last_plot_file
+    if (is.null(pf) || !file.exists(pf)) {
       return(list(src = "", alt = "No plot yet. Upload data, process, and click Update Preview."))
     }
-    tmp <- tempfile(fileext = ".png")
-    w <- if (isTRUE(input$mt_a4_output)) 297 else {
-      if (!is.null(input$mt_output_width)) input$mt_output_width else 29.7
-    }
-    h <- if (isTRUE(input$mt_a4_output)) 210 else {
-      if (!is.null(input$mt_output_height)) input$mt_output_height else 42
-    }
-    u <- if (isTRUE(input$mt_a4_output)) "mm" else {
-      if (!is.null(input$mt_output_units)) input$mt_output_units else "cm"
-    }
-    ggplot2::ggsave(tmp, plot = result, width = w, height = h, units = u,
-                    limitsize = FALSE, dpi = 150)
-    list(src = tmp, contentType = "image/png", width = "100%",
+    list(src = pf, contentType = "image/png", width = "100%",
          alt = "Multi-tree combined plot")
-  }, deleteFile = TRUE)
+  }, deleteFile = FALSE)
 
   # --- Log output ---
   output$mt_log <- renderText({
@@ -1600,27 +1605,16 @@ mt_install_server <- function(input, output, session) {
     shinyjs::click("mt_update_preview")
   })
 
-  # Classification preview: mirrors the main combined plot
+  # Classification preview: reads the same cached image file
   output$mt_combined_plot_class <- renderImage({
-    result <- mt_render_plot()
-    if (is.null(result)) {
-      return(list(src = "", alt = "Click Update Preview to render."))
+    mt_render_plot()  # establish reactive dependency
+    pf <- mt_values$last_plot_file
+    if (is.null(pf) || !file.exists(pf)) {
+      return(list(src = "", alt = "Click Apply & Preview to render."))
     }
-    tmp <- tempfile(fileext = ".png")
-    w <- if (isTRUE(input$mt_a4_output)) 297 else {
-      if (!is.null(input$mt_output_width)) input$mt_output_width else 29.7
-    }
-    h <- if (isTRUE(input$mt_a4_output)) 210 else {
-      if (!is.null(input$mt_output_height)) input$mt_output_height else 42
-    }
-    u <- if (isTRUE(input$mt_a4_output)) "mm" else {
-      if (!is.null(input$mt_output_units)) input$mt_output_units else "cm"
-    }
-    ggplot2::ggsave(tmp, plot = result, width = w, height = h, units = u,
-                    limitsize = FALSE, dpi = 150)
-    list(src = tmp, contentType = "image/png", width = "100%",
+    list(src = pf, contentType = "image/png", width = "100%",
          alt = "Multi-tree classification preview")
-  }, deleteFile = TRUE)
+  }, deleteFile = FALSE)
 
   # --- Configuration YAML output ---
   output$mt_yaml_output <- renderText({
