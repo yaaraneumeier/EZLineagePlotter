@@ -643,6 +643,7 @@ mt_install_server <- function(input, output, session) {
     trees = list(),             # list of treedata objects per newick
     matched_per_tree = list(),  # list[[tree_name]] = filtered CSV subset for that tree
     filtered_csv = NULL,        # combined filtered CSV (only matched rows across all trees)
+    temp_csv_path = NULL,        # path to filtered CSV on disk (passed to func.print.lineage.tree)
     per_tree = list(),          # list[[tree_name]] = list(rotate, highlight_adjust_height, highlight_adjust_width, title, bg_color)
     man_params = list(),        # man_* params from YAML import
     highlight_yaml = NULL,      # shared highlight YAML block
@@ -1073,6 +1074,22 @@ mt_install_server <- function(input, output, session) {
       mt_values$filtered_csv <- all_matched
     }
 
+    # Write filtered CSV to disk (matches single-mode pattern from line 13830)
+    # func.print.lineage.tree reads CSV from disk, so we must give it the filtered version
+    if (!is.null(mt_values$filtered_csv) && nrow(mt_values$filtered_csv) > 0) {
+      mt_values$temp_csv_path <- tempfile(fileext = ".csv")
+      csv_to_write <- mt_values$filtered_csv
+      col_names <- names(csv_to_write)
+      valid_cols <- !grepl("^\\.\\.\\.", col_names) & col_names != "" & !is.na(col_names)
+      if (sum(valid_cols) < length(col_names)) {
+        mt_log(paste0("Filtering out ", sum(!valid_cols), " empty/unnamed columns from temp CSV"))
+        csv_to_write <- csv_to_write[, valid_cols, drop = FALSE]
+      }
+      write.csv(csv_to_write, mt_values$temp_csv_path, row.names = FALSE)
+      mt_log(paste0("Temp CSV written: ", nrow(csv_to_write), " rows x ", ncol(csv_to_write),
+                    " cols -> ", mt_values$temp_csv_path))
+    }
+
     # Auto-generate classification groups from full CSV (shared across trees)
     if (!is.null(input$mt_classification_column) && input$mt_classification_column != "") {
       class_col <- input$mt_classification_column
@@ -1324,11 +1341,18 @@ mt_install_server <- function(input, output, session) {
       if (!is.null(pt$bg_color)) pt$bg_color else "#FFFFFF"
     })
 
+    # Use filtered CSV on disk if available (much smaller than full CSV)
+    render_csv_path <- if (!is.null(mt_values$temp_csv_path) && file.exists(mt_values$temp_csv_path)) {
+      mt_values$temp_csv_path
+    } else {
+      mt_values$csv_path
+    }
+
     result <- tryCatch(
       func.multiple.trees.one.page.in.app(
         newick_paths = mt_values$newick_paths,
         newick_names = mt_values$newick_names,
-        csv_path = mt_values$csv_path,
+        csv_path = render_csv_path,
         shared_settings = shared,
         per_tree_list = mt_values$per_tree,
         tree_titles = tree_titles,
@@ -1625,6 +1649,15 @@ mt_install_server <- function(input, output, session) {
     req(mt_values$newick_paths, mt_values$csv_path)
     showNotification("Rendering classification preview...", type = "message", duration = 2)
 
+    # Use filtered CSV on disk (matches single-mode pattern)
+    preview_csv_path <- isolate({
+      if (!is.null(mt_values$temp_csv_path) && file.exists(mt_values$temp_csv_path)) {
+        mt_values$temp_csv_path
+      } else {
+        mt_values$csv_path
+      }
+    })
+
     shared <- isolate(mt_gather_shared())
     shared$classification_groups <- lapply(cls$classes, function(entry) {
       list(values = list(entry$value), display_name = entry$display_name, color = entry$color)
@@ -1637,7 +1670,7 @@ mt_install_server <- function(input, output, session) {
 
     yaml_data <- mt_build_yaml_data(
       newick_path = isolate(mt_values$newick_paths[1]),
-      csv_path = isolate(mt_values$csv_path),
+      csv_path = preview_csv_path,
       shared = shared,
       per_tree = per_tree
     )
@@ -1647,7 +1680,7 @@ mt_install_server <- function(input, output, session) {
     treesi <- tryCatch({
       suppressWarnings(func.print.lineage.tree(
         conf_yaml_path = temp_yaml,
-        csv_path_bash = isolate(mt_values$csv_path),
+        csv_path_bash = preview_csv_path,
         width = shared$output_width,
         height = shared$output_height,
         units_out = shared$output_units,
