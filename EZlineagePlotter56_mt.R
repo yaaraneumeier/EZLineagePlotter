@@ -642,6 +642,7 @@ mt_install_server <- function(input, output, session) {
     csv_data = NULL,            # data.frame
     trees = list(),             # list of treedata objects per newick
     matched_per_tree = list(),  # list[[tree_name]] = filtered CSV subset for that tree
+    filtered_csv = NULL,        # combined filtered CSV (only matched rows across all trees)
     per_tree = list(),          # list[[tree_name]] = list(rotate, highlight_adjust_height, highlight_adjust_width, title, bg_color)
     man_params = list(),        # man_* params from YAML import
     highlight_yaml = NULL,      # shared highlight YAML block
@@ -1057,6 +1058,20 @@ mt_install_server <- function(input, output, session) {
       total_ok <- total_ok + 1
     }
 
+    # Build filtered_csv: combine all matched per-tree subsets, filtered to matched IDs
+    all_matched <- do.call(rbind, mt_values$matched_per_tree)
+    if (!is.null(all_matched) && nrow(all_matched) > 0 && !is.null(id_col) && id_col %in% names(all_matched)) {
+      all_tip_labels <- c()
+      for (tn in names(mt_values$trees)) {
+        all_tip_labels <- c(all_tip_labels, mt_values$trees[[tn]]@phylo$tip.label)
+      }
+      all_tip_labels <- unique(all_tip_labels)
+      mt_values$filtered_csv <- all_matched[all_matched[[id_col]] %in% all_tip_labels, , drop = FALSE]
+      mt_log(paste0("Filtered CSV: ", nrow(mt_values$filtered_csv), " rows (matched tree tips)"))
+    } else {
+      mt_values$filtered_csv <- all_matched
+    }
+
     # Auto-generate classification groups from full CSV (shared across trees)
     if (!is.null(input$mt_classification_column) && input$mt_classification_column != "") {
       class_col <- input$mt_classification_column
@@ -1364,6 +1379,8 @@ mt_install_server <- function(input, output, session) {
   # Mirrors single-mode classification workflow (lines 13907-18780)
   # ================================================================
 
+  mt_classification_loading <- reactiveVal(FALSE)
+
   # Keep classification tree selector in sync with uploaded trees
   observe({
     nn <- mt_values$newick_names
@@ -1373,13 +1390,26 @@ mt_install_server <- function(input, output, session) {
     }
   })
 
+  # Helper: get the appropriate CSV for classification (filtered if available)
+  mt_csv_for_classification <- function() {
+    if (!is.null(mt_values$filtered_csv) && nrow(mt_values$filtered_csv) > 0) {
+      mt_values$filtered_csv
+    } else {
+      mt_values$csv_data
+    }
+  }
+
   # --- Classification values UI: color pickers for each unique value ---
+  # Mirrors single-mode output$classification_values_ui (lines 13907-14069)
   output$mt_classification_values_ui <- renderUI({
     req(input$mt_classification_column)
-    csv_data <- isolate(mt_values$csv_data)
-    column <- input$mt_classification_column
+    mt_classification_loading(TRUE)
+    on.exit(mt_classification_loading(FALSE))
+
+    csv_data <- isolate(mt_csv_for_classification())
+    column <- isolate(input$mt_classification_column)
     if (is.null(csv_data) || is.null(column) || column == "" || !(column %in% names(csv_data))) {
-      return(tags$p(class = "text-muted", "Select a classification column."))
+      return(tags$p(class = "text-muted", "Select a classification column. Process Data first for best performance."))
     }
     unique_values <- unique(csv_data[[column]])
     unique_values <- unique_values[!is.na(unique_values)]
@@ -1425,9 +1455,10 @@ mt_install_server <- function(input, output, session) {
   })
 
   # Apply palette button
-  observeEvent(input$mt_apply_palette, {
-    req(mt_values$csv_data, input$mt_classification_column, input$mt_color_palette_choice)
-    csv_data <- mt_values$csv_data
+  observeEvent(input$mt_apply_palette, ignoreInit = TRUE, {
+    req(input$mt_classification_column, input$mt_color_palette_choice)
+    csv_data <- mt_csv_for_classification()
+    if (is.null(csv_data)) return()
     column <- input$mt_classification_column
     if (!(column %in% names(csv_data))) return()
     unique_values <- unique(csv_data[[column]])
@@ -1450,8 +1481,9 @@ mt_install_server <- function(input, output, session) {
 
   # Helper: gather current classification from UI inputs
   mt_gather_classification <- function() {
-    req(input$mt_classification_column, mt_values$csv_data)
-    csv_data <- mt_values$csv_data
+    req(input$mt_classification_column)
+    csv_data <- mt_csv_for_classification()
+    if (is.null(csv_data)) return(NULL)
     column <- input$mt_classification_column
     if (!(column %in% names(csv_data))) return(NULL)
     unique_values <- unique(csv_data[[column]])
@@ -1478,7 +1510,7 @@ mt_install_server <- function(input, output, session) {
   }
 
   # Save Classification button
-  observeEvent(input$mt_add_classification, {
+  observeEvent(input$mt_add_classification, ignoreInit = TRUE, {
     cls <- mt_gather_classification()
     if (is.null(cls)) return()
     scope <- if (!is.null(input$mt_classification_scope)) input$mt_classification_scope else "all"
@@ -1500,7 +1532,7 @@ mt_install_server <- function(input, output, session) {
   })
 
   # Remove Selected Classification button
-  observeEvent(input$mt_remove_classification, {
+  observeEvent(input$mt_remove_classification, ignoreInit = TRUE, {
     req(mt_values$classifications, length(mt_values$classifications) > 0)
     idx <- mt_values$active_classification_index
     if (is.null(idx) || idx < 1 || idx > length(mt_values$classifications)) return()
@@ -1575,7 +1607,9 @@ mt_install_server <- function(input, output, session) {
   })
 
   # Update Preview button: saves temp classification and re-renders
-  observeEvent(input$mt_update_classification_preview, {
+  observeEvent(input$mt_update_classification_preview, ignoreInit = TRUE, {
+    mt_classification_loading(TRUE)
+    on.exit(mt_classification_loading(FALSE))
     cls <- mt_gather_classification()
     if (is.null(cls)) return()
     mt_values$temp_classification_preview <- cls
@@ -1588,6 +1622,9 @@ mt_install_server <- function(input, output, session) {
 
   # Classification preview image (render first tree with current classification)
   output$mt_classification_preview_plot <- renderImage({
+    if (isTRUE(mt_classification_loading())) {
+      return(list(src = "", alt = "Loading classification..."))
+    }
     req(mt_values$newick_paths, mt_values$csv_path)
     cls <- NULL
     if (!is.null(mt_values$temp_classification_preview)) {
