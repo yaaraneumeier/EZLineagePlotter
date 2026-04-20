@@ -1501,7 +1501,7 @@ mt_install_server <- function(input, output, session) {
       return(NULL)
     }
 
-    updateSelectizeInput(session, "mt_highlight_values", choices = unique_values, selected = character(0))
+    updateSelectizeInput(session, "mt_highlight_values", choices = unique_values, selected = character(0), server = TRUE)
 
     output$mt_highlight_values_settings_ui <- renderUI({
       tags$div(
@@ -1942,7 +1942,7 @@ mt_install_server <- function(input, output, session) {
   })
 
   # Save per-tree highlight values
-  observeEvent(input$mt_pt_highlight_height, {
+  observeEvent(input$mt_pt_highlight_height, ignoreInit = TRUE, {
     req(input$mt_tree_selector)
     tn <- input$mt_tree_selector
     if (!is.null(mt_values$per_tree[[tn]])) {
@@ -1950,7 +1950,7 @@ mt_install_server <- function(input, output, session) {
     }
   })
 
-  observeEvent(input$mt_pt_highlight_width, {
+  observeEvent(input$mt_pt_highlight_width, ignoreInit = TRUE, {
     req(input$mt_tree_selector)
     tn <- input$mt_tree_selector
     if (!is.null(mt_values$per_tree[[tn]])) {
@@ -1959,7 +1959,7 @@ mt_install_server <- function(input, output, session) {
   })
 
   # --- Highlight values observer: per-value color + transparency settings (matches single mode lines 14621-14689) ---
-  observeEvent(input$mt_highlight_values, {
+  observeEvent(input$mt_highlight_values, ignoreInit = TRUE, {
     req(input$mt_highlight_column)
 
     selected_values <- input$mt_highlight_values
@@ -2096,7 +2096,7 @@ mt_install_server <- function(input, output, session) {
   })
 
   # Save per-tree extra values
-  observeEvent(input$mt_pt_title, {
+  observeEvent(input$mt_pt_title, ignoreInit = TRUE, {
     req(input$mt_tree_selector)
     tn <- input$mt_tree_selector
     if (!is.null(mt_values$per_tree[[tn]])) {
@@ -2104,7 +2104,7 @@ mt_install_server <- function(input, output, session) {
     }
   })
 
-  observeEvent(input$mt_pt_bg_color, {
+  observeEvent(input$mt_pt_bg_color, ignoreInit = TRUE, {
     req(input$mt_tree_selector)
     tn <- input$mt_tree_selector
     if (!is.null(mt_values$per_tree[[tn]])) {
@@ -2170,6 +2170,51 @@ mt_install_server <- function(input, output, session) {
   }
 
   mt_last_render_time <- reactiveVal(0)
+
+  # ==========================================================================
+  # DEBOUNCED REACTIVE INPUTS (matches single-mode pattern, prevents rapid UI updates)
+  # ==========================================================================
+  MT_DEBOUNCE_MS <- 300
+
+  # Tree display sliders
+  mt_tip_font_size_d <- debounce(reactive(input$mt_tip_font_size), MT_DEBOUNCE_MS)
+  mt_edge_width_d <- debounce(reactive(input$mt_edge_width), MT_DEBOUNCE_MS)
+  mt_node_number_font_size_d <- debounce(reactive(input$mt_node_number_font_size), MT_DEBOUNCE_MS)
+  mt_tip_length_d <- debounce(reactive(input$mt_tip_length), MT_DEBOUNCE_MS)
+
+  # Bootstrap sliders
+  mt_bootstrap_label_size_d <- debounce(reactive(input$mt_bootstrap_label_size), MT_DEBOUNCE_MS)
+  mt_man_boot_x_offset_d <- debounce(reactive(input$mt_man_boot_x_offset), MT_DEBOUNCE_MS)
+
+  # Highlight sliders
+  mt_highlight_offset_d <- debounce(reactive(input$mt_highlight_offset), MT_DEBOUNCE_MS)
+  mt_highlight_vertical_offset_d <- debounce(reactive(input$mt_highlight_vertical_offset), MT_DEBOUNCE_MS)
+  mt_highlight_adjust_height_d <- debounce(reactive(input$mt_highlight_adjust_height), MT_DEBOUNCE_MS)
+  mt_highlight_adjust_width_d <- debounce(reactive(input$mt_highlight_adjust_width), MT_DEBOUNCE_MS)
+
+  # Legend sliders
+  mt_legend_title_size_d <- debounce(reactive(input$mt_legend_title_size), MT_DEBOUNCE_MS)
+  mt_legend_text_size_d <- debounce(reactive(input$mt_legend_text_size), MT_DEBOUNCE_MS)
+  mt_legend_key_size_d <- debounce(reactive(input$mt_legend_key_size), MT_DEBOUNCE_MS)
+  mt_legend_key_width_d <- debounce(reactive(input$mt_legend_key_width), MT_DEBOUNCE_MS)
+  mt_legend_key_height_d <- debounce(reactive(input$mt_legend_key_height), MT_DEBOUNCE_MS)
+  mt_legend_spacing_d <- debounce(reactive(input$mt_legend_spacing), MT_DEBOUNCE_MS)
+  mt_legend_spacing_vertical_d <- debounce(reactive(input$mt_legend_spacing_vertical), MT_DEBOUNCE_MS)
+  mt_legend_title_key_spacing_d <- debounce(reactive(input$mt_legend_title_key_spacing), MT_DEBOUNCE_MS)
+  mt_legend_key_spacing_d <- debounce(reactive(input$mt_legend_key_spacing), MT_DEBOUNCE_MS)
+  mt_legend_margin_d <- debounce(reactive(input$mt_legend_margin), MT_DEBOUNCE_MS)
+
+  # Extra tab sliders
+  mt_plot_offset_x_d <- debounce(reactive(input$mt_plot_offset_x), MT_DEBOUNCE_MS)
+  mt_plot_offset_y_d <- debounce(reactive(input$mt_plot_offset_y), MT_DEBOUNCE_MS)
+  mt_plot_scale_percent_d <- debounce(reactive(input$mt_plot_scale_percent), MT_DEBOUNCE_MS)
+  mt_page_title_size_d <- debounce(reactive(input$mt_page_title_size), MT_DEBOUNCE_MS)
+  mt_page_title_x_d <- debounce(reactive(input$mt_page_title_x), MT_DEBOUNCE_MS)
+  mt_page_title_y_d <- debounce(reactive(input$mt_page_title_y), MT_DEBOUNCE_MS)
+  mt_background_color_d <- debounce(reactive(input$mt_background_color), MT_DEBOUNCE_MS)
+  # ==========================================================================
+  # END DEBOUNCED REACTIVE INPUTS
+  # ==========================================================================
 
   # --- Build highlight YAML (called before render, reads per-value colors/transparency) ---
   mt_build_highlight_yaml <- function() {
@@ -2421,25 +2466,25 @@ mt_install_server <- function(input, output, session) {
   })
 
   # Reset position
-  observeEvent(input$mt_reset_plot_position, {
+  observeEvent(input$mt_reset_plot_position, ignoreInit = TRUE, {
     updateSliderInput(session, "mt_plot_offset_x", value = 0)
     updateSliderInput(session, "mt_plot_offset_y", value = 0)
   })
 
   # Reset scale
-  observeEvent(input$mt_reset_plot_scale, {
+  observeEvent(input$mt_reset_plot_scale, ignoreInit = TRUE, {
     updateSliderInput(session, "mt_plot_scale_percent", value = 100)
   })
 
   # Reset background
-  observeEvent(input$mt_reset_background, {
+  observeEvent(input$mt_reset_background, ignoreInit = TRUE, {
     colourpicker::updateColourInput(session, "mt_background_color", value = "#FFFFFF")
   })
 
   # Custom text annotations storage
   mt_custom_texts <- reactiveVal(list())
 
-  observeEvent(input$mt_add_custom_text, {
+  observeEvent(input$mt_add_custom_text, ignoreInit = TRUE, {
     req(input$mt_custom_text_content)
     if (nchar(trimws(input$mt_custom_text_content)) > 0) {
       new_text <- list(
@@ -2458,7 +2503,7 @@ mt_install_server <- function(input, output, session) {
     }
   })
 
-  observeEvent(input$mt_clear_custom_texts, {
+  observeEvent(input$mt_clear_custom_texts, ignoreInit = TRUE, {
     mt_custom_texts(list())
   })
 
@@ -2685,22 +2730,25 @@ mt_install_server <- function(input, output, session) {
     showNotification(paste("Applied", input$mt_color_palette_choice, "palette"), type = "message", duration = 2)
   })
 
-  # R color name dropdown → colourInput sync (matches single mode)
-  observe({
+  # R color name dropdown → colourInput sync: per-value observers (matches single mode pattern)
+  # Single mode creates individual observeEvent per dropdown to avoid N-squared cascade
+  observeEvent(input$mt_classification_column, {
     req(input$mt_classification_column)
-    csv_data <- mt_csv_for_classification()
+    csv_data <- isolate(mt_csv_for_classification())
     if (is.null(csv_data)) return()
-    column <- input$mt_classification_column
+    column <- isolate(input$mt_classification_column)
     if (!(column %in% names(csv_data))) return()
     unique_values <- unique(csv_data[[column]])
     unique_values <- unique_values[!is.na(unique_values)]
     lapply(seq_along(unique_values), function(i) {
-      color_name <- input[[paste0("mt_class_color_name_", i)]]
-      if (!is.null(color_name) && color_name != "") {
-        colourpicker::updateColourInput(session, paste0("mt_class_color_", i), value = color_name)
-      }
+      observeEvent(input[[paste0("mt_class_color_name_", i)]], {
+        color_name <- input[[paste0("mt_class_color_name_", i)]]
+        if (!is.null(color_name) && color_name != "") {
+          colourpicker::updateColourInput(session, paste0("mt_class_color_", i), value = color_name)
+        }
+      }, ignoreInit = TRUE)
     })
-  })
+  }, ignoreInit = TRUE)
 
   # Helper: gather current classification from UI inputs
   mt_gather_classification <- function() {
@@ -2815,44 +2863,6 @@ mt_install_server <- function(input, output, session) {
     )
     yaml::as.yaml(yaml_data, indent.mapping.sequence = TRUE)
   })
-
-  # --- Download YAML config ---
-  output$mt_download_yaml <- downloadHandler(
-    filename = function() { "multi_tree_config.yaml" },
-    content = function(file) {
-      shared <- mt_gather_shared()
-      yaml_data <- mt_build_yaml_data(
-        newick_path = if (!is.null(mt_values$newick_paths)) mt_values$newick_paths[1] else "tree.nwk",
-        csv_path = if (!is.null(mt_values$csv_path)) mt_values$csv_path else "data.csv",
-        shared = shared,
-        per_tree = list()
-      )
-      writeLines(yaml::as.yaml(yaml_data, indent.mapping.sequence = TRUE), file)
-    }
-  )
-
-  # --- Download plot ---
-  output$mt_download_plot <- downloadHandler(
-    filename = function() {
-      fmt <- if (!is.null(input$mt_output_format)) input$mt_output_format else "pdf"
-      if (isTRUE(input$mt_replace_name) && !is.null(input$mt_custom_name) && nchar(input$mt_custom_name) > 0) {
-        paste0(input$mt_custom_name, ".", fmt)
-      } else {
-        prefix <- if (!is.null(input$mt_prefix_text)) input$mt_prefix_text else "MultiTree__"
-        suffix <- if (!is.null(input$mt_suffix_text)) input$mt_suffix_text else ""
-        name <- if (!is.null(input$mt_individual_name)) input$mt_individual_name else "Sample1"
-        paste0(prefix, name, suffix, ".", fmt)
-      }
-    },
-    content = function(file) {
-      req(mt_values$last_plot)
-      w <- if (isTRUE(input$mt_a4_output)) 297 else input$mt_output_width
-      h <- if (isTRUE(input$mt_a4_output)) 210 else input$mt_output_height
-      u <- if (isTRUE(input$mt_a4_output)) "mm" else input$mt_output_units
-      ggplot2::ggsave(file, plot = mt_values$last_plot,
-                      width = w, height = h, units = u, limitsize = FALSE)
-    }
-  )
 
   # --- YAML import observer (option ii: imports all shared settings) ---
   observeEvent(input$mt_yaml_config, {
