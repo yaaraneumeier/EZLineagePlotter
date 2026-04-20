@@ -2316,7 +2316,7 @@ mt_install_server <- function(input, output, session) {
     if (length(unique_values) == 0) {
       return(tags$p(class = "text-muted", "No values found in selected column."))
     }
-    r_colors <- c("" = "",
+    r_colors <- c("Select color name..." = "",
       "red", "blue", "green", "yellow", "orange", "purple", "pink", "brown",
       "gray", "black", "white", "cyan", "magenta",
       "darkred", "darkblue", "darkgreen", "darkorange", "darkviolet",
