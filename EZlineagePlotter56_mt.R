@@ -490,24 +490,113 @@ mt_tabItem_highlighting <- function() {
 }
 
 mt_tabItem_legend <- function() {
-  tabItem(tabName = "mt_legend", fluidRow(
-    box(title = "Legend Settings", status = "primary",
-        solidHeader = TRUE, width = 12,
-        selectInput("mt_legend_position", "Legend Position:",
-                    choices = c("right", "left", "bottom", "top", "none"), selected = "right"),
-        checkboxInput("mt_legend_show_classification", "Show Classification Legend", value = TRUE),
-        checkboxInput("mt_legend_show_highlight", "Show Highlight Legend", value = TRUE),
-        checkboxInput("mt_legend_show_bootstrap", "Show Bootstrap Legend", value = TRUE),
-        tags$hr(),
-        sliderInput("mt_legend_title_size", "Title Size:", min = 4, max = 30, value = 12, step = 1),
-        sliderInput("mt_legend_text_size", "Text Size:", min = 4, max = 30, value = 10, step = 1),
-        selectInput("mt_legend_font_family", "Font Family:",
-                    choices = c("sans", "serif", "mono"), selected = "sans"),
-        sliderInput("mt_legend_key_size", "Key Size:", min = 0.1, max = 3, value = 1, step = 0.1),
-        sliderInput("mt_legend_spacing", "Spacing:", min = 0, max = 2, value = 0.3, step = 0.05),
-        checkboxInput("mt_legend_reverse_order", "Reverse Legend Order", value = FALSE)
+  font_choices <- c("Sans-serif (default)" = "sans", "Serif" = "serif", "Monospace" = "mono")
+  if (exists("SHOWTEXT_AVAILABLE") && SHOWTEXT_AVAILABLE) {
+    font_choices <- c(font_choices,
+      "Roboto" = "Roboto", "Open Sans" = "Open Sans", "Lato" = "Lato",
+      "Montserrat" = "Montserrat", "PT Sans" = "PT Sans",
+      "Playfair Display" = "Playfair Display", "Merriweather" = "Merriweather",
+      "Source Code Pro" = "Source Code Pro")
+  }
+
+  tabItem(tabName = "mt_legend",
+    fluidRow(
+      column(4,
+        box(title = NULL, status = "primary", solidHeader = FALSE, width = 12,
+          tags$h4(icon("arrows-alt"), " Legend Position", style = "margin-top: 0;"),
+          tags$p(class = "text-muted", "Where legends appear on the plot:"),
+          selectInput("mt_legend_position", NULL,
+                      choices = c("Right (default)" = "right", "Left" = "left",
+                                  "Top" = "top", "Bottom" = "bottom",
+                                  "None (hide all)" = "none"),
+                      selected = "right")
+        ),
+        box(title = NULL, status = "info", solidHeader = FALSE, width = 12,
+          tags$h4(icon("eye"), " Legend Visibility", style = "margin-top: 0;"),
+          tags$p(class = "text-muted", "Toggle which legends to show:"),
+          checkboxInput("mt_legend_show_classification", "Classification Legend", value = TRUE),
+          checkboxInput("mt_legend_show_highlight", "Highlight Legend", value = TRUE),
+          checkboxInput("mt_legend_show_bootstrap", "Bootstrap Legend", value = TRUE),
+          checkboxInput("mt_legend_show_pvalue", "P Value Legend", value = TRUE)
+        ),
+        box(title = NULL, status = "primary", solidHeader = FALSE, width = 12,
+          tags$h4(icon("font"), " Font Settings", style = "margin-top: 0;"),
+          sliderInput("mt_legend_title_size", "Title Size:", min = 4, max = 48, value = 12, step = 1),
+          sliderInput("mt_legend_text_size", "Text Size:", min = 2, max = 36, value = 10, step = 1),
+          selectInput("mt_legend_font_family", "Font Family:", choices = font_choices, selected = "sans"),
+          tags$small(class = "text-muted",
+            if (exists("SHOWTEXT_AVAILABLE") && SHOWTEXT_AVAILABLE) "Google Fonts available via showtext"
+            else "Install 'showtext' package for more fonts")
+        ),
+        box(title = NULL, status = "primary", solidHeader = FALSE, width = 12,
+          tags$h4(icon("th"), " Symbol & Spacing", style = "margin-top: 0;"),
+          sliderInput("mt_legend_key_size", "Key Size:", min = 0.1, max = 5, value = 1, step = 0.1),
+          sliderInput("mt_legend_key_width", "Key Width:", min = 0.5, max = 3, value = 1, step = 0.1),
+          sliderInput("mt_legend_key_height", "Key Height:", min = 0.5, max = 3, value = 1, step = 0.1),
+          sliderInput("mt_legend_spacing", "Horizontal Spacing:", min = 0.05, max = 3, value = 0.3, step = 0.05),
+          sliderInput("mt_legend_spacing_vertical", "Vertical Spacing:", min = 0.1, max = 5, value = 1, step = 0.1),
+          sliderInput("mt_legend_title_key_spacing", "Title to Keys Spacing:", min = 0, max = 2, value = 0.2, step = 0.05),
+          sliderInput("mt_legend_key_spacing", "Between Keys Spacing:", min = 0, max = 2, value = 0.1, step = 0.05),
+          checkboxInput("mt_legend_reverse_order", "Reverse item order in legends", value = FALSE)
+        ),
+        box(title = NULL, status = "warning", solidHeader = FALSE, width = 12,
+          collapsible = TRUE, collapsed = TRUE,
+          tags$h4(icon("palette"), " Legend Background", style = "margin-top: 0;"),
+          tags$p(class = "text-muted", tags$small("Legend box appearance:")),
+          fluidRow(
+            column(6,
+              colourpicker::colourInput("mt_legend_box_background", "Box Background",
+                                        value = "transparent", showColour = "both",
+                                        allowTransparent = TRUE)
+            ),
+            column(6,
+              sliderInput("mt_legend_margin", "Legend Margin",
+                          min = 0, max = 2, value = 0.2, step = 0.05)
+            )
+          )
+        ),
+        box(title = NULL, status = "primary", solidHeader = FALSE, width = 12,
+          tags$h4(icon("sitemap"), " Legend Scope", style = "margin-top: 0;"),
+          radioButtons("mt_legend_scope", NULL,
+                       choices = c("Same legend for all trees" = "all",
+                                   "Legend per individual tree" = "per_tree"),
+                       selected = "all"),
+          conditionalPanel(
+            condition = "input.mt_legend_scope == 'per_tree'",
+            selectInput("mt_legend_tree_selector", "Select Tree:",
+                        choices = NULL, selected = NULL)
+          )
+        ),
+        box(title = NULL, status = "primary", solidHeader = FALSE, width = 12,
+          actionButton("mt_apply_legend", "Apply Legend Settings",
+                       class = "btn-success btn-lg btn-block", icon = icon("check"))
+        )
+      ),
+      column(8,
+        box(
+          title = tagList(
+            "Legend Preview ",
+            span(id = "mt_legend_status_waiting",
+              style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #f8f9fa; color: #6c757d; font-size: 12px;",
+              icon("clock"), " Waiting for data"
+            ),
+            span(id = "mt_legend_status_processing",
+              style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #6c757d; color: #ffffff; font-size: 12px; font-weight: bold;",
+              icon("spinner", class = "fa-spin"), " Processing..."
+            ),
+            span(id = "mt_legend_status_ready",
+              style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #28a745; color: #ffffff; font-size: 12px; font-weight: bold;",
+              icon("check-circle"), " Ready"
+            )
+          ),
+          status = "primary",
+          solidHeader = TRUE,
+          width = 12,
+          imageOutput("mt_legend_preview", height = "auto")
+        )
+      )
     )
-  ))
+  )
 }
 
 mt_tabItem_extra <- function() {
@@ -893,6 +982,8 @@ mt_install_server <- function(input, output, session) {
     temp_classification_preview = NULL, # temp classification for preview
     last_plot = NULL,           # last rendered gtable
     last_plot_file = NULL,      # path to cached PNG of last render
+    plot_counter = 0,           # incremented after each successful render
+    plot_generating = FALSE,    # recursion guard
     log_messages = "",          # log text for mt_log output
     p_cache_per_tree = list(),  # per-tree p-value cache: list[[tree_name]] = list(p_list, hash, p_list_cache)
     rotation1_config_per_tree = list(), # per-tree rotation1 config
@@ -1938,15 +2029,27 @@ mt_install_server <- function(input, output, session) {
         show_classification = isTRUE(input$mt_legend_show_classification),
         show_highlight = isTRUE(input$mt_legend_show_highlight),
         show_bootstrap = isTRUE(input$mt_legend_show_bootstrap),
+        show_pvalue = isTRUE(input$mt_legend_show_pvalue),
         title_size = if (!is.null(input$mt_legend_title_size)) input$mt_legend_title_size else 12,
         text_size = if (!is.null(input$mt_legend_text_size)) input$mt_legend_text_size else 10,
         font_family = if (!is.null(input$mt_legend_font_family)) input$mt_legend_font_family else "sans",
         key_size = if (!is.null(input$mt_legend_key_size)) input$mt_legend_key_size else 1,
+        key_width = if (!is.null(input$mt_legend_key_width)) input$mt_legend_key_width else 1,
+        key_height = if (!is.null(input$mt_legend_key_height)) input$mt_legend_key_height else 1,
         spacing = if (!is.null(input$mt_legend_spacing)) input$mt_legend_spacing else 0.3,
-        reverse_order = isTRUE(input$mt_legend_reverse_order)
+        spacing_vertical = if (!is.null(input$mt_legend_spacing_vertical)) input$mt_legend_spacing_vertical else 1,
+        title_key_spacing = if (!is.null(input$mt_legend_title_key_spacing)) input$mt_legend_title_key_spacing else 0.2,
+        key_spacing = if (!is.null(input$mt_legend_key_spacing)) input$mt_legend_key_spacing else 0.1,
+        reverse_order = isTRUE(input$mt_legend_reverse_order),
+        box_background = if (!is.null(input$mt_legend_box_background)) input$mt_legend_box_background else "transparent",
+        margin = if (!is.null(input$mt_legend_margin)) input$mt_legend_margin else 0.2,
+        scope = if (!is.null(input$mt_legend_scope)) input$mt_legend_scope else "all",
+        legend_tree = if (!is.null(input$mt_legend_tree_selector)) input$mt_legend_tree_selector else NULL
       )
     )
   }
+
+  mt_last_render_time <- reactiveVal(0)
 
   # --- Build highlight YAML (called before render, reads per-value colors/transparency) ---
   mt_build_highlight_yaml <- function() {
@@ -1983,28 +2086,46 @@ mt_install_server <- function(input, output, session) {
   }
 
   # --- Render: gated by Update Preview button ---
-  mt_render_plot <- eventReactive(input$mt_update_preview, {
+  # Uses observeEvent (not eventReactive) to prevent cascading re-renders.
+  # All renderImage outputs read mt_values$last_plot_file + plot_counter instead.
+  observeEvent(input$mt_update_preview, ignoreInit = TRUE, {
     req(mt_values$newick_paths, mt_values$csv_path)
-    mt_values$log_messages <- ""  # clear log
+
+    # Guard: skip if already rendering or classification UI loading
+    if (isTRUE(mt_values$plot_generating)) {
+      cat(file = stderr(), "[MT-PERF] Skipping - render already in progress\n")
+      return()
+    }
+    if (mt_classification_loading()) {
+      cat(file = stderr(), "[MT-PERF] Skipping - classification UI loading\n")
+      return()
+    }
+
+    # Cooldown: prevent rapid consecutive renders (500ms)
+    time_since_last <- as.numeric(Sys.time()) * 1000 - mt_last_render_time()
+    if (time_since_last < 500 && time_since_last > 0) {
+      cat(file = stderr(), sprintf("[MT-PERF] Skipping - rapid call (%.0fms since last)\n", time_since_last))
+      return()
+    }
+
+    mt_values$plot_generating <- TRUE
+    on.exit(mt_values$plot_generating <- FALSE)
+
+    mt_values$log_messages <- ""
     mt_show_processing()
     mt_log("Starting multi-tree render...")
 
-    # Save current tree's rotation state before rendering
     mt_save_current_tree_rotation()
-
-    # Build highlight YAML with per-value colors/transparency before gathering shared settings
     mt_build_highlight_yaml()
 
     shared <- mt_gather_shared()
 
-    # A4 override
     if (isTRUE(input$mt_a4_output)) {
       shared$output_width <- 297
       shared$output_height <- 210
       shared$output_units <- "mm"
     }
 
-    # Collect per-tree titles and bg colors
     tree_titles <- sapply(mt_values$newick_names, function(tn) {
       pt <- mt_values$per_tree[[tn]]
       if (!is.null(pt$title) && nchar(pt$title) > 0) pt$title else tn
@@ -2014,7 +2135,6 @@ mt_install_server <- function(input, output, session) {
       if (!is.null(pt$bg_color)) pt$bg_color else "#FFFFFF"
     })
 
-    # Use filtered CSV on disk if available (much smaller than full CSV)
     render_csv_path <- if (!is.null(mt_values$temp_csv_path) && file.exists(mt_values$temp_csv_path)) {
       mt_values$temp_csv_path
     } else {
@@ -2040,7 +2160,6 @@ mt_install_server <- function(input, output, session) {
     )
 
     if (!is.null(result)) {
-      # Store updated p-value cache from rendering
       cached <- attr(result, "p_cache_per_tree")
       if (!is.null(cached)) {
         mt_values$p_cache_per_tree <- cached
@@ -2048,7 +2167,6 @@ mt_install_server <- function(input, output, session) {
       mt_values$last_plot <- result
       mt_log("Render complete!")
 
-      # Save to persistent temp file (both plot outputs read from this)
       tmp <- tempfile(fileext = ".png")
       w <- if (isTRUE(input$mt_a4_output)) 297 else {
         if (!is.null(input$mt_output_width)) input$mt_output_width else 29.7
@@ -2062,13 +2180,16 @@ mt_install_server <- function(input, output, session) {
       ggplot2::ggsave(tmp, plot = result, width = w, height = h, units = u,
                       limitsize = FALSE, dpi = 150)
       mt_values$last_plot_file <- tmp
+      mt_values$plot_counter <- isolate(mt_values$plot_counter) + 1
     }
-    result
+
+    mt_last_render_time(as.numeric(Sys.time()) * 1000)
+    mt_show_ready()
   })
 
   # --- Status indicator helpers ---
   mt_show_processing <- function() {
-    for (pfx in c("mt_status", "mt_class_status", "mt_boot_status", "mt_high_status")) {
+    for (pfx in c("mt_status", "mt_class_status", "mt_boot_status", "mt_high_status", "mt_legend_status")) {
       shinyjs::hide(paste0(pfx, "_waiting"))
       shinyjs::hide(paste0(pfx, "_ready"))
       shinyjs::show(paste0(pfx, "_processing"))
@@ -2076,52 +2197,37 @@ mt_install_server <- function(input, output, session) {
   }
 
   mt_show_ready <- function() {
-    for (pfx in c("mt_status", "mt_class_status", "mt_boot_status", "mt_high_status")) {
+    for (pfx in c("mt_status", "mt_class_status", "mt_boot_status", "mt_high_status", "mt_legend_status")) {
       shinyjs::hide(paste0(pfx, "_waiting"))
       shinyjs::hide(paste0(pfx, "_processing"))
       shinyjs::show(paste0(pfx, "_ready"))
     }
   }
 
-  # --- Plot output: upload, classification, tree display, and bootstrap tabs show the same cached image ---
-  output$mt_combined_plot <- renderImage({
-    mt_render_plot()
-    pf <- mt_values$last_plot_file
+  # --- Plot outputs: all read cached PNG via plot_counter (no cascading renders) ---
+  mt_plot_image <- function(alt_empty) {
+    mt_values$plot_counter  # reactive dependency on counter only
+    pf <- isolate(mt_values$last_plot_file)
     if (is.null(pf) || !file.exists(pf)) {
-      return(list(src = "", alt = "No plot yet. Upload data, process, and click Update Preview."))
+      return(list(src = "", alt = alt_empty))
     }
-    list(src = pf, contentType = "image/png", width = "100%",
-         alt = "Multi-tree combined plot")
+    list(src = pf, contentType = "image/png", width = "100%", alt = "Multi-tree plot")
+  }
+
+  output$mt_combined_plot <- renderImage({
+    mt_plot_image("No plot yet. Upload data, process, and click Update Preview.")
   }, deleteFile = FALSE)
 
   output$mt_tree_display_preview <- renderImage({
-    mt_render_plot()
-    pf <- mt_values$last_plot_file
-    if (is.null(pf) || !file.exists(pf)) {
-      return(list(src = "", alt = "Click Apply & Preview to render."))
-    }
-    list(src = pf, contentType = "image/png", width = "100%",
-         alt = "Multi-tree display preview")
+    mt_plot_image("Click Apply & Preview to render.")
   }, deleteFile = FALSE)
 
   output$mt_bootstrap_preview <- renderImage({
-    mt_render_plot()
-    pf <- mt_values$last_plot_file
-    if (is.null(pf) || !file.exists(pf)) {
-      return(list(src = "", alt = "Click Apply & Preview to render."))
-    }
-    list(src = pf, contentType = "image/png", width = "100%",
-         alt = "Multi-tree bootstrap preview")
+    mt_plot_image("Click Apply & Preview to render.")
   }, deleteFile = FALSE)
 
   output$mt_highlight_preview <- renderImage({
-    mt_render_plot()
-    pf <- mt_values$last_plot_file
-    if (is.null(pf) || !file.exists(pf)) {
-      return(list(src = "", alt = "Click Apply & Preview to render."))
-    }
-    list(src = pf, contentType = "image/png", width = "100%",
-         alt = "Multi-tree highlight preview")
+    mt_plot_image("Click Apply & Preview to render.")
   }, deleteFile = FALSE)
 
   # --- Tree display Apply & Preview button ---
@@ -2136,10 +2242,23 @@ mt_install_server <- function(input, output, session) {
     shinyjs::click("mt_update_preview")
   })
 
-  # --- Update status indicators when render completes ---
-  observeEvent(mt_values$last_plot_file, {
-    if (!is.null(mt_values$last_plot_file) && file.exists(mt_values$last_plot_file)) {
-      mt_show_ready()
+  # --- Legend Apply button ---
+  observeEvent(input$mt_apply_legend, ignoreInit = TRUE, {
+    mt_show_processing()
+    shinyjs::click("mt_update_preview")
+    showNotification("Legend settings applied", type = "message", duration = 2)
+  })
+
+  # --- Legend preview output ---
+  output$mt_legend_preview <- renderImage({
+    mt_plot_image("Click Apply Legend Settings to render.")
+  }, deleteFile = FALSE)
+
+  # Keep legend tree selector in sync
+  observe({
+    nn <- mt_values$newick_names
+    if (!is.null(nn) && length(nn) > 0) {
+      updateSelectInput(session, "mt_legend_tree_selector", choices = nn, selected = nn[1])
     }
   })
 
@@ -2197,6 +2316,21 @@ mt_install_server <- function(input, output, session) {
     if (length(unique_values) == 0) {
       return(tags$p(class = "text-muted", "No values found in selected column."))
     }
+    r_colors <- c("" = "",
+      "red", "blue", "green", "yellow", "orange", "purple", "pink", "brown",
+      "gray", "black", "white", "cyan", "magenta",
+      "darkred", "darkblue", "darkgreen", "darkorange", "darkviolet",
+      "lightblue", "lightgreen", "lightyellow", "lightpink", "lightgray",
+      "steelblue", "skyblue", "navy", "maroon", "olive", "teal",
+      "coral", "salmon", "tomato", "firebrick", "indianred",
+      "forestgreen", "seagreen", "limegreen", "springgreen",
+      "royalblue", "dodgerblue", "cornflowerblue", "midnightblue",
+      "orchid", "plum", "violet", "mediumpurple", "darkorchid",
+      "gold", "khaki", "goldenrod", "darkgoldenrod",
+      "sienna", "chocolate", "peru", "tan", "wheat",
+      "slategray", "dimgray", "darkgray", "lightslategray",
+      "aquamarine", "turquoise", "cadetblue", "darkturquoise")
+
     palette_ui <- tags$div(
       style = "background-color: #f8f9fa; padding: 10px; margin-bottom: 15px; border-radius: 5px;",
       tags$h5("Quick Palette Options:", style = "margin-top: 0;"),
@@ -2204,8 +2338,10 @@ mt_install_server <- function(input, output, session) {
         column(6, selectInput("mt_color_palette_choice", "Apply Color Palette:",
                               choices = c("Rainbow" = "rainbow", "Heat Colors" = "heat.colors",
                                           "Terrain Colors" = "terrain.colors", "Topo Colors" = "topo.colors",
+                                          "CM Colors" = "cm.colors",
                                           "Viridis" = "viridis", "Plasma" = "plasma",
-                                          "Inferno" = "inferno", "Magma" = "magma"),
+                                          "Inferno" = "inferno", "Magma" = "magma",
+                                          "Cividis" = "cividis"),
                               selected = "rainbow")),
         column(6, style = "padding-top: 25px;",
                actionButton("mt_apply_palette", "Apply Palette to All",
@@ -2214,14 +2350,23 @@ mt_install_server <- function(input, output, session) {
     )
     default_colors <- rainbow(length(unique_values))
     class_values <- lapply(seq_along(unique_values), function(i) {
-      tags$div(
-        style = "display: flex; align-items: center; gap: 10px; padding: 3px 0;",
-        tags$span(style = "min-width: 120px; font-weight: bold;", as.character(unique_values[i])),
-        colourpicker::colourInput(
-          inputId = paste0("mt_class_color_", i),
-          label = NULL,
-          value = default_colors[i],
-          allowTransparent = FALSE
+      fluidRow(
+        column(4, tags$b(as.character(unique_values[i]))),
+        column(4,
+               colourpicker::colourInput(
+                 inputId = paste0("mt_class_color_", i),
+                 label = NULL,
+                 value = default_colors[i],
+                 allowTransparent = FALSE
+               )
+        ),
+        column(4,
+               selectInput(
+                 inputId = paste0("mt_class_color_name_", i),
+                 label = NULL,
+                 choices = r_colors,
+                 selected = ""
+               )
         )
       )
     })
@@ -2242,8 +2387,10 @@ mt_install_server <- function(input, output, session) {
       switch(input$mt_color_palette_choice,
              "rainbow" = rainbow(n), "heat.colors" = heat.colors(n),
              "terrain.colors" = terrain.colors(n), "topo.colors" = topo.colors(n),
+             "cm.colors" = cm.colors(n),
              "viridis" = viridisLite::viridis(n), "plasma" = viridisLite::plasma(n),
              "inferno" = viridisLite::inferno(n), "magma" = viridisLite::magma(n),
+             "cividis" = viridisLite::cividis(n),
              rainbow(n)),
       error = function(e) rainbow(n)
     )
@@ -2251,6 +2398,23 @@ mt_install_server <- function(input, output, session) {
       colourpicker::updateColourInput(session, paste0("mt_class_color_", i), value = colors[i])
     })
     showNotification(paste("Applied", input$mt_color_palette_choice, "palette"), type = "message", duration = 2)
+  })
+
+  # R color name dropdown → colourInput sync (matches single mode)
+  observe({
+    req(input$mt_classification_column)
+    csv_data <- mt_csv_for_classification()
+    if (is.null(csv_data)) return()
+    column <- input$mt_classification_column
+    if (!(column %in% names(csv_data))) return()
+    unique_values <- unique(csv_data[[column]])
+    unique_values <- unique_values[!is.na(unique_values)]
+    lapply(seq_along(unique_values), function(i) {
+      color_name <- input[[paste0("mt_class_color_name_", i)]]
+      if (!is.null(color_name) && color_name != "") {
+        colourpicker::updateColourInput(session, paste0("mt_class_color_", i), value = color_name)
+      }
+    })
   })
 
   # Helper: gather current classification from UI inputs
@@ -2348,15 +2512,8 @@ mt_install_server <- function(input, output, session) {
     shinyjs::click("mt_update_preview")
   })
 
-  # Classification preview: reads the same cached image file
   output$mt_combined_plot_class <- renderImage({
-    mt_render_plot()  # establish reactive dependency
-    pf <- mt_values$last_plot_file
-    if (is.null(pf) || !file.exists(pf)) {
-      return(list(src = "", alt = "Click Apply & Preview to render."))
-    }
-    list(src = pf, contentType = "image/png", width = "100%",
-         alt = "Multi-tree classification preview")
+    mt_plot_image("Click Apply & Preview to render.")
   }, deleteFile = FALSE)
 
   # --- Configuration YAML output ---
