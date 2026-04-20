@@ -1075,9 +1075,9 @@ mt_install_server <- function(input, output, session) {
                            selected = cols[1], server = TRUE)
       updateSelectizeInput(session, "mt_individual_column", choices = c("", cols),
                            server = TRUE)
-      updateSelectizeInput(session, "mt_classification_column", choices = c("" = "", cols),
+      updateSelectizeInput(session, "mt_classification_column", choices = c("Select column..." = "", cols),
                            server = TRUE)
-      updateSelectizeInput(session, "mt_highlight_column", choices = c("" = "", cols),
+      updateSelectizeInput(session, "mt_highlight_column", choices = c("Select column..." = "", cols),
                            server = TRUE)
     }
   })
