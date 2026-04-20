@@ -600,26 +600,123 @@ mt_tabItem_legend <- function() {
 }
 
 mt_tabItem_extra <- function() {
-  tabItem(tabName = "mt_extra", fluidRow(
-    box(title = "Extra Settings", status = "primary",
-        solidHeader = TRUE, width = 12,
-        tags$h5("Page Layout"),
-        checkboxInput("mt_a4_output", "A4 Page Format (297x210mm)", value = FALSE),
-        colourpicker::colourInput("mt_background_color", "Page Background:", value = "#FFFFFF"),
-        tags$hr(),
-        tags$h5("Per-Tree Settings"),
-        tags$p(class = "text-muted", "Select tree from Tree Display tab's tree selector."),
-        uiOutput("mt_per_tree_extra_ui"),
-        tags$hr(),
-        tags$h5("Page Title"),
-        checkboxInput("mt_enable_page_title", "Enable Page Title", value = FALSE),
-        conditionalPanel(
-          condition = "input.mt_enable_page_title == true",
-          textInput("mt_page_title_text", "Title Text:", value = ""),
-          sliderInput("mt_page_title_size", "Title Size:", min = 5, max = 30, value = 14, step = 1)
+  tabItem(tabName = "mt_extra",
+    fluidRow(
+      box(
+        title = tagList(
+          icon("arrows-alt"), " Plot Position ",
+          span(id = "mt_extra_status_waiting",
+            style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #f8f9fa; color: #6c757d; font-size: 12px;",
+            icon("clock"), " Waiting for data"),
+          span(id = "mt_extra_status_processing",
+            style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #6c757d; color: #ffffff; font-size: 12px; font-weight: bold;",
+            icon("spinner", class = "fa-spin"), " Processing..."),
+          span(id = "mt_extra_status_ready",
+            style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #28a745; color: #ffffff; font-size: 12px;",
+            icon("check"), " Ready")
+        ),
+        status = "primary", solidHeader = TRUE, width = 6,
+        selectInput("mt_extra_tree_selector", "Apply to Tree:",
+                    choices = c("All Trees" = "all"), selected = "all"),
+        tags$p(class = "text-muted", "Move the plot on the page. Select a specific tree or all."),
+        fluidRow(
+          column(6, sliderInput("mt_plot_offset_x", "Horizontal Position:",
+                                min = -5, max = 5, value = 0, step = 0.1, post = " (left/right)")),
+          column(6, sliderInput("mt_plot_offset_y", "Vertical Position:",
+                                min = -10, max = 5, value = 0, step = 0.1, post = " (down/up)"))
+        ),
+        fluidRow(column(12, actionButton("mt_reset_plot_position", "Reset to Center",
+                                          class = "btn-secondary btn-sm", icon = icon("undo")))),
+        hr(),
+        tags$p(class = "text-muted", "Scale the entire plot up or down (zoom)."),
+        sliderInput("mt_plot_scale_percent", "Plot Scale:", min = 25, max = 200, value = 100, step = 5, post = "%"),
+        fluidRow(column(12, actionButton("mt_reset_plot_scale", "Reset to 100%",
+                                          class = "btn-secondary btn-sm", icon = icon("undo")))),
+        hr(),
+        tags$p(class = "text-muted", tags$strong("Background:"), " Set page background color."),
+        fluidRow(
+          column(6, colourpicker::colourInput("mt_background_color", "Background Color:",
+                                              value = "#FFFFFF", showColour = "both", allowTransparent = TRUE)),
+          column(6, actionButton("mt_reset_background", "Reset to White",
+                                  class = "btn-secondary btn-sm", icon = icon("undo"), style = "margin-top: 25px;"))
+        ),
+        hr(),
+        checkboxInput("mt_a4_output", "A4 Page Format (297x210mm)", value = FALSE)
+      ),
+      box(title = "Preview", status = "primary", solidHeader = TRUE, width = 6,
+        imageOutput("mt_extra_preview", height = "auto"),
+        actionButton("mt_extra_apply", "Apply to Plot", class = "btn-primary", style = "margin-top: 10px;")
+      )
+    ),
+
+    fluidRow(
+      box(
+        title = tagList(icon("heading"), " Titles"),
+        status = "info", solidHeader = TRUE, width = 12, collapsible = TRUE, collapsed = TRUE,
+        fluidRow(
+          column(6,
+            tags$h5("Page Title"),
+            checkboxInput("mt_enable_page_title", "Enable Page Title", value = FALSE),
+            conditionalPanel(
+              condition = "input.mt_enable_page_title == true",
+              textInput("mt_page_title_text", "Title Text:", value = ""),
+              fluidRow(
+                column(6, numericInput("mt_page_title_x", "X Position:", value = 0.5, min = 0, max = 1, step = 0.01)),
+                column(6, numericInput("mt_page_title_y", "Y Position:", value = 0.95, min = 0, max = 1, step = 0.01))
+              ),
+              sliderInput("mt_page_title_size", "Font Size:", min = 6, max = 72, value = 18, step = 1),
+              colourpicker::colourInput("mt_page_title_color", "Color:", value = "#000000"),
+              fluidRow(
+                column(6, checkboxInput("mt_page_title_bold", "Bold", value = TRUE)),
+                column(6, selectInput("mt_page_title_hjust", "Alignment:",
+                                      choices = c("Left" = "0", "Center" = "0.5", "Right" = "1"), selected = "0.5"))
+              )
+            )
+          ),
+          column(6,
+            tags$h5("Per-Tree Titles"),
+            tags$p(class = "text-muted", "Change titles for individual trees."),
+            uiOutput("mt_per_tree_extra_ui")
+          )
         )
+      )
+    ),
+
+    fluidRow(
+      box(
+        title = tagList(icon("font"), " Text Overlay"),
+        status = "success", solidHeader = TRUE, width = 12, collapsible = TRUE, collapsed = FALSE,
+        tags$div(
+          style = "background: #d4edda; padding: 10px; border-radius: 5px; margin-bottom: 15px;",
+          tags$p(style = "margin: 0; color: #155724;", icon("info-circle"),
+            " Text is placed as an ", tags$b("overlay"), " on top of the plot.")
+        ),
+        fluidRow(
+          column(3, textInput("mt_custom_text_content", "Text:", value = "")),
+          column(2, numericInput("mt_custom_text_x", "X Position:", value = 0.5, min = 0, max = 1, step = 0.01)),
+          column(2, numericInput("mt_custom_text_y", "Y Position:", value = 0.5, min = 0, max = 1, step = 0.01)),
+          column(2, sliderInput("mt_custom_text_size", "Size:", min = 4, max = 36, value = 12, step = 1)),
+          column(2, colourpicker::colourInput("mt_custom_text_color", "Color:", value = "#000000"))
+        ),
+        fluidRow(
+          column(3, selectInput("mt_custom_text_fontface", "Font Style:",
+                                choices = c("Plain" = "plain", "Bold" = "bold", "Italic" = "italic", "Bold Italic" = "bold.italic"))),
+          column(3, selectInput("mt_custom_text_hjust", "H. Align:",
+                                choices = c("Left" = "0", "Center" = "0.5", "Right" = "1"), selected = "0.5")),
+          column(3, selectInput("mt_custom_text_vjust", "V. Align:",
+                                choices = c("Top" = "1", "Middle" = "0.5", "Bottom" = "0"), selected = "0.5")),
+          column(3, numericInput("mt_custom_text_angle", "Rotation:", value = 0, min = -180, max = 180, step = 1))
+        ),
+        fluidRow(
+          column(4, actionButton("mt_add_custom_text", "Add Text", class = "btn-success", icon = icon("plus"))),
+          column(4, actionButton("mt_clear_custom_texts", "Clear All Texts", class = "btn-warning", icon = icon("trash")))
+        ),
+        hr(),
+        h5("Added Texts:"),
+        uiOutput("mt_custom_texts_list")
+      )
     )
-  ))
+  )
 }
 
 mt_tabItem_config <- function() {
@@ -634,28 +731,48 @@ mt_tabItem_config <- function() {
 }
 
 mt_tabItem_download <- function() {
-  tabItem(tabName = "mt_download", fluidRow(
-    box(title = "Download Multi-Tree Plot", status = "primary",
-        solidHeader = TRUE, width = 12,
-        textInput("mt_individual_name", "Individual Name:", value = "Sample1"),
-        selectInput("mt_output_format", "Output Format:",
-                    choices = c("pdf", "png", "svg", "tiff"), selected = "pdf"),
-        numericInput("mt_output_width", "Width:", value = 29.7, min = 1, max = 200),
-        numericInput("mt_output_height", "Height:", value = 42, min = 1, max = 200),
-        selectInput("mt_output_units", "Units:",
-                    choices = c("cm", "mm", "in"), selected = "cm"),
-        tags$hr(),
-        checkboxInput("mt_replace_name", "Use Custom Filename", value = FALSE),
+  tabItem(tabName = "mt_download",
+    fluidRow(
+      box(title = "Output Options", status = "primary", solidHeader = TRUE, width = 4,
+        textInput("mt_individual_name", "Sample/Individual Name:", value = "Sample1"),
+        selectInput("mt_output_format", "File Format:",
+                    choices = c("pdf", "png", "tiff", "svg", "jpeg"), selected = "pdf"),
+        selectInput("mt_page_orientation", "Page Orientation:",
+                    choices = c("Landscape" = "landscape", "Portrait" = "portrait"), selected = "landscape"),
+        numericInput("mt_output_width", "Width:", value = 29.7),
+        numericInput("mt_output_height", "Height:", value = 42),
+        selectInput("mt_output_units", "Units:", choices = c("cm", "mm", "in"), selected = "cm"),
+        textInput("mt_output_path", "Output Directory:", value = "./"),
+        checkboxInput("mt_replace_name", "Use Custom File Name", value = FALSE),
         conditionalPanel(
           condition = "input.mt_replace_name == true",
-          textInput("mt_custom_name", "Custom Filename:", value = "multi_tree_plot")
+          textInput("mt_custom_name", "Custom File Name:", value = "multi_tree_plot")
         ),
-        textInput("mt_prefix_text", "Prefix:", value = "MultiTree__"),
-        textInput("mt_suffix_text", "Suffix:", value = ""),
-        tags$hr(),
-        downloadButton("mt_download_plot", "Download Plot", class = "btn-primary btn-block")
+        textInput("mt_prefix_text", "Optional Text at Beginning:", value = "MultiTree__"),
+        textInput("mt_suffix_text", "Optional Text at End:", value = "")
+      ),
+      box(
+        title = tagList(
+          "Final Preview ",
+          span(id = "mt_download_status_waiting",
+            style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #f8f9fa; color: #6c757d; font-size: 12px;",
+            icon("clock"), " Waiting for data"),
+          span(id = "mt_download_status_processing",
+            style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #6c757d; color: #ffffff; font-size: 12px; font-weight: bold;",
+            icon("spinner", class = "fa-spin"), " Processing..."),
+          span(id = "mt_download_status_ready",
+            style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #28a745; color: #ffffff; font-size: 12px; font-weight: bold;",
+            icon("check-circle"), " Ready")
+        ),
+        status = "primary", solidHeader = TRUE, width = 8,
+        imageOutput("mt_download_preview", height = "auto"),
+        downloadButton("mt_download_plot", "Download Plot", class = "btn-primary"),
+        downloadButton("mt_download_yaml", "Download YAML Configuration", class = "btn-success"),
+        tags$p(class = "text-muted", style = "margin-top: 5px;",
+          tags$small("YAML file captures current settings for reproducibility"))
+      )
     )
-  ))
+  )
 }
 
 # ================================================================
@@ -1729,7 +1846,8 @@ mt_install_server <- function(input, output, session) {
       mt_values$per_tree[[tn]]$enable_rotation <- TRUE
     }
     showNotification(paste0("Primary rotation applied to ", tn), type = "message")
-    shinyjs::click("mt_update_preview")
+    mt_show_processing()
+    shinyjs::delay(100, { shinyjs::click("mt_update_preview") })
   })
 
   # Apply rotation2 (secondary)
@@ -1750,7 +1868,8 @@ mt_install_server <- function(input, output, session) {
       mt_values$per_tree[[tn]]$enable_rotation <- TRUE
     }
     showNotification(paste0("Secondary rotation applied to ", tn), type = "message")
-    shinyjs::click("mt_update_preview")
+    mt_show_processing()
+    shinyjs::delay(100, { shinyjs::click("mt_update_preview") })
   })
 
   # Apply manual rotation
@@ -1769,7 +1888,8 @@ mt_install_server <- function(input, output, session) {
       mt_values$per_tree[[tn]]$enable_rotation <- TRUE
     }
     showNotification(paste0("Manual rotation applied to ", tn), type = "message")
-    shinyjs::click("mt_update_preview")
+    mt_show_processing()
+    shinyjs::delay(100, { shinyjs::click("mt_update_preview") })
   })
 
   # Clear rotation buttons
@@ -1949,7 +2069,7 @@ mt_install_server <- function(input, output, session) {
   # --- Highlight Apply & Preview button ---
   observeEvent(input$mt_apply_highlight, ignoreInit = TRUE, {
     mt_show_processing()
-    shinyjs::click("mt_update_preview")
+    shinyjs::delay(100, { shinyjs::click("mt_update_preview") })
   })
 
   # --- Highlight Remove button ---
@@ -1958,7 +2078,7 @@ mt_install_server <- function(input, output, session) {
     updateSelectizeInput(session, "mt_highlight_values", selected = character(0))
     mt_values$highlight_yaml <- NULL
     mt_show_processing()
-    shinyjs::click("mt_update_preview")
+    shinyjs::delay(100, { shinyjs::click("mt_update_preview") })
   })
 
   # --- Per-tree extra UI (title + bg color) ---
@@ -2185,11 +2305,18 @@ mt_install_server <- function(input, output, session) {
 
     mt_last_render_time(as.numeric(Sys.time()) * 1000)
     mt_show_ready()
+
+    # Async GC every 3rd render to free memory without blocking UI
+    current_count <- isolate(mt_values$plot_counter)
+    if (current_count > 0 && current_count %% 3 == 0) {
+      later::later(function() { gc(verbose = FALSE) }, delay = 0.1)
+    }
   })
 
   # --- Status indicator helpers ---
   mt_show_processing <- function() {
-    for (pfx in c("mt_status", "mt_class_status", "mt_boot_status", "mt_high_status", "mt_legend_status")) {
+    for (pfx in c("mt_status", "mt_class_status", "mt_boot_status", "mt_high_status",
+                   "mt_legend_status", "mt_extra_status", "mt_download_status")) {
       shinyjs::hide(paste0(pfx, "_waiting"))
       shinyjs::hide(paste0(pfx, "_ready"))
       shinyjs::show(paste0(pfx, "_processing"))
@@ -2197,7 +2324,8 @@ mt_install_server <- function(input, output, session) {
   }
 
   mt_show_ready <- function() {
-    for (pfx in c("mt_status", "mt_class_status", "mt_boot_status", "mt_high_status", "mt_legend_status")) {
+    for (pfx in c("mt_status", "mt_class_status", "mt_boot_status", "mt_high_status",
+                   "mt_legend_status", "mt_extra_status", "mt_download_status")) {
       shinyjs::hide(paste0(pfx, "_waiting"))
       shinyjs::hide(paste0(pfx, "_processing"))
       shinyjs::show(paste0(pfx, "_ready"))
@@ -2233,19 +2361,19 @@ mt_install_server <- function(input, output, session) {
   # --- Tree display Apply & Preview button ---
   observeEvent(input$mt_apply_tree_display, ignoreInit = TRUE, {
     mt_show_processing()
-    shinyjs::click("mt_update_preview")
+    shinyjs::delay(100, { shinyjs::click("mt_update_preview") })
   })
 
   # --- Bootstrap Apply & Preview button ---
   observeEvent(input$mt_apply_bootstrap, ignoreInit = TRUE, {
     mt_show_processing()
-    shinyjs::click("mt_update_preview")
+    shinyjs::delay(100, { shinyjs::click("mt_update_preview") })
   })
 
   # --- Legend Apply button ---
   observeEvent(input$mt_apply_legend, ignoreInit = TRUE, {
     mt_show_processing()
-    shinyjs::click("mt_update_preview")
+    shinyjs::delay(100, { shinyjs::click("mt_update_preview") })
     showNotification("Legend settings applied", type = "message", duration = 2)
   })
 
@@ -2266,6 +2394,163 @@ mt_install_server <- function(input, output, session) {
   output$mt_log <- renderText({
     mt_values$log_messages
   })
+
+  # ================================================================
+  # EXTRA TAB SERVER LOGIC
+  # ================================================================
+
+  # Keep extra tree selector in sync
+  observe({
+    nn <- mt_values$newick_names
+    if (!is.null(nn) && length(nn) > 0) {
+      updateSelectInput(session, "mt_extra_tree_selector",
+                        choices = c("All Trees" = "all", setNames(nn, nn)),
+                        selected = "all")
+    }
+  })
+
+  # Extra preview output
+  output$mt_extra_preview <- renderImage({
+    mt_plot_image("Click Apply to Plot to render.")
+  }, deleteFile = FALSE)
+
+  # Extra Apply button
+  observeEvent(input$mt_extra_apply, ignoreInit = TRUE, {
+    mt_show_processing()
+    shinyjs::delay(100, { shinyjs::click("mt_update_preview") })
+  })
+
+  # Reset position
+  observeEvent(input$mt_reset_plot_position, {
+    updateSliderInput(session, "mt_plot_offset_x", value = 0)
+    updateSliderInput(session, "mt_plot_offset_y", value = 0)
+  })
+
+  # Reset scale
+  observeEvent(input$mt_reset_plot_scale, {
+    updateSliderInput(session, "mt_plot_scale_percent", value = 100)
+  })
+
+  # Reset background
+  observeEvent(input$mt_reset_background, {
+    colourpicker::updateColourInput(session, "mt_background_color", value = "#FFFFFF")
+  })
+
+  # Custom text annotations storage
+  mt_custom_texts <- reactiveVal(list())
+
+  observeEvent(input$mt_add_custom_text, {
+    req(input$mt_custom_text_content)
+    if (nchar(trimws(input$mt_custom_text_content)) > 0) {
+      new_text <- list(
+        content = input$mt_custom_text_content,
+        x = if (!is.null(input$mt_custom_text_x)) input$mt_custom_text_x else 0.5,
+        y = if (!is.null(input$mt_custom_text_y)) input$mt_custom_text_y else 0.5,
+        size = if (!is.null(input$mt_custom_text_size)) input$mt_custom_text_size else 12,
+        color = if (!is.null(input$mt_custom_text_color)) input$mt_custom_text_color else "#000000",
+        fontface = if (!is.null(input$mt_custom_text_fontface)) input$mt_custom_text_fontface else "plain",
+        hjust = if (!is.null(input$mt_custom_text_hjust)) as.numeric(input$mt_custom_text_hjust) else 0.5,
+        vjust = if (!is.null(input$mt_custom_text_vjust)) as.numeric(input$mt_custom_text_vjust) else 0.5,
+        angle = if (!is.null(input$mt_custom_text_angle)) input$mt_custom_text_angle else 0
+      )
+      mt_custom_texts(c(mt_custom_texts(), list(new_text)))
+      updateTextInput(session, "mt_custom_text_content", value = "")
+    }
+  })
+
+  observeEvent(input$mt_clear_custom_texts, {
+    mt_custom_texts(list())
+  })
+
+  output$mt_custom_texts_list <- renderUI({
+    texts <- mt_custom_texts()
+    if (length(texts) == 0) {
+      return(tags$p(class = "text-muted", "No custom texts added yet."))
+    }
+    text_items <- lapply(seq_along(texts), function(i) {
+      txt <- texts[[i]]
+      tags$div(
+        style = "padding: 5px; margin: 5px 0; border: 1px solid #ddd; border-radius: 4px; background-color: #f9f9f9;",
+        tags$span(style = paste0("color: ", txt$color, "; font-weight: ",
+                                  if (txt$fontface %in% c("bold", "bold.italic")) "bold" else "normal", ";"),
+                  paste0(i, ". \"", substr(txt$content, 1, 30), if (nchar(txt$content) > 30) "..." else "", "\"")),
+        tags$span(class = "text-muted",
+                  paste0(" (x:", round(txt$x, 2), ", y:", round(txt$y, 2), ", size:", txt$size, ")")),
+        actionButton(paste0("mt_delete_text_", i), "", icon = icon("times"),
+                     class = "btn-xs btn-danger", style = "float: right; padding: 2px 6px;")
+      )
+    })
+    do.call(tagList, text_items)
+  })
+
+  observe({
+    texts <- mt_custom_texts()
+    lapply(seq_along(texts), function(i) {
+      observeEvent(input[[paste0("mt_delete_text_", i)]], {
+        current <- mt_custom_texts()
+        if (i <= length(current)) {
+          mt_custom_texts(current[-i])
+        }
+      }, ignoreInit = TRUE, once = TRUE)
+    })
+  })
+
+  # ================================================================
+  # DOWNLOAD TAB SERVER LOGIC
+  # ================================================================
+
+  # Download preview output
+  output$mt_download_preview <- renderImage({
+    mt_plot_image("No plot yet.")
+  }, deleteFile = FALSE)
+
+  # Download plot handler
+  output$mt_download_plot <- downloadHandler(
+    filename = function() {
+      if (isTRUE(input$mt_replace_name)) {
+        paste0(input$mt_custom_name, ".", input$mt_output_format)
+      } else {
+        paste0(input$mt_prefix_text, input$mt_individual_name, input$mt_suffix_text, ".", input$mt_output_format)
+      }
+    },
+    content = function(file) {
+      plot_obj <- mt_values$last_plot
+      if (is.null(plot_obj)) {
+        showNotification("No plot to download. Click Update Preview first.", type = "error")
+        return()
+      }
+      w <- if (!is.null(input$mt_output_width)) input$mt_output_width else 29.7
+      h <- if (!is.null(input$mt_output_height)) input$mt_output_height else 42
+      u <- if (!is.null(input$mt_output_units)) input$mt_output_units else "cm"
+      tryCatch({
+        ggplot2::ggsave(file, plot = plot_obj, width = w, height = h, units = u,
+                        device = input$mt_output_format, limitsize = FALSE, dpi = 300)
+      }, error = function(e) {
+        showNotification(paste("Download error:", e$message), type = "error")
+      })
+    }
+  )
+
+  # Download YAML handler
+  output$mt_download_yaml <- downloadHandler(
+    filename = function() {
+      paste0(input$mt_individual_name, "_multi_tree_config.yaml")
+    },
+    content = function(file) {
+      shared <- tryCatch(mt_gather_shared(), error = function(e) list())
+      yaml_data <- tryCatch(
+        mt_build_yaml_data(
+          newick_path = if (!is.null(mt_values$newick_paths)) mt_values$newick_paths[1] else "tree.nwk",
+          csv_path = if (!is.null(mt_values$csv_path)) mt_values$csv_path else "data.csv",
+          shared = shared,
+          per_tree = list()
+        ),
+        error = function(e) list()
+      )
+      yaml_text <- tryCatch(yaml::as.yaml(yaml_data, indent = 2), error = function(e) "# Error generating YAML")
+      writeLines(yaml_text, file)
+    }
+  )
 
   # ================================================================
   # CLASSIFICATION TAB SERVER LOGIC
@@ -2508,8 +2793,8 @@ mt_install_server <- function(input, output, session) {
 
     mt_classification_loading(FALSE)
 
-    # Trigger main render
-    shinyjs::click("mt_update_preview")
+    # Trigger main render with delay so Processing status shows before R blocks
+    shinyjs::delay(100, { shinyjs::click("mt_update_preview") })
   })
 
   output$mt_combined_plot_class <- renderImage({
