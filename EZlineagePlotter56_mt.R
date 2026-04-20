@@ -203,7 +203,10 @@ mt_tabItem_tree_display <- function() {
           condition = "input.mt_use_pvalues == true",
           sliderInput("mt_fdr_perc", "FDR Percentage", min = 0.01, max = 0.25, value = 0.1, step = 0.01)
         ),
-        checkboxInput("mt_ladderize", "Ladderize Tree", value = FALSE)
+        checkboxInput("mt_ladderize", "Ladderize Tree", value = FALSE),
+        tags$hr(),
+        actionButton("mt_apply_tree_display", "Apply & Preview",
+                     icon = icon("eye"), class = "btn-primary btn-block")
       ),
 
       box(
@@ -238,6 +241,30 @@ mt_tabItem_tree_display <- function() {
           uiOutput("mt_rotation_classes_ui")
         )
       )
+    ),
+
+    fluidRow(
+      box(
+        title = tagList(
+          "Tree Preview ",
+          span(id = "mt_status_waiting",
+            style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #f8f9fa; color: #6c757d; font-size: 12px;",
+            icon("clock"), " Waiting for data"
+          ),
+          span(id = "mt_status_processing",
+            style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #6c757d; color: #ffffff; font-size: 12px; font-weight: bold;",
+            icon("spinner", class = "fa-spin"), " Processing..."
+          ),
+          span(id = "mt_status_ready",
+            style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #28a745; color: #ffffff; font-size: 12px; font-weight: bold;",
+            icon("check-circle"), " Ready"
+          )
+        ),
+        status = "primary",
+        solidHeader = TRUE,
+        width = 12,
+        imageOutput("mt_tree_display_preview", height = "auto")
+      )
     )
   )
 }
@@ -270,6 +297,13 @@ mt_tabItem_classification <- function() {
         tags$hr(),
         actionButton("mt_update_classification_preview", "Apply & Preview",
                      icon = icon("eye"), class = "btn-primary btn-block"),
+        conditionalPanel(
+          condition = "input.mt_classification_scope == 'per_tree'",
+          actionButton("mt_save_classification_no_render", "Save for This Tree (no render)",
+                       icon = icon("save"), class = "btn-info btn-block btn-sm"),
+          tags$p(class = "text-muted", style = "font-size: 11px; margin-top: 5px;",
+                 "Tip: Save classifications for each tree first, then click Apply & Preview once to render all.")
+        ),
         tags$br(),
         actionButton("mt_remove_classification", "Reset Classification",
                      icon = icon("undo"), class = "btn-warning btn-block btn-sm")
@@ -295,22 +329,59 @@ mt_tabItem_classification <- function() {
 }
 
 mt_tabItem_bootstrap <- function() {
-  tabItem(tabName = "mt_bootstrap", fluidRow(
-    box(title = "Bootstrap Settings", status = "primary",
-        solidHeader = TRUE, width = 12,
-        checkboxInput("mt_enable_bootstrap", "Enable Bootstrap Display", value = TRUE),
+  tabItem(tabName = "mt_bootstrap",
+    fluidRow(
+      box(
+        title = "Bootstrap Display",
+        status = "primary",
+        solidHeader = TRUE,
+        width = 4,
+        checkboxInput("mt_enable_bootstrap", "Show Bootstrap Values", value = TRUE),
         conditionalPanel(
           condition = "input.mt_enable_bootstrap == true",
-          selectInput("mt_bootstrap_format", "Bootstrap Format:",
-                      choices = c("triangles", "circles"), selected = "triangles"),
-          numericInput("mt_bootstrap_param", "Bootstrap Parameter:", value = 1, min = 0, max = 100),
-          sliderInput("mt_bootstrap_label_size", "Bootstrap Label Size:",
-                      min = 0.5, max = 10, value = 1.5, step = 0.5),
-          sliderInput("mt_man_boot_x_offset", "Bootstrap X Offset:",
-                      min = -0.1, max = 0.1, value = 0, step = 0.001)
+          radioButtons("mt_bootstrap_format", "Display Format:",
+                       choices = list(
+                         "Triangles" = "triangles",
+                         "Raw Values" = "raw",
+                         "Percentage" = "percentage",
+                         "Color-coded Numbers" = "numbered_color",
+                         "Color-coded Percentage" = "percentage_color"
+                       ), selected = "triangles"),
+          sliderInput("mt_bootstrap_param", "Bootstrap Precision (decimal places)",
+                      min = 1, max = 5, value = 1, step = 1),
+          sliderInput("mt_bootstrap_label_size", "Bootstrap Triangle Size:",
+                      min = 0, max = 10, value = 1.5, step = 0.5, width = "100%"),
+          sliderInput("mt_man_boot_x_offset", "Bootstrap Position (higher/lower):",
+                      min = -0.5, max = 0.5, value = 0, step = 0.001, width = "100%"),
+          tags$hr(),
+          actionButton("mt_apply_bootstrap", "Apply & Preview",
+                       icon = icon("eye"), class = "btn-primary btn-block")
         )
+      ),
+
+      box(
+        title = tagList(
+          "Preview ",
+          span(id = "mt_boot_status_waiting",
+            style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #f8f9fa; color: #6c757d; font-size: 12px;",
+            icon("clock"), " Waiting for data"
+          ),
+          span(id = "mt_boot_status_processing",
+            style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #6c757d; color: #ffffff; font-size: 12px; font-weight: bold;",
+            icon("spinner", class = "fa-spin"), " Processing..."
+          ),
+          span(id = "mt_boot_status_ready",
+            style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #28a745; color: #ffffff; font-size: 12px; font-weight: bold;",
+            icon("check-circle"), " Ready"
+          )
+        ),
+        status = "primary",
+        solidHeader = TRUE,
+        width = 8,
+        imageOutput("mt_bootstrap_preview", height = "auto")
+      )
     )
-  ))
+  )
 }
 
 mt_tabItem_highlighting <- function() {
@@ -1676,6 +1747,7 @@ mt_install_server <- function(input, output, session) {
   mt_render_plot <- eventReactive(input$mt_update_preview, {
     req(mt_values$newick_paths, mt_values$csv_path)
     mt_values$log_messages <- ""  # clear log
+    mt_show_processing()
     mt_log("Starting multi-tree render...")
 
     # Save current tree's rotation state before rendering
@@ -1752,9 +1824,28 @@ mt_install_server <- function(input, output, session) {
     result
   })
 
-  # --- Plot output: both upload and classification tabs show the same cached image ---
+  # --- Status indicator helpers ---
+  mt_show_processing <- function() {
+    shinyjs::hide("mt_status_waiting")
+    shinyjs::hide("mt_status_ready")
+    shinyjs::show("mt_status_processing")
+    shinyjs::hide("mt_boot_status_waiting")
+    shinyjs::hide("mt_boot_status_ready")
+    shinyjs::show("mt_boot_status_processing")
+  }
+
+  mt_show_ready <- function() {
+    shinyjs::hide("mt_status_waiting")
+    shinyjs::hide("mt_status_processing")
+    shinyjs::show("mt_status_ready")
+    shinyjs::hide("mt_boot_status_waiting")
+    shinyjs::hide("mt_boot_status_processing")
+    shinyjs::show("mt_boot_status_ready")
+  }
+
+  # --- Plot output: upload, classification, tree display, and bootstrap tabs show the same cached image ---
   output$mt_combined_plot <- renderImage({
-    mt_render_plot()  # establish reactive dependency
+    mt_render_plot()
     pf <- mt_values$last_plot_file
     if (is.null(pf) || !file.exists(pf)) {
       return(list(src = "", alt = "No plot yet. Upload data, process, and click Update Preview."))
@@ -1762,6 +1853,45 @@ mt_install_server <- function(input, output, session) {
     list(src = pf, contentType = "image/png", width = "100%",
          alt = "Multi-tree combined plot")
   }, deleteFile = FALSE)
+
+  output$mt_tree_display_preview <- renderImage({
+    mt_render_plot()
+    pf <- mt_values$last_plot_file
+    if (is.null(pf) || !file.exists(pf)) {
+      return(list(src = "", alt = "Click Apply & Preview to render."))
+    }
+    list(src = pf, contentType = "image/png", width = "100%",
+         alt = "Multi-tree display preview")
+  }, deleteFile = FALSE)
+
+  output$mt_bootstrap_preview <- renderImage({
+    mt_render_plot()
+    pf <- mt_values$last_plot_file
+    if (is.null(pf) || !file.exists(pf)) {
+      return(list(src = "", alt = "Click Apply & Preview to render."))
+    }
+    list(src = pf, contentType = "image/png", width = "100%",
+         alt = "Multi-tree bootstrap preview")
+  }, deleteFile = FALSE)
+
+  # --- Tree display Apply & Preview button ---
+  observeEvent(input$mt_apply_tree_display, ignoreInit = TRUE, {
+    mt_show_processing()
+    shinyjs::click("mt_update_preview")
+  })
+
+  # --- Bootstrap Apply & Preview button ---
+  observeEvent(input$mt_apply_bootstrap, ignoreInit = TRUE, {
+    mt_show_processing()
+    shinyjs::click("mt_update_preview")
+  })
+
+  # --- Update status indicators when render completes ---
+  observeEvent(mt_values$last_plot_file, {
+    if (!is.null(mt_values$last_plot_file) && file.exists(mt_values$last_plot_file)) {
+      mt_show_ready()
+    }
+  })
 
   # --- Log output ---
   output$mt_log <- renderText({
@@ -1916,11 +2046,26 @@ mt_install_server <- function(input, output, session) {
     showNotification("Classification reset", type = "warning")
   })
 
-  # (Classification groups are now set directly by Apply & Preview button above)
+  # Save for This Tree (without rendering) - speeds up per-tree workflow
+  observeEvent(input$mt_save_classification_no_render, ignoreInit = TRUE, {
+    cls <- mt_gather_classification()
+    if (is.null(cls)) return()
+    tn <- input$mt_classification_tree_selector
+    if (is.null(tn) || is.null(mt_values$per_tree[[tn]])) return()
+    grps <- lapply(cls$classes, function(entry) {
+      list(values = list(entry$value), display_name = entry$display_name, color = entry$color)
+    })
+    mt_values$per_tree[[tn]]$classification_groups <- grps
+    mt_values$per_tree[[tn]]$classification_title <- cls$title
+    mt_values$per_tree[[tn]]$no_cluster_color <- cls$no_cluster_color
+    showNotification(paste0("Classification saved for: ", tn, " (click Apply & Preview to render)"),
+                     type = "message", duration = 3)
+  })
 
   # Apply & Preview: save classification (respecting scope) and trigger main render
   observeEvent(input$mt_update_classification_preview, ignoreInit = TRUE, {
     mt_classification_loading(TRUE)
+    mt_show_processing()
 
     cls <- mt_gather_classification()
     if (is.null(cls)) {
