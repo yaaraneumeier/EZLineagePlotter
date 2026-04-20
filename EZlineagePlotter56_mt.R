@@ -182,37 +182,64 @@ mt_tabItem_upload <- function() {
 }
 
 mt_tabItem_tree_display <- function() {
-  tabItem(tabName = "mt_tree_display", fluidRow(
-    box(title = "Tree Display Settings", status = "primary",
-        solidHeader = TRUE, width = 4,
-        tags$p(class = "text-muted", "These settings apply to all trees."),
-        sliderInput("mt_tip_font_size", "Tip Font Size:",
-                    min = 0.5, max = 20, value = 3, step = 0.5),
-        sliderInput("mt_edge_width", "Edge Width:",
-                    min = 0.1, max = 5, value = 1, step = 0.1),
-        checkboxInput("mt_display_node_numbers", "Display Node Numbers", value = FALSE),
+  tabItem(tabName = "mt_tree_display",
+    fluidRow(
+      box(
+        title = "Tree Appearance",
+        status = "primary",
+        solidHeader = TRUE,
+        width = 4,
+        checkboxInput("mt_trim_tips", "Trim Tips", value = FALSE),
         conditionalPanel(
-          condition = "input.mt_display_node_numbers == true",
-          sliderInput("mt_node_number_font_size", "Node Number Font Size:",
-                      min = 0.5, max = 10, value = 3.5, step = 0.5)
+          condition = "input.mt_trim_tips == true",
+          sliderInput("mt_tip_length", "Tip Length", min = 0.01, max = 0.2, value = 0.05, step = 0.01)
         ),
+        sliderInput("mt_edge_width", "Edge Width Multiplier", min = 0.5, max = 3, value = 1, step = 0.1),
+        sliderInput("mt_tip_font_size", "Tip Label Font Size", min = 1, max = 10, value = 3, step = 0.5),
+        checkboxInput("mt_display_node_numbers", "Display Node Numbers", value = FALSE),
+        sliderInput("mt_node_number_font_size", "Node Number Font Size", min = 1, max = 8, value = 3.5, step = 0.5),
         checkboxInput("mt_use_pvalues", "Use P-values for Branch Width", value = TRUE),
         conditionalPanel(
           condition = "input.mt_use_pvalues == true",
-          sliderInput("mt_fdr_perc", "FDR Percentage:",
-                      min = 0.01, max = 0.25, value = 0.1, step = 0.01)
+          sliderInput("mt_fdr_perc", "FDR Percentage", min = 0.01, max = 0.25, value = 0.1, step = 0.01)
         ),
-        sliderInput("mt_tip_length", "Tip Length:",
-                    min = 0, max = 1, value = 0.05, step = 0.01),
-        checkboxInput("mt_ladderize", "Ladderize Tree", value = TRUE),
-        checkboxInput("mt_trim_tips", "Trim Tips", value = TRUE),
-        tags$hr(),
-        tags$h5("Per-Tree: Rotation"),
+        checkboxInput("mt_ladderize", "Ladderize Tree", value = FALSE)
+      ),
+
+      box(
+        title = "Rotation Options",
+        status = "primary",
+        solidHeader = TRUE,
+        width = 8,
         selectInput("mt_tree_selector", "Select Tree:", choices = NULL),
-        textInput("mt_nodes_to_rotate", "Nodes to Rotate (comma-separated):",
-                  value = "", placeholder = "e.g. 15, 23, 42")
+        checkboxInput("mt_enable_rotation", "Enable Tree Rotation", value = FALSE),
+        conditionalPanel(
+          condition = "input.mt_enable_rotation == true",
+          radioButtons("mt_rotation_type", "Rotation Type:",
+                       choices = list(
+                         "Primary Classification First" = "primary",
+                         "Secondary Classification First" = "secondary",
+                         "Manual Node Rotation" = "manual"
+                       ), selected = "primary"),
+          conditionalPanel(
+            condition = "input.mt_rotation_type == 'manual'",
+            selectizeInput("mt_nodes_to_rotate", "Select Nodes to Rotate",
+                           choices = NULL, multiple = TRUE,
+                           options = list(placeholder = "Select nodes to rotate")),
+            checkboxInput("mt_highlight_selected_nodes", "Highlight Selected Nodes on Tree", value = FALSE),
+            tags$div(style = "margin-left: 20px; margin-top: -10px; margin-bottom: 10px;",
+                     tags$small(style = "color: #666;", "Shows red circles on selected nodes to help you verify your selection")
+            ),
+            br(),
+            actionButton("mt_apply_manual_rotation", "Apply Rotation", icon = icon("rotate"), class = "btn-primary"),
+            actionButton("mt_clear_manual_rotation", "Clear Manual Configuration", icon = icon("trash"), class = "btn-warning")
+          ),
+          uiOutput("mt_rotation_status_box"),
+          uiOutput("mt_rotation_classes_ui")
+        )
+      )
     )
-  ))
+  )
 }
 
 mt_tabItem_classification <- function() {
@@ -460,7 +487,7 @@ mt_build_yaml_data <- function(newick_path, csv_path, shared, per_tree) {
     param = as.character(shared$bootstrap_param)
   )
 
-  # Rotation
+  # Rotation - supports all three types: rotation1 (primary), rotation2 (secondary), manual
   rotation_nodes <- list()
   if (!is.null(per_tree$rotate) && length(per_tree$rotate) > 0) {
     for (k in seq_along(per_tree$rotate)) {
@@ -469,9 +496,44 @@ mt_build_yaml_data <- function(newick_path, csv_path, shared, per_tree) {
       rotation_nodes[[k]] <- node_entry
     }
   }
+
+  rotation_type <- per_tree$rotation_type
   manual_rotation <- list(
-    display = if (length(rotation_nodes) > 0) "yes" else "no",
+    display = if (length(rotation_nodes) > 0 &&
+                  (is.null(rotation_type) || rotation_type == "manual")) "yes" else "no",
     nodes = rotation_nodes
+  )
+
+  # rotation1 (primary classification first)
+  rot1_according <- list()
+  if (!is.null(per_tree$rotation1_config) && length(per_tree$rotation1_config) > 0) {
+    for (k in seq_along(per_tree$rotation1_config)) {
+      cfg <- per_tree$rotation1_config[[k]]
+      if (!is.null(cfg$col) && !is.null(cfg$val) && cfg$col != "" && cfg$val != "") {
+        rot1_according[[as.character(k)]] <- list(title = cfg$col, value = cfg$val)
+      }
+    }
+  }
+  rotation1_block <- list(
+    display = if (length(rot1_according) > 0 && !is.null(rotation_type) &&
+                  (rotation_type == "primary" || rotation_type == "manual")) "yes" else "no",
+    according = rot1_according
+  )
+
+  # rotation2 (secondary classification first)
+  rot2_according <- list()
+  if (!is.null(per_tree$rotation2_config) && length(per_tree$rotation2_config) > 0) {
+    for (k in seq_along(per_tree$rotation2_config)) {
+      cfg <- per_tree$rotation2_config[[k]]
+      if (!is.null(cfg$col) && !is.null(cfg$val) && cfg$col != "" && cfg$val != "") {
+        rot2_according[[as.character(k)]] <- list(title = cfg$col, value = cfg$val)
+      }
+    }
+  }
+  rotation2_block <- list(
+    display = if (length(rot2_according) > 0 && !is.null(rotation_type) &&
+                  rotation_type == "secondary") "yes" else "no",
+    according = rot2_according
   )
 
   # Assemble the full yaml_data
@@ -495,8 +557,8 @@ mt_build_yaml_data <- function(newick_path, csv_path, shared, per_tree) {
     "visual definitions" = list(
       classification = list(classification_entry),
       Bootstrap = bootstrap_block,
-      rotation1 = list(display = "no", according = list()),
-      rotation2 = list(display = "no", according = list()),
+      rotation1 = rotation1_block,
+      rotation2 = rotation2_block,
       manual_rotation = manual_rotation,
       "trim tips" = list(
         display = if (isTRUE(shared$trim_tips)) "yes" else "no",
@@ -511,6 +573,7 @@ mt_build_yaml_data <- function(newick_path, csv_path, shared, per_tree) {
         heat_map_title = 25,
         heat_map_legend = 3.8
       ),
+      laderize_flag = if (isTRUE(shared$ladderize)) "yes" else "no",
       compare_two_trees = "no",
       simulate_p_value = "yes",
       flag_calc_scores_for_tree = "no",
@@ -538,9 +601,11 @@ mt_build_yaml_data <- function(newick_path, csv_path, shared, per_tree) {
 func.multiple.trees.one.page.in.app <- function(
   newick_paths, newick_names, csv_path,
   shared_settings, per_tree_list,
-  tree_titles, tree_bg_colors, log_fn = function(msg) {}
+  tree_titles, tree_bg_colors, log_fn = function(msg) {},
+  p_cache_per_tree = list()
 ) {
   list_out <- list()
+  updated_cache <- p_cache_per_tree
 
   for (i in seq_along(newick_paths)) {
     tn <- newick_names[i]
@@ -572,6 +637,9 @@ func.multiple.trees.one.page.in.app <- function(
     temp_yaml <- tempfile(fileext = ".yaml")
     writeLines(yaml::as.yaml(yaml_data, indent.mapping.sequence = TRUE), temp_yaml)
 
+    # Retrieve per-tree p-value cache (speeds up re-renders significantly)
+    tree_cache <- if (!is.null(p_cache_per_tree[[tn]])) p_cache_per_tree[[tn]] else list()
+
     treesi <- tryCatch({
       suppressWarnings(func.print.lineage.tree(
         conf_yaml_path = temp_yaml,
@@ -588,7 +656,11 @@ func.multiple.trees.one.page.in.app <- function(
         man_boot_x_offset = shared_settings$man_boot_x_offset,
         heatmap_tree_distance = 0.02,
         heatmap_global_gap = 0.05,
-        legend_settings = shared_settings$legend_settings
+        legend_settings = shared_settings$legend_settings,
+        cached_p_list_of_pairs = tree_cache$p_list_of_pairs,
+        cached_p_list_hash = tree_cache$p_list_hash,
+        p_list_cache = if (!is.null(tree_cache$p_list_cache)) tree_cache$p_list_cache else list(),
+        heatmap_cache = if (!is.null(tree_cache$heatmap_cache)) tree_cache$heatmap_cache else list()
       ))
     }, error = function(e) {
       tb <- paste(capture.output(traceback(4)), collapse = "\n")
@@ -607,6 +679,21 @@ func.multiple.trees.one.page.in.app <- function(
     } else if (is.list(treesi) && length(treesi) > 0) {
       one_plot <- treesi[[1]]
     }
+
+    # Extract and store cache data for this tree (p-value caching)
+    if (!is.null(treesi$cache_data)) {
+      updated_cache[[tn]] <- list(
+        p_list_of_pairs = treesi$cache_data$p_list_of_pairs,
+        p_list_hash = treesi$cache_data$p_list_hash,
+        p_list_cache = if (!is.null(tree_cache$p_list_cache)) tree_cache$p_list_cache else list(),
+        heatmap_cache = treesi$cache_data$heatmap_cache
+      )
+      new_hash <- treesi$cache_data$p_list_hash
+      if (!is.null(new_hash) && !is.null(treesi$cache_data$p_list_of_pairs)) {
+        updated_cache[[tn]]$p_list_cache[[new_hash]] <- treesi$cache_data$p_list_of_pairs
+      }
+    }
+
     if (is.null(one_plot)) {
       log_fn(paste0("WARNING: No plot extracted for tree ", tn))
       next
@@ -628,7 +715,9 @@ func.multiple.trees.one.page.in.app <- function(
   if (length(list_out) == 0) return(NULL)
 
   log_fn(paste0("Combining ", length(list_out), " trees into one page"))
-  do.call(gridExtra::grid.arrange, c(list_out, ncol = 1))
+  result <- do.call(gridExtra::grid.arrange, c(list_out, ncol = 1))
+  attr(result, "p_cache_per_tree") <- updated_cache
+  result
 }
 
 # ================================================================
@@ -655,7 +744,11 @@ mt_install_server <- function(input, output, session) {
     temp_classification_preview = NULL, # temp classification for preview
     last_plot = NULL,           # last rendered gtable
     last_plot_file = NULL,      # path to cached PNG of last render
-    log_messages = ""           # log text for mt_log output
+    log_messages = "",          # log text for mt_log output
+    p_cache_per_tree = list(),  # per-tree p-value cache: list[[tree_name]] = list(p_list, hash, p_list_cache)
+    rotation1_config_per_tree = list(), # per-tree rotation1 config
+    rotation2_config_per_tree = list(), # per-tree rotation2 config
+    manual_rotation_per_tree = list()   # per-tree manual rotation nodes
   )
 
   # Helper to append log messages
@@ -1145,23 +1238,21 @@ mt_install_server <- function(input, output, session) {
   # Store current per-tree values when switching away
   mt_prev_tree <- reactiveVal(NULL)
 
+  # Save current tree's rotation state before switching
+  mt_save_current_tree_rotation <- function() {
+    prev <- mt_prev_tree()
+    if (is.null(prev) || is.null(mt_values$per_tree[[prev]])) return()
+    # Save rotation type
+    mt_values$per_tree[[prev]]$rotation_type <- input$mt_rotation_type
+    mt_values$per_tree[[prev]]$enable_rotation <- isTRUE(input$mt_enable_rotation)
+    # Manual rotation nodes saved by apply button
+  }
+
   observeEvent(input$mt_tree_selector, {
     req(input$mt_tree_selector)
 
-    # Save previous tree's per-tree values
-    prev <- mt_prev_tree()
-    if (!is.null(prev) && !is.null(mt_values$per_tree[[prev]])) {
-      # Parse rotation nodes
-      rot_text <- input$mt_nodes_to_rotate
-      rot_nodes <- NULL
-      if (!is.null(rot_text) && nchar(trimws(rot_text)) > 0) {
-        rot_nodes <- suppressWarnings(
-          as.numeric(trimws(unlist(strsplit(rot_text, ","))))
-        )
-        rot_nodes <- rot_nodes[!is.na(rot_nodes)]
-      }
-      mt_values$per_tree[[prev]]$rotate <- rot_nodes
-    }
+    # Save previous tree's rotation state
+    mt_save_current_tree_rotation()
 
     # Load new tree's per-tree values
     current <- input$mt_tree_selector
@@ -1169,11 +1260,270 @@ mt_install_server <- function(input, output, session) {
 
     pt <- mt_values$per_tree[[current]]
     if (!is.null(pt)) {
-      rot_str <- if (!is.null(pt$rotate) && length(pt$rotate) > 0) {
-        paste(pt$rotate, collapse = ", ")
-      } else ""
-      updateTextInput(session, "mt_nodes_to_rotate", value = rot_str)
+      # Restore rotation settings
+      updateCheckboxInput(session, "mt_enable_rotation",
+                          value = isTRUE(pt$enable_rotation))
+      if (!is.null(pt$rotation_type)) {
+        updateRadioButtons(session, "mt_rotation_type",
+                           selected = pt$rotation_type)
+      }
+      # Restore manual nodes
+      if (!is.null(pt$rotate) && length(pt$rotate) > 0) {
+        updateSelectizeInput(session, "mt_nodes_to_rotate",
+                             selected = as.character(pt$rotate))
+      } else {
+        updateSelectizeInput(session, "mt_nodes_to_rotate",
+                             selected = character(0))
+      }
     }
+  })
+
+  # ================================================================
+  # ROTATION SERVER LOGIC (mirrors single-mode rotation)
+  # ================================================================
+
+  # Populate node selector with tree node numbers when a tree is selected
+  observe({
+    req(input$mt_tree_selector, mt_values$trees)
+    tn <- input$mt_tree_selector
+    tree_obj <- mt_values$trees[[tn]]
+    if (!is.null(tree_obj)) {
+      all_nodes <- tree_obj$edge[, 1]
+      unique_nodes <- sort(unique(all_nodes))
+      updateSelectizeInput(session, "mt_nodes_to_rotate",
+                           choices = as.character(unique_nodes),
+                           server = TRUE)
+    }
+  })
+
+  # Rotation classes UI (primary/secondary) - mirrors single mode
+  output$mt_rotation_classes_ui <- renderUI({
+    req(input$mt_enable_rotation, input$mt_rotation_type != "manual")
+    if (input$mt_rotation_type == "primary") {
+      tagList(
+        numericInput("mt_rotation1_num_groups", "Number of rotation groups:", value = 2, min = 2, max = 10),
+        uiOutput("mt_rotation1_groups_ui"),
+        br(),
+        actionButton("mt_apply_rotation1", "Apply Rotation", icon = icon("rotate"), class = "btn-primary"),
+        actionButton("mt_clear_rotation1", "Clear Primary Configuration", icon = icon("trash"), class = "btn-warning")
+      )
+    } else if (input$mt_rotation_type == "secondary") {
+      tagList(
+        numericInput("mt_rotation2_num_groups", "Number of rotation groups:", value = 2, min = 2, max = 10),
+        uiOutput("mt_rotation2_groups_ui"),
+        br(),
+        actionButton("mt_apply_rotation2", "Apply Rotation", icon = icon("rotate"), class = "btn-primary"),
+        actionButton("mt_clear_rotation2", "Clear Secondary Configuration", icon = icon("trash"), class = "btn-warning")
+      )
+    }
+  })
+
+  # Rotation status box
+  output$mt_rotation_status_box <- renderUI({
+    req(input$mt_tree_selector)
+    tn <- input$mt_tree_selector
+    pt <- mt_values$per_tree[[tn]]
+    if (is.null(pt)) return(NULL)
+
+    status_items <- list()
+    if (!is.null(pt$rotation1_config) && length(pt$rotation1_config) > 0) {
+      status_items <- c(status_items, list(tags$li("Primary rotation configured")))
+    }
+    if (!is.null(pt$rotation2_config) && length(pt$rotation2_config) > 0) {
+      status_items <- c(status_items, list(tags$li("Secondary rotation configured")))
+    }
+    if (!is.null(pt$rotate) && length(pt$rotate) > 0) {
+      status_items <- c(status_items, list(tags$li(paste0("Manual rotation: nodes ", paste(pt$rotate, collapse = ", ")))))
+    }
+    if (length(status_items) == 0) return(NULL)
+
+    tags$div(
+      style = "margin-top: 10px; padding: 10px; background-color: #d4edda; border-radius: 5px;",
+      tags$strong(paste0("Rotation status for: ", tn)),
+      tags$ul(status_items)
+    )
+  })
+
+  # rotation1 groups UI
+  output$mt_rotation1_groups_ui <- renderUI({
+    req(input$mt_rotation1_num_groups)
+    csv_data <- mt_csv_for_classification()
+    if (is.null(csv_data)) return(tags$p("Load CSV data first."))
+    col_names <- names(csv_data)
+    group_uis <- lapply(1:input$mt_rotation1_num_groups, function(i) {
+      tagList(
+        hr(),
+        h5(paste("Rotation Group", i)),
+        fluidRow(
+          column(6, selectInput(inputId = paste0("mt_rotation1_col_", i), label = "Column:",
+                                choices = c("-- Select --" = "", col_names))),
+          column(6, uiOutput(paste0("mt_rotation1_val_ui_", i)))
+        )
+      )
+    })
+    tagList(group_uis)
+  })
+
+  # rotation2 groups UI
+  output$mt_rotation2_groups_ui <- renderUI({
+    req(input$mt_rotation2_num_groups)
+    csv_data <- mt_csv_for_classification()
+    if (is.null(csv_data)) return(tags$p("Load CSV data first."))
+    col_names <- names(csv_data)
+    group_uis <- lapply(1:input$mt_rotation2_num_groups, function(i) {
+      tagList(
+        hr(),
+        h5(paste("Rotation Group", i)),
+        fluidRow(
+          column(6, selectInput(inputId = paste0("mt_rotation2_col_", i), label = "Column:",
+                                choices = c("-- Select --" = "", col_names))),
+          column(6, uiOutput(paste0("mt_rotation2_val_ui_", i)))
+        )
+      )
+    })
+    tagList(group_uis)
+  })
+
+  # Dynamic value dropdowns for rotation1 groups
+  observe({
+    req(input$mt_rotation1_num_groups)
+    csv_data <- mt_csv_for_classification()
+    if (is.null(csv_data)) return()
+    for (i in 1:input$mt_rotation1_num_groups) {
+      local({
+        my_i <- i
+        output[[paste0("mt_rotation1_val_ui_", my_i)]] <- renderUI({
+          col_input <- input[[paste0("mt_rotation1_col_", my_i)]]
+          if (is.null(col_input) || col_input == "") {
+            selectInput(inputId = paste0("mt_rotation1_val_", my_i), label = "Value:",
+                        choices = c("Select column first" = ""))
+          } else {
+            csv_to_use <- mt_csv_for_classification()
+            unique_vals <- unique(csv_to_use[[col_input]])
+            unique_vals <- unique_vals[!is.na(unique_vals)]
+            selectInput(inputId = paste0("mt_rotation1_val_", my_i), label = "Value:",
+                        choices = c("-- Select --" = "", unique_vals))
+          }
+        })
+      })
+    }
+  })
+
+  # Dynamic value dropdowns for rotation2 groups
+  observe({
+    req(input$mt_rotation2_num_groups)
+    csv_data <- mt_csv_for_classification()
+    if (is.null(csv_data)) return()
+    for (i in 1:input$mt_rotation2_num_groups) {
+      local({
+        my_i <- i
+        output[[paste0("mt_rotation2_val_ui_", my_i)]] <- renderUI({
+          col_input <- input[[paste0("mt_rotation2_col_", my_i)]]
+          if (is.null(col_input) || col_input == "") {
+            selectInput(inputId = paste0("mt_rotation2_val_", my_i), label = "Value:",
+                        choices = c("Select column first" = ""))
+          } else {
+            csv_to_use <- mt_csv_for_classification()
+            unique_vals <- unique(csv_to_use[[col_input]])
+            unique_vals <- unique_vals[!is.na(unique_vals)]
+            selectInput(inputId = paste0("mt_rotation2_val_", my_i), label = "Value:",
+                        choices = c("-- Select --" = "", unique_vals))
+          }
+        })
+      })
+    }
+  })
+
+  # Apply rotation1 (primary)
+  observeEvent(input$mt_apply_rotation1, ignoreInit = TRUE, {
+    req(input$mt_tree_selector, input$mt_rotation1_num_groups)
+    tn <- input$mt_tree_selector
+    config <- list()
+    for (i in 1:input$mt_rotation1_num_groups) {
+      col <- input[[paste0("mt_rotation1_col_", i)]]
+      val <- input[[paste0("mt_rotation1_val_", i)]]
+      if (!is.null(col) && col != "" && !is.null(val) && val != "") {
+        config[[i]] <- list(col = col, val = val)
+      }
+    }
+    if (!is.null(mt_values$per_tree[[tn]])) {
+      mt_values$per_tree[[tn]]$rotation1_config <- config
+      mt_values$per_tree[[tn]]$rotation_type <- "primary"
+      mt_values$per_tree[[tn]]$enable_rotation <- TRUE
+    }
+    showNotification(paste0("Primary rotation applied to ", tn), type = "message")
+    shinyjs::click("mt_update_preview")
+  })
+
+  # Apply rotation2 (secondary)
+  observeEvent(input$mt_apply_rotation2, ignoreInit = TRUE, {
+    req(input$mt_tree_selector, input$mt_rotation2_num_groups)
+    tn <- input$mt_tree_selector
+    config <- list()
+    for (i in 1:input$mt_rotation2_num_groups) {
+      col <- input[[paste0("mt_rotation2_col_", i)]]
+      val <- input[[paste0("mt_rotation2_val_", i)]]
+      if (!is.null(col) && col != "" && !is.null(val) && val != "") {
+        config[[i]] <- list(col = col, val = val)
+      }
+    }
+    if (!is.null(mt_values$per_tree[[tn]])) {
+      mt_values$per_tree[[tn]]$rotation2_config <- config
+      mt_values$per_tree[[tn]]$rotation_type <- "secondary"
+      mt_values$per_tree[[tn]]$enable_rotation <- TRUE
+    }
+    showNotification(paste0("Secondary rotation applied to ", tn), type = "message")
+    shinyjs::click("mt_update_preview")
+  })
+
+  # Apply manual rotation
+  observeEvent(input$mt_apply_manual_rotation, ignoreInit = TRUE, {
+    req(input$mt_tree_selector, input$mt_nodes_to_rotate)
+    tn <- input$mt_tree_selector
+    nodes <- as.numeric(input$mt_nodes_to_rotate)
+    nodes <- nodes[!is.na(nodes)]
+    if (length(nodes) == 0) {
+      showNotification("Please select at least one node to rotate", type = "error", duration = 5)
+      return()
+    }
+    if (!is.null(mt_values$per_tree[[tn]])) {
+      mt_values$per_tree[[tn]]$rotate <- nodes
+      mt_values$per_tree[[tn]]$rotation_type <- "manual"
+      mt_values$per_tree[[tn]]$enable_rotation <- TRUE
+    }
+    showNotification(paste0("Manual rotation applied to ", tn), type = "message")
+    shinyjs::click("mt_update_preview")
+  })
+
+  # Clear rotation buttons
+  observeEvent(input$mt_clear_manual_rotation, ignoreInit = TRUE, {
+    req(input$mt_tree_selector)
+    tn <- input$mt_tree_selector
+    if (!is.null(mt_values$per_tree[[tn]])) {
+      mt_values$per_tree[[tn]]$rotate <- NULL
+    }
+    updateSelectizeInput(session, "mt_nodes_to_rotate", selected = character(0))
+    showNotification(paste0("Manual rotation cleared for ", tn), type = "warning")
+  })
+
+  observeEvent(input$mt_clear_rotation1, ignoreInit = TRUE, {
+    req(input$mt_tree_selector)
+    tn <- input$mt_tree_selector
+    if (!is.null(mt_values$per_tree[[tn]])) {
+      mt_values$per_tree[[tn]]$rotation1_config <- list()
+    }
+    updateNumericInput(session, "mt_rotation1_num_groups", value = 2)
+    showNotification(paste0("Primary rotation cleared for ", tn), type = "warning")
+  })
+
+  observeEvent(input$mt_clear_rotation2, ignoreInit = TRUE, {
+    req(input$mt_tree_selector)
+    tn <- input$mt_tree_selector
+    if (!is.null(mt_values$per_tree[[tn]])) {
+      mt_values$per_tree[[tn]]$rotation2_config <- list()
+    }
+    updateNumericInput(session, "mt_rotation2_num_groups", value = 2)
+    showNotification(paste0("Secondary rotation cleared for ", tn), type = "warning")
   })
 
   # --- Per-tree highlight UI (rendered dynamically) ---
@@ -1328,16 +1678,8 @@ mt_install_server <- function(input, output, session) {
     mt_values$log_messages <- ""  # clear log
     mt_log("Starting multi-tree render...")
 
-    # Save current tree selector state before rendering
-    if (!is.null(input$mt_tree_selector) && !is.null(mt_values$per_tree[[input$mt_tree_selector]])) {
-      rot_text <- input$mt_nodes_to_rotate
-      rot_nodes <- NULL
-      if (!is.null(rot_text) && nchar(trimws(rot_text)) > 0) {
-        rot_nodes <- suppressWarnings(as.numeric(trimws(unlist(strsplit(rot_text, ",")))))
-        rot_nodes <- rot_nodes[!is.na(rot_nodes)]
-      }
-      mt_values$per_tree[[input$mt_tree_selector]]$rotate <- rot_nodes
-    }
+    # Save current tree's rotation state before rendering
+    mt_save_current_tree_rotation()
 
     shared <- mt_gather_shared()
 
@@ -1374,7 +1716,8 @@ mt_install_server <- function(input, output, session) {
         per_tree_list = mt_values$per_tree,
         tree_titles = tree_titles,
         tree_bg_colors = tree_bg_colors,
-        log_fn = mt_log
+        log_fn = mt_log,
+        p_cache_per_tree = isolate(mt_values$p_cache_per_tree)
       ),
       error = function(e) {
         mt_log(paste0("RENDER ERROR: ", e$message))
@@ -1383,6 +1726,11 @@ mt_install_server <- function(input, output, session) {
     )
 
     if (!is.null(result)) {
+      # Store updated p-value cache from rendering
+      cached <- attr(result, "p_cache_per_tree")
+      if (!is.null(cached)) {
+        mt_values$p_cache_per_tree <- cached
+      }
       mt_values$last_plot <- result
       mt_log("Render complete!")
 
