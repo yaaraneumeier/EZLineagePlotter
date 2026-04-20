@@ -318,7 +318,21 @@ mt_tabItem_classification <- function() {
     ),
     fluidRow(
       box(
-        title = "Preview",
+        title = tagList(
+          "Preview ",
+          span(id = "mt_class_status_waiting",
+            style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #f8f9fa; color: #6c757d; font-size: 12px;",
+            icon("clock"), " Waiting for data"
+          ),
+          span(id = "mt_class_status_processing",
+            style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #6c757d; color: #ffffff; font-size: 12px; font-weight: bold;",
+            icon("spinner", class = "fa-spin"), " Processing..."
+          ),
+          span(id = "mt_class_status_ready",
+            style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #28a745; color: #ffffff; font-size: 12px; font-weight: bold;",
+            icon("check-circle"), " Ready"
+          )
+        ),
         status = "primary",
         solidHeader = TRUE,
         width = 12,
@@ -385,30 +399,94 @@ mt_tabItem_bootstrap <- function() {
 }
 
 mt_tabItem_highlighting <- function() {
-  tabItem(tabName = "mt_highlighting", fluidRow(
-    box(title = "Highlighting Settings", status = "primary",
-        solidHeader = TRUE, width = 12,
+  tabItem(tabName = "mt_highlighting",
+    fluidRow(
+      box(
+        title = "Highlight Settings",
+        status = "primary",
+        solidHeader = TRUE,
+        width = 4,
         checkboxInput("mt_enable_highlight", "Enable Highlighting", value = FALSE),
         conditionalPanel(
           condition = "input.mt_enable_highlight == true",
-          selectizeInput("mt_highlight_column", "Highlight Column:", choices = NULL,
-                        options = list(placeholder = "Select column...")),
-          selectizeInput("mt_highlight_values", "Values to Highlight:",
-                         choices = NULL, multiple = TRUE),
-          textInput("mt_highlight_title", "Highlight Title:", value = "Highlight"),
-          numericInput("mt_highlight_offset", "Highlight Offset:", value = 0, step = 0.1),
-          sliderInput("mt_highlight_vertical_offset", "Vertical Offset:",
-                      min = -5, max = 5, value = 0, step = 0.1),
-          sliderInput("mt_highlight_adjust_height", "Ellipse Height:",
-                      min = 0.1, max = 10, value = 1, step = 0.1),
-          sliderInput("mt_highlight_adjust_width", "Ellipse Width:",
-                      min = 0.1, max = 10, value = 1.5, step = 0.1),
-          tags$hr(),
+          selectInput("mt_highlight_column", "Select Column for Highlighting",
+                      choices = NULL, selected = NULL),
+          selectizeInput("mt_highlight_values", "Select Values to Highlight",
+                         choices = NULL, multiple = TRUE,
+                         options = list(maxOptions = 1000,
+                                        placeholder = "Select values to highlight")),
+          textInput("mt_highlight_title", "Highlight Legend Title", value = "Highlight"),
+          hr(),
+          h5("Global Positioning:"),
+          fluidRow(
+            column(12,
+                   tags$label("Vertical Offset (up/down)"),
+                   fluidRow(
+                     column(4, actionButton("mt_offset_down_big", "-1", class = "btn-sm btn-outline-secondary", style = "width: 100%;")),
+                     column(4, actionButton("mt_offset_down_small", "-0.1", class = "btn-sm btn-outline-secondary", style = "width: 100%;")),
+                     column(4, actionButton("mt_offset_down_tiny", "-0.01", class = "btn-sm btn-outline-secondary", style = "width: 100%;"))
+                   ),
+                   numericInput("mt_highlight_offset", NULL,
+                                value = 0, min = -10, max = 10, step = 0.01, width = "100%"),
+                   fluidRow(
+                     column(4, actionButton("mt_offset_up_big", "+1", class = "btn-sm btn-outline-secondary", style = "width: 100%;")),
+                     column(4, actionButton("mt_offset_up_small", "+0.1", class = "btn-sm btn-outline-secondary", style = "width: 100%;")),
+                     column(4, actionButton("mt_offset_up_tiny", "+0.01", class = "btn-sm btn-outline-secondary", style = "width: 100%;"))
+                   ),
+                   tags$small(class = "text-muted", "Use buttons for quick adjustments, or type exact value")
+            )
+          ),
+          br(),
+          sliderInput("mt_highlight_vertical_offset", "Horizontal Offset (left/right)",
+                      min = -1, max = 1, value = 0, step = 0.01),
+          sliderInput("mt_highlight_adjust_height", "Ellipse Height",
+                      min = 0.1, max = 3, value = 1, step = 0.05),
+          sliderInput("mt_highlight_adjust_width", "Ellipse Width",
+                      min = 0.1, max = 5, value = 1.5, step = 0.1),
+          hr(),
+          actionButton("mt_apply_highlight", "Apply & Preview",
+                       icon = icon("eye"), class = "btn-primary btn-block"),
+          actionButton("mt_remove_highlight", "Remove Highlight",
+                       icon = icon("minus"), class = "btn-danger btn-block btn-sm"),
+          hr(),
           tags$h5("Per-Tree Ellipse Adjustments"),
           uiOutput("mt_per_tree_highlight_ui")
         )
+      ),
+
+      box(
+        title = "Highlight Values Settings",
+        status = "primary",
+        solidHeader = TRUE,
+        width = 8,
+        uiOutput("mt_highlight_values_settings_ui")
+      )
+    ),
+
+    fluidRow(
+      box(
+        title = tagList(
+          "Preview ",
+          span(id = "mt_high_status_waiting",
+            style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #f8f9fa; color: #6c757d; font-size: 12px;",
+            icon("clock"), " Waiting for data"
+          ),
+          span(id = "mt_high_status_processing",
+            style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #6c757d; color: #ffffff; font-size: 12px; font-weight: bold;",
+            icon("spinner", class = "fa-spin"), " Processing..."
+          ),
+          span(id = "mt_high_status_ready",
+            style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #28a745; color: #ffffff; font-size: 12px; font-weight: bold;",
+            icon("check-circle"), " Ready"
+          )
+        ),
+        status = "primary",
+        solidHeader = TRUE,
+        width = 12,
+        imageOutput("mt_highlight_preview", height = "auto")
+      )
     )
-  ))
+  )
 }
 
 mt_tabItem_legend <- function() {
@@ -997,9 +1075,9 @@ mt_install_server <- function(input, output, session) {
                            selected = cols[1], server = TRUE)
       updateSelectizeInput(session, "mt_individual_column", choices = c("", cols),
                            server = TRUE)
-      updateSelectizeInput(session, "mt_classification_column", choices = cols,
+      updateSelectizeInput(session, "mt_classification_column", choices = c("" = "", cols),
                            server = TRUE)
-      updateSelectizeInput(session, "mt_highlight_column", choices = cols,
+      updateSelectizeInput(session, "mt_highlight_column", choices = c("" = "", cols),
                            server = TRUE)
     }
   })
@@ -1181,13 +1259,50 @@ mt_install_server <- function(input, output, session) {
            ncol(mt_values$csv_data), " columns")
   })
 
-  # --- Highlight column observer ---
+  # --- Highlight column observer (matches single mode lines 14225-14270) ---
   observeEvent(input$mt_highlight_column, {
-    req(input$mt_highlight_column, mt_values$csv_data)
-    vals <- sort(unique(na.omit(mt_values$csv_data[[input$mt_highlight_column]])))
-    updateSelectizeInput(session, "mt_highlight_values",
-                         choices = vals, selected = NULL)
-  })
+    if (is.null(input$mt_highlight_column) || input$mt_highlight_column == "") {
+      updateSelectizeInput(session, "mt_highlight_values", choices = character(0), selected = character(0))
+      output$mt_highlight_values_settings_ui <- renderUI({
+        tags$p(style = "color: gray; font-style: italic;", "Please select a column first")
+      })
+      return(NULL)
+    }
+
+    req(mt_values$csv_data, input$mt_highlight_column)
+    if (!(input$mt_highlight_column %in% names(mt_values$csv_data))) return(NULL)
+
+    csv_to_use <- if (!is.null(mt_values$filtered_csv) && nrow(mt_values$filtered_csv) > 0) {
+      mt_values$filtered_csv
+    } else {
+      mt_values$csv_data
+    }
+
+    unique_values <- unique(csv_to_use[[input$mt_highlight_column]])
+    unique_values <- unique_values[!is.na(unique_values)]
+
+    if (length(unique_values) > 100) {
+      output$mt_highlight_values_settings_ui <- renderUI({
+        tags$div(
+          style = "padding: 20px; background-color: #fff3cd; border: 1px solid #ffc107; border-radius: 5px;",
+          tags$h5("Too many unique values!", style = "color: #856404; margin-top: 0;"),
+          tags$p(paste("This column has", length(unique_values), "unique values."))
+        )
+      })
+      updateSelectizeInput(session, "mt_highlight_values", choices = character(0))
+      return(NULL)
+    }
+
+    updateSelectizeInput(session, "mt_highlight_values", choices = unique_values, selected = character(0))
+
+    output$mt_highlight_values_settings_ui <- renderUI({
+      tags$div(
+        tags$p(tags$strong(paste("Available values:", length(unique_values)))),
+        tags$p("Select values from the dropdown to highlight them."),
+        tags$p(style = "color: #666;", "After selecting, you can customize color and settings for each value below.")
+      )
+    })
+  }, ignoreInit = TRUE)
 
   # --- Process & Match IDs ---
   observeEvent(input$mt_process_data, {
@@ -1632,6 +1747,129 @@ mt_install_server <- function(input, output, session) {
     }
   })
 
+  # --- Highlight values observer: per-value color + transparency settings (matches single mode lines 14621-14689) ---
+  observeEvent(input$mt_highlight_values, {
+    req(input$mt_highlight_column)
+
+    selected_values <- input$mt_highlight_values
+
+    if (is.null(selected_values) || length(selected_values) == 0) {
+      output$mt_highlight_values_settings_ui <- renderUI({
+        tags$div(
+          tags$p(tags$strong("No values selected")),
+          tags$p("Select values from the dropdown to customize their highlight settings.")
+        )
+      })
+      return(NULL)
+    }
+
+    output$mt_highlight_values_settings_ui <- renderUI({
+      value_settings <- lapply(seq_along(selected_values), function(i) {
+        value <- selected_values[i]
+        default_color <- rainbow(length(selected_values))[i]
+        default_transparency <- 0.5
+
+        tagList(
+          tags$hr(style = if (i == 1) "margin-top: 0;" else ""),
+          fluidRow(
+            column(12, tags$h5(tags$strong(as.character(value))))
+          ),
+          fluidRow(
+            column(4,
+                   colourpicker::colourInput(
+                     inputId = paste0("mt_highlight_color_", i),
+                     label = "Color",
+                     value = default_color,
+                     allowTransparent = FALSE
+                   )
+            ),
+            column(4,
+                   sliderInput(
+                     inputId = paste0("mt_highlight_transparency_", i),
+                     label = "Transparency",
+                     min = 0.1, max = 1, value = default_transparency, step = 0.1
+                   )
+            ),
+            column(4,
+                   tags$div(
+                     style = "margin-top: 25px;",
+                     tags$div(
+                       style = sprintf(
+                         "width: 100%%; height: 40px; border-radius: 5px; border: 2px solid #999; background-color: %s; opacity: %s;",
+                         default_color, default_transparency
+                       ),
+                       id = paste0("mt_highlight_preview_box_", i)
+                     )
+                   )
+            )
+          )
+        )
+      })
+
+      tagList(
+        tags$h4("Individual Value Settings:"),
+        tags$p(style = "color: #666;", "Customize color and transparency for each highlighted value."),
+        value_settings
+      )
+    })
+  }, ignoreNULL = FALSE)
+
+  # --- Update highlight preview boxes when color/transparency changes ---
+  observe({
+    req(input$mt_highlight_values)
+    lapply(seq_along(input$mt_highlight_values), function(i) {
+      color_input <- paste0("mt_highlight_color_", i)
+      trans_input <- paste0("mt_highlight_transparency_", i)
+      if (!is.null(input[[color_input]]) && !is.null(input[[trans_input]])) {
+        shinyjs::runjs(sprintf(
+          "$('#mt_highlight_preview_box_%d').css({'background-color': '%s', 'opacity': '%s'});",
+          i, input[[color_input]], input[[trans_input]]
+        ))
+      }
+    })
+  })
+
+  # --- Highlight offset quick-adjust buttons ---
+  observeEvent(input$mt_offset_down_big, ignoreInit = TRUE, {
+    cur <- if (!is.null(input$mt_highlight_offset)) input$mt_highlight_offset else 0
+    updateNumericInput(session, "mt_highlight_offset", value = cur - 1)
+  })
+  observeEvent(input$mt_offset_down_small, ignoreInit = TRUE, {
+    cur <- if (!is.null(input$mt_highlight_offset)) input$mt_highlight_offset else 0
+    updateNumericInput(session, "mt_highlight_offset", value = cur - 0.1)
+  })
+  observeEvent(input$mt_offset_down_tiny, ignoreInit = TRUE, {
+    cur <- if (!is.null(input$mt_highlight_offset)) input$mt_highlight_offset else 0
+    updateNumericInput(session, "mt_highlight_offset", value = cur - 0.01)
+  })
+  observeEvent(input$mt_offset_up_big, ignoreInit = TRUE, {
+    cur <- if (!is.null(input$mt_highlight_offset)) input$mt_highlight_offset else 0
+    updateNumericInput(session, "mt_highlight_offset", value = cur + 1)
+  })
+  observeEvent(input$mt_offset_up_small, ignoreInit = TRUE, {
+    cur <- if (!is.null(input$mt_highlight_offset)) input$mt_highlight_offset else 0
+    updateNumericInput(session, "mt_highlight_offset", value = cur + 0.1)
+  })
+  observeEvent(input$mt_offset_up_tiny, ignoreInit = TRUE, {
+    cur <- if (!is.null(input$mt_highlight_offset)) input$mt_highlight_offset else 0
+    updateNumericInput(session, "mt_highlight_offset", value = cur + 0.01)
+  })
+
+  # --- Highlight Apply & Preview button ---
+  observeEvent(input$mt_apply_highlight, ignoreInit = TRUE, {
+    mt_show_processing()
+    shinyjs::click("mt_update_preview")
+  })
+
+  # --- Highlight Remove button ---
+  observeEvent(input$mt_remove_highlight, ignoreInit = TRUE, {
+    updateCheckboxInput(session, "mt_enable_highlight", value = FALSE)
+    updateSelectizeInput(session, "mt_highlight_values", selected = character(0))
+    mt_values$highlight_yaml <- NULL
+    mt_show_processing()
+    shinyjs::click("mt_update_preview")
+  })
+
   # --- Per-tree extra UI (title + bg color) ---
   output$mt_per_tree_extra_ui <- renderUI({
     req(input$mt_tree_selector, mt_values$per_tree)
@@ -1710,38 +1948,39 @@ mt_install_server <- function(input, output, session) {
     )
   }
 
-  # --- Build highlight YAML when user configures highlighting ---
-  observeEvent(list(input$mt_highlight_column, input$mt_highlight_values,
-                    input$mt_highlight_title, input$mt_highlight_offset,
-                    input$mt_highlight_vertical_offset,
-                    input$mt_highlight_adjust_height, input$mt_highlight_adjust_width), {
+  # --- Build highlight YAML (called before render, reads per-value colors/transparency) ---
+  mt_build_highlight_yaml <- function() {
     if (!isTRUE(input$mt_enable_highlight) || is.null(input$mt_highlight_values) ||
         length(input$mt_highlight_values) == 0) {
       mt_values$highlight_yaml <- NULL
       return()
     }
-    # Build according list for highlight
     hl_according <- list()
     for (j in seq_along(input$mt_highlight_values)) {
+      color_id <- paste0("mt_highlight_color_", j)
+      trans_id <- paste0("mt_highlight_transparency_", j)
+      val_color <- if (!is.null(input[[color_id]])) input[[color_id]] else rainbow(length(input$mt_highlight_values))[j]
+      val_trans <- if (!is.null(input[[trans_id]])) input[[trans_id]] else 0.5
       entry <- list()
       entry[[as.character(j)]] <- list(
         title1 = input$mt_highlight_column,
         value1 = list(input$mt_highlight_values[j]),
         display_name = input$mt_highlight_values[j],
-        color = "yellow",
-        transparency = 0.5
+        color = val_color,
+        transparency = val_trans
       )
       hl_according[[j]] <- entry
     }
     mt_values$highlight_yaml <- list(
       display = "yes",
+      title = if (!is.null(input$mt_highlight_title) && nchar(input$mt_highlight_title) > 0) input$mt_highlight_title else "Highlight",
       offset = if (!is.null(input$mt_highlight_offset)) input$mt_highlight_offset else 0,
       vertical_offset = if (!is.null(input$mt_highlight_vertical_offset)) input$mt_highlight_vertical_offset else 0,
       adjust_height = if (!is.null(input$mt_highlight_adjust_height)) input$mt_highlight_adjust_height else 1,
       adjust_width = if (!is.null(input$mt_highlight_adjust_width)) input$mt_highlight_adjust_width else 1.5,
       according = hl_according
     )
-  }, ignoreNULL = FALSE)
+  }
 
   # --- Render: gated by Update Preview button ---
   mt_render_plot <- eventReactive(input$mt_update_preview, {
@@ -1752,6 +1991,9 @@ mt_install_server <- function(input, output, session) {
 
     # Save current tree's rotation state before rendering
     mt_save_current_tree_rotation()
+
+    # Build highlight YAML with per-value colors/transparency before gathering shared settings
+    mt_build_highlight_yaml()
 
     shared <- mt_gather_shared()
 
@@ -1826,21 +2068,19 @@ mt_install_server <- function(input, output, session) {
 
   # --- Status indicator helpers ---
   mt_show_processing <- function() {
-    shinyjs::hide("mt_status_waiting")
-    shinyjs::hide("mt_status_ready")
-    shinyjs::show("mt_status_processing")
-    shinyjs::hide("mt_boot_status_waiting")
-    shinyjs::hide("mt_boot_status_ready")
-    shinyjs::show("mt_boot_status_processing")
+    for (pfx in c("mt_status", "mt_class_status", "mt_boot_status", "mt_high_status")) {
+      shinyjs::hide(paste0(pfx, "_waiting"))
+      shinyjs::hide(paste0(pfx, "_ready"))
+      shinyjs::show(paste0(pfx, "_processing"))
+    }
   }
 
   mt_show_ready <- function() {
-    shinyjs::hide("mt_status_waiting")
-    shinyjs::hide("mt_status_processing")
-    shinyjs::show("mt_status_ready")
-    shinyjs::hide("mt_boot_status_waiting")
-    shinyjs::hide("mt_boot_status_processing")
-    shinyjs::show("mt_boot_status_ready")
+    for (pfx in c("mt_status", "mt_class_status", "mt_boot_status", "mt_high_status")) {
+      shinyjs::hide(paste0(pfx, "_waiting"))
+      shinyjs::hide(paste0(pfx, "_processing"))
+      shinyjs::show(paste0(pfx, "_ready"))
+    }
   }
 
   # --- Plot output: upload, classification, tree display, and bootstrap tabs show the same cached image ---
@@ -1872,6 +2112,16 @@ mt_install_server <- function(input, output, session) {
     }
     list(src = pf, contentType = "image/png", width = "100%",
          alt = "Multi-tree bootstrap preview")
+  }, deleteFile = FALSE)
+
+  output$mt_highlight_preview <- renderImage({
+    mt_render_plot()
+    pf <- mt_values$last_plot_file
+    if (is.null(pf) || !file.exists(pf)) {
+      return(list(src = "", alt = "Click Apply & Preview to render."))
+    }
+    list(src = pf, contentType = "image/png", width = "100%",
+         alt = "Multi-tree highlight preview")
   }, deleteFile = FALSE)
 
   # --- Tree display Apply & Preview button ---
