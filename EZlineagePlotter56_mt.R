@@ -953,118 +953,145 @@ mt_build_yaml_data <- function(newick_path, csv_path, shared, per_tree) {
 
 # Render multiple trees and combine into a single gtable.
 # Returns a gtable suitable for plotOutput / ggsave. Does NOT save to disk.
+func.render.single.tree.in.app <- function(
+  newick_path, tree_name, csv_path,
+  shared_settings, per_tree, tree_title, tree_bg_color,
+  log_fn = function(msg) {}, tree_cache = list()
+) {
+  tree_shared <- shared_settings
+  if (!is.null(per_tree$individual_value) && nzchar(per_tree$individual_value)) {
+    tree_shared$individual_name <- per_tree$individual_value
+  }
+  if (!is.null(per_tree$classification_groups) && length(per_tree$classification_groups) > 0) {
+    tree_shared$classification_groups <- per_tree$classification_groups
+  }
+  if (!is.null(per_tree$classification_title)) {
+    tree_shared$classification_title <- per_tree$classification_title
+  }
+  if (!is.null(per_tree$no_cluster_color)) {
+    tree_shared$no_cluster_color <- (per_tree$no_cluster_color == "gray")
+  }
+  yaml_data <- mt_build_yaml_data(
+    newick_path = newick_path,
+    csv_path = csv_path,
+    shared = tree_shared,
+    per_tree = per_tree
+  )
+
+  temp_yaml <- tempfile(fileext = ".yaml")
+  writeLines(yaml::as.yaml(yaml_data, indent.mapping.sequence = TRUE), temp_yaml)
+
+  treesi <- tryCatch({
+    suppressWarnings(func.print.lineage.tree(
+      conf_yaml_path = temp_yaml,
+      csv_path_bash = csv_path,
+      width = shared_settings$output_width,
+      height = shared_settings$output_height,
+      units_out = shared_settings$output_units,
+      debug_mode = FALSE,
+      compare_two_trees = FALSE,
+      list_nodes_to_rotate = if (!is.null(per_tree$rotate) && length(per_tree$rotate) > 0) per_tree$rotate else NA,
+      flag_display_nod_number_on_tree = isTRUE(shared_settings$display_node_numbers),
+      node_number_font_size = shared_settings$node_number_font_size,
+      bootstrap_label_size = shared_settings$bootstrap_label_size,
+      man_boot_x_offset = shared_settings$man_boot_x_offset,
+      heatmap_tree_distance = 0.02,
+      heatmap_global_gap = 0.05,
+      legend_settings = shared_settings$legend_settings,
+      cached_p_list_of_pairs = tree_cache$p_list_of_pairs,
+      cached_p_list_hash = tree_cache$p_list_hash,
+      p_list_cache = if (!is.null(tree_cache$p_list_cache)) tree_cache$p_list_cache else list(),
+      heatmap_cache = if (!is.null(tree_cache$heatmap_cache)) tree_cache$heatmap_cache else list()
+    ))
+  }, error = function(e) {
+    tb <- paste(capture.output(traceback(4)), collapse = "\n")
+    log_fn(paste0("ERROR rendering tree ", tree_name, ": ", e$message))
+    log_fn(paste0("Traceback:\n", tb))
+    NULL
+  })
+
+  if (is.null(treesi)) return(NULL)
+
+  one_plot <- NULL
+  if (!is.null(treesi$plots) && length(treesi$plots) > 0) {
+    one_plot <- treesi$plots[[1]]
+  } else if (is.list(treesi) && length(treesi) > 0) {
+    one_plot <- treesi[[1]]
+  }
+
+  updated_cache <- tree_cache
+  if (!is.null(treesi$cache_data)) {
+    updated_cache <- list(
+      p_list_of_pairs = treesi$cache_data$p_list_of_pairs,
+      p_list_hash = treesi$cache_data$p_list_hash,
+      p_list_cache = if (!is.null(tree_cache$p_list_cache)) tree_cache$p_list_cache else list(),
+      heatmap_cache = treesi$cache_data$heatmap_cache
+    )
+    new_hash <- treesi$cache_data$p_list_hash
+    if (!is.null(new_hash) && !is.null(treesi$cache_data$p_list_of_pairs)) {
+      updated_cache$p_list_cache[[new_hash]] <- treesi$cache_data$p_list_of_pairs
+    }
+  }
+
+  if (is.null(one_plot)) return(NULL)
+
+  styled_plot <- one_plot +
+    ggtree::theme_tree(bgcolor = tree_bg_color) +
+    ggplot2::ggtitle(tree_title) +
+    ggplot2::theme(
+      plot.title = ggplot2::element_text(hjust = 0.5, size = 10),
+      plot.background = ggplot2::element_rect(fill = tree_bg_color, color = tree_bg_color)
+    ) +
+    ggplot2::guides(color = "none", size = "none", shape = "none")
+
+  list(plot = styled_plot, cache = updated_cache)
+}
+
 func.multiple.trees.one.page.in.app <- function(
   newick_paths, newick_names, csv_path,
   shared_settings, per_tree_list,
   tree_titles, tree_bg_colors, log_fn = function(msg) {},
-  p_cache_per_tree = list()
+  p_cache_per_tree = list(),
+  cached_tree_plots = list(),
+  dirty_trees = NULL
 ) {
   list_out <- list()
   updated_cache <- p_cache_per_tree
+  updated_plots <- cached_tree_plots
+  all_dirty <- is.null(dirty_trees)
 
   for (i in seq_along(newick_paths)) {
     tn <- newick_names[i]
-    log_fn(paste0("Rendering tree ", i, "/", length(newick_paths), ": ", tn))
-
-    # Build YAML for this tree
     per_tree <- if (!is.null(per_tree_list[[tn]])) per_tree_list[[tn]] else list()
-    # Override per-tree settings (individual, classification)
-    tree_shared <- shared_settings
-    if (!is.null(per_tree$individual_value) && nzchar(per_tree$individual_value)) {
-      tree_shared$individual_name <- per_tree$individual_value
-    }
-    if (!is.null(per_tree$classification_groups) && length(per_tree$classification_groups) > 0) {
-      tree_shared$classification_groups <- per_tree$classification_groups
-    }
-    if (!is.null(per_tree$classification_title)) {
-      tree_shared$classification_title <- per_tree$classification_title
-    }
-    if (!is.null(per_tree$no_cluster_color)) {
-      tree_shared$no_cluster_color <- (per_tree$no_cluster_color == "gray")
-    }
-    yaml_data <- mt_build_yaml_data(
-      newick_path = newick_paths[i],
-      csv_path = csv_path,
-      shared = tree_shared,
-      per_tree = per_tree
-    )
 
-    temp_yaml <- tempfile(fileext = ".yaml")
-    writeLines(yaml::as.yaml(yaml_data, indent.mapping.sequence = TRUE), temp_yaml)
+    need_render <- all_dirty || (tn %in% dirty_trees) || is.null(cached_tree_plots[[tn]])
 
-    # Retrieve per-tree p-value cache (speeds up re-renders significantly)
-    tree_cache <- if (!is.null(p_cache_per_tree[[tn]])) p_cache_per_tree[[tn]] else list()
-
-    treesi <- tryCatch({
-      suppressWarnings(func.print.lineage.tree(
-        conf_yaml_path = temp_yaml,
-        csv_path_bash = csv_path,
-        width = shared_settings$output_width,
-        height = shared_settings$output_height,
-        units_out = shared_settings$output_units,
-        debug_mode = FALSE,
-        compare_two_trees = FALSE,
-        list_nodes_to_rotate = if (!is.null(per_tree$rotate) && length(per_tree$rotate) > 0) per_tree$rotate else NA,
-        flag_display_nod_number_on_tree = isTRUE(shared_settings$display_node_numbers),
-        node_number_font_size = shared_settings$node_number_font_size,
-        bootstrap_label_size = shared_settings$bootstrap_label_size,
-        man_boot_x_offset = shared_settings$man_boot_x_offset,
-        heatmap_tree_distance = 0.02,
-        heatmap_global_gap = 0.05,
-        legend_settings = shared_settings$legend_settings,
-        cached_p_list_of_pairs = tree_cache$p_list_of_pairs,
-        cached_p_list_hash = tree_cache$p_list_hash,
-        p_list_cache = if (!is.null(tree_cache$p_list_cache)) tree_cache$p_list_cache else list(),
-        heatmap_cache = if (!is.null(tree_cache$heatmap_cache)) tree_cache$heatmap_cache else list()
-      ))
-    }, error = function(e) {
-      tb <- paste(capture.output(traceback(4)), collapse = "\n")
-      log_fn(paste0("ERROR rendering tree ", tn, ": ", e$message))
-      log_fn(paste0("Traceback:\n", tb))
-      NULL
-    })
-
-    if (is.null(treesi)) next
-
-    # Return-value fix: current func.print.lineage.tree returns
-    # list(plots=..., rotated_tree=..., cache_data=...)
-    one_plot <- NULL
-    if (!is.null(treesi$plots) && length(treesi$plots) > 0) {
-      one_plot <- treesi$plots[[1]]
-    } else if (is.list(treesi) && length(treesi) > 0) {
-      one_plot <- treesi[[1]]
-    }
-
-    # Extract and store cache data for this tree (p-value caching)
-    if (!is.null(treesi$cache_data)) {
-      updated_cache[[tn]] <- list(
-        p_list_of_pairs = treesi$cache_data$p_list_of_pairs,
-        p_list_hash = treesi$cache_data$p_list_hash,
-        p_list_cache = if (!is.null(tree_cache$p_list_cache)) tree_cache$p_list_cache else list(),
-        heatmap_cache = treesi$cache_data$heatmap_cache
-      )
-      new_hash <- treesi$cache_data$p_list_hash
-      if (!is.null(new_hash) && !is.null(treesi$cache_data$p_list_of_pairs)) {
-        updated_cache[[tn]]$p_list_cache[[new_hash]] <- treesi$cache_data$p_list_of_pairs
-      }
-    }
-
-    if (is.null(one_plot)) {
-      log_fn(paste0("WARNING: No plot extracted for tree ", tn))
+    if (!need_render) {
+      log_fn(paste0("Using cached plot for tree ", i, "/", length(newick_paths), ": ", tn))
+      list_out[[length(list_out) + 1]] <- cached_tree_plots[[tn]]
       next
     }
 
-    # Apply per-tree styling
-    list_out[[length(list_out) + 1]] <- one_plot +
-      ggtree::theme_tree(bgcolor = tree_bg_colors[i]) +
-      ggplot2::ggtitle(tree_titles[i]) +
-      ggplot2::theme(
-        plot.title = ggplot2::element_text(hjust = 0.5, size = 10),
-        plot.background = ggplot2::element_rect(
-          fill = tree_bg_colors[i], color = tree_bg_colors[i]
-        )
-      ) +
-      ggplot2::guides(color = "none", size = "none", shape = "none")
+    log_fn(paste0("Rendering tree ", i, "/", length(newick_paths), ": ", tn))
+    tree_cache <- if (!is.null(p_cache_per_tree[[tn]])) p_cache_per_tree[[tn]] else list()
+
+    result_single <- func.render.single.tree.in.app(
+      newick_path = newick_paths[i],
+      tree_name = tn,
+      csv_path = csv_path,
+      shared_settings = shared_settings,
+      per_tree = per_tree,
+      tree_title = tree_titles[i],
+      tree_bg_color = tree_bg_colors[i],
+      log_fn = log_fn,
+      tree_cache = tree_cache
+    )
+
+    if (is.null(result_single)) next
+
+    list_out[[length(list_out) + 1]] <- result_single$plot
+    updated_plots[[tn]] <- result_single$plot
+    updated_cache[[tn]] <- result_single$cache
   }
 
   if (length(list_out) == 0) return(NULL)
@@ -1072,6 +1099,7 @@ func.multiple.trees.one.page.in.app <- function(
   log_fn(paste0("Combining ", length(list_out), " trees into one page"))
   result <- do.call(gridExtra::grid.arrange, c(list_out, ncol = 1))
   attr(result, "p_cache_per_tree") <- updated_cache
+  attr(result, "cached_tree_plots") <- updated_plots
   result
 }
 
@@ -1098,14 +1126,16 @@ mt_install_server <- function(input, output, session) {
     classification_groups = list(), # classification groups for YAML builder
     temp_classification_preview = NULL, # temp classification for preview
     last_plot = NULL,           # last rendered gtable
-    last_plot_file = NULL,      # path to cached PNG of last render
+    last_plot_file = NULL,      # path to cached SVG of last render
     plot_counter = 0,           # incremented after each successful render
     plot_generating = FALSE,    # recursion guard
     log_messages = "",          # log text for mt_log output
     p_cache_per_tree = list(),  # per-tree p-value cache: list[[tree_name]] = list(p_list, hash, p_list_cache)
     rotation1_config_per_tree = list(), # per-tree rotation1 config
     rotation2_config_per_tree = list(), # per-tree rotation2 config
-    manual_rotation_per_tree = list()   # per-tree manual rotation nodes
+    manual_rotation_per_tree = list(),  # per-tree manual rotation nodes
+    cached_tree_plots = list(), # per-tree ggplot objects for incremental rendering
+    dirty_trees = NULL          # character vector of tree names needing re-render (NULL = all dirty)
   )
 
   # Helper to append log messages
@@ -1846,8 +1876,7 @@ mt_install_server <- function(input, output, session) {
       mt_values$per_tree[[tn]]$enable_rotation <- TRUE
     }
     showNotification(paste0("Primary rotation applied to ", tn), type = "message")
-    mt_show_processing()
-    shinyjs::delay(100, { shinyjs::click("mt_update_preview") })
+    mt_request_render(dirty = tn)
   })
 
   # Apply rotation2 (secondary)
@@ -1868,8 +1897,7 @@ mt_install_server <- function(input, output, session) {
       mt_values$per_tree[[tn]]$enable_rotation <- TRUE
     }
     showNotification(paste0("Secondary rotation applied to ", tn), type = "message")
-    mt_show_processing()
-    shinyjs::delay(100, { shinyjs::click("mt_update_preview") })
+    mt_request_render(dirty = tn)
   })
 
   # Apply manual rotation
@@ -1888,8 +1916,7 @@ mt_install_server <- function(input, output, session) {
       mt_values$per_tree[[tn]]$enable_rotation <- TRUE
     }
     showNotification(paste0("Manual rotation applied to ", tn), type = "message")
-    mt_show_processing()
-    shinyjs::delay(100, { shinyjs::click("mt_update_preview") })
+    mt_request_render(dirty = tn)
   })
 
   # Clear rotation buttons
@@ -2068,8 +2095,7 @@ mt_install_server <- function(input, output, session) {
 
   # --- Highlight Apply & Preview button ---
   observeEvent(input$mt_apply_highlight, ignoreInit = TRUE, {
-    mt_show_processing()
-    shinyjs::delay(100, { shinyjs::click("mt_update_preview") })
+    mt_request_render()
   })
 
   # --- Highlight Remove button ---
@@ -2077,8 +2103,7 @@ mt_install_server <- function(input, output, session) {
     updateCheckboxInput(session, "mt_enable_highlight", value = FALSE)
     updateSelectizeInput(session, "mt_highlight_values", selected = character(0))
     mt_values$highlight_yaml <- NULL
-    mt_show_processing()
-    shinyjs::delay(100, { shinyjs::click("mt_update_preview") })
+    mt_request_render()
   })
 
   # --- Per-tree extra UI (title + bg color) ---
@@ -2216,76 +2241,64 @@ mt_install_server <- function(input, output, session) {
   # END DEBOUNCED REACTIVE INPUTS
   # ==========================================================================
 
-  # --- Build highlight YAML (called before render, reads per-value colors/transparency) ---
+  # --- Build highlight YAML (called from mt_do_render via session$onFlushed) ---
   mt_build_highlight_yaml <- function() {
-    if (!isTRUE(input$mt_enable_highlight) || is.null(input$mt_highlight_values) ||
-        length(input$mt_highlight_values) == 0) {
-      mt_values$highlight_yaml <- NULL
-      return()
-    }
-    hl_according <- list()
-    for (j in seq_along(input$mt_highlight_values)) {
-      color_id <- paste0("mt_highlight_color_", j)
-      trans_id <- paste0("mt_highlight_transparency_", j)
-      val_color <- if (!is.null(input[[color_id]])) input[[color_id]] else rainbow(length(input$mt_highlight_values))[j]
-      val_trans <- if (!is.null(input[[trans_id]])) input[[trans_id]] else 0.5
-      entry <- list()
-      entry[[as.character(j)]] <- list(
-        title1 = input$mt_highlight_column,
-        value1 = list(input$mt_highlight_values[j]),
-        display_name = input$mt_highlight_values[j],
-        color = val_color,
-        transparency = val_trans
+    isolate({
+      if (!isTRUE(input$mt_enable_highlight) || is.null(input$mt_highlight_values) ||
+          length(input$mt_highlight_values) == 0) {
+        mt_values$highlight_yaml <- NULL
+        return()
+      }
+      hl_vals <- input$mt_highlight_values
+      hl_according <- list()
+      for (j in seq_along(hl_vals)) {
+        color_id <- paste0("mt_highlight_color_", j)
+        trans_id <- paste0("mt_highlight_transparency_", j)
+        val_color <- if (!is.null(input[[color_id]])) input[[color_id]] else rainbow(length(hl_vals))[j]
+        val_trans <- if (!is.null(input[[trans_id]])) input[[trans_id]] else 0.5
+        entry <- list()
+        entry[[as.character(j)]] <- list(
+          title1 = input$mt_highlight_column,
+          value1 = list(hl_vals[j]),
+          display_name = hl_vals[j],
+          color = val_color,
+          transparency = val_trans
+        )
+        hl_according[[j]] <- entry
+      }
+      mt_values$highlight_yaml <- list(
+        display = "yes",
+        title = if (!is.null(input$mt_highlight_title) && nchar(input$mt_highlight_title) > 0) input$mt_highlight_title else "Highlight",
+        offset = if (!is.null(input$mt_highlight_offset)) input$mt_highlight_offset else 0,
+        vertical_offset = if (!is.null(input$mt_highlight_vertical_offset)) input$mt_highlight_vertical_offset else 0,
+        adjust_height = if (!is.null(input$mt_highlight_adjust_height)) input$mt_highlight_adjust_height else 1,
+        adjust_width = if (!is.null(input$mt_highlight_adjust_width)) input$mt_highlight_adjust_width else 1.5,
+        according = hl_according
       )
-      hl_according[[j]] <- entry
-    }
-    mt_values$highlight_yaml <- list(
-      display = "yes",
-      title = if (!is.null(input$mt_highlight_title) && nchar(input$mt_highlight_title) > 0) input$mt_highlight_title else "Highlight",
-      offset = if (!is.null(input$mt_highlight_offset)) input$mt_highlight_offset else 0,
-      vertical_offset = if (!is.null(input$mt_highlight_vertical_offset)) input$mt_highlight_vertical_offset else 0,
-      adjust_height = if (!is.null(input$mt_highlight_adjust_height)) input$mt_highlight_adjust_height else 1,
-      adjust_width = if (!is.null(input$mt_highlight_adjust_width)) input$mt_highlight_adjust_width else 1.5,
-      according = hl_according
-    )
+    })
   }
 
-  # --- Render: gated by Update Preview button ---
-  # Uses observeEvent (not eventReactive) to prevent cascading re-renders.
-  # All renderImage outputs read mt_values$last_plot_file + plot_counter instead.
-  observeEvent(input$mt_update_preview, ignoreInit = TRUE, {
-    req(mt_values$newick_paths, mt_values$csv_path)
-
-    # Guard: skip if already rendering or classification UI loading
-    if (isTRUE(mt_values$plot_generating)) {
-      cat(file = stderr(), "[MT-PERF] Skipping - render already in progress\n")
-      return()
-    }
-    if (mt_classification_loading()) {
-      cat(file = stderr(), "[MT-PERF] Skipping - classification UI loading\n")
-      return()
-    }
-
-    # Cooldown: prevent rapid consecutive renders (500ms)
-    time_since_last <- as.numeric(Sys.time()) * 1000 - mt_last_render_time()
-    if (time_since_last < 500 && time_since_last > 0) {
-      cat(file = stderr(), sprintf("[MT-PERF] Skipping - rapid call (%.0fms since last)\n", time_since_last))
-      return()
-    }
+  # --- Core render function (called via session$onFlushed for proper status sync) ---
+  mt_do_render <- function() {
+    if (is.null(mt_values$newick_paths) || is.null(mt_values$csv_path)) return()
+    if (isTRUE(mt_values$plot_generating)) return()
+    if (mt_classification_loading()) return()
 
     mt_values$plot_generating <- TRUE
-    on.exit(mt_values$plot_generating <- FALSE)
+    on.exit({
+      mt_values$plot_generating <- FALSE
+      mt_show_ready()
+    })
 
     mt_values$log_messages <- ""
-    mt_show_processing()
     mt_log("Starting multi-tree render...")
 
-    mt_save_current_tree_rotation()
+    isolate(mt_save_current_tree_rotation())
     mt_build_highlight_yaml()
 
-    shared <- mt_gather_shared()
+    shared <- isolate(mt_gather_shared())
 
-    if (isTRUE(input$mt_a4_output)) {
+    if (isTRUE(isolate(input$mt_a4_output))) {
       shared$output_width <- 297
       shared$output_height <- 210
       shared$output_units <- "mm"
@@ -2306,6 +2319,8 @@ mt_install_server <- function(input, output, session) {
       mt_values$csv_path
     }
 
+    dirty <- isolate(mt_values$dirty_trees)
+
     result <- tryCatch(
       func.multiple.trees.one.page.in.app(
         newick_paths = mt_values$newick_paths,
@@ -2316,7 +2331,9 @@ mt_install_server <- function(input, output, session) {
         tree_titles = tree_titles,
         tree_bg_colors = tree_bg_colors,
         log_fn = mt_log,
-        p_cache_per_tree = isolate(mt_values$p_cache_per_tree)
+        p_cache_per_tree = isolate(mt_values$p_cache_per_tree),
+        cached_tree_plots = isolate(mt_values$cached_tree_plots),
+        dirty_trees = dirty
       ),
       error = function(e) {
         mt_log(paste0("RENDER ERROR: ", e$message))
@@ -2325,38 +2342,61 @@ mt_install_server <- function(input, output, session) {
     )
 
     if (!is.null(result)) {
-      cached <- attr(result, "p_cache_per_tree")
-      if (!is.null(cached)) {
-        mt_values$p_cache_per_tree <- cached
-      }
+      cached_p <- attr(result, "p_cache_per_tree")
+      if (!is.null(cached_p)) mt_values$p_cache_per_tree <- cached_p
+      cached_plots <- attr(result, "cached_tree_plots")
+      if (!is.null(cached_plots)) mt_values$cached_tree_plots <- cached_plots
+
       mt_values$last_plot <- result
+      mt_values$dirty_trees <- character(0)
       mt_log("Render complete!")
 
-      tmp <- tempfile(fileext = ".png")
-      w <- if (isTRUE(input$mt_a4_output)) 297 else {
-        if (!is.null(input$mt_output_width)) input$mt_output_width else 29.7
+      tmp <- tempfile(fileext = ".svg")
+      w <- if (isTRUE(isolate(input$mt_a4_output))) 297 else {
+        v <- isolate(input$mt_output_width); if (!is.null(v)) v else 29.7
       }
-      h <- if (isTRUE(input$mt_a4_output)) 210 else {
-        if (!is.null(input$mt_output_height)) input$mt_output_height else 42
+      h <- if (isTRUE(isolate(input$mt_a4_output))) 210 else {
+        v <- isolate(input$mt_output_height); if (!is.null(v)) v else 42
       }
-      u <- if (isTRUE(input$mt_a4_output)) "mm" else {
-        if (!is.null(input$mt_output_units)) input$mt_output_units else "cm"
+      u <- if (isTRUE(isolate(input$mt_a4_output))) "mm" else {
+        v <- isolate(input$mt_output_units); if (!is.null(v)) v else "cm"
       }
       ggplot2::ggsave(tmp, plot = result, width = w, height = h, units = u,
-                      limitsize = FALSE, dpi = 150)
+                      limitsize = FALSE)
       mt_values$last_plot_file <- tmp
       mt_values$plot_counter <- isolate(mt_values$plot_counter) + 1
     }
 
     mt_last_render_time(as.numeric(Sys.time()) * 1000)
-    mt_show_ready()
 
-    # Async GC every 3rd render to free memory without blocking UI
     current_count <- isolate(mt_values$plot_counter)
     if (current_count > 0 && current_count %% 3 == 0) {
       later::later(function() { gc(verbose = FALSE) }, delay = 0.1)
     }
-  })
+  }
+
+  # Request a render: shows Processing, flushes to browser, THEN does heavy work
+  mt_request_render <- function(dirty = NULL) {
+    if (isTRUE(mt_values$plot_generating)) return()
+    if (is.null(mt_values$newick_paths) || is.null(mt_values$csv_path)) return()
+
+    if (!is.null(dirty)) {
+      current_dirty <- isolate(mt_values$dirty_trees)
+      if (is.null(current_dirty)) {
+        mt_values$dirty_trees <- NULL
+      } else {
+        mt_values$dirty_trees <- union(current_dirty, dirty)
+      }
+    } else {
+      mt_values$dirty_trees <- NULL
+    }
+
+    mt_show_processing()
+
+    session$onFlushed(function() {
+      mt_do_render()
+    }, once = TRUE)
+  }
 
   # --- Status indicator helpers ---
   mt_show_processing <- function() {
@@ -2377,14 +2417,14 @@ mt_install_server <- function(input, output, session) {
     }
   }
 
-  # --- Plot outputs: all read cached PNG via plot_counter (no cascading renders) ---
+  # --- Plot outputs: all read cached SVG via plot_counter (no cascading renders) ---
   mt_plot_image <- function(alt_empty) {
-    mt_values$plot_counter  # reactive dependency on counter only
+    mt_values$plot_counter
     pf <- isolate(mt_values$last_plot_file)
     if (is.null(pf) || !file.exists(pf)) {
       return(list(src = "", alt = alt_empty))
     }
-    list(src = pf, contentType = "image/png", width = "100%", alt = "Multi-tree plot")
+    list(src = pf, contentType = "image/svg+xml", width = "100%", alt = "Multi-tree plot")
   }
 
   output$mt_combined_plot <- renderImage({
@@ -2403,22 +2443,24 @@ mt_install_server <- function(input, output, session) {
     mt_plot_image("Click Apply & Preview to render.")
   }, deleteFile = FALSE)
 
+  # --- Main Update Preview button (tree display tab) ---
+  observeEvent(input$mt_update_preview, ignoreInit = TRUE, {
+    mt_request_render()
+  })
+
   # --- Tree display Apply & Preview button ---
   observeEvent(input$mt_apply_tree_display, ignoreInit = TRUE, {
-    mt_show_processing()
-    shinyjs::delay(100, { shinyjs::click("mt_update_preview") })
+    mt_request_render()
   })
 
   # --- Bootstrap Apply & Preview button ---
   observeEvent(input$mt_apply_bootstrap, ignoreInit = TRUE, {
-    mt_show_processing()
-    shinyjs::delay(100, { shinyjs::click("mt_update_preview") })
+    mt_request_render()
   })
 
   # --- Legend Apply button ---
   observeEvent(input$mt_apply_legend, ignoreInit = TRUE, {
-    mt_show_processing()
-    shinyjs::delay(100, { shinyjs::click("mt_update_preview") })
+    mt_request_render()
     showNotification("Legend settings applied", type = "message", duration = 2)
   })
 
@@ -2461,8 +2503,7 @@ mt_install_server <- function(input, output, session) {
 
   # Extra Apply button
   observeEvent(input$mt_extra_apply, ignoreInit = TRUE, {
-    mt_show_processing()
-    shinyjs::delay(100, { shinyjs::click("mt_update_preview") })
+    mt_request_render()
   })
 
   # Reset position
@@ -2828,20 +2869,15 @@ mt_install_server <- function(input, output, session) {
 
   # Apply & Preview: save classification (respecting scope) and trigger main render
   observeEvent(input$mt_update_classification_preview, ignoreInit = TRUE, {
-    mt_classification_loading(TRUE)
-    mt_show_processing()
-
     cls <- mt_gather_classification()
-    if (is.null(cls)) {
-      mt_classification_loading(FALSE)
-      return()
-    }
+    if (is.null(cls)) return()
 
     scope <- if (!is.null(input$mt_classification_scope)) input$mt_classification_scope else "all"
     grps <- lapply(cls$classes, function(entry) {
       list(values = list(entry$value), display_name = entry$display_name, color = entry$color)
     })
 
+    dirty <- NULL
     if (scope == "per_tree" && !is.null(input$mt_classification_tree_selector)) {
       tn <- input$mt_classification_tree_selector
       if (!is.null(mt_values$per_tree[[tn]])) {
@@ -2849,6 +2885,7 @@ mt_install_server <- function(input, output, session) {
         mt_values$per_tree[[tn]]$classification_title <- cls$title
         mt_values$per_tree[[tn]]$no_cluster_color <- cls$no_cluster_color
       }
+      dirty <- tn
       showNotification(paste0("Classification applied to tree: ", tn), type = "message", duration = 3)
     } else {
       mt_values$classification_groups <- grps
@@ -2856,10 +2893,7 @@ mt_install_server <- function(input, output, session) {
       showNotification("Classification applied to all trees", type = "message", duration = 3)
     }
 
-    mt_classification_loading(FALSE)
-
-    # Trigger main render with delay so Processing status shows before R blocks
-    shinyjs::delay(100, { shinyjs::click("mt_update_preview") })
+    mt_request_render(dirty = dirty)
   })
 
   output$mt_combined_plot_class <- renderImage({
