@@ -1498,7 +1498,7 @@ mt_install_server <- function(input, output, session) {
   })
 
   # --- Highlight column observer (matches single mode lines 14225-14270) ---
-  observeEvent(input$mt_highlight_column, ignoreInit = TRUE, {
+  observeEvent(input$mt_highlight_column, {
     if (is.null(input$mt_highlight_column) || input$mt_highlight_column == "") {
       updateSelectizeInput(session, "mt_highlight_values", choices = character(0), selected = character(0))
       output$mt_highlight_values_settings_ui <- renderUI({
