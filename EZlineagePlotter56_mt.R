@@ -2241,138 +2241,138 @@ mt_install_server <- function(input, output, session) {
   # END DEBOUNCED REACTIVE INPUTS
   # ==========================================================================
 
-  # --- Build highlight YAML (called from mt_do_render via session$onFlushed) ---
+  # --- Build highlight YAML (called from mt_do_render, already inside isolate) ---
   mt_build_highlight_yaml <- function() {
-    isolate({
-      if (!isTRUE(input$mt_enable_highlight) || is.null(input$mt_highlight_values) ||
-          length(input$mt_highlight_values) == 0) {
-        mt_values$highlight_yaml <- NULL
-        return()
-      }
-      hl_vals <- input$mt_highlight_values
-      hl_according <- list()
-      for (j in seq_along(hl_vals)) {
-        color_id <- paste0("mt_highlight_color_", j)
-        trans_id <- paste0("mt_highlight_transparency_", j)
-        val_color <- if (!is.null(input[[color_id]])) input[[color_id]] else rainbow(length(hl_vals))[j]
-        val_trans <- if (!is.null(input[[trans_id]])) input[[trans_id]] else 0.5
-        entry <- list()
-        entry[[as.character(j)]] <- list(
-          title1 = input$mt_highlight_column,
-          value1 = list(hl_vals[j]),
-          display_name = hl_vals[j],
-          color = val_color,
-          transparency = val_trans
-        )
-        hl_according[[j]] <- entry
-      }
-      mt_values$highlight_yaml <- list(
-        display = "yes",
-        title = if (!is.null(input$mt_highlight_title) && nchar(input$mt_highlight_title) > 0) input$mt_highlight_title else "Highlight",
-        offset = if (!is.null(input$mt_highlight_offset)) input$mt_highlight_offset else 0,
-        vertical_offset = if (!is.null(input$mt_highlight_vertical_offset)) input$mt_highlight_vertical_offset else 0,
-        adjust_height = if (!is.null(input$mt_highlight_adjust_height)) input$mt_highlight_adjust_height else 1,
-        adjust_width = if (!is.null(input$mt_highlight_adjust_width)) input$mt_highlight_adjust_width else 1.5,
-        according = hl_according
+    if (!isTRUE(input$mt_enable_highlight) || is.null(input$mt_highlight_values) ||
+        length(input$mt_highlight_values) == 0) {
+      mt_values$highlight_yaml <- NULL
+      return()
+    }
+    hl_vals <- input$mt_highlight_values
+    hl_according <- list()
+    for (j in seq_along(hl_vals)) {
+      color_id <- paste0("mt_highlight_color_", j)
+      trans_id <- paste0("mt_highlight_transparency_", j)
+      val_color <- if (!is.null(input[[color_id]])) input[[color_id]] else rainbow(length(hl_vals))[j]
+      val_trans <- if (!is.null(input[[trans_id]])) input[[trans_id]] else 0.5
+      entry <- list()
+      entry[[as.character(j)]] <- list(
+        title1 = input$mt_highlight_column,
+        value1 = list(hl_vals[j]),
+        display_name = hl_vals[j],
+        color = val_color,
+        transparency = val_trans
       )
-    })
+      hl_according[[j]] <- entry
+    }
+    mt_values$highlight_yaml <- list(
+      display = "yes",
+      title = if (!is.null(input$mt_highlight_title) && nchar(input$mt_highlight_title) > 0) input$mt_highlight_title else "Highlight",
+      offset = if (!is.null(input$mt_highlight_offset)) input$mt_highlight_offset else 0,
+      vertical_offset = if (!is.null(input$mt_highlight_vertical_offset)) input$mt_highlight_vertical_offset else 0,
+      adjust_height = if (!is.null(input$mt_highlight_adjust_height)) input$mt_highlight_adjust_height else 1,
+      adjust_width = if (!is.null(input$mt_highlight_adjust_width)) input$mt_highlight_adjust_width else 1.5,
+      according = hl_according
+    )
   }
 
-  # --- Core render function (called via session$onFlushed for proper status sync) ---
+  # --- Core render function (called via session$onFlushed — NOT a reactive context) ---
   mt_do_render <- function() {
-    if (is.null(mt_values$newick_paths) || is.null(mt_values$csv_path)) return()
-    if (isTRUE(mt_values$plot_generating)) return()
-    if (mt_classification_loading()) return()
+    isolate({
+      if (is.null(mt_values$newick_paths) || is.null(mt_values$csv_path)) return()
+      if (isTRUE(mt_values$plot_generating)) return()
+      if (mt_classification_loading()) return()
 
-    mt_values$plot_generating <- TRUE
-    on.exit({
-      mt_values$plot_generating <- FALSE
-      mt_show_ready()
+      mt_values$plot_generating <- TRUE
+      on.exit({
+        mt_values$plot_generating <- FALSE
+        mt_show_ready()
+      })
+
+      mt_values$log_messages <- ""
+      mt_log("Starting multi-tree render...")
+
+      mt_save_current_tree_rotation()
+      mt_build_highlight_yaml()
+
+      shared <- mt_gather_shared()
+
+      if (isTRUE(input$mt_a4_output)) {
+        shared$output_width <- 297
+        shared$output_height <- 210
+        shared$output_units <- "mm"
+      }
+
+      tree_titles <- sapply(mt_values$newick_names, function(tn) {
+        pt <- mt_values$per_tree[[tn]]
+        if (!is.null(pt$title) && nchar(pt$title) > 0) pt$title else tn
+      })
+      tree_bg_colors <- sapply(mt_values$newick_names, function(tn) {
+        pt <- mt_values$per_tree[[tn]]
+        if (!is.null(pt$bg_color)) pt$bg_color else "#FFFFFF"
+      })
+
+      render_csv_path <- if (!is.null(mt_values$temp_csv_path) && file.exists(mt_values$temp_csv_path)) {
+        mt_values$temp_csv_path
+      } else {
+        mt_values$csv_path
+      }
+
+      dirty <- mt_values$dirty_trees
+
+      result <- tryCatch(
+        func.multiple.trees.one.page.in.app(
+          newick_paths = mt_values$newick_paths,
+          newick_names = mt_values$newick_names,
+          csv_path = render_csv_path,
+          shared_settings = shared,
+          per_tree_list = mt_values$per_tree,
+          tree_titles = tree_titles,
+          tree_bg_colors = tree_bg_colors,
+          log_fn = mt_log,
+          p_cache_per_tree = mt_values$p_cache_per_tree,
+          cached_tree_plots = mt_values$cached_tree_plots,
+          dirty_trees = dirty
+        ),
+        error = function(e) {
+          mt_log(paste0("RENDER ERROR: ", e$message))
+          NULL
+        }
+      )
+
+      if (!is.null(result)) {
+        cached_p <- attr(result, "p_cache_per_tree")
+        if (!is.null(cached_p)) mt_values$p_cache_per_tree <- cached_p
+        cached_plots <- attr(result, "cached_tree_plots")
+        if (!is.null(cached_plots)) mt_values$cached_tree_plots <- cached_plots
+
+        mt_values$last_plot <- result
+        mt_values$dirty_trees <- character(0)
+        mt_log("Render complete!")
+
+        tmp <- tempfile(fileext = ".svg")
+        w <- if (isTRUE(input$mt_a4_output)) 297 else {
+          v <- input$mt_output_width; if (!is.null(v)) v else 29.7
+        }
+        h <- if (isTRUE(input$mt_a4_output)) 210 else {
+          v <- input$mt_output_height; if (!is.null(v)) v else 42
+        }
+        u <- if (isTRUE(input$mt_a4_output)) "mm" else {
+          v <- input$mt_output_units; if (!is.null(v)) v else "cm"
+        }
+        ggplot2::ggsave(tmp, plot = result, width = w, height = h, units = u,
+                        limitsize = FALSE)
+        mt_values$last_plot_file <- tmp
+        mt_values$plot_counter <- mt_values$plot_counter + 1
+      }
+
+      mt_last_render_time(as.numeric(Sys.time()) * 1000)
+
+      current_count <- mt_values$plot_counter
+      if (current_count > 0 && current_count %% 3 == 0) {
+        later::later(function() { gc(verbose = FALSE) }, delay = 0.1)
+      }
     })
-
-    mt_values$log_messages <- ""
-    mt_log("Starting multi-tree render...")
-
-    isolate(mt_save_current_tree_rotation())
-    mt_build_highlight_yaml()
-
-    shared <- isolate(mt_gather_shared())
-
-    if (isTRUE(isolate(input$mt_a4_output))) {
-      shared$output_width <- 297
-      shared$output_height <- 210
-      shared$output_units <- "mm"
-    }
-
-    tree_titles <- sapply(mt_values$newick_names, function(tn) {
-      pt <- mt_values$per_tree[[tn]]
-      if (!is.null(pt$title) && nchar(pt$title) > 0) pt$title else tn
-    })
-    tree_bg_colors <- sapply(mt_values$newick_names, function(tn) {
-      pt <- mt_values$per_tree[[tn]]
-      if (!is.null(pt$bg_color)) pt$bg_color else "#FFFFFF"
-    })
-
-    render_csv_path <- if (!is.null(mt_values$temp_csv_path) && file.exists(mt_values$temp_csv_path)) {
-      mt_values$temp_csv_path
-    } else {
-      mt_values$csv_path
-    }
-
-    dirty <- isolate(mt_values$dirty_trees)
-
-    result <- tryCatch(
-      func.multiple.trees.one.page.in.app(
-        newick_paths = mt_values$newick_paths,
-        newick_names = mt_values$newick_names,
-        csv_path = render_csv_path,
-        shared_settings = shared,
-        per_tree_list = mt_values$per_tree,
-        tree_titles = tree_titles,
-        tree_bg_colors = tree_bg_colors,
-        log_fn = mt_log,
-        p_cache_per_tree = isolate(mt_values$p_cache_per_tree),
-        cached_tree_plots = isolate(mt_values$cached_tree_plots),
-        dirty_trees = dirty
-      ),
-      error = function(e) {
-        mt_log(paste0("RENDER ERROR: ", e$message))
-        NULL
-      }
-    )
-
-    if (!is.null(result)) {
-      cached_p <- attr(result, "p_cache_per_tree")
-      if (!is.null(cached_p)) mt_values$p_cache_per_tree <- cached_p
-      cached_plots <- attr(result, "cached_tree_plots")
-      if (!is.null(cached_plots)) mt_values$cached_tree_plots <- cached_plots
-
-      mt_values$last_plot <- result
-      mt_values$dirty_trees <- character(0)
-      mt_log("Render complete!")
-
-      tmp <- tempfile(fileext = ".svg")
-      w <- if (isTRUE(isolate(input$mt_a4_output))) 297 else {
-        v <- isolate(input$mt_output_width); if (!is.null(v)) v else 29.7
-      }
-      h <- if (isTRUE(isolate(input$mt_a4_output))) 210 else {
-        v <- isolate(input$mt_output_height); if (!is.null(v)) v else 42
-      }
-      u <- if (isTRUE(isolate(input$mt_a4_output))) "mm" else {
-        v <- isolate(input$mt_output_units); if (!is.null(v)) v else "cm"
-      }
-      ggplot2::ggsave(tmp, plot = result, width = w, height = h, units = u,
-                      limitsize = FALSE)
-      mt_values$last_plot_file <- tmp
-      mt_values$plot_counter <- isolate(mt_values$plot_counter) + 1
-    }
-
-    mt_last_render_time(as.numeric(Sys.time()) * 1000)
-
-    current_count <- isolate(mt_values$plot_counter)
-    if (current_count > 0 && current_count %% 3 == 0) {
-      later::later(function() { gc(verbose = FALSE) }, delay = 0.1)
-    }
   }
 
   # Request a render: shows Processing, flushes to browser, THEN does heavy work
