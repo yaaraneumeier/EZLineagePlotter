@@ -725,7 +725,7 @@ mt_tabItem_config <- function() {
         solidHeader = TRUE, width = 12,
         tags$p("Current multi-tree YAML configuration:"),
         verbatimTextOutput("mt_yaml_output"),
-        downloadButton("mt_download_yaml", "Download Configuration", class = "btn-success")
+        downloadButton("mt_download_yaml_config", "Download Configuration", class = "btn-success")
     )
   ))
 }
@@ -2594,6 +2594,23 @@ mt_install_server <- function(input, output, session) {
       )
       yaml_text <- tryCatch(yaml::as.yaml(yaml_data, indent = 2), error = function(e) "# Error generating YAML")
       writeLines(yaml_text, file)
+    }
+  )
+
+  # Config tab YAML download (same content, different button ID)
+  output$mt_download_yaml_config <- downloadHandler(
+    filename = function() { "multi_tree_config.yaml" },
+    content = function(file) {
+      shared <- tryCatch(mt_gather_shared(), error = function(e) list())
+      yaml_data <- tryCatch(
+        mt_build_yaml_data(
+          newick_path = if (!is.null(mt_values$newick_paths)) mt_values$newick_paths[1] else "tree.nwk",
+          csv_path = if (!is.null(mt_values$csv_path)) mt_values$csv_path else "data.csv",
+          shared = shared, per_tree = list()
+        ),
+        error = function(e) list()
+      )
+      writeLines(tryCatch(yaml::as.yaml(yaml_data, indent = 2), error = function(e) "# Error"), file)
     }
   )
 
