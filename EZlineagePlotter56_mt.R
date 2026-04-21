@@ -900,7 +900,7 @@ mt_build_yaml_data <- function(newick_path, csv_path, shared, per_tree) {
       "individual column" = shared$individual_column,
       "out_file" = list(
         "base_path" = "./",
-        "file_type" = shared$output_format,
+        "file_type" = "pdf",
         "optional text at beggining" = "",
         "optional text at end" = "",
         "replace name" = list(flag = "no", name = "tree_plot")
@@ -1149,7 +1149,7 @@ mt_install_server <- function(input, output, session) {
   mt_observed_slots <- reactiveVal(integer(0))
 
   # "+ Add another tree" button adds a new upload widget
-  observeEvent(input$mt_add_upload_slot, {
+  observeEvent(input$mt_add_upload_slot, ignoreInit = TRUE, {
     mt_slot_count(mt_slot_count() + 1)
   })
 
@@ -1281,7 +1281,7 @@ mt_install_server <- function(input, output, session) {
 
   # --- CSV upload observer ---
   # Mirrors single-mode CSV read (lines 12346-12373): fread + column filtering
-  observeEvent(input$mt_csv_file, {
+  observeEvent(input$mt_csv_file, ignoreInit = TRUE, {
     req(input$mt_csv_file)
     mt_values$csv_path <- input$mt_csv_file$datapath
     csv_data_raw <- tryCatch({
@@ -1404,7 +1404,7 @@ mt_install_server <- function(input, output, session) {
   }
 
   # Auto-match individuals by filename
-  observeEvent(input$mt_auto_match_individuals, {
+  observeEvent(input$mt_auto_match_individuals, ignoreInit = TRUE, {
     req(mt_values$newick_names, mt_values$csv_data, input$mt_individual_column)
     if (input$mt_individual_column == "") return()
     choices <- mt_individual_choices()
@@ -1498,7 +1498,7 @@ mt_install_server <- function(input, output, session) {
   })
 
   # --- Highlight column observer (matches single mode lines 14225-14270) ---
-  observeEvent(input$mt_highlight_column, {
+  observeEvent(input$mt_highlight_column, ignoreInit = TRUE, {
     if (is.null(input$mt_highlight_column) || input$mt_highlight_column == "") {
       updateSelectizeInput(session, "mt_highlight_values", choices = character(0), selected = character(0))
       output$mt_highlight_values_settings_ui <- renderUI({
@@ -1543,7 +1543,7 @@ mt_install_server <- function(input, output, session) {
   }, ignoreInit = TRUE)
 
   # --- Process & Match IDs ---
-  observeEvent(input$mt_process_data, {
+  observeEvent(input$mt_process_data, ignoreInit = TRUE, {
     req(mt_values$csv_data, mt_values$newick_paths)
     mt_log("Processing and matching IDs for each tree...")
 
@@ -1672,7 +1672,7 @@ mt_install_server <- function(input, output, session) {
     # Manual rotation nodes saved by apply button
   }
 
-  observeEvent(input$mt_tree_selector, {
+  observeEvent(input$mt_tree_selector, ignoreInit = TRUE, {
     req(input$mt_tree_selector)
 
     # Save previous tree's rotation state
@@ -1811,7 +1811,7 @@ mt_install_server <- function(input, output, session) {
   # Dynamic value dropdowns for rotation1 groups
   observe({
     req(input$mt_rotation1_num_groups)
-    csv_data <- mt_csv_for_classification()
+    csv_data <- isolate(mt_csv_for_classification())
     if (is.null(csv_data)) return()
     for (i in 1:input$mt_rotation1_num_groups) {
       local({
@@ -1822,7 +1822,7 @@ mt_install_server <- function(input, output, session) {
             selectInput(inputId = paste0("mt_rotation1_val_", my_i), label = "Value:",
                         choices = c("Select column first" = ""))
           } else {
-            csv_to_use <- mt_csv_for_classification()
+            csv_to_use <- isolate(mt_csv_for_classification())
             unique_vals <- unique(csv_to_use[[col_input]])
             unique_vals <- unique_vals[!is.na(unique_vals)]
             selectInput(inputId = paste0("mt_rotation1_val_", my_i), label = "Value:",
@@ -1836,7 +1836,7 @@ mt_install_server <- function(input, output, session) {
   # Dynamic value dropdowns for rotation2 groups
   observe({
     req(input$mt_rotation2_num_groups)
-    csv_data <- mt_csv_for_classification()
+    csv_data <- isolate(mt_csv_for_classification())
     if (is.null(csv_data)) return()
     for (i in 1:input$mt_rotation2_num_groups) {
       local({
@@ -1847,7 +1847,7 @@ mt_install_server <- function(input, output, session) {
             selectInput(inputId = paste0("mt_rotation2_val_", my_i), label = "Value:",
                         choices = c("Select column first" = ""))
           } else {
-            csv_to_use <- mt_csv_for_classification()
+            csv_to_use <- isolate(mt_csv_for_classification())
             unique_vals <- unique(csv_to_use[[col_input]])
             unique_vals <- unique_vals[!is.na(unique_vals)]
             selectInput(inputId = paste0("mt_rotation2_val_", my_i), label = "Value:",
@@ -2108,9 +2108,11 @@ mt_install_server <- function(input, output, session) {
 
   # --- Per-tree extra UI (title + bg color) ---
   output$mt_per_tree_extra_ui <- renderUI({
-    req(input$mt_tree_selector, mt_values$per_tree)
-    tn <- input$mt_tree_selector
+    req(input$mt_extra_tree_selector, mt_values$per_tree)
+    tn <- input$mt_extra_tree_selector
+    if (tn == "all") return(tags$p(class = "text-muted", "Select a specific tree to edit its title and background color."))
     pt <- mt_values$per_tree[[tn]]
+    if (is.null(pt)) return(NULL)
     tagList(
       tags$p(tags$strong(paste0("Tree: ", tn))),
       textInput("mt_pt_title", "Tree Title:",
@@ -2122,16 +2124,18 @@ mt_install_server <- function(input, output, session) {
 
   # Save per-tree extra values
   observeEvent(input$mt_pt_title, ignoreInit = TRUE, {
-    req(input$mt_tree_selector)
-    tn <- input$mt_tree_selector
+    req(input$mt_extra_tree_selector)
+    tn <- input$mt_extra_tree_selector
+    if (tn == "all") return()
     if (!is.null(mt_values$per_tree[[tn]])) {
       mt_values$per_tree[[tn]]$title <- input$mt_pt_title
     }
   })
 
   observeEvent(input$mt_pt_bg_color, ignoreInit = TRUE, {
-    req(input$mt_tree_selector)
-    tn <- input$mt_tree_selector
+    req(input$mt_extra_tree_selector)
+    tn <- input$mt_extra_tree_selector
+    if (tn == "all") return()
     if (!is.null(mt_values$per_tree[[tn]])) {
       mt_values$per_tree[[tn]]$bg_color <- input$mt_pt_bg_color
     }
@@ -2288,6 +2292,13 @@ mt_install_server <- function(input, output, session) {
         mt_values$plot_generating <- FALSE
         mt_show_ready()
       })
+
+      # Clean up old plot files (keep last 5)
+      old_svgs <- list.files(tempdir(), pattern = paste0("^file.*\\.svg$"), full.names = TRUE)
+      if (length(old_svgs) > 5) {
+        old_sorted <- old_svgs[order(file.info(old_svgs)$mtime)]
+        sapply(old_sorted[1:(length(old_sorted) - 5)], unlink)
+      }
 
       mt_values$log_messages <- ""
       mt_log("Starting multi-tree render...")
@@ -2902,21 +2913,24 @@ mt_install_server <- function(input, output, session) {
 
   # --- Configuration YAML output ---
   output$mt_yaml_output <- renderText({
-    shared <- tryCatch(mt_gather_shared(), error = function(e) list())
-    yaml_data <- tryCatch(
-      mt_build_yaml_data(
-        newick_path = if (!is.null(mt_values$newick_paths)) mt_values$newick_paths[1] else "tree.nwk",
-        csv_path = if (!is.null(mt_values$csv_path)) mt_values$csv_path else "data.csv",
-        shared = shared,
-        per_tree = list()
-      ),
-      error = function(e) list(error = e$message)
-    )
-    yaml::as.yaml(yaml_data, indent.mapping.sequence = TRUE)
+    mt_values$plot_counter
+    isolate({
+      shared <- tryCatch(mt_gather_shared(), error = function(e) list())
+      yaml_data <- tryCatch(
+        mt_build_yaml_data(
+          newick_path = if (!is.null(mt_values$newick_paths)) mt_values$newick_paths[1] else "tree.nwk",
+          csv_path = if (!is.null(mt_values$csv_path)) mt_values$csv_path else "data.csv",
+          shared = shared,
+          per_tree = list()
+        ),
+        error = function(e) list(error = e$message)
+      )
+      yaml::as.yaml(yaml_data, indent.mapping.sequence = TRUE)
+    })
   })
 
   # --- YAML import observer (option ii: imports all shared settings) ---
-  observeEvent(input$mt_yaml_config, {
+  observeEvent(input$mt_yaml_config, ignoreInit = TRUE, {
     req(input$mt_yaml_config)
     mt_log("Importing YAML configuration...")
 
