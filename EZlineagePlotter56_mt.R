@@ -2280,14 +2280,20 @@ mt_install_server <- function(input, output, session) {
     )
   }
 
-  # --- Core render function (called via session$onFlushed — NOT a reactive context) ---
+  # --- Core render function (called via later::later — outside reactive context) ---
   mt_do_render <- function() {
     isolate({
-      if (is.null(mt_values$newick_paths) || is.null(mt_values$csv_path)) return()
-      if (isTRUE(mt_values$plot_generating)) return()
-      if (mt_classification_loading()) return()
+      if (is.null(mt_values$newick_paths) || is.null(mt_values$csv_path)) {
+        mt_values$plot_generating <- FALSE
+        mt_show_ready()
+        return()
+      }
+      if (mt_classification_loading()) {
+        mt_values$plot_generating <- FALSE
+        mt_show_ready()
+        return()
+      }
 
-      mt_values$plot_generating <- TRUE
       on.exit({
         mt_values$plot_generating <- FALSE
         mt_show_ready()
@@ -2386,10 +2392,13 @@ mt_install_server <- function(input, output, session) {
     })
   }
 
-  # Request a render: shows Processing, flushes to browser, THEN does heavy work
+  # Request a render: shows Processing, yields to event loop so browser
+  # receives the status update, THEN does heavy work via later::later.
   mt_request_render <- function(dirty = NULL) {
     if (isTRUE(mt_values$plot_generating)) return()
     if (is.null(mt_values$newick_paths) || is.null(mt_values$csv_path)) return()
+
+    mt_values$plot_generating <- TRUE
 
     if (!is.null(dirty)) {
       current_dirty <- isolate(mt_values$dirty_trees)
@@ -2404,9 +2413,11 @@ mt_install_server <- function(input, output, session) {
 
     mt_show_processing()
 
-    session$onFlushed(function() {
-      mt_do_render()
-    }, once = TRUE)
+    later::later(function() {
+      withReactiveDomain(session, {
+        mt_do_render()
+      })
+    }, delay = 0.1)
   }
 
   # --- Status indicator helpers ---
