@@ -2396,8 +2396,10 @@ mt_install_server <- function(input, output, session) {
     })
   }
 
-  # Request a render: show Processing status, flush to browser, then render.
-  # Uses session$onFlushed so the browser shows "Processing" before R blocks.
+  # Request a render: show Processing status, then render after browser confirms.
+  # Uses shinyjs::delay to round-trip through the browser: the browser receives
+  # "Processing" status, renders it, then after 50ms sends a message back to the
+  # server which triggers the render in a normal observer context.
   mt_request_render <- function(dirty = NULL) {
     if (isTRUE(mt_values$plot_generating)) {
       cat(file=stderr(), "[MT] mt_request_render: SKIP (plot_generating=TRUE)\n")
@@ -2424,10 +2426,10 @@ mt_install_server <- function(input, output, session) {
 
     mt_show_processing()
 
-    session$onFlushed(function() {
-      cat(file=stderr(), "[MT] onFlushed callback -> calling mt_do_render()\n")
+    shinyjs::delay(50, {
+      cat(file=stderr(), "[MT] shinyjs::delay callback -> calling mt_do_render()\n")
       mt_do_render()
-    }, once = TRUE)
+    })
   }
 
   # --- Status indicator helpers ---
