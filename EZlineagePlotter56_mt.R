@@ -2280,18 +2280,27 @@ mt_install_server <- function(input, output, session) {
     )
   }
 
-  # --- Core render function (called directly from observers, like single mode) ---
+  # --- Core render function (called from session$onFlushed after status is sent) ---
   mt_do_render <- function() {
     isolate({
-      if (is.null(mt_values$newick_paths) || is.null(mt_values$csv_path)) return()
-      if (isTRUE(mt_values$plot_generating)) return()
-      if (mt_classification_loading()) return()
+      cat(file=stderr(), "[MT] mt_do_render() called\n")
+      if (is.null(mt_values$newick_paths) || is.null(mt_values$csv_path)) {
+        cat(file=stderr(), "[MT] SKIP: no newick_paths or csv_path\n")
+        mt_values$plot_generating <- FALSE
+        mt_show_ready()
+        return()
+      }
+      if (mt_classification_loading()) {
+        cat(file=stderr(), "[MT] SKIP: classification_loading is TRUE\n")
+        mt_values$plot_generating <- FALSE
+        mt_show_ready()
+        return()
+      }
 
-      mt_show_processing()
-      mt_values$plot_generating <- TRUE
       on.exit({
         mt_values$plot_generating <- FALSE
         mt_show_ready()
+        cat(file=stderr(), "[MT] mt_do_render() exiting\n")
       })
 
       # Clean up old plot files (keep last 5)
@@ -2387,13 +2396,20 @@ mt_install_server <- function(input, output, session) {
     })
   }
 
-  # Request a render: calls mt_do_render directly (synchronous, like single mode).
-  # This avoids async overhead from later::later / session$onFlushed which
-  # forces all reactive processing (renderUI, etc.) to complete before the
-  # render even starts.
+  # Request a render: show Processing status, flush to browser, then render.
+  # Uses session$onFlushed so the browser shows "Processing" before R blocks.
   mt_request_render <- function(dirty = NULL) {
-    if (isTRUE(mt_values$plot_generating)) return()
-    if (is.null(mt_values$newick_paths) || is.null(mt_values$csv_path)) return()
+    if (isTRUE(mt_values$plot_generating)) {
+      cat(file=stderr(), "[MT] mt_request_render: SKIP (plot_generating=TRUE)\n")
+      return()
+    }
+    if (is.null(mt_values$newick_paths) || is.null(mt_values$csv_path)) {
+      cat(file=stderr(), "[MT] mt_request_render: SKIP (no data)\n")
+      return()
+    }
+
+    cat(file=stderr(), "[MT] mt_request_render: locking + showing Processing\n")
+    mt_values$plot_generating <- TRUE
 
     if (!is.null(dirty)) {
       current_dirty <- isolate(mt_values$dirty_trees)
@@ -2406,7 +2422,12 @@ mt_install_server <- function(input, output, session) {
       mt_values$dirty_trees <- NULL
     }
 
-    mt_do_render()
+    mt_show_processing()
+
+    session$onFlushed(function() {
+      cat(file=stderr(), "[MT] onFlushed callback -> calling mt_do_render()\n")
+      mt_do_render()
+    }, once = TRUE)
   }
 
   # --- Status indicator helpers ---
@@ -2880,8 +2901,13 @@ mt_install_server <- function(input, output, session) {
 
   # Apply & Preview: save classification (respecting scope) and trigger main render
   observeEvent(input$mt_update_classification_preview, ignoreInit = TRUE, {
+    cat(file=stderr(), "[MT] Classification Apply button clicked\n")
     cls <- mt_gather_classification()
-    if (is.null(cls)) return()
+    if (is.null(cls)) {
+      cat(file=stderr(), "[MT] Classification Apply: mt_gather_classification() returned NULL\n")
+      return()
+    }
+    cat(file=stderr(), paste0("[MT] Classification Apply: gathered ", length(cls$classes), " classes\n"))
 
     scope <- if (!is.null(input$mt_classification_scope)) input$mt_classification_scope else "all"
     grps <- lapply(cls$classes, function(entry) {
