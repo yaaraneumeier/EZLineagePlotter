@@ -9182,7 +9182,6 @@ ui <- dashboardPage(
     ),
     tags$hr(style = "margin: 0;"),
     sidebarMenu(
-      id = "sidebar_tabs",
       menuItem("Upload Data", tabName = "data_upload", icon = icon("upload")),
       menuItem("Tree Display", tabName = "tree_display", icon = icon("tree")),
       menuItem("Classification", tabName = "classification", icon = icon("palette")),
@@ -9195,19 +9194,8 @@ ui <- dashboardPage(
       menuItem("Download", tabName = "download", icon = icon("download")),
       menuItem("Configuration", tabName = "config", icon = icon("cogs"))
     ),
-    shinyjs::hidden(div(id = "mt_sidebar_wrapper",
-      sidebarMenu(
-        id = "sidebar_tabs_mt",
-        menuItem("Upload Data", tabName = "mt_upload", icon = icon("upload")),
-        menuItem("Tree Display", tabName = "mt_tree_display", icon = icon("tree")),
-        menuItem("Classification", tabName = "mt_classification", icon = icon("palette")),
-        menuItem("Bootstrap Values", tabName = "mt_bootstrap", icon = icon("percentage")),
-        menuItem("Highlighting", tabName = "mt_highlighting", icon = icon("highlighter")),
-        menuItem("Legend", tabName = "mt_legend", icon = icon("list")),
-        menuItem("Extra", tabName = "mt_extra", icon = icon("plus-circle")),
-        menuItem("Download", tabName = "mt_download", icon = icon("download")),
-        menuItem("Configuration", tabName = "mt_config", icon = icon("cogs"))
-      )
+    shinyjs::hidden(div(id = "multi_tree_sidebar",
+      sidebarMenuOutput("mt_sidebar_menu")
     ))
   ),
   
@@ -22292,7 +22280,7 @@ server <- function(input, output, session) {
     )
   }, deleteFile = FALSE)
 
-  # === MULTI-TREE MODE: Render mt tabs only when first needed ===
+  # === MULTI-TREE MODE: Render mt UI only when first needed ===
   mt_server_installed <- FALSE
   output$mt_tabs_placeholder <- renderUI({
     req(input$app_mode == "Multiple Trees")
@@ -22308,19 +22296,31 @@ server <- function(input, output, session) {
       mt_tabItem_config()
     )
   })
+  output$mt_sidebar_menu <- renderMenu({
+    req(input$app_mode == "Multiple Trees")
+    sidebarMenu(
+      menuItem("Upload Data", tabName = "mt_upload", icon = icon("upload")),
+      menuItem("Tree Display", tabName = "mt_tree_display", icon = icon("tree")),
+      menuItem("Classification", tabName = "mt_classification", icon = icon("palette")),
+      menuItem("Bootstrap Values", tabName = "mt_bootstrap", icon = icon("percentage")),
+      menuItem("Highlighting", tabName = "mt_highlighting", icon = icon("highlighter")),
+      menuItem("Legend", tabName = "mt_legend", icon = icon("list")),
+      menuItem("Extra", tabName = "mt_extra", icon = icon("plus-circle")),
+      menuItem("Download", tabName = "mt_download", icon = icon("download")),
+      menuItem("Configuration", tabName = "mt_config", icon = icon("cogs"))
+    )
+  })
   observeEvent(input$app_mode, ignoreInit = TRUE, {
     if (input$app_mode == "Multiple Trees") {
-      shinyjs::hide(selector = "#sidebar_tabs")
-      shinyjs::show("mt_sidebar_wrapper")
+      shinyjs::runjs("$('.sidebar-menu').first().hide()")
+      shinyjs::show("multi_tree_sidebar")
       if (!mt_server_installed) {
         mt_install_server(input, output, session)
         mt_server_installed <<- TRUE
       }
-      updateTabItems(session, "sidebar_tabs_mt", selected = "mt_upload")
     } else {
-      shinyjs::hide("mt_sidebar_wrapper")
-      shinyjs::show(selector = "#sidebar_tabs")
-      updateTabItems(session, "sidebar_tabs", selected = "data_upload")
+      shinyjs::hide("multi_tree_sidebar")
+      shinyjs::runjs("$('.sidebar-menu').first().show()")
     }
   })
 
