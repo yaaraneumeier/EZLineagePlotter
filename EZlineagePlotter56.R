@@ -22303,14 +22303,18 @@ server <- function(input, output, session) {
   }, deleteFile = FALSE)
 
   # === MULTI-TREE MODE: Mode switching + server logic ===
+  mt_server_installed <- FALSE
   observeEvent(input$app_mode, {
     if (input$app_mode == "Multiple Trees") {
+      if (!mt_server_installed) {
+        mt_install_server(input, output, session)
+        mt_server_installed <<- TRUE
+      }
       updateTabItems(session, "sidebar_multi", selected = "mt_upload")
     } else {
       updateTabItems(session, "sidebar_single", selected = "data_upload")
     }
   })
-  mt_install_server(input, output, session)
 
 } # End of server function
 

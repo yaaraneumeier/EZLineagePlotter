@@ -2953,15 +2953,6 @@ mt_install_server <- function(input, output, session) {
     mt_plot_image("Click Apply & Preview to render.")
   }, deleteFile = FALSE)
 
-  outputOptions(output, "mt_combined_plot", suspendWhenHidden = FALSE)
-  outputOptions(output, "mt_combined_plot_class", suspendWhenHidden = FALSE)
-  outputOptions(output, "mt_tree_display_preview", suspendWhenHidden = FALSE)
-  outputOptions(output, "mt_bootstrap_preview", suspendWhenHidden = FALSE)
-  outputOptions(output, "mt_highlight_preview", suspendWhenHidden = FALSE)
-  outputOptions(output, "mt_legend_preview", suspendWhenHidden = FALSE)
-  outputOptions(output, "mt_extra_preview", suspendWhenHidden = FALSE)
-  outputOptions(output, "mt_download_preview", suspendWhenHidden = FALSE)
-
   # --- Configuration YAML output ---
   output$mt_yaml_output <- renderText({
     mt_values$plot_counter
