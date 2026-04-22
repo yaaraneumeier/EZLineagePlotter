@@ -9170,15 +9170,18 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
 # Define UI
 ui <- dashboardPage(
-  dashboardHeader(title = "Lineage Tree Plotter v159"),
+  dashboardHeader(title = "Lineage Tree Plotter v159",
+    tags$li(class = "dropdown",
+      tags$div(style = "padding: 8px 15px; display: inline-block;",
+        selectInput("app_mode", NULL,
+                    choices = c("Single Tree", "Multiple Trees"),
+                    selected = "Single Tree", width = "150px")
+      )
+    )
+  ),
   
   dashboardSidebar(
     width = 300,
-    tags$div(style = "padding: 10px 15px;",
-      selectInput("app_mode", "Mode:",
-                  choices = c("Single Tree", "Multiple Trees"),
-                  selected = "Single Tree", width = "100%")
-    ),
     sidebarMenu(
       menuItem("Upload Data", tabName = "data_upload", icon = icon("upload")),
       menuItem("Tree Display", tabName = "tree_display", icon = icon("tree")),
@@ -10655,9 +10658,9 @@ ui <- dashboardPage(
             downloadButton("download_yaml_config", "Download Configuration", class = "btn-success")
           )
         )
-      ),
-      uiOutput("mt_tabs_placeholder")
-    )
+      )
+    ),
+    uiOutput("mt_tabs_placeholder")
   )
 )
 
