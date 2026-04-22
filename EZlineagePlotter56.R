@@ -62,7 +62,6 @@ options(shiny.reactlog = TRUE)
 # v146: Increase max upload size for Shiny server deployments (100MB)
 options(shiny.maxRequestSize = 100*1024^2)
 
-# === MULTI-TREE MODE: Source separate module ===
 source(file.path(getwd(), "EZlineagePlotter56_mt.R"), local = TRUE)
 
 # v147: Fixed ellipse x0 positioning in heatmap mode (was using incorrect -15.4 multiplier)
@@ -9180,7 +9179,6 @@ ui <- dashboardPage(
                   choices = c("Single Tree", "Multiple Trees"),
                   selected = "Single Tree", width = "100%")
     ),
-    tags$hr(style = "margin: 0;"),
     sidebarMenu(
       menuItem("Upload Data", tabName = "data_upload", icon = icon("upload")),
       menuItem("Tree Display", tabName = "tree_display", icon = icon("tree")),
@@ -9190,13 +9188,10 @@ ui <- dashboardPage(
       menuItem("Heatmap", tabName = "heatmap", icon = icon("th")),
       menuItem("SNP Analysis", tabName = "snp_analysis", icon = icon("dna")),
       menuItem("Legend", tabName = "legend", icon = icon("list")),
-      menuItem("Extra", tabName = "extra", icon = icon("plus-circle")),
+      menuItem("Extra", tabName = "extra", icon = icon("plus-circle")),  # v130: New tab for title, text, images
       menuItem("Download", tabName = "download", icon = icon("download")),
       menuItem("Configuration", tabName = "config", icon = icon("cogs"))
-    ),
-    shinyjs::hidden(div(id = "multi_tree_sidebar",
-      sidebarMenuOutput("mt_sidebar_menu")
-    ))
+    )
   ),
   
   dashboardBody(
@@ -9233,15 +9228,9 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #155724;",
-                     tags$h4(style = "color: #155724; margin: 0;", "Version S3.13 Stable"),
+                     tags$h4(style = "color: #155724; margin: 0;", "Version S3.12 Stable"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
-                            tags$strong("New in S3.13:"),
-                            tags$ul(
-                              tags$li("Multiple Trees Mode: plot several trees on one page with shared classification coloring"),
-                              tags$li("Per-tree rotation, background color, and display titles"),
-                              tags$li("YAML import support for multi-tree shared settings")
-                            ),
-                            tags$strong("From S3.12:"),
+                            tags$strong("New in S3.12:"),
                             tags$ul(
                               tags$li("Fix crash when YAML references CSV columns that don't exist"),
                               tags$li("Filter stray numeric values from discrete heatmap legends"),
@@ -10667,8 +10656,6 @@ ui <- dashboardPage(
           )
         )
       ),
-
-      # === MULTI-TREE MODE: Tab items rendered on demand ===
       uiOutput("mt_tabs_placeholder")
     )
   )
@@ -22280,8 +22267,9 @@ server <- function(input, output, session) {
     )
   }, deleteFile = FALSE)
 
-  # === MULTI-TREE MODE: Render mt UI only when first needed ===
+  # === MULTI-TREE MODE ===
   mt_server_installed <- FALSE
+
   output$mt_tabs_placeholder <- renderUI({
     req(input$app_mode == "Multiple Trees")
     tagList(
@@ -22296,31 +22284,40 @@ server <- function(input, output, session) {
       mt_tabItem_config()
     )
   })
-  output$mt_sidebar_menu <- renderMenu({
-    req(input$app_mode == "Multiple Trees")
-    sidebarMenu(
-      menuItem("Upload Data", tabName = "mt_upload", icon = icon("upload")),
-      menuItem("Tree Display", tabName = "mt_tree_display", icon = icon("tree")),
-      menuItem("Classification", tabName = "mt_classification", icon = icon("palette")),
-      menuItem("Bootstrap Values", tabName = "mt_bootstrap", icon = icon("percentage")),
-      menuItem("Highlighting", tabName = "mt_highlighting", icon = icon("highlighter")),
-      menuItem("Legend", tabName = "mt_legend", icon = icon("list")),
-      menuItem("Extra", tabName = "mt_extra", icon = icon("plus-circle")),
-      menuItem("Download", tabName = "mt_download", icon = icon("download")),
-      menuItem("Configuration", tabName = "mt_config", icon = icon("cogs"))
-    )
-  })
+
   observeEvent(input$app_mode, ignoreInit = TRUE, {
     if (input$app_mode == "Multiple Trees") {
-      shinyjs::runjs("$('.sidebar-menu').first().hide()")
-      shinyjs::show("multi_tree_sidebar")
       if (!mt_server_installed) {
         mt_install_server(input, output, session)
         mt_server_installed <<- TRUE
       }
+      shinyjs::runjs("
+        $('.sidebar-menu').hide();
+        if ($('#mt_sidebar_container').length === 0) {
+          $('.left-side, .main-sidebar').find('.sidebar').append(
+            '<ul id=\"mt_sidebar_container\" class=\"sidebar-menu\" data-widget=\"tree\">' +
+            '<li><a href=\"#shiny-tab-mt_upload\" data-toggle=\"tab\"><i class=\"fa fa-upload\"></i> <span>Upload Data</span></a></li>' +
+            '<li><a href=\"#shiny-tab-mt_tree_display\" data-toggle=\"tab\"><i class=\"fa fa-tree\"></i> <span>Tree Display</span></a></li>' +
+            '<li><a href=\"#shiny-tab-mt_classification\" data-toggle=\"tab\"><i class=\"fa fa-palette\"></i> <span>Classification</span></a></li>' +
+            '<li><a href=\"#shiny-tab-mt_bootstrap\" data-toggle=\"tab\"><i class=\"fa fa-percentage\"></i> <span>Bootstrap Values</span></a></li>' +
+            '<li><a href=\"#shiny-tab-mt_highlighting\" data-toggle=\"tab\"><i class=\"fa fa-highlighter\"></i> <span>Highlighting</span></a></li>' +
+            '<li><a href=\"#shiny-tab-mt_legend\" data-toggle=\"tab\"><i class=\"fa fa-list\"></i> <span>Legend</span></a></li>' +
+            '<li><a href=\"#shiny-tab-mt_extra\" data-toggle=\"tab\"><i class=\"fa fa-plus-circle\"></i> <span>Extra</span></a></li>' +
+            '<li><a href=\"#shiny-tab-mt_download\" data-toggle=\"tab\"><i class=\"fa fa-download\"></i> <span>Download</span></a></li>' +
+            '<li><a href=\"#shiny-tab-mt_config\" data-toggle=\"tab\"><i class=\"fa fa-cogs\"></i> <span>Configuration</span></a></li>' +
+            '</ul>'
+          );
+          $.AdminLTE.tree('#mt_sidebar_container');
+        }
+        $('#mt_sidebar_container').show();
+        $('#mt_sidebar_container li:first-child a').tab('show');
+      ")
     } else {
-      shinyjs::hide("multi_tree_sidebar")
-      shinyjs::runjs("$('.sidebar-menu').first().show()")
+      shinyjs::runjs("
+        $('#mt_sidebar_container').hide();
+        $('.sidebar-menu').not('#mt_sidebar_container').show();
+        $('.sidebar-menu').not('#mt_sidebar_container').find('li.active a').tab('show');
+      ")
     }
   })
 
