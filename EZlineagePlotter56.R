@@ -10682,16 +10682,8 @@ ui <- dashboardPage(
         )
       ),
 
-      # === MULTI-TREE MODE: Tab items (one per sidebar menuItem) ===
-      mt_tabItem_upload(),
-      mt_tabItem_tree_display(),
-      mt_tabItem_classification(),
-      mt_tabItem_bootstrap(),
-      mt_tabItem_highlighting(),
-      mt_tabItem_legend(),
-      mt_tabItem_extra(),
-      mt_tabItem_download(),
-      mt_tabItem_config()
+      # === MULTI-TREE MODE: Tab items rendered on demand ===
+      uiOutput("mt_tabs_placeholder")
     )
   )
 )
@@ -22302,9 +22294,23 @@ server <- function(input, output, session) {
     )
   }, deleteFile = FALSE)
 
-  # === MULTI-TREE MODE: Mode switching + server logic ===
+  # === MULTI-TREE MODE: Render mt tabs only when first needed ===
   mt_server_installed <- FALSE
-  observeEvent(input$app_mode, {
+  output$mt_tabs_placeholder <- renderUI({
+    req(input$app_mode == "Multiple Trees")
+    tagList(
+      mt_tabItem_upload(),
+      mt_tabItem_tree_display(),
+      mt_tabItem_classification(),
+      mt_tabItem_bootstrap(),
+      mt_tabItem_highlighting(),
+      mt_tabItem_legend(),
+      mt_tabItem_extra(),
+      mt_tabItem_download(),
+      mt_tabItem_config()
+    )
+  })
+  observeEvent(input$app_mode, ignoreInit = TRUE, {
     if (input$app_mode == "Multiple Trees") {
       if (!mt_server_installed) {
         mt_install_server(input, output, session)
