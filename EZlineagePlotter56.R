@@ -62,8 +62,6 @@ options(shiny.reactlog = TRUE)
 # v146: Increase max upload size for Shiny server deployments (100MB)
 options(shiny.maxRequestSize = 100*1024^2)
 
-source(file.path(getwd(), "EZlineagePlotter56_mt.R"), local = TRUE)
-
 # v147: Fixed ellipse x0 positioning in heatmap mode (was using incorrect -15.4 multiplier)
 #       Added debug output for PLOT ellipse alpha to compare with legend ellipse alpha
 #       Improved legend coordinate output with coordinate system explanations
@@ -9170,15 +9168,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
 # Define UI
 ui <- dashboardPage(
-  dashboardHeader(title = "Lineage Tree Plotter v159",
-    tags$li(class = "dropdown",
-      tags$div(style = "padding: 8px 15px; display: inline-block;",
-        selectInput("app_mode", NULL,
-                    choices = c("Single Tree", "Multiple Trees"),
-                    selected = "Single Tree", width = "150px")
-      )
-    )
-  ),
+  dashboardHeader(title = "Lineage Tree Plotter v159"),
   
   dashboardSidebar(
     width = 300,
@@ -10659,8 +10649,7 @@ ui <- dashboardPage(
           )
         )
       )
-    ),
-    uiOutput("mt_tabs_placeholder")
+    )
   )
 )
 
@@ -22269,60 +22258,6 @@ server <- function(input, output, session) {
       alt = "SNP Analysis preview"
     )
   }, deleteFile = FALSE)
-
-  # === MULTI-TREE MODE ===
-  mt_server_installed <- FALSE
-
-  output$mt_tabs_placeholder <- renderUI({
-    req(input$app_mode == "Multiple Trees")
-    tagList(
-      mt_tabItem_upload(),
-      mt_tabItem_tree_display(),
-      mt_tabItem_classification(),
-      mt_tabItem_bootstrap(),
-      mt_tabItem_highlighting(),
-      mt_tabItem_legend(),
-      mt_tabItem_extra(),
-      mt_tabItem_download(),
-      mt_tabItem_config()
-    )
-  })
-
-  observeEvent(input$app_mode, ignoreInit = TRUE, {
-    if (input$app_mode == "Multiple Trees") {
-      if (!mt_server_installed) {
-        mt_install_server(input, output, session)
-        mt_server_installed <<- TRUE
-      }
-      shinyjs::runjs("
-        $('.sidebar-menu').hide();
-        if ($('#mt_sidebar_container').length === 0) {
-          $('.left-side, .main-sidebar').find('.sidebar').append(
-            '<ul id=\"mt_sidebar_container\" class=\"sidebar-menu\" data-widget=\"tree\">' +
-            '<li><a href=\"#shiny-tab-mt_upload\" data-toggle=\"tab\"><i class=\"fa fa-upload\"></i> <span>Upload Data</span></a></li>' +
-            '<li><a href=\"#shiny-tab-mt_tree_display\" data-toggle=\"tab\"><i class=\"fa fa-tree\"></i> <span>Tree Display</span></a></li>' +
-            '<li><a href=\"#shiny-tab-mt_classification\" data-toggle=\"tab\"><i class=\"fa fa-palette\"></i> <span>Classification</span></a></li>' +
-            '<li><a href=\"#shiny-tab-mt_bootstrap\" data-toggle=\"tab\"><i class=\"fa fa-percentage\"></i> <span>Bootstrap Values</span></a></li>' +
-            '<li><a href=\"#shiny-tab-mt_highlighting\" data-toggle=\"tab\"><i class=\"fa fa-highlighter\"></i> <span>Highlighting</span></a></li>' +
-            '<li><a href=\"#shiny-tab-mt_legend\" data-toggle=\"tab\"><i class=\"fa fa-list\"></i> <span>Legend</span></a></li>' +
-            '<li><a href=\"#shiny-tab-mt_extra\" data-toggle=\"tab\"><i class=\"fa fa-plus-circle\"></i> <span>Extra</span></a></li>' +
-            '<li><a href=\"#shiny-tab-mt_download\" data-toggle=\"tab\"><i class=\"fa fa-download\"></i> <span>Download</span></a></li>' +
-            '<li><a href=\"#shiny-tab-mt_config\" data-toggle=\"tab\"><i class=\"fa fa-cogs\"></i> <span>Configuration</span></a></li>' +
-            '</ul>'
-          );
-          $.AdminLTE.tree('#mt_sidebar_container');
-        }
-        $('#mt_sidebar_container').show();
-        $('#mt_sidebar_container li:first-child a').tab('show');
-      ")
-    } else {
-      shinyjs::runjs("
-        $('#mt_sidebar_container').hide();
-        $('.sidebar-menu').not('#mt_sidebar_container').show();
-        $('.sidebar-menu').not('#mt_sidebar_container').find('li.active a').tab('show');
-      ")
-    }
-  })
 
 } # End of server function
 
