@@ -3143,8 +3143,7 @@ func.print.lineage.tree <- function(conf_yaml_path,
                                     cached_p_list_of_pairs = NULL,  # S2.0-PERF: Cached p-values (Option 3A)
                                     cached_p_list_hash = NULL,      # S2.0-PERF: Hash for cache validation
                                     p_list_cache = list(),          # S2.7-PERF: Multi-entry cache (hash -> p_list_of_pairs)
-                                    heatmap_cache = list(),         # S2.9-PERF: Heatmap cache (index -> tile_df + hash)
-                                    cached_csv_data = NULL) {       # MT-PERF: Pre-loaded CSV data.frame to skip disk read
+                                    heatmap_cache = list()) {       # S2.9-PERF: Heatmap cache (index -> tile_df + hash)
 
   # === DEBUG CHECKPOINT 2: FUNCTION ENTRY ===
   # v53: cat(file=stderr(), "\nÃ°Å¸â€Â DEBUG CHECKPOINT 2: func.print.lineage.tree ENTRY\n")
@@ -3205,17 +3204,12 @@ func.print.lineage.tree <- function(conf_yaml_path,
   #get csv file for mapping subgroups
   # v53: print(paste0("Get mapping csv from: ",csv_path))
   .prof_section_start <- Sys.time()
-  if (!is.null(cached_csv_data)) {
-    readfile <- cached_csv_data
-    cat(file=stderr(), sprintf("[PROF-TREE] CSV from cache (skipped disk read): %.3f sec\n", as.numeric(Sys.time() - .prof_section_start)))
-  } else if (flag_csv_read_func=="fread"){
+  if (flag_csv_read_func=="fread"){
     fread_rownames(csv_path, row.var = rowname_param)
   } else {
     readfile <- read.csv(csv_path)
   }
-  if (is.null(cached_csv_data)) {
-    cat(file=stderr(), sprintf("[PROF-TREE] CSV read (in func): %.3f sec\n", as.numeric(Sys.time() - .prof_section_start)))
-  }
+  cat(file=stderr(), sprintf("[PROF-TREE] CSV read (in func): %.3f sec\n", as.numeric(Sys.time() - .prof_section_start)))
   #print("readfile is")
   #print(readfile)
   #print("####")
