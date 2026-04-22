@@ -168,7 +168,21 @@ mt_tabItem_upload <- function() {
     # Row 6: Preview
     fluidRow(
       box(
-        title = "Multi-Tree Preview",
+        title = tagList(
+          "Multi-Tree Preview ",
+          span(id = "mt_upload_status_waiting",
+            style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #f8f9fa; color: #6c757d; font-size: 12px;",
+            icon("clock"), " Waiting for data"
+          ),
+          span(id = "mt_upload_status_processing",
+            style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #6c757d; color: #ffffff; font-size: 12px; font-weight: bold;",
+            icon("spinner", class = "fa-spin"), " Processing..."
+          ),
+          span(id = "mt_upload_status_ready",
+            style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #28a745; color: #ffffff; font-size: 12px; font-weight: bold;",
+            icon("check-circle"), " Ready"
+          )
+        ),
         status = "primary",
         solidHeader = TRUE,
         width = 12,
@@ -956,7 +970,8 @@ mt_build_yaml_data <- function(newick_path, csv_path, shared, per_tree) {
 func.render.single.tree.in.app <- function(
   newick_path, tree_name, csv_path,
   shared_settings, per_tree, tree_title, tree_bg_color,
-  log_fn = function(msg) {}, tree_cache = list()
+  log_fn = function(msg) {}, tree_cache = list(),
+  cached_csv_data = NULL
 ) {
   tree_shared <- shared_settings
   if (!is.null(per_tree$individual_value) && nzchar(per_tree$individual_value)) {
@@ -1001,7 +1016,8 @@ func.render.single.tree.in.app <- function(
       cached_p_list_of_pairs = tree_cache$p_list_of_pairs,
       cached_p_list_hash = tree_cache$p_list_hash,
       p_list_cache = if (!is.null(tree_cache$p_list_cache)) tree_cache$p_list_cache else list(),
-      heatmap_cache = if (!is.null(tree_cache$heatmap_cache)) tree_cache$heatmap_cache else list()
+      heatmap_cache = if (!is.null(tree_cache$heatmap_cache)) tree_cache$heatmap_cache else list(),
+      cached_csv_data = cached_csv_data
     ))
   }, error = function(e) {
     tb <- paste(capture.output(traceback(4)), collapse = "\n")
@@ -1053,7 +1069,8 @@ func.multiple.trees.one.page.in.app <- function(
   tree_titles, tree_bg_colors, log_fn = function(msg) {},
   p_cache_per_tree = list(),
   cached_tree_plots = list(),
-  dirty_trees = NULL
+  dirty_trees = NULL,
+  cached_csv_data = NULL
 ) {
   list_out <- list()
   updated_cache <- p_cache_per_tree
@@ -1084,7 +1101,8 @@ func.multiple.trees.one.page.in.app <- function(
       tree_title = tree_titles[i],
       tree_bg_color = tree_bg_colors[i],
       log_fn = log_fn,
-      tree_cache = tree_cache
+      tree_cache = tree_cache,
+      cached_csv_data = cached_csv_data
     )
 
     if (is.null(result_single)) next
@@ -1480,6 +1498,14 @@ mt_install_server <- function(input, output, session) {
       !is.null(mt_values$csv_data)
   })
   outputOptions(output, "mt_files_loaded", suspendWhenHidden = FALSE)
+  outputOptions(output, "mt_combined_plot", suspendWhenHidden = FALSE)
+  outputOptions(output, "mt_combined_plot_class", suspendWhenHidden = FALSE)
+  outputOptions(output, "mt_tree_display_preview", suspendWhenHidden = FALSE)
+  outputOptions(output, "mt_bootstrap_preview", suspendWhenHidden = FALSE)
+  outputOptions(output, "mt_highlight_preview", suspendWhenHidden = FALSE)
+  outputOptions(output, "mt_legend_preview", suspendWhenHidden = FALSE)
+  outputOptions(output, "mt_extra_preview", suspendWhenHidden = FALSE)
+  outputOptions(output, "mt_download_preview", suspendWhenHidden = FALSE)
 
   # --- Tree summary output ---
   output$mt_tree_summary <- renderText({
@@ -2339,6 +2365,18 @@ mt_install_server <- function(input, output, session) {
         mt_values$csv_path
       }
 
+      render_csv_data <- if (!is.null(mt_values$filtered_csv) && is.data.frame(mt_values$filtered_csv) && nrow(mt_values$filtered_csv) > 0) {
+        mt_values$filtered_csv
+      } else if (!is.null(mt_values$csv_data) && is.data.frame(mt_values$csv_data)) {
+        mt_values$csv_data
+      } else {
+        NULL
+      }
+      if (!is.null(render_csv_data)) {
+        cat(file=stderr(), sprintf("[MT] Using in-memory CSV (%d rows x %d cols) - skipping disk reads\n",
+                                    nrow(render_csv_data), ncol(render_csv_data)))
+      }
+
       dirty <- mt_values$dirty_trees
 
       result <- tryCatch(
@@ -2353,7 +2391,8 @@ mt_install_server <- function(input, output, session) {
           log_fn = mt_log,
           p_cache_per_tree = mt_values$p_cache_per_tree,
           cached_tree_plots = mt_values$cached_tree_plots,
-          dirty_trees = dirty
+          dirty_trees = dirty,
+          cached_csv_data = render_csv_data
         ),
         error = function(e) {
           mt_log(paste0("RENDER ERROR: ", e$message))
@@ -2416,7 +2455,7 @@ mt_install_server <- function(input, output, session) {
     if (!is.null(dirty)) {
       current_dirty <- isolate(mt_values$dirty_trees)
       if (is.null(current_dirty)) {
-        mt_values$dirty_trees <- NULL
+        mt_values$dirty_trees <- dirty
       } else {
         mt_values$dirty_trees <- union(current_dirty, dirty)
       }
@@ -2434,7 +2473,7 @@ mt_install_server <- function(input, output, session) {
 
   # --- Status indicator helpers ---
   mt_show_processing <- function() {
-    for (pfx in c("mt_status", "mt_class_status", "mt_boot_status", "mt_high_status",
+    for (pfx in c("mt_upload_status", "mt_status", "mt_class_status", "mt_boot_status", "mt_high_status",
                    "mt_legend_status", "mt_extra_status", "mt_download_status")) {
       shinyjs::hide(paste0(pfx, "_waiting"))
       shinyjs::hide(paste0(pfx, "_ready"))
@@ -2443,7 +2482,7 @@ mt_install_server <- function(input, output, session) {
   }
 
   mt_show_ready <- function() {
-    for (pfx in c("mt_status", "mt_class_status", "mt_boot_status", "mt_high_status",
+    for (pfx in c("mt_upload_status", "mt_status", "mt_class_status", "mt_boot_status", "mt_high_status",
                    "mt_legend_status", "mt_extra_status", "mt_download_status")) {
       shinyjs::hide(paste0(pfx, "_waiting"))
       shinyjs::hide(paste0(pfx, "_processing"))
