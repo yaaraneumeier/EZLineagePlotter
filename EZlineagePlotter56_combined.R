@@ -64,11 +64,11 @@ mode_switch_btn <- function(current_mode) {
   }
   tags$script(HTML(sprintf("
     $(document).ready(function() {
-      $('body').append(
-        '<a href=\"%s\" style=\"position:fixed;bottom:15px;right:15px;z-index:99999;' +
-        'padding:8px 16px;background:#3c8dbc;color:white;border-radius:4px;' +
-        'text-decoration:none;font-size:13px;font-weight:bold;' +
-        'box-shadow:0 2px 5px rgba(0,0,0,.3);\">%s</a>'
+      $('.sidebar').append(
+        '<div style=\"padding:10px 15px;margin-top:20px;border-top:1px solid #4b646f;\">' +
+        '<a href=\"%s\" style=\"display:block;padding:8px 12px;background:#3c8dbc;color:white;' +
+        'border-radius:4px;text-decoration:none;font-size:13px;font-weight:bold;text-align:center;\">' +
+        '%s</a></div>'
       );
     });
   ", url, label)))

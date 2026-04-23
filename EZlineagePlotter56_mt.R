@@ -454,7 +454,7 @@ mt_tabItem_highlighting <- function() {
           sliderInput("mt_highlight_vertical_offset", "Horizontal Offset (left/right)",
                       min = -1, max = 1, value = 0, step = 0.01),
           sliderInput("mt_highlight_adjust_height", "Ellipse Height",
-                      min = 0.1, max = 3, value = 1, step = 0.05),
+                      min = 0.01, max = 3, value = 1, step = 0.01),
           sliderInput("mt_highlight_adjust_width", "Ellipse Width",
                       min = 0.1, max = 5, value = 1.5, step = 0.1),
           hr(),
@@ -464,6 +464,8 @@ mt_tabItem_highlighting <- function() {
                        icon = icon("minus"), class = "btn-danger btn-block btn-sm"),
           hr(),
           tags$h5("Per-Tree Ellipse Adjustments"),
+          selectInput("mt_highlight_tree_selector", "Select Tree:",
+                      choices = NULL, selected = NULL),
           uiOutput("mt_per_tree_highlight_ui")
         )
       ),
@@ -655,6 +657,12 @@ mt_tabItem_extra <- function() {
                                   class = "btn-secondary btn-sm", icon = icon("undo"), style = "margin-top: 25px;"))
         ),
         hr(),
+        tags$p(class = "text-muted", tags$strong("Per-Tree Background:"), " Set background for individual trees."),
+        fluidRow(
+          column(6, selectInput("mt_bg_tree_selector", "Select Tree:", choices = NULL, selected = NULL)),
+          column(6, uiOutput("mt_per_tree_bg_ui"))
+        ),
+        hr(),
         checkboxInput("mt_a4_output", "A4 Page Format (297x210mm)", value = FALSE)
       ),
       box(title = "Preview", status = "primary", solidHeader = TRUE, width = 6,
@@ -689,7 +697,8 @@ mt_tabItem_extra <- function() {
           ),
           column(6,
             tags$h5("Per-Tree Titles"),
-            tags$p(class = "text-muted", "Change titles for individual trees."),
+            tags$p(class = "text-muted", "Change titles and appearance for individual trees."),
+            selectInput("mt_title_tree_selector", "Select Tree:", choices = NULL, selected = NULL),
             uiOutput("mt_per_tree_extra_ui")
           )
         )
@@ -1049,11 +1058,14 @@ func.render.single.tree.in.app <- function(
 
   if (is.null(one_plot)) return(NULL)
 
+  title_sz <- if (!is.null(per_tree$title_size)) per_tree$title_size else 10
+  title_col <- if (!is.null(per_tree$title_color)) per_tree$title_color else "#000000"
+
   styled_plot <- one_plot +
     ggtree::theme_tree(bgcolor = tree_bg_color) +
     ggplot2::ggtitle(tree_title) +
     ggplot2::theme(
-      plot.title = ggplot2::element_text(hjust = 0.5, size = 10),
+      plot.title = ggplot2::element_text(hjust = 0.5, size = title_sz, colour = title_col),
       plot.background = ggplot2::element_rect(fill = tree_bg_color, color = tree_bg_color)
     ) +
     ggplot2::guides(color = "none", size = "none", shape = "none")
@@ -1284,12 +1296,15 @@ mt_install_server <- function(input, output, session) {
       }
     }
 
-    # Update tree selector
+    # Update tree selectors
     if (length(names) > 0) {
       updateSelectInput(session, "mt_tree_selector",
                         choices = names, selected = names[length(names)])
+      updateSelectInput(session, "mt_highlight_tree_selector",
+                        choices = names, selected = names[1])
     } else {
       updateSelectInput(session, "mt_tree_selector", choices = NULL)
+      updateSelectInput(session, "mt_highlight_tree_selector", choices = NULL)
     }
   }
 
@@ -1966,15 +1981,15 @@ mt_install_server <- function(input, output, session) {
 
   # --- Per-tree highlight UI (rendered dynamically) ---
   output$mt_per_tree_highlight_ui <- renderUI({
-    req(input$mt_tree_selector, mt_values$per_tree)
-    tn <- input$mt_tree_selector
+    req(input$mt_highlight_tree_selector, mt_values$per_tree)
+    tn <- input$mt_highlight_tree_selector
     pt <- mt_values$per_tree[[tn]]
+    if (is.null(pt)) return(NULL)
     tagList(
-      tags$p(tags$strong(paste0("Tree: ", tn))),
       sliderInput("mt_pt_highlight_height", "Ellipse Height (this tree):",
-                  min = 0.1, max = 10,
+                  min = 0.01, max = 10,
                   value = if (!is.null(pt$highlight_adjust_height)) pt$highlight_adjust_height else 1,
-                  step = 0.1),
+                  step = 0.01),
       sliderInput("mt_pt_highlight_width", "Ellipse Width (this tree):",
                   min = 0.1, max = 10,
                   value = if (!is.null(pt$highlight_adjust_width)) pt$highlight_adjust_width else 1.5,
@@ -1984,16 +1999,16 @@ mt_install_server <- function(input, output, session) {
 
   # Save per-tree highlight values
   observeEvent(input$mt_pt_highlight_height, ignoreInit = TRUE, {
-    req(input$mt_tree_selector)
-    tn <- input$mt_tree_selector
+    req(input$mt_highlight_tree_selector)
+    tn <- input$mt_highlight_tree_selector
     if (!is.null(mt_values$per_tree[[tn]])) {
       mt_values$per_tree[[tn]]$highlight_adjust_height <- input$mt_pt_highlight_height
     }
   })
 
   observeEvent(input$mt_pt_highlight_width, ignoreInit = TRUE, {
-    req(input$mt_tree_selector)
-    tn <- input$mt_tree_selector
+    req(input$mt_highlight_tree_selector)
+    tn <- input$mt_highlight_tree_selector
     if (!is.null(mt_values$per_tree[[tn]])) {
       mt_values$per_tree[[tn]]$highlight_adjust_width <- input$mt_pt_highlight_width
     }
@@ -2120,38 +2135,55 @@ mt_install_server <- function(input, output, session) {
     mt_request_render()
   })
 
-  # --- Per-tree extra UI (title + bg color) ---
+  # --- Per-tree extra UI (title + font settings) ---
   output$mt_per_tree_extra_ui <- renderUI({
-    req(input$mt_extra_tree_selector, mt_values$per_tree)
-    tn <- input$mt_extra_tree_selector
-    if (tn == "all") return(tags$p(class = "text-muted", "Select a specific tree to edit its title and background color."))
+    req(input$mt_title_tree_selector, mt_values$per_tree)
+    tn <- input$mt_title_tree_selector
     pt <- mt_values$per_tree[[tn]]
     if (is.null(pt)) return(NULL)
     tagList(
-      tags$p(tags$strong(paste0("Tree: ", tn))),
       textInput("mt_pt_title", "Tree Title:",
                 value = if (!is.null(pt$title)) pt$title else tn),
-      colourpicker::colourInput("mt_pt_bg_color", "Tree Background Color:",
-                                value = if (!is.null(pt$bg_color)) pt$bg_color else "#FFFFFF")
+      fluidRow(
+        column(6, sliderInput("mt_pt_title_size", "Title Font Size:",
+                              min = 4, max = 36, value = if (!is.null(pt$title_size)) pt$title_size else 12, step = 1)),
+        column(6, colourpicker::colourInput("mt_pt_title_color", "Title Color:",
+                                            value = if (!is.null(pt$title_color)) pt$title_color else "#000000"))
+      )
     )
   })
 
-  # Save per-tree extra values
+  # Populate title tree selector when trees change
+  observe({
+    names <- mt_values$newick_names
+    if (!is.null(names) && length(names) > 0) {
+      updateSelectInput(session, "mt_title_tree_selector",
+                        choices = names, selected = names[1])
+    }
+  })
+
+  # Save per-tree title values
   observeEvent(input$mt_pt_title, ignoreInit = TRUE, {
-    req(input$mt_extra_tree_selector)
-    tn <- input$mt_extra_tree_selector
-    if (tn == "all") return()
+    req(input$mt_title_tree_selector)
+    tn <- input$mt_title_tree_selector
     if (!is.null(mt_values$per_tree[[tn]])) {
       mt_values$per_tree[[tn]]$title <- input$mt_pt_title
     }
   })
 
-  observeEvent(input$mt_pt_bg_color, ignoreInit = TRUE, {
-    req(input$mt_extra_tree_selector)
-    tn <- input$mt_extra_tree_selector
-    if (tn == "all") return()
+  observeEvent(input$mt_pt_title_size, ignoreInit = TRUE, {
+    req(input$mt_title_tree_selector)
+    tn <- input$mt_title_tree_selector
     if (!is.null(mt_values$per_tree[[tn]])) {
-      mt_values$per_tree[[tn]]$bg_color <- input$mt_pt_bg_color
+      mt_values$per_tree[[tn]]$title_size <- input$mt_pt_title_size
+    }
+  })
+
+  observeEvent(input$mt_pt_title_color, ignoreInit = TRUE, {
+    req(input$mt_title_tree_selector)
+    tn <- input$mt_title_tree_selector
+    if (!is.null(mt_values$per_tree[[tn]])) {
+      mt_values$per_tree[[tn]]$title_color <- input$mt_pt_title_color
     }
   })
 
@@ -2381,6 +2413,57 @@ mt_install_server <- function(input, output, session) {
         cached_plots <- attr(result, "cached_tree_plots")
         if (!is.null(cached_plots)) mt_values$cached_tree_plots <- cached_plots
 
+        # Apply position, scale, and background from Extra tab
+        ox <- if (!is.null(input$mt_plot_offset_x)) input$mt_plot_offset_x / 10 else 0
+        oy <- if (!is.null(input$mt_plot_offset_y)) input$mt_plot_offset_y / 10 else 0
+        sc <- if (!is.null(input$mt_plot_scale_percent)) input$mt_plot_scale_percent / 100 else 1
+        bg <- if (!is.null(input$mt_background_color)) input$mt_background_color else "#FFFFFF"
+
+        if (ox != 0 || oy != 0 || sc != 1 || bg != "#FFFFFF") {
+          canvas <- cowplot::ggdraw() +
+            cowplot::draw_grob(result,
+                               x = 0.5 + ox, y = 0.5 + oy,
+                               width = sc, height = sc,
+                               hjust = 0.5, vjust = 0.5) +
+            ggplot2::theme(plot.background = ggplot2::element_rect(fill = bg, color = NA))
+          result <- canvas
+        }
+
+        # Apply page title if enabled
+        if (isTRUE(input$mt_enable_page_title) && !is.null(input$mt_page_title_text) && nchar(input$mt_page_title_text) > 0) {
+          pt_x <- if (!is.null(input$mt_page_title_x)) input$mt_page_title_x else 0.5
+          pt_y <- if (!is.null(input$mt_page_title_y)) input$mt_page_title_y else 0.95
+          pt_size <- if (!is.null(input$mt_page_title_size)) input$mt_page_title_size else 18
+          pt_color <- if (!is.null(input$mt_page_title_color)) input$mt_page_title_color else "#000000"
+          pt_bold <- if (isTRUE(input$mt_page_title_bold)) "bold" else "plain"
+          pt_hjust <- if (!is.null(input$mt_page_title_hjust)) as.numeric(input$mt_page_title_hjust) else 0.5
+
+          if (!inherits(result, "gg")) {
+            result <- cowplot::ggdraw() + cowplot::draw_grob(result)
+          }
+          result <- result + cowplot::draw_label(
+            input$mt_page_title_text,
+            x = pt_x, y = pt_y, size = pt_size, colour = pt_color,
+            fontface = pt_bold, hjust = pt_hjust
+          )
+        }
+
+        # Apply custom text annotations
+        texts <- mt_custom_texts()
+        if (length(texts) > 0) {
+          if (!inherits(result, "gg")) {
+            result <- cowplot::ggdraw() + cowplot::draw_grob(result)
+          }
+          for (ct in texts) {
+            result <- result + cowplot::draw_label(
+              ct$content, x = ct$x, y = ct$y, size = ct$size,
+              colour = ct$color, fontface = ct$fontface,
+              hjust = as.numeric(ct$hjust), vjust = as.numeric(ct$vjust),
+              angle = ct$angle
+            )
+          }
+        }
+
         mt_values$last_plot <- result
         mt_values$dirty_trees <- character(0)
         mt_log("Render complete!")
@@ -2568,6 +2651,33 @@ mt_install_server <- function(input, output, session) {
   # Reset background
   observeEvent(input$mt_reset_background, ignoreInit = TRUE, {
     colourpicker::updateColourInput(session, "mt_background_color", value = "#FFFFFF")
+  })
+
+  # Per-tree background selector sync
+  observe({
+    nn <- mt_values$newick_names
+    if (!is.null(nn) && length(nn) > 0) {
+      updateSelectInput(session, "mt_bg_tree_selector",
+                        choices = nn, selected = nn[1])
+    }
+  })
+
+  output$mt_per_tree_bg_ui <- renderUI({
+    req(input$mt_bg_tree_selector, mt_values$per_tree)
+    tn <- input$mt_bg_tree_selector
+    pt <- mt_values$per_tree[[tn]]
+    if (is.null(pt)) return(NULL)
+    colourpicker::colourInput("mt_pt_bg_color", NULL,
+                              value = if (!is.null(pt$bg_color)) pt$bg_color else "#FFFFFF",
+                              showColour = "both", allowTransparent = TRUE)
+  })
+
+  observeEvent(input$mt_pt_bg_color, ignoreInit = TRUE, {
+    req(input$mt_bg_tree_selector)
+    tn <- input$mt_bg_tree_selector
+    if (!is.null(mt_values$per_tree[[tn]])) {
+      mt_values$per_tree[[tn]]$bg_color <- input$mt_pt_bg_color
+    }
   })
 
   # Custom text annotations storage
