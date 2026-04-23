@@ -88,7 +88,7 @@ ui <- function(request) {
 
 # --- Combined server: delegates to the right mode ---
 server <- function(input, output, session) {
-  query <- parseQueryString(session$clientData$url_search)
+  query <- isolate(parseQueryString(session$clientData$url_search))
   mode <- if (identical(query$mode, "multi")) "multi" else "single"
 
   if (mode == "multi") {
