@@ -53,25 +53,29 @@ multi_ui <- dashboardPage(
   )
 )
 
-# Floating button to switch modes (pure JS, doesn't touch dashboard structure)
+# Mode indicator + switch button (injected via JS into sidebar)
 mode_switch_btn <- function(current_mode) {
   if (current_mode == "single") {
-    label <- "▶ Switch to Multiple Trees"
+    label <- "Switch to Multiple Trees ▶"
     url <- "?mode=multi"
+    badge <- "Single Tree Mode"
   } else {
     label <- "◀ Switch to Single Tree"
     url <- "?mode=single"
+    badge <- "Multiple Trees Mode"
   }
   tags$script(HTML(sprintf("
     $(document).ready(function() {
       $('.sidebar').append(
         '<div style=\"padding:10px 15px;margin-top:20px;border-top:1px solid #4b646f;\">' +
+        '<div style=\"text-align:center;margin-bottom:8px;padding:4px 8px;background:#1a2226;' +
+        'border-radius:3px;color:#b8c7ce;font-size:11px;font-weight:bold;\">%s</div>' +
         '<a href=\"%s\" style=\"display:block;padding:8px 12px;background:#3c8dbc;color:white;' +
-        'border-radius:4px;text-decoration:none;font-size:13px;font-weight:bold;text-align:center;\">' +
+        'border-radius:4px;text-decoration:none;font-size:12px;font-weight:bold;text-align:center;\">' +
         '%s</a></div>'
       );
     });
-  ", url, label)))
+  ", badge, url, label)))
 }
 
 # --- Dynamic UI: serves the right dashboard based on ?mode= ---

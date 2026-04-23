@@ -454,7 +454,7 @@ mt_tabItem_highlighting <- function() {
           sliderInput("mt_highlight_vertical_offset", "Horizontal Offset (left/right)",
                       min = -1, max = 1, value = 0, step = 0.01),
           sliderInput("mt_highlight_adjust_height", "Ellipse Height",
-                      min = 0.01, max = 3, value = 1, step = 0.01),
+                      min = 0.001, max = 2, value = 0.3, step = 0.001),
           sliderInput("mt_highlight_adjust_width", "Ellipse Width",
                       min = 0.1, max = 5, value = 1.5, step = 0.1),
           hr(),
@@ -632,9 +632,7 @@ mt_tabItem_extra <- function() {
             icon("check"), " Ready")
         ),
         status = "primary", solidHeader = TRUE, width = 6,
-        selectInput("mt_extra_tree_selector", "Apply to Tree:",
-                    choices = c("All Trees" = "all"), selected = "all"),
-        tags$p(class = "text-muted", "Move the plot on the page. Select a specific tree or all."),
+        tags$p(class = "text-muted", "Adjust the entire plot position on the page."),
         fluidRow(
           column(6, sliderInput("mt_plot_offset_x", "Horizontal Position:",
                                 min = -5, max = 5, value = 0, step = 0.1, post = " (left/right)")),
@@ -661,9 +659,7 @@ mt_tabItem_extra <- function() {
         fluidRow(
           column(6, selectInput("mt_bg_tree_selector", "Select Tree:", choices = NULL, selected = NULL)),
           column(6, uiOutput("mt_per_tree_bg_ui"))
-        ),
-        hr(),
-        checkboxInput("mt_a4_output", "A4 Page Format (297x210mm)", value = FALSE)
+        )
       ),
       box(title = "Preview", status = "primary", solidHeader = TRUE, width = 6,
         imageOutput("mt_extra_preview", height = "auto"),
@@ -738,6 +734,33 @@ mt_tabItem_extra <- function() {
         h5("Added Texts:"),
         uiOutput("mt_custom_texts_list")
       )
+    ),
+
+    fluidRow(
+      box(
+        title = tagList(icon("image"), " Image Overlay"),
+        status = "warning", solidHeader = TRUE, width = 12, collapsible = TRUE, collapsed = TRUE,
+        tags$div(
+          style = "background: #fff3cd; padding: 10px; border-radius: 5px; margin-bottom: 15px;",
+          tags$p(style = "margin: 0; color: #856404;", icon("info-circle"),
+            " Images are placed as an ", tags$b("overlay"), " on top of the plot.")
+        ),
+        fluidRow(
+          column(4, fileInput("mt_custom_image_file", "Select Image:",
+                              accept = c("image/png", "image/jpeg", "image/gif", "image/svg+xml"))),
+          column(2, numericInput("mt_custom_image_x", "X Position:", value = 0.5, min = 0, max = 1, step = 0.01)),
+          column(2, numericInput("mt_custom_image_y", "Y Position:", value = 0.5, min = 0, max = 1, step = 0.01)),
+          column(2, numericInput("mt_custom_image_width", "Width:", value = 0.2, min = 0.01, max = 1, step = 0.01)),
+          column(2, numericInput("mt_custom_image_height", "Height (0=auto):", value = 0, min = 0, max = 1, step = 0.01))
+        ),
+        fluidRow(
+          column(4, actionButton("mt_add_custom_image", "Add Image", class = "btn-success", icon = icon("plus"))),
+          column(4, actionButton("mt_clear_custom_images", "Clear All Images", class = "btn-warning", icon = icon("trash")))
+        ),
+        hr(),
+        h5("Added Images:"),
+        uiOutput("mt_custom_images_list")
+      )
     )
   )
 }
@@ -762,9 +785,13 @@ mt_tabItem_download <- function() {
                     choices = c("pdf", "png", "tiff", "svg", "jpeg"), selected = "pdf"),
         selectInput("mt_page_orientation", "Page Orientation:",
                     choices = c("Landscape" = "landscape", "Portrait" = "portrait"), selected = "landscape"),
-        numericInput("mt_output_width", "Width:", value = 29.7),
-        numericInput("mt_output_height", "Height:", value = 42),
-        selectInput("mt_output_units", "Units:", choices = c("cm", "mm", "in"), selected = "cm"),
+        checkboxInput("mt_a4_output", "A4 Page Format (297x210mm)", value = FALSE),
+        conditionalPanel(
+          condition = "input.mt_a4_output == false",
+          numericInput("mt_output_width", "Width:", value = 29.7),
+          numericInput("mt_output_height", "Height:", value = 42),
+          selectInput("mt_output_units", "Units:", choices = c("cm", "mm", "in"), selected = "cm")
+        ),
         textInput("mt_output_path", "Output Directory:", value = "./"),
         checkboxInput("mt_replace_name", "Use Custom File Name", value = FALSE),
         conditionalPanel(
@@ -1060,12 +1087,15 @@ func.render.single.tree.in.app <- function(
 
   title_sz <- if (!is.null(per_tree$title_size)) per_tree$title_size else 10
   title_col <- if (!is.null(per_tree$title_color)) per_tree$title_color else "#000000"
+  title_font <- if (!is.null(per_tree$title_font)) per_tree$title_font else "sans"
+  title_hjust <- if (!is.null(per_tree$title_hjust)) per_tree$title_hjust else 0.5
 
   styled_plot <- one_plot +
     ggtree::theme_tree(bgcolor = tree_bg_color) +
     ggplot2::ggtitle(tree_title) +
     ggplot2::theme(
-      plot.title = ggplot2::element_text(hjust = 0.5, size = title_sz, colour = title_col),
+      plot.title = ggplot2::element_text(hjust = title_hjust, size = title_sz,
+                                          colour = title_col, family = title_font),
       plot.background = ggplot2::element_rect(fill = tree_bg_color, color = tree_bg_color)
     ) +
     ggplot2::guides(color = "none", size = "none", shape = "none")
@@ -1987,9 +2017,9 @@ mt_install_server <- function(input, output, session) {
     if (is.null(pt)) return(NULL)
     tagList(
       sliderInput("mt_pt_highlight_height", "Ellipse Height (this tree):",
-                  min = 0.01, max = 10,
-                  value = if (!is.null(pt$highlight_adjust_height)) pt$highlight_adjust_height else 1,
-                  step = 0.01),
+                  min = 0.001, max = 5,
+                  value = if (!is.null(pt$highlight_adjust_height)) pt$highlight_adjust_height else 0.3,
+                  step = 0.001),
       sliderInput("mt_pt_highlight_width", "Ellipse Width (this tree):",
                   min = 0.1, max = 10,
                   value = if (!is.null(pt$highlight_adjust_width)) pt$highlight_adjust_width else 1.5,
@@ -2141,15 +2171,22 @@ mt_install_server <- function(input, output, session) {
     tn <- input$mt_title_tree_selector
     pt <- mt_values$per_tree[[tn]]
     if (is.null(pt)) return(NULL)
+    font_choices <- c("Sans-serif" = "sans", "Serif" = "serif", "Monospace" = "mono")
     tagList(
       textInput("mt_pt_title", "Tree Title:",
                 value = if (!is.null(pt$title)) pt$title else tn),
       fluidRow(
-        column(6, sliderInput("mt_pt_title_size", "Title Font Size:",
+        column(4, sliderInput("mt_pt_title_size", "Font Size:",
                               min = 4, max = 36, value = if (!is.null(pt$title_size)) pt$title_size else 12, step = 1)),
-        column(6, colourpicker::colourInput("mt_pt_title_color", "Title Color:",
-                                            value = if (!is.null(pt$title_color)) pt$title_color else "#000000"))
-      )
+        column(4, colourpicker::colourInput("mt_pt_title_color", "Color:",
+                                            value = if (!is.null(pt$title_color)) pt$title_color else "#000000")),
+        column(4, selectInput("mt_pt_title_font", "Font:",
+                              choices = font_choices,
+                              selected = if (!is.null(pt$title_font)) pt$title_font else "sans"))
+      ),
+      selectInput("mt_pt_title_hjust", "Title Alignment:",
+                  choices = c("Left" = "0", "Center" = "0.5", "Right" = "1"),
+                  selected = if (!is.null(pt$title_hjust)) as.character(pt$title_hjust) else "0.5")
     )
   })
 
@@ -2184,6 +2221,22 @@ mt_install_server <- function(input, output, session) {
     tn <- input$mt_title_tree_selector
     if (!is.null(mt_values$per_tree[[tn]])) {
       mt_values$per_tree[[tn]]$title_color <- input$mt_pt_title_color
+    }
+  })
+
+  observeEvent(input$mt_pt_title_font, ignoreInit = TRUE, {
+    req(input$mt_title_tree_selector)
+    tn <- input$mt_title_tree_selector
+    if (!is.null(mt_values$per_tree[[tn]])) {
+      mt_values$per_tree[[tn]]$title_font <- input$mt_pt_title_font
+    }
+  })
+
+  observeEvent(input$mt_pt_title_hjust, ignoreInit = TRUE, {
+    req(input$mt_title_tree_selector)
+    tn <- input$mt_title_tree_selector
+    if (!is.null(mt_values$per_tree[[tn]])) {
+      mt_values$per_tree[[tn]]$title_hjust <- as.numeric(input$mt_pt_title_hjust)
     }
   })
 
@@ -2419,15 +2472,13 @@ mt_install_server <- function(input, output, session) {
         sc <- if (!is.null(input$mt_plot_scale_percent)) input$mt_plot_scale_percent / 100 else 1
         bg <- if (!is.null(input$mt_background_color)) input$mt_background_color else "#FFFFFF"
 
-        if (ox != 0 || oy != 0 || sc != 1 || bg != "#FFFFFF") {
-          canvas <- cowplot::ggdraw() +
-            cowplot::draw_grob(result,
-                               x = 0.5 + ox, y = 0.5 + oy,
-                               width = sc, height = sc,
-                               hjust = 0.5, vjust = 0.5) +
-            ggplot2::theme(plot.background = ggplot2::element_rect(fill = bg, color = NA))
-          result <- canvas
-        }
+        canvas <- cowplot::ggdraw() +
+          cowplot::draw_grob(result,
+                             x = 0.5 + ox, y = 0.5 + oy,
+                             width = sc, height = sc,
+                             hjust = 0.5, vjust = 0.5) +
+          ggplot2::theme(plot.background = ggplot2::element_rect(fill = bg, color = NA))
+        result <- canvas
 
         # Apply page title if enabled
         if (isTRUE(input$mt_enable_page_title) && !is.null(input$mt_page_title_text) && nchar(input$mt_page_title_text) > 0) {
@@ -2464,6 +2515,39 @@ mt_install_server <- function(input, output, session) {
           }
         }
 
+        # Apply custom image overlays
+        imgs <- mt_custom_images()
+        if (length(imgs) > 0) {
+          if (!inherits(result, "gg")) {
+            result <- cowplot::ggdraw() + cowplot::draw_grob(result)
+          }
+          for (img in imgs) {
+            if (file.exists(img$path)) {
+              tryCatch({
+                img_h <- img$height
+                if (is.null(img_h) || img_h <= 0) {
+                  file_ext <- tolower(tools::file_ext(img$path))
+                  img_data <- NULL
+                  if (file_ext == "png") img_data <- png::readPNG(img$path)
+                  else if (file_ext %in% c("jpg", "jpeg")) img_data <- jpeg::readJPEG(img$path)
+                  if (!is.null(img_data)) {
+                    img_h <- img$width * (dim(img_data)[1] / dim(img_data)[2])
+                  } else {
+                    img_h <- img$width
+                  }
+                }
+                result <- result + cowplot::draw_image(
+                  img$path,
+                  x = img$x - img$width / 2, y = img$y - img_h / 2,
+                  width = img$width, height = img_h
+                )
+              }, error = function(e) {
+                mt_log(paste0("Image overlay error: ", e$message))
+              })
+            }
+          }
+        }
+
         mt_values$last_plot <- result
         mt_values$dirty_trees <- character(0)
         mt_log("Render complete!")
@@ -2493,10 +2577,117 @@ mt_install_server <- function(input, output, session) {
     })
   }
 
+  # Overlay-only re-render: reuses cached tree plots, only reapplies
+  # position/scale/background/title/text/image overlays. Much faster.
+  mt_do_overlay_render <- function() {
+    isolate({
+      cat(file=stderr(), "[MT] mt_do_overlay_render() called\n")
+      cached_plots <- mt_values$cached_tree_plots
+      if (is.null(cached_plots) || length(cached_plots) == 0) {
+        cat(file=stderr(), "[MT] overlay: no cached plots, falling back to full render\n")
+        mt_do_render()
+        return()
+      }
+
+      on.exit({
+        mt_values$plot_generating <- FALSE
+        mt_show_ready()
+      })
+
+      list_out <- list()
+      for (tn in mt_values$newick_names) {
+        if (!is.null(cached_plots[[tn]])) {
+          list_out[[length(list_out) + 1]] <- cached_plots[[tn]]
+        }
+      }
+      if (length(list_out) == 0) {
+        mt_do_render()
+        return()
+      }
+
+      result <- do.call(gridExtra::grid.arrange, c(list_out, ncol = 1))
+
+      ox <- if (!is.null(input$mt_plot_offset_x)) input$mt_plot_offset_x / 10 else 0
+      oy <- if (!is.null(input$mt_plot_offset_y)) input$mt_plot_offset_y / 10 else 0
+      sc <- if (!is.null(input$mt_plot_scale_percent)) input$mt_plot_scale_percent / 100 else 1
+      bg <- if (!is.null(input$mt_background_color)) input$mt_background_color else "#FFFFFF"
+
+      canvas <- cowplot::ggdraw() +
+        cowplot::draw_grob(result,
+                           x = 0.5 + ox, y = 0.5 + oy,
+                           width = sc, height = sc,
+                           hjust = 0.5, vjust = 0.5) +
+        ggplot2::theme(plot.background = ggplot2::element_rect(fill = bg, color = NA))
+      result <- canvas
+
+      if (isTRUE(input$mt_enable_page_title) && !is.null(input$mt_page_title_text) && nchar(input$mt_page_title_text) > 0) {
+        result <- result + cowplot::draw_label(
+          input$mt_page_title_text,
+          x = if (!is.null(input$mt_page_title_x)) input$mt_page_title_x else 0.5,
+          y = if (!is.null(input$mt_page_title_y)) input$mt_page_title_y else 0.95,
+          size = if (!is.null(input$mt_page_title_size)) input$mt_page_title_size else 18,
+          colour = if (!is.null(input$mt_page_title_color)) input$mt_page_title_color else "#000000",
+          fontface = if (isTRUE(input$mt_page_title_bold)) "bold" else "plain",
+          hjust = if (!is.null(input$mt_page_title_hjust)) as.numeric(input$mt_page_title_hjust) else 0.5
+        )
+      }
+
+      texts <- mt_custom_texts()
+      for (ct in texts) {
+        result <- result + cowplot::draw_label(
+          ct$content, x = ct$x, y = ct$y, size = ct$size,
+          colour = ct$color, fontface = ct$fontface,
+          hjust = as.numeric(ct$hjust), vjust = as.numeric(ct$vjust),
+          angle = ct$angle
+        )
+      }
+
+      imgs <- mt_custom_images()
+      for (img in imgs) {
+        if (file.exists(img$path)) {
+          tryCatch({
+            img_h <- img$height
+            if (is.null(img_h) || img_h <= 0) {
+              file_ext <- tolower(tools::file_ext(img$path))
+              img_data <- NULL
+              if (file_ext == "png") img_data <- png::readPNG(img$path)
+              else if (file_ext %in% c("jpg", "jpeg")) img_data <- jpeg::readJPEG(img$path)
+              img_h <- if (!is.null(img_data)) img$width * (dim(img_data)[1] / dim(img_data)[2]) else img$width
+            }
+            result <- result + cowplot::draw_image(
+              img$path, x = img$x - img$width / 2, y = img$y - img_h / 2,
+              width = img$width, height = img_h
+            )
+          }, error = function(e) {})
+        }
+      }
+
+      mt_values$last_plot <- result
+      tmp <- tempfile(fileext = ".svg")
+      w <- if (isTRUE(input$mt_a4_output)) 297 else { v <- input$mt_output_width; if (!is.null(v)) v else 29.7 }
+      h <- if (isTRUE(input$mt_a4_output)) 210 else { v <- input$mt_output_height; if (!is.null(v)) v else 42 }
+      u <- if (isTRUE(input$mt_a4_output)) "mm" else { v <- input$mt_output_units; if (!is.null(v)) v else "cm" }
+      ggplot2::ggsave(tmp, plot = result, width = w, height = h, units = u, limitsize = FALSE)
+      mt_values$last_plot_file <- tmp
+      mt_values$plot_counter <- mt_values$plot_counter + 1
+      mt_last_render_time(as.numeric(Sys.time()) * 1000)
+      cat(file=stderr(), "[MT] mt_do_overlay_render() done\n")
+    })
+  }
+
+  mt_request_overlay_render <- function() {
+    if (isTRUE(mt_values$plot_generating)) return()
+    mt_values$plot_generating <- TRUE
+    mt_show_processing()
+    shinyjs::delay(50, { mt_do_overlay_render() })
+  }
+
   # Request a render: show Processing status, then render after browser confirms.
   # Uses shinyjs::delay to round-trip through the browser: the browser receives
   # "Processing" status, renders it, then after 50ms sends a message back to the
   # server which triggers the render in a normal observer context.
+  MT_COOLDOWN_MS <- 1000
+
   mt_request_render <- function(dirty = NULL) {
     if (isTRUE(mt_values$plot_generating)) {
       cat(file=stderr(), "[MT] mt_request_render: SKIP (plot_generating=TRUE)\n")
@@ -2504,6 +2695,12 @@ mt_install_server <- function(input, output, session) {
     }
     if (is.null(mt_values$newick_paths) || is.null(mt_values$csv_path)) {
       cat(file=stderr(), "[MT] mt_request_render: SKIP (no data)\n")
+      return()
+    }
+
+    time_since_last <- as.numeric(Sys.time()) * 1000 - isolate(mt_last_render_time())
+    if (time_since_last < MT_COOLDOWN_MS) {
+      cat(file=stderr(), sprintf("[MT] mt_request_render: SKIP cooldown (%.0fms)\n", time_since_last))
       return()
     }
 
@@ -2617,16 +2814,6 @@ mt_install_server <- function(input, output, session) {
   # EXTRA TAB SERVER LOGIC
   # ================================================================
 
-  # Keep extra tree selector in sync
-  observe({
-    nn <- mt_values$newick_names
-    if (!is.null(nn) && length(nn) > 0) {
-      updateSelectInput(session, "mt_extra_tree_selector",
-                        choices = c("All Trees" = "all", setNames(nn, nn)),
-                        selected = "all")
-    }
-  })
-
   # Extra preview output
   output$mt_extra_preview <- renderImage({
     mt_plot_image("Click Apply to Plot to render.")
@@ -2634,7 +2821,7 @@ mt_install_server <- function(input, output, session) {
 
   # Extra Apply button
   observeEvent(input$mt_extra_apply, ignoreInit = TRUE, {
-    mt_request_render()
+    mt_request_overlay_render()
   })
 
   # Reset position
@@ -2735,6 +2922,60 @@ mt_install_server <- function(input, output, session) {
         if (i <= length(current)) {
           mt_custom_texts(current[-i])
         }
+      }, ignoreInit = TRUE, once = TRUE)
+    })
+  })
+
+  # ================================================================
+  # IMAGE OVERLAY
+  # ================================================================
+  mt_custom_images <- reactiveVal(list())
+
+  observeEvent(input$mt_add_custom_image, ignoreInit = TRUE, {
+    req(input$mt_custom_image_file)
+    temp_path <- file.path(tempdir(), paste0("mt_img_", length(mt_custom_images()) + 1, "_",
+                                              basename(input$mt_custom_image_file$name)))
+    file.copy(input$mt_custom_image_file$datapath, temp_path, overwrite = TRUE)
+    new_img <- list(
+      path = temp_path,
+      name = input$mt_custom_image_file$name,
+      x = if (!is.null(input$mt_custom_image_x)) input$mt_custom_image_x else 0.5,
+      y = if (!is.null(input$mt_custom_image_y)) input$mt_custom_image_y else 0.5,
+      width = if (!is.null(input$mt_custom_image_width)) input$mt_custom_image_width else 0.2,
+      height = if (!is.null(input$mt_custom_image_height) && input$mt_custom_image_height > 0) input$mt_custom_image_height else NULL
+    )
+    mt_custom_images(c(mt_custom_images(), list(new_img)))
+  })
+
+  observeEvent(input$mt_clear_custom_images, ignoreInit = TRUE, {
+    mt_custom_images(list())
+  })
+
+  output$mt_custom_images_list <- renderUI({
+    imgs <- mt_custom_images()
+    if (length(imgs) == 0) return(tags$p(class = "text-muted", "No custom images added yet."))
+    img_items <- lapply(seq_along(imgs), function(i) {
+      img <- imgs[[i]]
+      tags$div(
+        style = "padding: 5px; margin: 5px 0; border: 1px solid #ddd; border-radius: 4px; background-color: #f9f9f9;",
+        tags$span(icon("image"), paste0(i, ". ", img$name)),
+        tags$span(class = "text-muted",
+                  paste0(" (x:", round(img$x, 2), ", y:", round(img$y, 2),
+                         ", w:", round(img$width, 2),
+                         if (!is.null(img$height)) paste0(", h:", round(img$height, 2)) else "", ")")),
+        actionButton(paste0("mt_delete_image_", i), "", icon = icon("times"),
+                     class = "btn-xs btn-danger", style = "float: right; padding: 2px 6px;")
+      )
+    })
+    do.call(tagList, img_items)
+  })
+
+  observe({
+    imgs <- mt_custom_images()
+    lapply(seq_along(imgs), function(i) {
+      observeEvent(input[[paste0("mt_delete_image_", i)]], {
+        current <- mt_custom_images()
+        if (i <= length(current)) mt_custom_images(current[-i])
       }, ignoreInit = TRUE, once = TRUE)
     })
   })
