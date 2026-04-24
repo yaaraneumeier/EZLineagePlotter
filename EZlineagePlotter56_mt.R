@@ -453,10 +453,10 @@ mt_tabItem_highlighting <- function() {
           br(),
           sliderInput("mt_highlight_vertical_offset", "Horizontal Offset (left/right)",
                       min = -1, max = 1, value = 0, step = 0.01),
-          sliderInput("mt_highlight_adjust_height", "Ellipse Height",
+          sliderInput("mt_highlight_adjust_height", "Ellipse Horizontal Extent",
                       min = 0.001, max = 2, value = 0.3, step = 0.001),
-          sliderInput("mt_highlight_adjust_width", "Ellipse Width",
-                      min = 0.1, max = 5, value = 1.5, step = 0.1),
+          sliderInput("mt_highlight_adjust_width", "Ellipse Vertical Extent (Height)",
+                      min = 0.01, max = 3, value = 0.5, step = 0.01),
           hr(),
           actionButton("mt_apply_highlight", "Apply & Preview",
                        icon = icon("eye"), class = "btn-primary btn-block"),
@@ -646,6 +646,9 @@ mt_tabItem_extra <- function() {
         sliderInput("mt_plot_scale_percent", "Plot Scale:", min = 25, max = 200, value = 100, step = 5, post = "%"),
         fluidRow(column(12, actionButton("mt_reset_plot_scale", "Reset to 100%",
                                           class = "btn-secondary btn-sm", icon = icon("undo")))),
+        hr(),
+        tags$p(class = "text-muted", tags$strong("Tree Spacing:"), " Adjust vertical space between trees."),
+        sliderInput("mt_tree_spacing", "Space Between Trees:", min = 0, max = 50, value = 5, step = 1, post = " mm"),
         hr(),
         tags$p(class = "text-muted", tags$strong("Background:"), " Set page background color."),
         fluidRow(
@@ -1109,7 +1112,8 @@ func.multiple.trees.one.page.in.app <- function(
   tree_titles, tree_bg_colors, log_fn = function(msg) {},
   p_cache_per_tree = list(),
   cached_tree_plots = list(),
-  dirty_trees = NULL
+  dirty_trees = NULL,
+  tree_spacing_mm = 5
 ) {
   list_out <- list()
   updated_cache <- p_cache_per_tree
@@ -1153,7 +1157,8 @@ func.multiple.trees.one.page.in.app <- function(
   if (length(list_out) == 0) return(NULL)
 
   log_fn(paste0("Combining ", length(list_out), " trees into one page"))
-  result <- do.call(gridExtra::grid.arrange, c(list_out, ncol = 1))
+  padding <- grid::unit(tree_spacing_mm, "mm")
+  result <- do.call(gridExtra::grid.arrange, c(list_out, ncol = 1, list(padding = padding)))
   attr(result, "p_cache_per_tree") <- updated_cache
   attr(result, "cached_tree_plots") <- updated_plots
   result
@@ -1319,8 +1324,8 @@ mt_install_server <- function(input, output, session) {
     for (tn in names) {
       if (is.null(mt_values$per_tree[[tn]])) {
         mt_values$per_tree[[tn]] <- list(
-          rotate = NULL, highlight_adjust_height = 1,
-          highlight_adjust_width = 1.5, title = tn, bg_color = "#FFFFFF",
+          rotate = NULL, highlight_adjust_height = 0.3,
+          highlight_adjust_width = 0.5, title = tn, bg_color = "#FFFFFF",
           individual_value = NULL
         )
       }
@@ -2016,14 +2021,14 @@ mt_install_server <- function(input, output, session) {
     pt <- mt_values$per_tree[[tn]]
     if (is.null(pt)) return(NULL)
     tagList(
-      sliderInput("mt_pt_highlight_height", "Ellipse Height (this tree):",
+      sliderInput("mt_pt_highlight_height", "Horizontal Extent (this tree):",
                   min = 0.001, max = 5,
                   value = if (!is.null(pt$highlight_adjust_height)) pt$highlight_adjust_height else 0.3,
                   step = 0.001),
-      sliderInput("mt_pt_highlight_width", "Ellipse Width (this tree):",
-                  min = 0.1, max = 10,
-                  value = if (!is.null(pt$highlight_adjust_width)) pt$highlight_adjust_width else 1.5,
-                  step = 0.1)
+      sliderInput("mt_pt_highlight_width", "Vertical Extent / Height (this tree):",
+                  min = 0.01, max = 5,
+                  value = if (!is.null(pt$highlight_adjust_width)) pt$highlight_adjust_width else 0.5,
+                  step = 0.01)
     )
   })
 
@@ -2216,11 +2221,11 @@ mt_install_server <- function(input, output, session) {
     }
   })
 
-  observeEvent(input$mt_pt_title_color, ignoreInit = TRUE, {
+  observeEvent(mt_pt_title_color_d(), ignoreInit = TRUE, {
     req(input$mt_title_tree_selector)
     tn <- input$mt_title_tree_selector
     if (!is.null(mt_values$per_tree[[tn]])) {
-      mt_values$per_tree[[tn]]$title_color <- input$mt_pt_title_color
+      mt_values$per_tree[[tn]]$title_color <- mt_pt_title_color_d()
     }
   })
 
@@ -2340,8 +2345,50 @@ mt_install_server <- function(input, output, session) {
   mt_page_title_x_d <- debounce(reactive(input$mt_page_title_x), MT_DEBOUNCE_MS)
   mt_page_title_y_d <- debounce(reactive(input$mt_page_title_y), MT_DEBOUNCE_MS)
   mt_background_color_d <- debounce(reactive(input$mt_background_color), MT_DEBOUNCE_MS)
+  mt_pt_title_color_d <- debounce(reactive(input$mt_pt_title_color), 500)
+  mt_pt_bg_color_d <- debounce(reactive(input$mt_pt_bg_color), 500)
+  mt_legend_box_background_d <- debounce(reactive(input$mt_legend_box_background), MT_DEBOUNCE_MS)
+
   # ==========================================================================
-  # END DEBOUNCED REACTIVE INPUTS
+  # PLOT TRIGGER MECHANISM (matches single-mode pattern)
+  # All parameter changes increment mt_plot_trigger, which is debounced at 500ms.
+  # This batches rapid changes into a single render call.
+  # ==========================================================================
+  mt_plot_trigger <- reactiveVal(0)
+  mt_plot_trigger_debounced <- debounce(reactive(mt_plot_trigger()), 500)
+
+  mt_request_plot_update <- function(dirty = NULL) {
+    if (!is.null(dirty)) {
+      current_dirty <- isolate(mt_values$dirty_trees)
+      if (is.null(current_dirty)) {
+        mt_values$dirty_trees <- dirty
+      } else {
+        mt_values$dirty_trees <- union(current_dirty, dirty)
+      }
+    } else {
+      mt_values$dirty_trees <- NULL
+    }
+    mt_plot_trigger(isolate(mt_plot_trigger()) + 1)
+  }
+
+  observeEvent(mt_plot_trigger_debounced(), {
+    req(mt_values$newick_paths, mt_values$csv_path)
+    req(mt_plot_trigger() > 0)
+
+    time_since_last <- as.numeric(Sys.time()) * 1000 - mt_last_render_time()
+    if (time_since_last < MT_COOLDOWN_MS) {
+      cat(file=stderr(), sprintf("[MT] plot_trigger: cooldown active (%.0fms)\n", time_since_last))
+      return()
+    }
+
+    cat(file=stderr(), "[MT] plot_trigger_debounced fired -> mt_request_render\n")
+    mt_values$plot_generating <- TRUE
+    mt_show_processing()
+    shinyjs::delay(50, { mt_do_render() })
+  }, ignoreInit = TRUE)
+
+  # ==========================================================================
+  # END DEBOUNCED / TRIGGER MECHANISM
   # ==========================================================================
 
   # --- Build highlight YAML (called from mt_do_render, already inside isolate) ---
@@ -2452,7 +2499,8 @@ mt_install_server <- function(input, output, session) {
           log_fn = mt_log,
           p_cache_per_tree = mt_values$p_cache_per_tree,
           cached_tree_plots = mt_values$cached_tree_plots,
-          dirty_trees = dirty
+          dirty_trees = dirty,
+          tree_spacing_mm = if (!is.null(input$mt_tree_spacing)) input$mt_tree_spacing else 5
         ),
         error = function(e) {
           mt_log(paste0("RENDER ERROR: ", e$message))
@@ -2477,7 +2525,8 @@ mt_install_server <- function(input, output, session) {
                              x = 0.5 + ox, y = 0.5 + oy,
                              width = sc, height = sc,
                              hjust = 0.5, vjust = 0.5) +
-          ggplot2::theme(plot.background = ggplot2::element_rect(fill = bg, color = NA))
+          ggplot2::theme(plot.background = ggplot2::element_rect(fill = bg, color = NA),
+                         panel.background = ggplot2::element_rect(fill = bg, color = NA))
         result <- canvas
 
         # Apply page title if enabled
@@ -2605,7 +2654,8 @@ mt_install_server <- function(input, output, session) {
         return()
       }
 
-      result <- do.call(gridExtra::grid.arrange, c(list_out, ncol = 1))
+      sp <- if (!is.null(input$mt_tree_spacing)) input$mt_tree_spacing else 5
+      result <- do.call(gridExtra::grid.arrange, c(list_out, ncol = 1, list(padding = grid::unit(sp, "mm"))))
 
       ox <- if (!is.null(input$mt_plot_offset_x)) input$mt_plot_offset_x / 10 else 0
       oy <- if (!is.null(input$mt_plot_offset_y)) input$mt_plot_offset_y / 10 else 0
@@ -2859,11 +2909,11 @@ mt_install_server <- function(input, output, session) {
                               showColour = "both", allowTransparent = TRUE)
   })
 
-  observeEvent(input$mt_pt_bg_color, ignoreInit = TRUE, {
+  observeEvent(mt_pt_bg_color_d(), ignoreInit = TRUE, {
     req(input$mt_bg_tree_selector)
     tn <- input$mt_bg_tree_selector
     if (!is.null(mt_values$per_tree[[tn]])) {
-      mt_values$per_tree[[tn]]$bg_color <- input$mt_pt_bg_color
+      mt_values$per_tree[[tn]]$bg_color <- mt_pt_bg_color_d()
     }
   })
 
