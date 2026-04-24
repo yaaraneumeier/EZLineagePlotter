@@ -454,9 +454,9 @@ mt_tabItem_highlighting <- function() {
           sliderInput("mt_highlight_vertical_offset", "Horizontal Offset (left/right)",
                       min = -1, max = 1, value = 0, step = 0.01),
           sliderInput("mt_highlight_adjust_height", "Ellipse Horizontal Extent",
-                      min = 0.001, max = 2, value = 0.3, step = 0.001),
+                      min = 0.01, max = 5, value = 1, step = 0.01),
           sliderInput("mt_highlight_adjust_width", "Ellipse Vertical Extent (Height)",
-                      min = 0.01, max = 3, value = 0.5, step = 0.01),
+                      min = 0.01, max = 5, value = 1.5, step = 0.01),
           hr(),
           actionButton("mt_apply_highlight", "Apply & Preview",
                        icon = icon("eye"), class = "btn-primary btn-block"),
@@ -1083,6 +1083,10 @@ func.render.single.tree.in.app <- function(
     new_hash <- treesi$cache_data$p_list_hash
     if (!is.null(new_hash) && !is.null(treesi$cache_data$p_list_of_pairs)) {
       updated_cache$p_list_cache[[new_hash]] <- treesi$cache_data$p_list_of_pairs
+      cache_names <- names(updated_cache$p_list_cache)
+      if (length(cache_names) > 10) {
+        updated_cache$p_list_cache <- updated_cache$p_list_cache[cache_names[(length(cache_names) - 9):length(cache_names)]]
+      }
     }
   }
 
@@ -1099,7 +1103,8 @@ func.render.single.tree.in.app <- function(
     ggplot2::theme(
       plot.title = ggplot2::element_text(hjust = title_hjust, size = title_sz,
                                           colour = title_col, family = title_font),
-      plot.background = ggplot2::element_rect(fill = tree_bg_color, color = tree_bg_color)
+      plot.background = ggplot2::element_rect(fill = tree_bg_color, color = tree_bg_color),
+      panel.background = ggplot2::element_rect(fill = tree_bg_color, color = tree_bg_color)
     ) +
     ggplot2::guides(color = "none", size = "none", shape = "none")
 
@@ -1324,8 +1329,8 @@ mt_install_server <- function(input, output, session) {
     for (tn in names) {
       if (is.null(mt_values$per_tree[[tn]])) {
         mt_values$per_tree[[tn]] <- list(
-          rotate = NULL, highlight_adjust_height = 0.3,
-          highlight_adjust_width = 0.5, title = tn, bg_color = "#FFFFFF",
+          rotate = NULL, highlight_adjust_height = 1,
+          highlight_adjust_width = 1.5, title = tn, bg_color = "#FFFFFF",
           individual_value = NULL
         )
       }
@@ -2023,11 +2028,11 @@ mt_install_server <- function(input, output, session) {
     tagList(
       sliderInput("mt_pt_highlight_height", "Horizontal Extent (this tree):",
                   min = 0.001, max = 5,
-                  value = if (!is.null(pt$highlight_adjust_height)) pt$highlight_adjust_height else 0.3,
+                  value = if (!is.null(pt$highlight_adjust_height)) pt$highlight_adjust_height else 1,
                   step = 0.001),
       sliderInput("mt_pt_highlight_width", "Vertical Extent / Height (this tree):",
                   min = 0.01, max = 5,
-                  value = if (!is.null(pt$highlight_adjust_width)) pt$highlight_adjust_width else 0.5,
+                  value = if (!is.null(pt$highlight_adjust_width)) pt$highlight_adjust_width else 1.5,
                   step = 0.01)
     )
   })
@@ -2038,6 +2043,7 @@ mt_install_server <- function(input, output, session) {
     tn <- input$mt_highlight_tree_selector
     if (!is.null(mt_values$per_tree[[tn]])) {
       mt_values$per_tree[[tn]]$highlight_adjust_height <- input$mt_pt_highlight_height
+      mt_request_plot_update(dirty = tn)
     }
   })
 
@@ -2046,6 +2052,7 @@ mt_install_server <- function(input, output, session) {
     tn <- input$mt_highlight_tree_selector
     if (!is.null(mt_values$per_tree[[tn]])) {
       mt_values$per_tree[[tn]]$highlight_adjust_width <- input$mt_pt_highlight_width
+      mt_request_plot_update(dirty = tn)
     }
   })
 
@@ -2177,6 +2184,13 @@ mt_install_server <- function(input, output, session) {
     pt <- mt_values$per_tree[[tn]]
     if (is.null(pt)) return(NULL)
     font_choices <- c("Sans-serif" = "sans", "Serif" = "serif", "Monospace" = "mono")
+    if (exists("SHOWTEXT_AVAILABLE") && SHOWTEXT_AVAILABLE) {
+      font_choices <- c(font_choices,
+        "Roboto" = "Roboto", "Open Sans" = "Open Sans", "Lato" = "Lato",
+        "Montserrat" = "Montserrat", "PT Sans" = "PT Sans",
+        "Playfair Display" = "Playfair Display", "Merriweather" = "Merriweather",
+        "Source Code Pro" = "Source Code Pro")
+    }
     tagList(
       textInput("mt_pt_title", "Tree Title:",
                 value = if (!is.null(pt$title)) pt$title else tn),
@@ -2210,6 +2224,7 @@ mt_install_server <- function(input, output, session) {
     tn <- input$mt_title_tree_selector
     if (!is.null(mt_values$per_tree[[tn]])) {
       mt_values$per_tree[[tn]]$title <- input$mt_pt_title
+      mt_request_plot_update(dirty = tn)
     }
   })
 
@@ -2218,6 +2233,7 @@ mt_install_server <- function(input, output, session) {
     tn <- input$mt_title_tree_selector
     if (!is.null(mt_values$per_tree[[tn]])) {
       mt_values$per_tree[[tn]]$title_size <- input$mt_pt_title_size
+      mt_request_plot_update(dirty = tn)
     }
   })
 
@@ -2226,6 +2242,7 @@ mt_install_server <- function(input, output, session) {
     tn <- input$mt_title_tree_selector
     if (!is.null(mt_values$per_tree[[tn]])) {
       mt_values$per_tree[[tn]]$title_color <- mt_pt_title_color_d()
+      mt_request_plot_update(dirty = tn)
     }
   })
 
@@ -2234,6 +2251,7 @@ mt_install_server <- function(input, output, session) {
     tn <- input$mt_title_tree_selector
     if (!is.null(mt_values$per_tree[[tn]])) {
       mt_values$per_tree[[tn]]$title_font <- input$mt_pt_title_font
+      mt_request_plot_update(dirty = tn)
     }
   })
 
@@ -2242,6 +2260,7 @@ mt_install_server <- function(input, output, session) {
     tn <- input$mt_title_tree_selector
     if (!is.null(mt_values$per_tree[[tn]])) {
       mt_values$per_tree[[tn]]$title_hjust <- as.numeric(input$mt_pt_title_hjust)
+      mt_request_plot_update(dirty = tn)
     }
   })
 
@@ -2667,7 +2686,8 @@ mt_install_server <- function(input, output, session) {
                            x = 0.5 + ox, y = 0.5 + oy,
                            width = sc, height = sc,
                            hjust = 0.5, vjust = 0.5) +
-        ggplot2::theme(plot.background = ggplot2::element_rect(fill = bg, color = NA))
+        ggplot2::theme(plot.background = ggplot2::element_rect(fill = bg, color = NA),
+                       panel.background = ggplot2::element_rect(fill = bg, color = NA))
       result <- canvas
 
       if (isTRUE(input$mt_enable_page_title) && !is.null(input$mt_page_title_text) && nchar(input$mt_page_title_text) > 0) {
@@ -2914,6 +2934,7 @@ mt_install_server <- function(input, output, session) {
     tn <- input$mt_bg_tree_selector
     if (!is.null(mt_values$per_tree[[tn]])) {
       mt_values$per_tree[[tn]]$bg_color <- mt_pt_bg_color_d()
+      mt_request_plot_update(dirty = tn)
     }
   })
 
