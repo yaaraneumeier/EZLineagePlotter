@@ -1201,7 +1201,8 @@ mt_install_server <- function(input, output, session) {
     rotation2_config_per_tree = list(), # per-tree rotation2 config
     manual_rotation_per_tree = list(),  # per-tree manual rotation nodes
     cached_tree_plots = list(), # per-tree ggplot objects for incremental rendering
-    dirty_trees = NULL          # character vector of tree names needing re-render (NULL = all dirty)
+    dirty_trees = NULL,         # character vector of tree names needing re-render (NULL = all dirty)
+    render_pending = FALSE      # TRUE if a render was requested while another was in progress
   )
 
   # Helper to append log messages
@@ -2037,11 +2038,12 @@ mt_install_server <- function(input, output, session) {
     )
   })
 
-  # Save per-tree highlight values
+  # Save per-tree highlight values (with change-detection)
   observeEvent(input$mt_pt_highlight_height, ignoreInit = TRUE, {
     req(input$mt_highlight_tree_selector)
     tn <- input$mt_highlight_tree_selector
-    if (!is.null(mt_values$per_tree[[tn]])) {
+    pt <- mt_values$per_tree[[tn]]
+    if (!is.null(pt) && !identical(pt$highlight_adjust_height, input$mt_pt_highlight_height)) {
       mt_values$per_tree[[tn]]$highlight_adjust_height <- input$mt_pt_highlight_height
       mt_request_plot_update(dirty = tn)
     }
@@ -2050,7 +2052,8 @@ mt_install_server <- function(input, output, session) {
   observeEvent(input$mt_pt_highlight_width, ignoreInit = TRUE, {
     req(input$mt_highlight_tree_selector)
     tn <- input$mt_highlight_tree_selector
-    if (!is.null(mt_values$per_tree[[tn]])) {
+    pt <- mt_values$per_tree[[tn]]
+    if (!is.null(pt) && !identical(pt$highlight_adjust_width, input$mt_pt_highlight_width)) {
       mt_values$per_tree[[tn]]$highlight_adjust_width <- input$mt_pt_highlight_width
       mt_request_plot_update(dirty = tn)
     }
@@ -2218,11 +2221,12 @@ mt_install_server <- function(input, output, session) {
     }
   })
 
-  # Save per-tree title values
+  # Save per-tree title values (with change-detection to avoid spurious renders on tab/tree switch)
   observeEvent(input$mt_pt_title, ignoreInit = TRUE, {
     req(input$mt_title_tree_selector)
     tn <- input$mt_title_tree_selector
-    if (!is.null(mt_values$per_tree[[tn]])) {
+    pt <- mt_values$per_tree[[tn]]
+    if (!is.null(pt) && !identical(pt$title, input$mt_pt_title)) {
       mt_values$per_tree[[tn]]$title <- input$mt_pt_title
       mt_request_plot_update(dirty = tn)
     }
@@ -2231,7 +2235,8 @@ mt_install_server <- function(input, output, session) {
   observeEvent(input$mt_pt_title_size, ignoreInit = TRUE, {
     req(input$mt_title_tree_selector)
     tn <- input$mt_title_tree_selector
-    if (!is.null(mt_values$per_tree[[tn]])) {
+    pt <- mt_values$per_tree[[tn]]
+    if (!is.null(pt) && !identical(pt$title_size, input$mt_pt_title_size)) {
       mt_values$per_tree[[tn]]$title_size <- input$mt_pt_title_size
       mt_request_plot_update(dirty = tn)
     }
@@ -2240,7 +2245,8 @@ mt_install_server <- function(input, output, session) {
   observeEvent(mt_pt_title_color_d(), ignoreInit = TRUE, {
     req(input$mt_title_tree_selector)
     tn <- input$mt_title_tree_selector
-    if (!is.null(mt_values$per_tree[[tn]])) {
+    pt <- mt_values$per_tree[[tn]]
+    if (!is.null(pt) && !identical(pt$title_color, mt_pt_title_color_d())) {
       mt_values$per_tree[[tn]]$title_color <- mt_pt_title_color_d()
       mt_request_plot_update(dirty = tn)
     }
@@ -2249,7 +2255,8 @@ mt_install_server <- function(input, output, session) {
   observeEvent(input$mt_pt_title_font, ignoreInit = TRUE, {
     req(input$mt_title_tree_selector)
     tn <- input$mt_title_tree_selector
-    if (!is.null(mt_values$per_tree[[tn]])) {
+    pt <- mt_values$per_tree[[tn]]
+    if (!is.null(pt) && !identical(pt$title_font, input$mt_pt_title_font)) {
       mt_values$per_tree[[tn]]$title_font <- input$mt_pt_title_font
       mt_request_plot_update(dirty = tn)
     }
@@ -2258,8 +2265,10 @@ mt_install_server <- function(input, output, session) {
   observeEvent(input$mt_pt_title_hjust, ignoreInit = TRUE, {
     req(input$mt_title_tree_selector)
     tn <- input$mt_title_tree_selector
-    if (!is.null(mt_values$per_tree[[tn]])) {
-      mt_values$per_tree[[tn]]$title_hjust <- as.numeric(input$mt_pt_title_hjust)
+    pt <- mt_values$per_tree[[tn]]
+    new_val <- as.numeric(input$mt_pt_title_hjust)
+    if (!is.null(pt) && !identical(pt$title_hjust, new_val)) {
+      mt_values$per_tree[[tn]]$title_hjust <- new_val
       mt_request_plot_update(dirty = tn)
     }
   })
@@ -2393,17 +2402,8 @@ mt_install_server <- function(input, output, session) {
   observeEvent(mt_plot_trigger_debounced(), {
     req(mt_values$newick_paths, mt_values$csv_path)
     req(mt_plot_trigger() > 0)
-
-    time_since_last <- as.numeric(Sys.time()) * 1000 - mt_last_render_time()
-    if (time_since_last < MT_COOLDOWN_MS) {
-      cat(file=stderr(), sprintf("[MT] plot_trigger: cooldown active (%.0fms)\n", time_since_last))
-      return()
-    }
-
     cat(file=stderr(), "[MT] plot_trigger_debounced fired -> mt_request_render\n")
-    mt_values$plot_generating <- TRUE
-    mt_show_processing()
-    shinyjs::delay(50, { mt_do_render() })
+    mt_request_render()
   }, ignoreInit = TRUE)
 
   # ==========================================================================
@@ -2456,15 +2456,27 @@ mt_install_server <- function(input, output, session) {
         return()
       }
       if (mt_classification_loading()) {
-        cat(file=stderr(), "[MT] SKIP: classification_loading is TRUE\n")
+        cat(file=stderr(), "[MT] SKIP: classification_loading is TRUE, re-queuing\n")
         mt_values$plot_generating <- FALSE
-        mt_show_ready()
+        mt_values$render_pending <- TRUE
+        shinyjs::delay(500, {
+          if (isTRUE(isolate(mt_values$render_pending)) && !isTRUE(isolate(mt_values$plot_generating))) {
+            isolate(mt_values$render_pending <- FALSE)
+            mt_request_render()
+          }
+        })
         return()
       }
 
       on.exit({
         mt_values$plot_generating <- FALSE
-        mt_show_ready()
+        if (isTRUE(mt_values$render_pending)) {
+          cat(file=stderr(), "[MT] mt_do_render: pending render found, scheduling\n")
+          mt_values$render_pending <- FALSE
+          shinyjs::delay(100, { mt_request_render() })
+        } else {
+          mt_show_ready()
+        }
         cat(file=stderr(), "[MT] mt_do_render() exiting\n")
       })
 
@@ -2659,7 +2671,12 @@ mt_install_server <- function(input, output, session) {
 
       on.exit({
         mt_values$plot_generating <- FALSE
-        mt_show_ready()
+        if (isTRUE(mt_values$render_pending)) {
+          mt_values$render_pending <- FALSE
+          shinyjs::delay(100, { mt_request_render() })
+        } else {
+          mt_show_ready()
+        }
       })
 
       list_out <- list()
@@ -2759,24 +2776,6 @@ mt_install_server <- function(input, output, session) {
   MT_COOLDOWN_MS <- 1000
 
   mt_request_render <- function(dirty = NULL) {
-    if (isTRUE(mt_values$plot_generating)) {
-      cat(file=stderr(), "[MT] mt_request_render: SKIP (plot_generating=TRUE)\n")
-      return()
-    }
-    if (is.null(mt_values$newick_paths) || is.null(mt_values$csv_path)) {
-      cat(file=stderr(), "[MT] mt_request_render: SKIP (no data)\n")
-      return()
-    }
-
-    time_since_last <- as.numeric(Sys.time()) * 1000 - isolate(mt_last_render_time())
-    if (time_since_last < MT_COOLDOWN_MS) {
-      cat(file=stderr(), sprintf("[MT] mt_request_render: SKIP cooldown (%.0fms)\n", time_since_last))
-      return()
-    }
-
-    cat(file=stderr(), "[MT] mt_request_render: locking + showing Processing\n")
-    mt_values$plot_generating <- TRUE
-
     if (!is.null(dirty)) {
       current_dirty <- isolate(mt_values$dirty_trees)
       if (is.null(current_dirty)) {
@@ -2787,6 +2786,34 @@ mt_install_server <- function(input, output, session) {
     } else {
       mt_values$dirty_trees <- NULL
     }
+
+    if (isTRUE(mt_values$plot_generating)) {
+      cat(file=stderr(), "[MT] mt_request_render: queued (plot_generating=TRUE)\n")
+      mt_values$render_pending <- TRUE
+      return()
+    }
+    if (is.null(mt_values$newick_paths) || is.null(mt_values$csv_path)) {
+      cat(file=stderr(), "[MT] mt_request_render: SKIP (no data)\n")
+      return()
+    }
+
+    time_since_last <- as.numeric(Sys.time()) * 1000 - isolate(mt_last_render_time())
+    if (time_since_last < MT_COOLDOWN_MS) {
+      remaining <- ceiling(MT_COOLDOWN_MS - time_since_last)
+      cat(file=stderr(), sprintf("[MT] mt_request_render: queued for cooldown (%dms)\n", remaining))
+      mt_values$render_pending <- TRUE
+      shinyjs::delay(remaining, {
+        if (isTRUE(isolate(mt_values$render_pending)) && !isTRUE(isolate(mt_values$plot_generating))) {
+          isolate(mt_values$render_pending <- FALSE)
+          mt_request_render()
+        }
+      })
+      return()
+    }
+
+    cat(file=stderr(), "[MT] mt_request_render: locking + showing Processing\n")
+    mt_values$plot_generating <- TRUE
+    mt_values$render_pending <- FALSE
 
     mt_show_processing()
 
@@ -2932,7 +2959,8 @@ mt_install_server <- function(input, output, session) {
   observeEvent(mt_pt_bg_color_d(), ignoreInit = TRUE, {
     req(input$mt_bg_tree_selector)
     tn <- input$mt_bg_tree_selector
-    if (!is.null(mt_values$per_tree[[tn]])) {
+    pt <- mt_values$per_tree[[tn]]
+    if (!is.null(pt) && !identical(pt$bg_color, mt_pt_bg_color_d())) {
       mt_values$per_tree[[tn]]$bg_color <- mt_pt_bg_color_d()
       mt_request_plot_update(dirty = tn)
     }
