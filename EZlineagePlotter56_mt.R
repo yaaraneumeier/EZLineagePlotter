@@ -1207,7 +1207,8 @@ mt_install_server <- function(input, output, session) {
     cached_tree_plots = list(), # per-tree styled ggplot objects for incremental rendering
     cached_base_plots = list(), # per-tree base ggplot objects (pre-styling, for fast bg/title re-style)
     dirty_trees = NULL,         # character vector of tree names needing re-render (NULL = all dirty)
-    render_pending = FALSE      # TRUE if a render was requested while another was in progress
+    render_pending = FALSE,     # TRUE if a full render was requested while another was in progress
+    restyle_pending = FALSE     # TRUE if a restyle render was requested while another was in progress
   )
 
   # Helper to append log messages
@@ -1336,7 +1337,7 @@ mt_install_server <- function(input, output, session) {
       if (is.null(mt_values$per_tree[[tn]])) {
         mt_values$per_tree[[tn]] <- list(
           rotate = NULL, highlight_adjust_height = 1,
-          highlight_adjust_width = 1.5, title = tn, bg_color = "#FFFFFF",
+          highlight_adjust_width = 1.5, title = tn, bg_color = NULL,
           individual_value = NULL
         )
       }
@@ -2226,14 +2227,14 @@ mt_install_server <- function(input, output, session) {
     }
   })
 
-  # Save per-tree title values (with change-detection; uses fast restyle path)
+  # Save per-tree title values (with change-detection; uses debounced restyle path)
   observeEvent(input$mt_pt_title, ignoreInit = TRUE, {
     req(input$mt_title_tree_selector)
     tn <- input$mt_title_tree_selector
     pt <- mt_values$per_tree[[tn]]
     if (!is.null(pt) && !identical(pt$title, input$mt_pt_title)) {
       mt_values$per_tree[[tn]]$title <- input$mt_pt_title
-      mt_request_restyle_render()
+      mt_request_restyle_update()
     }
   })
 
@@ -2243,7 +2244,7 @@ mt_install_server <- function(input, output, session) {
     pt <- mt_values$per_tree[[tn]]
     if (!is.null(pt) && !identical(pt$title_size, input$mt_pt_title_size)) {
       mt_values$per_tree[[tn]]$title_size <- input$mt_pt_title_size
-      mt_request_restyle_render()
+      mt_request_restyle_update()
     }
   })
 
@@ -2253,7 +2254,7 @@ mt_install_server <- function(input, output, session) {
     pt <- mt_values$per_tree[[tn]]
     if (!is.null(pt) && !identical(pt$title_color, mt_pt_title_color_d())) {
       mt_values$per_tree[[tn]]$title_color <- mt_pt_title_color_d()
-      mt_request_restyle_render()
+      mt_request_restyle_update()
     }
   })
 
@@ -2263,7 +2264,7 @@ mt_install_server <- function(input, output, session) {
     pt <- mt_values$per_tree[[tn]]
     if (!is.null(pt) && !identical(pt$title_font, input$mt_pt_title_font)) {
       mt_values$per_tree[[tn]]$title_font <- input$mt_pt_title_font
-      mt_request_restyle_render()
+      mt_request_restyle_update()
     }
   })
 
@@ -2274,7 +2275,7 @@ mt_install_server <- function(input, output, session) {
     new_val <- as.numeric(input$mt_pt_title_hjust)
     if (!is.null(pt) && !identical(pt$title_hjust, new_val)) {
       mt_values$per_tree[[tn]]$title_hjust <- new_val
-      mt_request_restyle_render()
+      mt_request_restyle_update()
     }
   })
 
@@ -2412,6 +2413,23 @@ mt_install_server <- function(input, output, session) {
   }, ignoreInit = TRUE)
 
   # ==========================================================================
+  # RESTYLE TRIGGER (debounced) — batches title/bg changes into one restyle
+  # ==========================================================================
+  mt_restyle_trigger <- reactiveVal(0)
+  mt_restyle_trigger_debounced <- debounce(reactive(mt_restyle_trigger()), 500)
+
+  mt_request_restyle_update <- function() {
+    mt_restyle_trigger(isolate(mt_restyle_trigger()) + 1)
+  }
+
+  observeEvent(mt_restyle_trigger_debounced(), {
+    req(mt_values$newick_paths, mt_values$csv_path)
+    req(mt_restyle_trigger() > 0)
+    cat(file=stderr(), "[MT] restyle_trigger_debounced fired -> mt_request_restyle_render\n")
+    mt_request_restyle_render()
+  }, ignoreInit = TRUE)
+
+  # ==========================================================================
   # END DEBOUNCED / TRIGGER MECHANISM
   # ==========================================================================
 
@@ -2512,9 +2530,10 @@ mt_install_server <- function(input, output, session) {
         pt <- mt_values$per_tree[[tn]]
         if (!is.null(pt$title) && nchar(pt$title) > 0) pt$title else tn
       })
+      bg <- if (!is.null(input$mt_background_color)) input$mt_background_color else "#FFFFFF"
       tree_bg_colors <- sapply(mt_values$newick_names, function(tn) {
         pt <- mt_values$per_tree[[tn]]
-        if (!is.null(pt$bg_color)) pt$bg_color else "#FFFFFF"
+        if (!is.null(pt$bg_color)) pt$bg_color else bg
       })
 
       render_csv_path <- if (!is.null(mt_values$temp_csv_path) && file.exists(mt_values$temp_csv_path)) {
@@ -2559,7 +2578,6 @@ mt_install_server <- function(input, output, session) {
         ox <- if (!is.null(input$mt_plot_offset_x)) input$mt_plot_offset_x / 10 else 0
         oy <- if (!is.null(input$mt_plot_offset_y)) input$mt_plot_offset_y / 10 else 0
         sc <- if (!is.null(input$mt_plot_scale_percent)) input$mt_plot_scale_percent / 100 else 1
-        bg <- if (!is.null(input$mt_background_color)) input$mt_background_color else "#FFFFFF"
 
         canvas <- cowplot::ggdraw() +
           cowplot::draw_grob(result,
@@ -2681,7 +2699,10 @@ mt_install_server <- function(input, output, session) {
 
       on.exit({
         mt_values$plot_generating <- FALSE
-        if (isTRUE(mt_values$render_pending)) {
+        if (isTRUE(mt_values$restyle_pending)) {
+          mt_values$restyle_pending <- FALSE
+          shinyjs::delay(100, { mt_request_restyle_render() })
+        } else if (isTRUE(mt_values$render_pending)) {
           mt_values$render_pending <- FALSE
           shinyjs::delay(100, { mt_request_render() })
         } else {
@@ -2775,6 +2796,7 @@ mt_install_server <- function(input, output, session) {
   mt_do_restyle_render <- function() {
     isolate({
       cat(file=stderr(), "[MT] mt_do_restyle_render() called\n")
+      mt_values$restyle_pending <- FALSE
       base_plots <- mt_values$cached_base_plots
       if (is.null(base_plots) || length(base_plots) == 0) {
         cat(file=stderr(), "[MT] restyle: no cached base plots, falling back to full render\n")
@@ -2784,7 +2806,10 @@ mt_install_server <- function(input, output, session) {
 
       on.exit({
         mt_values$plot_generating <- FALSE
-        if (isTRUE(mt_values$render_pending)) {
+        if (isTRUE(mt_values$restyle_pending)) {
+          mt_values$restyle_pending <- FALSE
+          shinyjs::delay(100, { mt_request_restyle_render() })
+        } else if (isTRUE(mt_values$render_pending)) {
           mt_values$render_pending <- FALSE
           shinyjs::delay(100, { mt_request_render() })
         } else {
@@ -2792,6 +2817,7 @@ mt_install_server <- function(input, output, session) {
         }
       })
 
+      global_bg <- if (!is.null(input$mt_background_color)) input$mt_background_color else "#FFFFFF"
       list_out <- list()
       for (tn in mt_values$newick_names) {
         bp <- base_plots[[tn]]
@@ -2801,7 +2827,7 @@ mt_install_server <- function(input, output, session) {
           next
         }
         pt <- mt_values$per_tree[[tn]]
-        tree_bg <- if (!is.null(pt$bg_color)) pt$bg_color else "#FFFFFF"
+        tree_bg <- if (!is.null(pt$bg_color)) pt$bg_color else global_bg
         tree_title <- if (!is.null(pt$title) && nchar(pt$title) > 0) pt$title else tn
         title_sz <- if (!is.null(pt$title_size)) pt$title_size else 10
         title_col <- if (!is.null(pt$title_color)) pt$title_color else "#000000"
@@ -2856,10 +2882,11 @@ mt_install_server <- function(input, output, session) {
 
   mt_request_restyle_render <- function() {
     if (isTRUE(mt_values$plot_generating)) {
-      mt_values$render_pending <- TRUE
+      mt_values$restyle_pending <- TRUE
       return()
     }
     mt_values$plot_generating <- TRUE
+    mt_values$restyle_pending <- FALSE
     mt_show_processing()
     shinyjs::delay(50, { mt_do_restyle_render() })
   }
@@ -3030,10 +3057,10 @@ mt_install_server <- function(input, output, session) {
     mt_request_overlay_render()
   })
 
-  # Global background color change → overlay render (fast path)
+  # Global background color change → restyle render (updates all tree backgrounds)
   observeEvent(mt_background_color_d(), ignoreInit = TRUE, {
     if (!is.null(mt_values$last_plot)) {
-      mt_request_overlay_render()
+      mt_request_restyle_update()
     }
   })
 
@@ -3067,8 +3094,9 @@ mt_install_server <- function(input, output, session) {
     tn <- input$mt_bg_tree_selector
     pt <- mt_values$per_tree[[tn]]
     if (is.null(pt)) return(NULL)
+    default_bg <- if (!is.null(isolate(input$mt_background_color))) isolate(input$mt_background_color) else "#FFFFFF"
     colourpicker::colourInput("mt_pt_bg_color", NULL,
-                              value = if (!is.null(pt$bg_color)) pt$bg_color else "#FFFFFF",
+                              value = if (!is.null(pt$bg_color)) pt$bg_color else default_bg,
                               showColour = "both", allowTransparent = TRUE)
   })
 
@@ -3078,7 +3106,7 @@ mt_install_server <- function(input, output, session) {
     pt <- mt_values$per_tree[[tn]]
     if (!is.null(pt) && !identical(pt$bg_color, mt_pt_bg_color_d())) {
       mt_values$per_tree[[tn]]$bg_color <- mt_pt_bg_color_d()
-      mt_request_restyle_render()
+      mt_request_restyle_update()
     }
   })
 
