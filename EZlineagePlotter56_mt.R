@@ -2449,6 +2449,8 @@ mt_install_server <- function(input, output, session) {
   mt_do_render <- function() {
     isolate({
       cat(file=stderr(), "[MT] mt_do_render() called\n")
+      mt_values$render_pending <- FALSE
+
       if (is.null(mt_values$newick_paths) || is.null(mt_values$csv_path)) {
         cat(file=stderr(), "[MT] SKIP: no newick_paths or csv_path\n")
         mt_values$plot_generating <- FALSE
@@ -2776,6 +2778,18 @@ mt_install_server <- function(input, output, session) {
   MT_COOLDOWN_MS <- 1000
 
   mt_request_render <- function(dirty = NULL) {
+    if (isTRUE(mt_values$plot_generating)) {
+      cat(file=stderr(), "[MT] mt_request_render: queued (plot_generating=TRUE)\n")
+      mt_values$render_pending <- TRUE
+      if (!is.null(dirty)) {
+        current_dirty <- isolate(mt_values$dirty_trees)
+        if (!is.null(current_dirty)) {
+          mt_values$dirty_trees <- union(current_dirty, dirty)
+        }
+      }
+      return()
+    }
+
     if (!is.null(dirty)) {
       current_dirty <- isolate(mt_values$dirty_trees)
       if (is.null(current_dirty)) {
@@ -2787,11 +2801,6 @@ mt_install_server <- function(input, output, session) {
       mt_values$dirty_trees <- NULL
     }
 
-    if (isTRUE(mt_values$plot_generating)) {
-      cat(file=stderr(), "[MT] mt_request_render: queued (plot_generating=TRUE)\n")
-      mt_values$render_pending <- TRUE
-      return()
-    }
     if (is.null(mt_values$newick_paths) || is.null(mt_values$csv_path)) {
       cat(file=stderr(), "[MT] mt_request_render: SKIP (no data)\n")
       return()
