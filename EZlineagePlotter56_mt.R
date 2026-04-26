@@ -1108,7 +1108,7 @@ func.render.single.tree.in.app <- function(
     ) +
     ggplot2::guides(color = "none", size = "none", shape = "none")
 
-  list(plot = styled_plot, cache = updated_cache)
+  list(plot = styled_plot, base_plot = one_plot, cache = updated_cache)
 }
 
 func.multiple.trees.one.page.in.app <- function(
@@ -1117,12 +1117,14 @@ func.multiple.trees.one.page.in.app <- function(
   tree_titles, tree_bg_colors, log_fn = function(msg) {},
   p_cache_per_tree = list(),
   cached_tree_plots = list(),
+  cached_base_plots = list(),
   dirty_trees = NULL,
   tree_spacing_mm = 5
 ) {
   list_out <- list()
   updated_cache <- p_cache_per_tree
   updated_plots <- cached_tree_plots
+  updated_base <- cached_base_plots
   all_dirty <- is.null(dirty_trees)
 
   for (i in seq_along(newick_paths)) {
@@ -1156,6 +1158,7 @@ func.multiple.trees.one.page.in.app <- function(
 
     list_out[[length(list_out) + 1]] <- result_single$plot
     updated_plots[[tn]] <- result_single$plot
+    updated_base[[tn]] <- result_single$base_plot
     updated_cache[[tn]] <- result_single$cache
   }
 
@@ -1166,6 +1169,7 @@ func.multiple.trees.one.page.in.app <- function(
   result <- do.call(gridExtra::grid.arrange, c(list_out, ncol = 1, list(padding = padding)))
   attr(result, "p_cache_per_tree") <- updated_cache
   attr(result, "cached_tree_plots") <- updated_plots
+  attr(result, "cached_base_plots") <- updated_base
   result
 }
 
@@ -1200,7 +1204,8 @@ mt_install_server <- function(input, output, session) {
     rotation1_config_per_tree = list(), # per-tree rotation1 config
     rotation2_config_per_tree = list(), # per-tree rotation2 config
     manual_rotation_per_tree = list(),  # per-tree manual rotation nodes
-    cached_tree_plots = list(), # per-tree ggplot objects for incremental rendering
+    cached_tree_plots = list(), # per-tree styled ggplot objects for incremental rendering
+    cached_base_plots = list(), # per-tree base ggplot objects (pre-styling, for fast bg/title re-style)
     dirty_trees = NULL,         # character vector of tree names needing re-render (NULL = all dirty)
     render_pending = FALSE      # TRUE if a render was requested while another was in progress
   )
@@ -2221,14 +2226,14 @@ mt_install_server <- function(input, output, session) {
     }
   })
 
-  # Save per-tree title values (with change-detection to avoid spurious renders on tab/tree switch)
+  # Save per-tree title values (with change-detection; uses fast restyle path)
   observeEvent(input$mt_pt_title, ignoreInit = TRUE, {
     req(input$mt_title_tree_selector)
     tn <- input$mt_title_tree_selector
     pt <- mt_values$per_tree[[tn]]
     if (!is.null(pt) && !identical(pt$title, input$mt_pt_title)) {
       mt_values$per_tree[[tn]]$title <- input$mt_pt_title
-      mt_request_plot_update(dirty = tn)
+      mt_request_restyle_render()
     }
   })
 
@@ -2238,7 +2243,7 @@ mt_install_server <- function(input, output, session) {
     pt <- mt_values$per_tree[[tn]]
     if (!is.null(pt) && !identical(pt$title_size, input$mt_pt_title_size)) {
       mt_values$per_tree[[tn]]$title_size <- input$mt_pt_title_size
-      mt_request_plot_update(dirty = tn)
+      mt_request_restyle_render()
     }
   })
 
@@ -2248,7 +2253,7 @@ mt_install_server <- function(input, output, session) {
     pt <- mt_values$per_tree[[tn]]
     if (!is.null(pt) && !identical(pt$title_color, mt_pt_title_color_d())) {
       mt_values$per_tree[[tn]]$title_color <- mt_pt_title_color_d()
-      mt_request_plot_update(dirty = tn)
+      mt_request_restyle_render()
     }
   })
 
@@ -2258,7 +2263,7 @@ mt_install_server <- function(input, output, session) {
     pt <- mt_values$per_tree[[tn]]
     if (!is.null(pt) && !identical(pt$title_font, input$mt_pt_title_font)) {
       mt_values$per_tree[[tn]]$title_font <- input$mt_pt_title_font
-      mt_request_plot_update(dirty = tn)
+      mt_request_restyle_render()
     }
   })
 
@@ -2269,7 +2274,7 @@ mt_install_server <- function(input, output, session) {
     new_val <- as.numeric(input$mt_pt_title_hjust)
     if (!is.null(pt) && !identical(pt$title_hjust, new_val)) {
       mt_values$per_tree[[tn]]$title_hjust <- new_val
-      mt_request_plot_update(dirty = tn)
+      mt_request_restyle_render()
     }
   })
 
@@ -2532,6 +2537,7 @@ mt_install_server <- function(input, output, session) {
           log_fn = mt_log,
           p_cache_per_tree = mt_values$p_cache_per_tree,
           cached_tree_plots = mt_values$cached_tree_plots,
+          cached_base_plots = mt_values$cached_base_plots,
           dirty_trees = dirty,
           tree_spacing_mm = if (!is.null(input$mt_tree_spacing)) input$mt_tree_spacing else 5
         ),
@@ -2546,6 +2552,8 @@ mt_install_server <- function(input, output, session) {
         if (!is.null(cached_p)) mt_values$p_cache_per_tree <- cached_p
         cached_plots <- attr(result, "cached_tree_plots")
         if (!is.null(cached_plots)) mt_values$cached_tree_plots <- cached_plots
+        cached_base <- attr(result, "cached_base_plots")
+        if (!is.null(cached_base)) mt_values$cached_base_plots <- cached_base
 
         # Apply position, scale, and background from Extra tab
         ox <- if (!is.null(input$mt_plot_offset_x)) input$mt_plot_offset_x / 10 else 0
@@ -2764,6 +2772,98 @@ mt_install_server <- function(input, output, session) {
     })
   }
 
+  mt_do_restyle_render <- function() {
+    isolate({
+      cat(file=stderr(), "[MT] mt_do_restyle_render() called\n")
+      base_plots <- mt_values$cached_base_plots
+      if (is.null(base_plots) || length(base_plots) == 0) {
+        cat(file=stderr(), "[MT] restyle: no cached base plots, falling back to full render\n")
+        mt_do_render()
+        return()
+      }
+
+      on.exit({
+        mt_values$plot_generating <- FALSE
+        if (isTRUE(mt_values$render_pending)) {
+          mt_values$render_pending <- FALSE
+          shinyjs::delay(100, { mt_request_render() })
+        } else {
+          mt_show_ready()
+        }
+      })
+
+      list_out <- list()
+      for (tn in mt_values$newick_names) {
+        bp <- base_plots[[tn]]
+        if (is.null(bp)) {
+          cp <- mt_values$cached_tree_plots[[tn]]
+          if (!is.null(cp)) { list_out[[length(list_out) + 1]] <- cp; next }
+          next
+        }
+        pt <- mt_values$per_tree[[tn]]
+        tree_bg <- if (!is.null(pt$bg_color)) pt$bg_color else "#FFFFFF"
+        tree_title <- if (!is.null(pt$title) && nchar(pt$title) > 0) pt$title else tn
+        title_sz <- if (!is.null(pt$title_size)) pt$title_size else 10
+        title_col <- if (!is.null(pt$title_color)) pt$title_color else "#000000"
+        title_font <- if (!is.null(pt$title_font)) pt$title_font else "sans"
+        title_hjust <- if (!is.null(pt$title_hjust)) pt$title_hjust else 0.5
+
+        styled <- bp +
+          ggtree::theme_tree(bgcolor = tree_bg) +
+          ggplot2::ggtitle(tree_title) +
+          ggplot2::theme(
+            plot.title = ggplot2::element_text(hjust = title_hjust, size = title_sz,
+                                                colour = title_col, family = title_font),
+            plot.background = ggplot2::element_rect(fill = tree_bg, color = tree_bg),
+            panel.background = ggplot2::element_rect(fill = tree_bg, color = tree_bg)
+          ) +
+          ggplot2::guides(color = "none", size = "none", shape = "none")
+
+        list_out[[length(list_out) + 1]] <- styled
+        mt_values$cached_tree_plots[[tn]] <- styled
+      }
+
+      if (length(list_out) == 0) { mt_do_render(); return() }
+
+      sp <- if (!is.null(input$mt_tree_spacing)) input$mt_tree_spacing else 5
+      result <- do.call(gridExtra::grid.arrange, c(list_out, ncol = 1, list(padding = grid::unit(sp, "mm"))))
+
+      ox <- if (!is.null(input$mt_plot_offset_x)) input$mt_plot_offset_x / 10 else 0
+      oy <- if (!is.null(input$mt_plot_offset_y)) input$mt_plot_offset_y / 10 else 0
+      sc <- if (!is.null(input$mt_plot_scale_percent)) input$mt_plot_scale_percent / 100 else 1
+      bg <- if (!is.null(input$mt_background_color)) input$mt_background_color else "#FFFFFF"
+
+      canvas <- cowplot::ggdraw() +
+        cowplot::draw_grob(result,
+                           x = 0.5 + ox, y = 0.5 + oy,
+                           width = sc, height = sc,
+                           hjust = 0.5, vjust = 0.5) +
+        ggplot2::theme(plot.background = ggplot2::element_rect(fill = bg, color = NA),
+                       panel.background = ggplot2::element_rect(fill = bg, color = NA))
+
+      mt_values$last_plot <- canvas
+      tmp <- tempfile(fileext = ".svg")
+      w <- if (isTRUE(input$mt_a4_output)) 297 else { v <- input$mt_output_width; if (!is.null(v)) v else 29.7 }
+      h <- if (isTRUE(input$mt_a4_output)) 210 else { v <- input$mt_output_height; if (!is.null(v)) v else 42 }
+      u <- if (isTRUE(input$mt_a4_output)) "mm" else { v <- input$mt_output_units; if (!is.null(v)) v else "cm" }
+      ggplot2::ggsave(tmp, plot = canvas, width = w, height = h, units = u, limitsize = FALSE)
+      mt_values$last_plot_file <- tmp
+      mt_values$plot_counter <- mt_values$plot_counter + 1
+      mt_last_render_time(as.numeric(Sys.time()) * 1000)
+      cat(file=stderr(), "[MT] mt_do_restyle_render() done\n")
+    })
+  }
+
+  mt_request_restyle_render <- function() {
+    if (isTRUE(mt_values$plot_generating)) {
+      mt_values$render_pending <- TRUE
+      return()
+    }
+    mt_values$plot_generating <- TRUE
+    mt_show_processing()
+    shinyjs::delay(50, { mt_do_restyle_render() })
+  }
+
   mt_request_overlay_render <- function() {
     if (isTRUE(mt_values$plot_generating)) return()
     mt_values$plot_generating <- TRUE
@@ -2930,6 +3030,13 @@ mt_install_server <- function(input, output, session) {
     mt_request_overlay_render()
   })
 
+  # Global background color change → overlay render (fast path)
+  observeEvent(mt_background_color_d(), ignoreInit = TRUE, {
+    if (!is.null(mt_values$last_plot)) {
+      mt_request_overlay_render()
+    }
+  })
+
   # Reset position
   observeEvent(input$mt_reset_plot_position, ignoreInit = TRUE, {
     updateSliderInput(session, "mt_plot_offset_x", value = 0)
@@ -2971,7 +3078,7 @@ mt_install_server <- function(input, output, session) {
     pt <- mt_values$per_tree[[tn]]
     if (!is.null(pt) && !identical(pt$bg_color, mt_pt_bg_color_d())) {
       mt_values$per_tree[[tn]]$bg_color <- mt_pt_bg_color_d()
-      mt_request_plot_update(dirty = tn)
+      mt_request_restyle_render()
     }
   })
 
