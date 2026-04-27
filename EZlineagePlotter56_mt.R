@@ -1336,8 +1336,8 @@ mt_install_server <- function(input, output, session) {
     for (tn in names) {
       if (is.null(mt_values$per_tree[[tn]])) {
         mt_values$per_tree[[tn]] <- list(
-          rotate = NULL, highlight_adjust_height = 1,
-          highlight_adjust_width = 1.5, title = tn, bg_color = NULL,
+          rotate = NULL, highlight_adjust_height = NULL,
+          highlight_adjust_width = NULL, title = tn, bg_color = NULL,
           individual_value = NULL
         )
       }
@@ -2032,14 +2032,16 @@ mt_install_server <- function(input, output, session) {
     tn <- input$mt_highlight_tree_selector
     pt <- mt_values$per_tree[[tn]]
     if (is.null(pt)) return(NULL)
+    shared_h <- if (!is.null(isolate(input$mt_highlight_adjust_height))) isolate(input$mt_highlight_adjust_height) else 1
+    shared_w <- if (!is.null(isolate(input$mt_highlight_adjust_width))) isolate(input$mt_highlight_adjust_width) else 1.5
     tagList(
       sliderInput("mt_pt_highlight_height", "Horizontal Extent (this tree):",
                   min = 0.001, max = 5,
-                  value = if (!is.null(pt$highlight_adjust_height)) pt$highlight_adjust_height else 1,
+                  value = if (!is.null(pt$highlight_adjust_height)) pt$highlight_adjust_height else shared_h,
                   step = 0.001),
       sliderInput("mt_pt_highlight_width", "Vertical Extent / Height (this tree):",
                   min = 0.01, max = 5,
-                  value = if (!is.null(pt$highlight_adjust_width)) pt$highlight_adjust_width else 1.5,
+                  value = if (!is.null(pt$highlight_adjust_width)) pt$highlight_adjust_width else shared_w,
                   step = 0.01)
     )
   })
@@ -2049,7 +2051,10 @@ mt_install_server <- function(input, output, session) {
     req(input$mt_highlight_tree_selector)
     tn <- input$mt_highlight_tree_selector
     pt <- mt_values$per_tree[[tn]]
-    if (!is.null(pt) && !identical(pt$highlight_adjust_height, input$mt_pt_highlight_height)) {
+    if (is.null(pt)) return()
+    shared_h <- if (!is.null(input$mt_highlight_adjust_height)) input$mt_highlight_adjust_height else 1
+    effective <- if (!is.null(pt$highlight_adjust_height)) pt$highlight_adjust_height else shared_h
+    if (!identical(effective, input$mt_pt_highlight_height)) {
       mt_values$per_tree[[tn]]$highlight_adjust_height <- input$mt_pt_highlight_height
       mt_request_plot_update(dirty = tn)
     }
@@ -2059,7 +2064,10 @@ mt_install_server <- function(input, output, session) {
     req(input$mt_highlight_tree_selector)
     tn <- input$mt_highlight_tree_selector
     pt <- mt_values$per_tree[[tn]]
-    if (!is.null(pt) && !identical(pt$highlight_adjust_width, input$mt_pt_highlight_width)) {
+    if (is.null(pt)) return()
+    shared_w <- if (!is.null(input$mt_highlight_adjust_width)) input$mt_highlight_adjust_width else 1.5
+    effective <- if (!is.null(pt$highlight_adjust_width)) pt$highlight_adjust_width else shared_w
+    if (!identical(effective, input$mt_pt_highlight_width)) {
       mt_values$per_tree[[tn]]$highlight_adjust_width <- input$mt_pt_highlight_width
       mt_request_plot_update(dirty = tn)
     }
@@ -3104,8 +3112,12 @@ mt_install_server <- function(input, output, session) {
     req(input$mt_bg_tree_selector)
     tn <- input$mt_bg_tree_selector
     pt <- mt_values$per_tree[[tn]]
-    if (!is.null(pt) && !identical(pt$bg_color, mt_pt_bg_color_d())) {
-      mt_values$per_tree[[tn]]$bg_color <- mt_pt_bg_color_d()
+    if (is.null(pt)) return()
+    new_val <- mt_pt_bg_color_d()
+    global_bg <- if (!is.null(input$mt_background_color)) input$mt_background_color else "#FFFFFF"
+    effective <- if (!is.null(pt$bg_color)) pt$bg_color else global_bg
+    if (!identical(effective, new_val)) {
+      mt_values$per_tree[[tn]]$bg_color <- new_val
       mt_request_restyle_update()
     }
   })
