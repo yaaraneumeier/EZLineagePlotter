@@ -3012,6 +3012,10 @@ mt_install_server <- function(input, output, session) {
     mt_plot_image("Click Apply & Preview to render.")
   }, deleteFile = FALSE)
 
+  outputOptions(output, "mt_bootstrap_preview", suspendWhenHidden = FALSE)
+  outputOptions(output, "mt_highlight_preview", suspendWhenHidden = FALSE)
+  outputOptions(output, "mt_tree_display_preview", suspendWhenHidden = FALSE)
+
   # --- Main Update Preview button (tree display tab) ---
   observeEvent(input$mt_update_preview, ignoreInit = TRUE, {
     mt_request_render()
@@ -3114,9 +3118,9 @@ mt_install_server <- function(input, output, session) {
     pt <- mt_values$per_tree[[tn]]
     if (is.null(pt)) return()
     new_val <- mt_pt_bg_color_d()
-    global_bg <- if (!is.null(input$mt_background_color)) input$mt_background_color else "#FFFFFF"
+    global_bg <- if (!is.null(input$mt_background_color)) input$mt_background_color else "#ffffff"
     effective <- if (!is.null(pt$bg_color)) pt$bg_color else global_bg
-    if (!identical(effective, new_val)) {
+    if (!identical(tolower(effective), tolower(new_val))) {
       mt_values$per_tree[[tn]]$bg_color <- new_val
       mt_request_restyle_update()
     }

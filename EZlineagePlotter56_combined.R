@@ -12,7 +12,7 @@
 
 # Load everything from the single-mode file except the shinyApp() launch.
 # This gives us all library() calls, func.* definitions, plus `ui` and `server`.
-main_lines <- readLines(file.path(getwd(), "EZlineagePlotter56.R"))
+main_lines <- readLines(file.path(getwd(), "EZlineagePlotter56.R"), warn = FALSE)
 main_lines[grep("^shinyApp\\(", main_lines)] <- ""
 eval(parse(text = main_lines))
 
