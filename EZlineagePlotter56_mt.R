@@ -1338,7 +1338,8 @@ mt_install_server <- function(input, output, session) {
         mt_values$per_tree[[tn]] <- list(
           rotate = NULL, highlight_adjust_height = NULL,
           highlight_adjust_width = NULL, title = tn, bg_color = NULL,
-          individual_value = NULL
+          individual_value = NULL,
+          rotation_type = "rotation1", enable_rotation = FALSE
         )
       }
     }
@@ -1742,10 +1743,18 @@ mt_install_server <- function(input, output, session) {
   mt_save_current_tree_rotation <- function() {
     prev <- mt_prev_tree()
     if (is.null(prev) || is.null(mt_values$per_tree[[prev]])) return()
-    # Save rotation type
-    mt_values$per_tree[[prev]]$rotation_type <- input$mt_rotation_type
-    mt_values$per_tree[[prev]]$enable_rotation <- isTRUE(input$mt_enable_rotation)
-    # Manual rotation nodes saved by apply button
+    pt <- mt_values$per_tree[[prev]]
+    new_type <- input$mt_rotation_type
+    new_enable <- isTRUE(input$mt_enable_rotation)
+    changed <- FALSE
+    if (!identical(pt$rotation_type, new_type)) {
+      mt_values$per_tree[[prev]]$rotation_type <- new_type
+      changed <- TRUE
+    }
+    if (!identical(pt$enable_rotation, new_enable)) {
+      mt_values$per_tree[[prev]]$enable_rotation <- new_enable
+      changed <- TRUE
+    }
   }
 
   observeEvent(input$mt_tree_selector, ignoreInit = TRUE, {
@@ -2235,12 +2244,15 @@ mt_install_server <- function(input, output, session) {
     }
   })
 
-  # Save per-tree title values (with change-detection; uses debounced restyle path)
+  # Save per-tree title values (with effective-value comparison to prevent
+  # spurious triggers from renderUI recreation)
   observeEvent(input$mt_pt_title, ignoreInit = TRUE, {
     req(input$mt_title_tree_selector)
     tn <- input$mt_title_tree_selector
     pt <- mt_values$per_tree[[tn]]
-    if (!is.null(pt) && !identical(pt$title, input$mt_pt_title)) {
+    if (is.null(pt)) return()
+    effective <- if (!is.null(pt$title)) pt$title else tn
+    if (!identical(effective, input$mt_pt_title)) {
       mt_values$per_tree[[tn]]$title <- input$mt_pt_title
       mt_request_restyle_update()
     }
@@ -2250,7 +2262,9 @@ mt_install_server <- function(input, output, session) {
     req(input$mt_title_tree_selector)
     tn <- input$mt_title_tree_selector
     pt <- mt_values$per_tree[[tn]]
-    if (!is.null(pt) && !identical(pt$title_size, input$mt_pt_title_size)) {
+    if (is.null(pt)) return()
+    effective <- if (!is.null(pt$title_size)) pt$title_size else 10
+    if (!identical(effective, input$mt_pt_title_size)) {
       mt_values$per_tree[[tn]]$title_size <- input$mt_pt_title_size
       mt_request_restyle_update()
     }
@@ -2260,8 +2274,11 @@ mt_install_server <- function(input, output, session) {
     req(input$mt_title_tree_selector)
     tn <- input$mt_title_tree_selector
     pt <- mt_values$per_tree[[tn]]
-    if (!is.null(pt) && !identical(pt$title_color, mt_pt_title_color_d())) {
-      mt_values$per_tree[[tn]]$title_color <- mt_pt_title_color_d()
+    if (is.null(pt)) return()
+    new_val <- mt_pt_title_color_d()
+    effective <- if (!is.null(pt$title_color)) pt$title_color else "#000000"
+    if (!identical(tolower(effective), tolower(new_val))) {
+      mt_values$per_tree[[tn]]$title_color <- new_val
       mt_request_restyle_update()
     }
   })
@@ -2270,7 +2287,9 @@ mt_install_server <- function(input, output, session) {
     req(input$mt_title_tree_selector)
     tn <- input$mt_title_tree_selector
     pt <- mt_values$per_tree[[tn]]
-    if (!is.null(pt) && !identical(pt$title_font, input$mt_pt_title_font)) {
+    if (is.null(pt)) return()
+    effective <- if (!is.null(pt$title_font)) pt$title_font else "sans"
+    if (!identical(effective, input$mt_pt_title_font)) {
       mt_values$per_tree[[tn]]$title_font <- input$mt_pt_title_font
       mt_request_restyle_update()
     }
@@ -2280,8 +2299,10 @@ mt_install_server <- function(input, output, session) {
     req(input$mt_title_tree_selector)
     tn <- input$mt_title_tree_selector
     pt <- mt_values$per_tree[[tn]]
+    if (is.null(pt)) return()
     new_val <- as.numeric(input$mt_pt_title_hjust)
-    if (!is.null(pt) && !identical(pt$title_hjust, new_val)) {
+    effective <- if (!is.null(pt$title_hjust)) pt$title_hjust else 0.5
+    if (!identical(effective, new_val)) {
       mt_values$per_tree[[tn]]$title_hjust <- new_val
       mt_request_restyle_update()
     }
