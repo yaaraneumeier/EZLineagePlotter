@@ -2515,6 +2515,7 @@ mt_install_server <- function(input, output, session) {
         mt_values$render_pending <- TRUE
         shinyjs::delay(500, {
           if (isTRUE(isolate(mt_values$render_pending)) && !isTRUE(isolate(mt_values$plot_generating))) {
+            cat(file=stderr(), "[MT] classification_loading retry timer -> mt_request_render\n")
             isolate(mt_values$render_pending <- FALSE)
             mt_request_render()
           }
@@ -2523,12 +2524,15 @@ mt_install_server <- function(input, output, session) {
       }
 
       on.exit({
-        mt_values$plot_generating <- FALSE
         if (isTRUE(mt_values$render_pending)) {
-          cat(file=stderr(), "[MT] mt_do_render: pending render found, scheduling\n")
+          cat(file=stderr(), "[MT] mt_do_render: pending render found, scheduling direct\n")
           mt_values$render_pending <- FALSE
-          shinyjs::delay(100, { mt_request_render() })
+          shinyjs::delay(100, {
+            cat(file=stderr(), "[MT] mt_do_render on.exit timer -> mt_do_render (direct)\n")
+            mt_do_render()
+          })
         } else {
+          mt_values$plot_generating <- FALSE
           mt_show_ready()
         }
         cat(file=stderr(), "[MT] mt_do_render() exiting\n")
@@ -2727,14 +2731,22 @@ mt_install_server <- function(input, output, session) {
       }
 
       on.exit({
-        mt_values$plot_generating <- FALSE
         if (isTRUE(mt_values$restyle_pending)) {
+          cat(file=stderr(), "[MT] mt_do_overlay_render on.exit: restyle_pending, scheduling direct\n")
           mt_values$restyle_pending <- FALSE
-          shinyjs::delay(100, { mt_request_restyle_render() })
+          shinyjs::delay(100, {
+            cat(file=stderr(), "[MT] mt_do_overlay_render on.exit timer -> mt_do_restyle_render\n")
+            mt_do_restyle_render()
+          })
         } else if (isTRUE(mt_values$render_pending)) {
+          cat(file=stderr(), "[MT] mt_do_overlay_render on.exit: render_pending, scheduling direct\n")
           mt_values$render_pending <- FALSE
-          shinyjs::delay(100, { mt_request_render() })
+          shinyjs::delay(100, {
+            cat(file=stderr(), "[MT] mt_do_overlay_render on.exit timer -> mt_do_render (direct)\n")
+            mt_do_render()
+          })
         } else {
+          mt_values$plot_generating <- FALSE
           mt_show_ready()
         }
       })
@@ -2834,14 +2846,22 @@ mt_install_server <- function(input, output, session) {
       }
 
       on.exit({
-        mt_values$plot_generating <- FALSE
         if (isTRUE(mt_values$restyle_pending)) {
+          cat(file=stderr(), "[MT] mt_do_restyle_render on.exit: restyle_pending, scheduling direct\n")
           mt_values$restyle_pending <- FALSE
-          shinyjs::delay(100, { mt_request_restyle_render() })
+          shinyjs::delay(100, {
+            cat(file=stderr(), "[MT] mt_do_restyle_render on.exit timer -> mt_do_restyle_render\n")
+            mt_do_restyle_render()
+          })
         } else if (isTRUE(mt_values$render_pending)) {
+          cat(file=stderr(), "[MT] mt_do_restyle_render on.exit: render_pending, scheduling direct\n")
           mt_values$render_pending <- FALSE
-          shinyjs::delay(100, { mt_request_render() })
+          shinyjs::delay(100, {
+            cat(file=stderr(), "[MT] mt_do_restyle_render on.exit timer -> mt_do_render (direct)\n")
+            mt_do_render()
+          })
         } else {
+          mt_values$plot_generating <- FALSE
           mt_show_ready()
         }
       })
@@ -2935,13 +2955,18 @@ mt_install_server <- function(input, output, session) {
 
   mt_request_render <- function(dirty = NULL) {
     if (isTRUE(mt_values$plot_generating)) {
-      cat(file=stderr(), "[MT] mt_request_render: queued (plot_generating=TRUE)\n")
+      already_queued <- isTRUE(mt_values$render_pending)
+      cat(file=stderr(), sprintf("[MT] mt_request_render: queued (plot_generating=TRUE, already_queued=%s)\n", already_queued))
       mt_values$render_pending <- TRUE
       if (!is.null(dirty)) {
         current_dirty <- isolate(mt_values$dirty_trees)
         if (!is.null(current_dirty)) {
           mt_values$dirty_trees <- union(current_dirty, dirty)
         }
+      }
+      if (!already_queued) {
+        showNotification("Render request queued - will run when current render finishes.",
+                         type = "message", duration = 3, id = "mt_queued_notify")
       }
       return()
     }
@@ -2969,6 +2994,7 @@ mt_install_server <- function(input, output, session) {
       mt_values$render_pending <- TRUE
       shinyjs::delay(remaining, {
         if (isTRUE(isolate(mt_values$render_pending)) && !isTRUE(isolate(mt_values$plot_generating))) {
+          cat(file=stderr(), "[MT] cooldown timer expired -> mt_request_render\n")
           isolate(mt_values$render_pending <- FALSE)
           mt_request_render()
         }
@@ -2989,6 +3015,11 @@ mt_install_server <- function(input, output, session) {
   }
 
   # --- Status indicator helpers ---
+  mt_apply_buttons <- c("mt_apply_highlight", "mt_apply_bootstrap", "mt_apply_tree_display",
+                        "mt_update_preview", "mt_apply_legend", "mt_remove_highlight",
+                        "mt_apply_rotation1", "mt_apply_rotation2", "mt_apply_manual_rotation",
+                        "mt_remove_classification", "mt_apply_palette")
+
   mt_show_processing <- function() {
     for (pfx in c("mt_upload_status", "mt_status", "mt_class_status", "mt_boot_status", "mt_high_status",
                    "mt_legend_status", "mt_extra_status", "mt_download_status")) {
@@ -2996,6 +3027,7 @@ mt_install_server <- function(input, output, session) {
       shinyjs::hide(paste0(pfx, "_ready"))
       shinyjs::show(paste0(pfx, "_processing"))
     }
+    for (btn in mt_apply_buttons) shinyjs::disable(btn)
   }
 
   mt_show_ready <- function() {
@@ -3005,6 +3037,7 @@ mt_install_server <- function(input, output, session) {
       shinyjs::hide(paste0(pfx, "_processing"))
       shinyjs::show(paste0(pfx, "_ready"))
     }
+    for (btn in mt_apply_buttons) shinyjs::enable(btn)
   }
 
   # --- Plot outputs: all read cached SVG via plot_counter (no cascading renders) ---
