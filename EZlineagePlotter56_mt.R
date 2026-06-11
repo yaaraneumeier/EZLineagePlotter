@@ -1189,6 +1189,7 @@ mt_install_server <- function(input, output, session) {
     csv_path = NULL,            # single temp file path
     csv_data = NULL,            # data.frame
     trees = list(),             # list of treedata objects per newick
+    tree_data = list(),         # list[[tree_name]] = ggtree layout data (node/parent/isTip/label/x/y)
     matched_per_tree = list(),  # list[[tree_name]] = filtered CSV subset for that tree
     filtered_csv = NULL,        # combined filtered CSV (only matched rows across all trees)
     temp_csv_path = NULL,        # path to filtered CSV on disk (passed to func.print.lineage.tree)
@@ -1649,6 +1650,19 @@ mt_install_server <- function(input, output, session) {
       if (is.null(tree)) next
       mt_values$trees[[tn]] <- tree
 
+      # Precompute ggtree layout data for this tree (same as single mode's
+      # values$tree_data) so the rotation node selector and per-branch ordering
+      # UI have real node numbers. treeio::read.newick returns treedata (@phylo).
+      mt_values$tree_data[[tn]] <- tryCatch({
+        phylo_obj <- if (inherits(tree, "phylo")) tree else tree@phylo
+        suppressWarnings(ggtree(phylo_obj)$data)
+      }, error = function(e) {
+        mt_log(paste0("ERROR computing tree layout for '", tn, "': ", e$message))
+        NULL
+      })
+      cat(file=stderr(), sprintf("[MT-ROTATION] tree_data for '%s': %s rows\n",
+          tn, if (is.null(mt_values$tree_data[[tn]])) "NULL" else nrow(mt_values$tree_data[[tn]])))
+
       # Determine CSV subset for this tree
       if (use_all || is.null(indiv_col) || indiv_col == "") {
         csv_sub <- csv_full
@@ -1793,16 +1807,12 @@ mt_install_server <- function(input, output, session) {
   # ROTATION SERVER LOGIC (mirrors single-mode rotation)
   # ================================================================
 
-  # Layout data (ggtree) for the currently-selected tree. Handles both phylo and
-  # treedata - treeio::read.newick returns a treedata (S4, has @phylo), so the
-  # old `tree_obj$edge` returned NULL and the node selector never populated.
+  # Layout data (ggtree) for the currently-selected tree - read from the
+  # precomputed per-tree store (populated at Process Data time).
   mt_rotation_tree_data <- reactive({
-    req(input$mt_tree_selector, mt_values$trees)
     tn <- input$mt_tree_selector
-    tree_obj <- mt_values$trees[[tn]]
-    if (is.null(tree_obj)) return(NULL)
-    phylo_obj <- if (inherits(tree_obj, "phylo")) tree_obj else tree_obj@phylo
-    suppressWarnings(ggtree(phylo_obj)$data)
+    if (is.null(tn) || tn == "") return(NULL)
+    mt_values$tree_data[[tn]]
   })
 
   # Populate node selector with the tree's internal (rotatable) node numbers.
@@ -1810,9 +1820,16 @@ mt_install_server <- function(input, output, session) {
   # conditionalPanels, and client-side choices render correctly when it opens
   # and are typeable/filterable; server-side choices were not appearing.
   observe({
+    tn <- input$mt_tree_selector
     td <- mt_rotation_tree_data()
-    if (is.null(td)) return()
+    if (is.null(td)) {
+      cat(file=stderr(), sprintf("[MT-ROTATION] node-choices: no tree_data for '%s'\n",
+          if (is.null(tn)) "NULL" else tn))
+      return()
+    }
     internal_nodes <- sort(td$node[td$isTip == FALSE])
+    cat(file=stderr(), sprintf("[MT-ROTATION] node-choices for '%s': %d internal nodes\n",
+        tn, length(internal_nodes)))
     updateSelectizeInput(session, "mt_nodes_to_rotate",
                          choices = internal_nodes)
   })
