@@ -218,6 +218,9 @@ mt_tabItem_tree_display <- function() {
           sliderInput("mt_fdr_perc", "FDR Percentage", min = 0.01, max = 0.25, value = 0.1, step = 0.01)
         ),
         checkboxInput("mt_ladderize", "Ladderize Tree", value = FALSE),
+        checkboxInput("mt_mirror_tree", "Mirror Tree (left ↔ right)", value = FALSE),
+        tags$div(style = "margin-left: 20px; margin-top: -10px; margin-bottom: 10px;",
+                 tags$small(style = "color: #666;", "Flips the whole tree horizontally. Topology stays accurate; labels and heatmaps follow.")),
         tags$hr(),
         actionButton("mt_apply_tree_display", "Apply & Preview",
                      icon = icon("eye"), class = "btn-primary btn-block")
@@ -1044,6 +1047,7 @@ func.render.single.tree.in.app <- function(
       debug_mode = FALSE,
       compare_two_trees = FALSE,
       list_nodes_to_rotate = if (!is.null(per_tree$rotate) && length(per_tree$rotate) > 0) per_tree$rotate else NA,
+      mirror_tree_flag = isTRUE(shared_settings$mirror_tree),
       flag_display_nod_number_on_tree = isTRUE(shared_settings$display_node_numbers),
       node_number_font_size = shared_settings$node_number_font_size,
       bootstrap_label_size = shared_settings$bootstrap_label_size,
@@ -2332,6 +2336,7 @@ mt_install_server <- function(input, output, session) {
       node_number_font_size = if (!is.null(input$mt_node_number_font_size)) input$mt_node_number_font_size else 3.5,
       tip_length = if (!is.null(input$mt_tip_length)) input$mt_tip_length else 0.05,
       ladderize = isTRUE(input$mt_ladderize),
+      mirror_tree = isTRUE(input$mt_mirror_tree),
       trim_tips = isTRUE(input$mt_trim_tips),
       legend_title_size = if (!is.null(input$mt_legend_title_size)) input$mt_legend_title_size else 12,
       legend_text_size = if (!is.null(input$mt_legend_text_size)) input$mt_legend_text_size else 10,
