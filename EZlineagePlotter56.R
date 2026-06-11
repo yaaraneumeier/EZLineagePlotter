@@ -3209,6 +3209,27 @@ func.rotate.specific.nodes <- function(tree_TRY1, list_nodes_to_rotate) {
   return(tree_TRY1)
 }
 
+# Function to mirror the whole tree left<->right.
+#
+# The tree is drawn with coord_flip + scale_y_reverse, so the ggtree `y`
+# coordinate is the horizontal (tip-ordering) axis on screen. Mirroring is a
+# pure reflection of that one coordinate for every node:
+#     y_new = (min(y) + max(y)) - y_old
+# Topology and branch lengths are unchanged, and because every layer (branches,
+# tip labels, bootstrap, highlights, heatmap tiles) is positioned from this same
+# tip coordinate, they all flip together and stay aligned - so the tree remains
+# accurate. Text is only repositioned, never reversed. A parent stays the mean
+# of its children, so the layout remains internally consistent.
+func.mirror.tree <- function(tree_view) {
+  df <- tree_view$data
+  if (is.null(df$y) || all(is.na(df$y))) return(tree_view)
+  reflect <- min(df$y, na.rm = TRUE) + max(df$y, na.rm = TRUE)
+  df$y <- reflect - df$y
+  tree_view$data <- df
+  cat(file=stderr(), "[DEBUG-MIRROR] Tree mirrored left<->right (reflected y)\n")
+  return(tree_view)
+}
+
 # Helper: human-readable label for a child node, for the rotation UI.
 func.child.label <- function(td, cid) {
   row <- which(td$node == cid)
@@ -3290,6 +3311,7 @@ func.print.lineage.tree <- function(conf_yaml_path,
                                     classification_in_compare=NA,
                                     flag_print_tree_data= FALSE,
                                     list_nodes_to_rotate= NA,
+                                    mirror_tree_flag= FALSE,
                                     flag_display_nod_number_on_tree= FALSE,
                                     node_number_font_size= 3.5,
                                     highlight_manual_nodes= FALSE,
@@ -5677,7 +5699,8 @@ func.print.lineage.tree <- function(conf_yaml_path,
         cached_p_list_of_pairs = cached_p_list_of_pairs,  # S2.0-PERF: Pass cached p-values
         cached_p_list_hash = cached_p_list_hash,  # S2.0-PERF: Pass cache hash for validation
         p_list_cache = p_list_cache,  # S2.7-PERF: Multi-entry cache
-        heatmap_cache = heatmap_cache  # S2.9-PERF: Heatmap cache
+        heatmap_cache = heatmap_cache,  # S2.9-PERF: Heatmap cache
+        mirror_tree_flag = mirror_tree_flag  # Mirror tree left<->right
       )
       # }
 
@@ -5863,7 +5886,8 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
                                          cached_p_list_of_pairs = NULL,  # S2.0-PERF: Cached p-values (Option 3A)
                                          cached_p_list_hash = NULL,      # S2.0-PERF: Hash for cache validation
                                          p_list_cache = list(),          # S2.7-PERF: Multi-entry cache
-                                         heatmap_cache = list()) {       # S2.9-PERF: Heatmap cache
+                                         heatmap_cache = list(),         # S2.9-PERF: Heatmap cache
+                                         mirror_tree_flag = FALSE) {     # Mirror tree left<->right
 
   # === DEBUG CHECKPOINT 4: INNER FUNCTION ENTRY ===
   # v53: cat(file=stderr(), "\nÃ°Å¸â€Â DEBUG CHECKPOINT 4: func.make.plot.tree.heat.NEW ENTRY\n")
@@ -6111,9 +6135,15 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   } else {
     tree_TRY2 <- tree_TRY1
   }
-  
+
+  # Mirror the whole tree left<->right if requested (pure layout reflection;
+  # every tip-aligned layer follows, so the tree stays accurate).
+  if (isTRUE(mirror_tree_flag)) {
+    tree_TRY2 <- func.mirror.tree(tree_TRY2)
+  }
+
   #print("J")
-  
+
   tree_newick <- tree_TRY2
   
   # Handle short tips if requested
@@ -9619,9 +9649,12 @@ ui <- dashboardPage(
               condition = "input.use_pvalues == true",
               sliderInput("fdr_perc", "FDR Percentage", min = 0.01, max = 0.25, value = 0.1, step = 0.01)
             ),
-            checkboxInput("ladderize", "Ladderize Tree", value = FALSE)
+            checkboxInput("ladderize", "Ladderize Tree", value = FALSE),
+            checkboxInput("mirror_tree", "Mirror Tree (left ↔ right)", value = FALSE),
+            tags$div(style = "margin-left: 20px; margin-top: -10px; margin-bottom: 10px;",
+                     tags$small(style = "color: #666;", "Flips the whole tree horizontally. Topology stays accurate; labels and heatmaps follow."))
           ),
-          
+
           box(
             title = "Rotation Options",
             status = "primary",
@@ -19070,7 +19103,13 @@ server <- function(input, output, session) {
     req(values$plot_ready)
     request_plot_update()
   }, ignoreInit = TRUE)
-  
+
+  # Mirror tree left<->right
+  observeEvent(input$mirror_tree, {
+    req(values$plot_ready)
+    request_plot_update()
+  }, ignoreInit = TRUE)
+
   validate_rotation <- function(num_groups, rotation_prefix) {
     errors <- c()
     for (i in 1:num_groups) {
@@ -19675,12 +19714,13 @@ server <- function(input, output, session) {
         units_out = units_val,
         debug_mode = FALSE,
         compare_two_trees = FALSE,
-        list_nodes_to_rotate = if (!is.null(values$manual_rotation_config) && 
+        list_nodes_to_rotate = if (!is.null(values$manual_rotation_config) &&
                                    length(values$manual_rotation_config) > 0) {
           values$manual_rotation_config
         } else {
           NA
         },
+        mirror_tree_flag = isTRUE(input$mirror_tree),
         flag_display_nod_number_on_tree = display_nodes_to_pass,
         node_number_font_size = font_size_to_pass,
         highlight_manual_nodes = highlight_flag_to_pass,
