@@ -19157,6 +19157,31 @@ server <- function(input, output, session) {
   # Dynamic per-node child-ordering UI for multifurcating (non-binary) nodes.
   # Each selected node with >2 children gets a row of its branches with left/
   # right arrow buttons; the row order is the left->right order on the tree.
+  #
+  # Initialize the default child order for newly-selected multifurcating nodes
+  # in a normal observer (NOT inside renderUI - writing reactive state during a
+  # render desyncs the output and produces "output ... in unexpected state"
+  # client errors).
+  observeEvent(list(input$nodes_to_rotate, values$tree_data), {
+    td <- values$tree_data
+    sel <- input$nodes_to_rotate
+    if (is.null(td) || is.null(sel) || length(sel) == 0) return()
+    sel <- as.numeric(sel)
+    cur <- values$multifurc_order
+    changed <- FALSE
+    for (n in sel) {
+      children <- td$node[td$parent == n & td$node != n]
+      if (length(children) <= 2) next
+      key <- as.character(n)
+      ord <- cur[[key]]
+      if (is.null(ord) || length(ord) != length(children) || !setequal(ord, children)) {
+        cur[[key]] <- children[order(td$y[match(children, td$node)])]
+        changed <- TRUE
+      }
+    }
+    if (changed) values$multifurc_order <- cur
+  }, ignoreInit = FALSE)
+
   output$multifurcating_order_ui <- renderUI({
     req(input$enable_rotation, input$rotation_type == "manual")
     sel <- input$nodes_to_rotate
@@ -19172,9 +19197,9 @@ server <- function(input, output, session) {
       key <- as.character(n)
       ord <- values$multifurc_order[[key]]
       if (is.null(ord) || length(ord) != length(children) || !setequal(ord, children)) {
-        # Default to the current visual order (by layout y).
+        # Display-only fallback (the authoritative default is set by the
+        # initialization observer above - never write reactive state here).
         ord <- children[order(td$y[match(children, td$node)])]
-        isolate({ values$multifurc_order[[key]] <- ord })
       }
 
       arm_ui <- lapply(seq_along(ord), function(pos) {
