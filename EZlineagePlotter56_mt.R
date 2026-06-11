@@ -1189,7 +1189,6 @@ mt_install_server <- function(input, output, session) {
     csv_path = NULL,            # single temp file path
     csv_data = NULL,            # data.frame
     trees = list(),             # list of treedata objects per newick
-    tree_data = list(),         # list[[tree_name]] = ggtree layout data (node/parent/isTip/label/x/y)
     matched_per_tree = list(),  # list[[tree_name]] = filtered CSV subset for that tree
     filtered_csv = NULL,        # combined filtered CSV (only matched rows across all trees)
     temp_csv_path = NULL,        # path to filtered CSV on disk (passed to func.print.lineage.tree)
@@ -1650,19 +1649,6 @@ mt_install_server <- function(input, output, session) {
       if (is.null(tree)) next
       mt_values$trees[[tn]] <- tree
 
-      # Precompute ggtree layout data for this tree (same as single mode's
-      # values$tree_data) so the rotation node selector and per-branch ordering
-      # UI have real node numbers. treeio::read.newick returns treedata (@phylo).
-      mt_values$tree_data[[tn]] <- tryCatch({
-        phylo_obj <- if (inherits(tree, "phylo")) tree else tree@phylo
-        suppressWarnings(ggtree(phylo_obj)$data)
-      }, error = function(e) {
-        mt_log(paste0("ERROR computing tree layout for '", tn, "': ", e$message))
-        NULL
-      })
-      cat(file=stderr(), sprintf("[MT-ROTATION] tree_data for '%s': %s rows\n",
-          tn, if (is.null(mt_values$tree_data[[tn]])) "NULL" else nrow(mt_values$tree_data[[tn]])))
-
       # Determine CSV subset for this tree
       if (use_all || is.null(indiv_col) || indiv_col == "") {
         csv_sub <- csv_full
@@ -1807,12 +1793,25 @@ mt_install_server <- function(input, output, session) {
   # ROTATION SERVER LOGIC (mirrors single-mode rotation)
   # ================================================================
 
-  # Layout data (ggtree) for the currently-selected tree - read from the
-  # precomputed per-tree store (populated at Process Data time).
+  # Layout data (ggtree) for the currently-selected tree. Read directly from the
+  # tree's newick file - the SAME file and node numbering that
+  # func.print.lineage.tree uses (ape::read.tree) - so it does not depend on the
+  # Process Data step having populated mt_values$trees.
   mt_rotation_tree_data <- reactive({
     tn <- input$mt_tree_selector
     if (is.null(tn) || tn == "") return(NULL)
-    mt_values$tree_data[[tn]]
+    paths <- mt_values$newick_paths
+    nms <- mt_values$newick_names
+    if (is.null(paths) || is.null(nms)) return(NULL)
+    idx <- match(tn, nms)
+    if (is.na(idx) || idx > length(paths)) return(NULL)
+    tryCatch(
+      suppressWarnings(ggtree(ape::read.tree(paths[idx]))$data),
+      error = function(e) {
+        cat(file=stderr(), paste0("[MT-ROTATION] layout error for '", tn, "': ", e$message, "\n"))
+        NULL
+      }
+    )
   })
 
   # Populate node selector with the tree's internal (rotatable) node numbers.
