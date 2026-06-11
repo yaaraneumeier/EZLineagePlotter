@@ -1806,13 +1806,15 @@ mt_install_server <- function(input, output, session) {
   })
 
   # Populate node selector with the tree's internal (rotatable) node numbers.
+  # Client-side (no server=TRUE) to match single mode: the panel lives inside
+  # conditionalPanels, and client-side choices render correctly when it opens
+  # and are typeable/filterable; server-side choices were not appearing.
   observe({
     td <- mt_rotation_tree_data()
     if (is.null(td)) return()
     internal_nodes <- sort(td$node[td$isTip == FALSE])
     updateSelectizeInput(session, "mt_nodes_to_rotate",
-                         choices = as.character(internal_nodes),
-                         server = TRUE)
+                         choices = internal_nodes)
   })
 
   # Initialize default child order for newly-selected multifurcating nodes
