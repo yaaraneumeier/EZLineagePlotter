@@ -3230,6 +3230,96 @@ func.mirror.tree <- function(tree_view) {
   return(tree_view)
 }
 
+# Function to overlay clade-cluster separation on the (single-mode) tree.
+# Each cluster is a contiguous TIP RANGE: list(start_tip, end_tip, label, color).
+# The tree uses layout_dendrogram (root top, tips bottom): data `y` is the
+# horizontal tip-ordering axis and data `x` is tree depth (vertical). Overlays
+# are drawn in data coordinates (with inherit.aes = FALSE and constant colors so
+# they don't touch the tree's color/size/fill scales) and layout_dendrogram
+# transforms them consistently with the tree.
+func.add.cluster.overlay <- function(p, cluster_overlay) {
+  if (is.null(cluster_overlay)) return(p)
+  clusters <- cluster_overlay$clusters
+  if (is.null(clusters) || length(clusters) == 0) return(p)
+  styles <- cluster_overlay$styles; if (is.null(styles)) styles <- list()
+  prm    <- cluster_overlay$params; if (is.null(prm)) prm <- list()
+  getp <- function(nm, def) if (!is.null(prm[[nm]])) prm[[nm]] else def
+  placement     <- getp("placement", "top")
+  label_size    <- getp("label_size", 4)
+  label_angle   <- getp("label_angle", 0)
+  bracket_thick <- getp("bracket_thickness", 1)
+  band_opacity  <- getp("band_opacity", 0.15)
+  strip_thick   <- getp("strip_thickness", 0.4)
+
+  df <- p$data
+  tips <- df[df$isTip == TRUE & !is.na(df$isTip), ]
+  if (nrow(tips) == 0) return(p)
+  x_min <- min(df$x, na.rm = TRUE); x_max <- max(df$x, na.rm = TRUE)
+  x_span <- x_max - x_min
+  if (!is.finite(x_span) || x_span <= 0) x_span <- 1
+  off  <- 0.04 * x_span   # gap between tree and bracket
+  tick <- 0.02 * x_span   # bracket end-tick length
+  sw   <- strip_thick * 0.08 * x_span  # tip strip width
+
+  for (cl in clusters) {
+    st <- as.character(cl$start_tip); en <- as.character(cl$end_tip)
+    ys <- tips$y[tips$label %in% c(st, en)]
+    if (length(ys) < 1 || all(is.na(ys))) {
+      cat(file=stderr(), paste0("[CLUSTER] skipped '", if (!is.null(cl$label)) cl$label else "", "' - tips not found: ", st, " / ", en, "\n"))
+      next
+    }
+    y1 <- min(ys, na.rm = TRUE); y2 <- max(ys, na.rm = TRUE)
+    ymid <- (y1 + y2) / 2
+    lab <- if (!is.null(cl$label)) as.character(cl$label) else ""
+    col <- if (!is.null(cl$color) && nzchar(cl$color)) cl$color else "#333333"
+
+    if (isTRUE(styles$band)) {
+      p <- p + ggplot2::geom_rect(
+        data = data.frame(xmin = x_min, xmax = x_max, ymin = y1 - 0.5, ymax = y2 + 0.5),
+        aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
+        fill = col, alpha = band_opacity, inherit.aes = FALSE)
+    }
+    if (isTRUE(styles$strip)) {
+      p <- p + ggplot2::geom_rect(
+        data = data.frame(xmin = x_max, xmax = x_max + sw, ymin = y1 - 0.5, ymax = y2 + 0.5),
+        aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
+        fill = col, alpha = 0.95, inherit.aes = FALSE)
+    }
+    if (isTRUE(styles$lines)) {
+      p <- p + ggplot2::geom_segment(
+        data = data.frame(x = c(x_min, x_min), xend = c(x_max, x_max),
+                          y = c(y1 - 0.5, y2 + 0.5), yend = c(y1 - 0.5, y2 + 0.5)),
+        aes(x = x, xend = xend, y = y, yend = yend),
+        color = col, linewidth = bracket_thick, linetype = "dashed", inherit.aes = FALSE)
+    }
+    if (isTRUE(styles$bracket)) {
+      if (identical(placement, "bottom")) {
+        xb <- x_max + off; xtick <- xb - tick; xlab <- xb + off
+      } else {
+        xb <- x_min - off; xtick <- xb + tick; xlab <- xb - off
+      }
+      p <- p + ggplot2::geom_segment(
+        data = data.frame(x = xb, xend = xb, y = y1 - 0.4, yend = y2 + 0.4),
+        aes(x = x, xend = xend, y = y, yend = yend),
+        color = col, linewidth = bracket_thick, inherit.aes = FALSE)
+      p <- p + ggplot2::geom_segment(
+        data = data.frame(x = c(xb, xb), xend = c(xtick, xtick),
+                          y = c(y1 - 0.4, y2 + 0.4), yend = c(y1 - 0.4, y2 + 0.4)),
+        aes(x = x, xend = xend, y = y, yend = yend),
+        color = col, linewidth = bracket_thick, inherit.aes = FALSE)
+      if (nzchar(lab)) {
+        p <- p + ggplot2::geom_text(
+          data = data.frame(x = xlab, y = ymid, label = lab),
+          aes(x = x, y = y, label = label),
+          color = col, size = label_size, angle = label_angle,
+          hjust = 0.5, vjust = 0.5, inherit.aes = FALSE)
+      }
+    }
+  }
+  cat(file=stderr(), paste0("[CLUSTER] overlay applied: ", length(clusters), " cluster(s)\n"))
+  return(p)
+}
+
 # Helper: human-readable label for a child node, for the rotation UI.
 func.child.label <- function(td, cid) {
   row <- which(td$node == cid)
@@ -3312,6 +3402,7 @@ func.print.lineage.tree <- function(conf_yaml_path,
                                     flag_print_tree_data= FALSE,
                                     list_nodes_to_rotate= NA,
                                     mirror_tree_flag= FALSE,
+                                    cluster_overlay= NULL,
                                     flag_display_nod_number_on_tree= FALSE,
                                     node_number_font_size= 3.5,
                                     highlight_manual_nodes= FALSE,
@@ -5700,7 +5791,8 @@ func.print.lineage.tree <- function(conf_yaml_path,
         cached_p_list_hash = cached_p_list_hash,  # S2.0-PERF: Pass cache hash for validation
         p_list_cache = p_list_cache,  # S2.7-PERF: Multi-entry cache
         heatmap_cache = heatmap_cache,  # S2.9-PERF: Heatmap cache
-        mirror_tree_flag = mirror_tree_flag  # Mirror tree left<->right
+        mirror_tree_flag = mirror_tree_flag,  # Mirror tree left<->right
+        cluster_overlay = cluster_overlay  # Clade cluster overlay (single mode)
       )
       # }
 
@@ -5887,7 +5979,8 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
                                          cached_p_list_hash = NULL,      # S2.0-PERF: Hash for cache validation
                                          p_list_cache = list(),          # S2.7-PERF: Multi-entry cache
                                          heatmap_cache = list(),         # S2.9-PERF: Heatmap cache
-                                         mirror_tree_flag = FALSE) {     # Mirror tree left<->right
+                                         mirror_tree_flag = FALSE,       # Mirror tree left<->right
+                                         cluster_overlay = NULL) {       # Clade cluster overlay (single mode)
 
   # === DEBUG CHECKPOINT 4: INNER FUNCTION ENTRY ===
   # v53: cat(file=stderr(), "\nÃ°Å¸â€Â DEBUG CHECKPOINT 4: func.make.plot.tree.heat.NEW ENTRY\n")
@@ -9245,6 +9338,16 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   })
   debug_cat(paste0("============================================\n"))
 
+  # Clade cluster overlay (single mode): draw bracket/band/lines/strip for each
+  # user-defined tip range. Done last so it sits on top of the finished plot.
+  p <- tryCatch(
+    func.add.cluster.overlay(p, cluster_overlay),
+    error = function(e) {
+      cat(file=stderr(), paste0("[CLUSTER] overlay error: ", e$message, "\n"))
+      p
+    }
+  )
+
   # v88: Save the plot with comprehensive error handling and multiple fallbacks
   save_success <- FALSE
 
@@ -9384,6 +9487,7 @@ ui <- dashboardPage(
       menuItem("Classification", tabName = "classification", icon = icon("palette")),
       menuItem("Bootstrap Values", tabName = "bootstrap", icon = icon("percentage")),
       menuItem("Highlighting", tabName = "highlighting", icon = icon("highlighter")),
+      menuItem("Clade Clusters", tabName = "clade_clusters", icon = icon("object-group")),
       menuItem("Heatmap", tabName = "heatmap", icon = icon("th")),
       menuItem("SNP Analysis", tabName = "snp_analysis", icon = icon("dna")),
       menuItem("Legend", tabName = "legend", icon = icon("list")),
@@ -9416,6 +9520,52 @@ ui <- dashboardPage(
       uiOutput("progress_bar_ui")
     ),
     tabItems(
+      # Clade Clusters Tab (single mode) - overlay cluster separation on the tree.
+      # A cluster is a contiguous TIP RANGE (from one tip to another), not a clade.
+      tabItem(
+        tabName = "clade_clusters",
+        fluidRow(
+          box(
+            title = "Clade Cluster Overlay",
+            status = "primary", solidHeader = TRUE, width = 12,
+            checkboxInput("enable_clusters", "Enable cluster overlay", value = FALSE),
+            conditionalPanel(
+              condition = "input.enable_clusters == true",
+              fluidRow(
+                column(7,
+                  tags$b("Clusters (each = a tip range)"),
+                  numericInput("num_clusters", "Number of clusters:", value = 1, min = 1, max = 30, step = 1),
+                  uiOutput("cluster_rows_ui"),
+                  checkboxInput("cluster_highlight_preview", "Highlight selected ranges on preview", value = FALSE)
+                ),
+                column(5,
+                  tags$b("Display styles (combine any)"),
+                  checkboxInput("cluster_style_bracket", "Bracket + label", value = TRUE),
+                  checkboxInput("cluster_style_band", "Shaded band", value = FALSE),
+                  checkboxInput("cluster_style_lines", "Separator lines", value = FALSE),
+                  checkboxInput("cluster_style_strip", "Colored tip strip", value = FALSE),
+                  tags$hr(),
+                  tags$b("Style"),
+                  radioButtons("cluster_placement", "Bracket/label placement:",
+                               choices = list("Top (root side)" = "top", "Bottom (tips side)" = "bottom"),
+                               selected = "top", inline = TRUE),
+                  sliderInput("cluster_label_size", "Label font size", min = 1, max = 12, value = 4, step = 0.5),
+                  sliderInput("cluster_label_angle", "Label angle", min = -90, max = 90, value = 0, step = 15),
+                  sliderInput("cluster_bracket_thickness", "Bracket thickness", min = 0.2, max = 4, value = 1, step = 0.1),
+                  sliderInput("cluster_band_opacity", "Band opacity", min = 0.02, max = 0.6, value = 0.15, step = 0.01),
+                  sliderInput("cluster_strip_thickness", "Tip strip thickness", min = 0.05, max = 2, value = 0.4, step = 0.05)
+                )
+              ),
+              tags$hr(),
+              actionButton("apply_clusters", "Apply & Preview", icon = icon("eye"), class = "btn-primary"),
+              actionButton("clear_clusters", "Clear", icon = icon("trash"), class = "btn-warning"),
+              tags$small(style = "color:#666; display:block; margin-top:8px;",
+                         "Tip ranges follow the current display order, so set rotation/mirror first. View the result in the Tree Display preview.")
+            )
+          )
+        )
+      ),
+
       # Data Upload Tab
       tabItem(
         tabName = "data_upload",
@@ -10899,6 +11049,8 @@ server <- function(input, output, session) {
     rotation2_config = list(),  # Store secondary rotation configuration
     manual_rotation_config = list(),  # Store manual rotation configuration (node list / ordered entries)
     multifurc_order = list(),  # Working child-order per multifurcating node (keyed by node id as character)
+    cluster_overlay = NULL,  # Clade cluster overlay config (clusters/styles/params)
+    cluster_rows = list(),  # Working per-row cluster definitions for the UI
     current_plot = NULL,
     plot_counter = 0,  # Counter to force reactive updates
     progress_message = "",  # Current progress message
@@ -19110,6 +19262,87 @@ server <- function(input, output, session) {
     request_plot_update()
   }, ignoreInit = TRUE)
 
+  # ============================================================================
+  # CLADE CLUSTER OVERLAY (single mode)
+  # ============================================================================
+  # Dynamic cluster definition rows: each is a tip range (from tip -> to tip),
+  # plus a label and color. Tip choices come from the layout data, in display order.
+  output$cluster_rows_ui <- renderUI({
+    req(input$num_clusters)
+    td <- values$tree_data
+    tip_choices <- character(0)
+    if (!is.null(td)) {
+      tr <- td[td$isTip == TRUE & !is.na(td$isTip), ]
+      tip_choices <- as.character(tr$label[order(tr$y)])
+    }
+    n <- max(1, input$num_clusters)
+    rows <- lapply(seq_len(n), function(i) {
+      s_id <- paste0("cluster_start_", i); e_id <- paste0("cluster_end_", i)
+      l_id <- paste0("cluster_label_", i); c_id <- paste0("cluster_color_", i)
+      stored <- if (!is.null(values$cluster_rows) && length(values$cluster_rows) >= i) values$cluster_rows[[i]] else NULL
+      sel_s <- isolate(input[[s_id]]); if (is.null(sel_s) && !is.null(stored)) sel_s <- stored$start_tip
+      sel_e <- isolate(input[[e_id]]); if (is.null(sel_e) && !is.null(stored)) sel_e <- stored$end_tip
+      val_l <- isolate(input[[l_id]]); if (is.null(val_l)) val_l <- if (!is.null(stored)) stored$label else paste0("Cluster ", i)
+      val_c <- isolate(input[[c_id]]); if (is.null(val_c)) val_c <- if (!is.null(stored)) stored$color else "#3366CC"
+      fluidRow(
+        column(3, selectizeInput(s_id, if (i == 1) "From tip" else NULL, choices = tip_choices,
+                                 selected = sel_s, options = list(placeholder = "start tip"))),
+        column(3, selectizeInput(e_id, if (i == 1) "To tip" else NULL, choices = tip_choices,
+                                 selected = sel_e, options = list(placeholder = "end tip"))),
+        column(3, textInput(l_id, if (i == 1) "Label" else NULL, value = val_l)),
+        column(3, colourpicker::colourInput(c_id, if (i == 1) "Color" else NULL, value = val_c))
+      )
+    })
+    tagList(rows)
+  })
+
+  observeEvent(input$apply_clusters, {
+    req(values$plot_ready)
+    n <- max(1, input$num_clusters)
+    rows <- list(); clusters <- list()
+    for (i in seq_len(n)) {
+      s <- input[[paste0("cluster_start_", i)]]
+      e <- input[[paste0("cluster_end_", i)]]
+      l <- input[[paste0("cluster_label_", i)]]
+      cc <- input[[paste0("cluster_color_", i)]]
+      rows[[i]] <- list(start_tip = s, end_tip = e, label = l, color = cc)
+      if (!is.null(s) && !is.null(e) && nzchar(s) && nzchar(e)) {
+        clusters[[length(clusters) + 1]] <- list(start_tip = s, end_tip = e, label = l, color = cc)
+      }
+    }
+    values$cluster_rows <- rows
+    if (length(clusters) == 0) {
+      showNotification("Add at least one cluster with both a start and end tip", type = "error", duration = 5)
+      return()
+    }
+    values$cluster_overlay <- list(
+      clusters = clusters,
+      styles = list(
+        bracket = isTRUE(input$cluster_style_bracket),
+        band    = isTRUE(input$cluster_style_band),
+        lines   = isTRUE(input$cluster_style_lines),
+        strip   = isTRUE(input$cluster_style_strip)
+      ),
+      params = list(
+        placement         = if (!is.null(input$cluster_placement)) input$cluster_placement else "top",
+        label_size        = if (!is.null(input$cluster_label_size)) input$cluster_label_size else 4,
+        label_angle       = if (!is.null(input$cluster_label_angle)) input$cluster_label_angle else 0,
+        bracket_thickness = if (!is.null(input$cluster_bracket_thickness)) input$cluster_bracket_thickness else 1,
+        band_opacity      = if (!is.null(input$cluster_band_opacity)) input$cluster_band_opacity else 0.15,
+        strip_thickness   = if (!is.null(input$cluster_strip_thickness)) input$cluster_strip_thickness else 0.4
+      )
+    )
+    generate_plot()
+    showNotification("Cluster overlay applied!", type = "message")
+  })
+
+  observeEvent(input$clear_clusters, {
+    values$cluster_overlay <- NULL
+    values$cluster_rows <- list()
+    generate_plot()
+    showNotification("Cluster overlay cleared", type = "warning")
+  })
+
   validate_rotation <- function(num_groups, rotation_prefix) {
     errors <- c()
     for (i in 1:num_groups) {
@@ -19721,6 +19954,7 @@ server <- function(input, output, session) {
           NA
         },
         mirror_tree_flag = isTRUE(input$mirror_tree),
+        cluster_overlay = if (isTRUE(input$enable_clusters)) values$cluster_overlay else NULL,
         flag_display_nod_number_on_tree = display_nodes_to_pass,
         node_number_font_size = font_size_to_pass,
         highlight_manual_nodes = highlight_flag_to_pass,
