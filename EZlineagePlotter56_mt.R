@@ -246,6 +246,8 @@ mt_tabItem_tree_display <- function() {
             selectizeInput("mt_nodes_to_rotate", "Select Nodes to Rotate",
                            choices = NULL, multiple = TRUE,
                            options = list(placeholder = "Select nodes to rotate")),
+            # Per-node child ordering for non-binary (multifurcating) nodes.
+            uiOutput("mt_multifurcating_order_ui"),
             checkboxInput("mt_highlight_selected_nodes", "Highlight Selected Nodes on Tree", value = FALSE),
             tags$div(style = "margin-left: 20px; margin-top: -10px; margin-bottom: 10px;",
                      tags$small(style = "color: #666;", "Shows red circles on selected nodes to help you verify your selection")
@@ -898,15 +900,11 @@ mt_build_yaml_data <- function(newick_path, csv_path, shared, per_tree) {
     param = as.character(shared$bootstrap_param)
   )
 
-  # Rotation - supports all three types: rotation1 (primary), rotation2 (secondary), manual
-  rotation_nodes <- list()
-  if (!is.null(per_tree$rotate) && length(per_tree$rotate) > 0) {
-    for (k in seq_along(per_tree$rotate)) {
-      node_entry <- list()
-      node_entry[[as.character(k)]] <- per_tree$rotate[k]
-      rotation_nodes[[k]] <- node_entry
-    }
-  }
+  # Rotation - supports all three types: rotation1 (primary), rotation2 (secondary), manual.
+  # per_tree$rotate is the structured config (scalar ids and/or list(node, order));
+  # serialize it the same way single mode does (backend rotation is driven by the
+  # list_nodes_to_rotate param, but we keep the YAML representation consistent).
+  rotation_nodes <- func.serialize.rotation.config(per_tree$rotate)
 
   rotation_type <- per_tree$rotation_type
   manual_rotation <- list(
@@ -1783,7 +1781,7 @@ mt_install_server <- function(input, output, session) {
       # Restore manual nodes
       if (!is.null(pt$rotate) && length(pt$rotate) > 0) {
         updateSelectizeInput(session, "mt_nodes_to_rotate",
-                             selected = as.character(pt$rotate))
+                             selected = as.character(func.rotation.config.node.ids(pt$rotate)))
       } else {
         updateSelectizeInput(session, "mt_nodes_to_rotate",
                              selected = character(0))
@@ -1795,17 +1793,132 @@ mt_install_server <- function(input, output, session) {
   # ROTATION SERVER LOGIC (mirrors single-mode rotation)
   # ================================================================
 
-  # Populate node selector with tree node numbers when a tree is selected
-  observe({
+  # Layout data (ggtree) for the currently-selected tree. Handles both phylo and
+  # treedata - treeio::read.newick returns a treedata (S4, has @phylo), so the
+  # old `tree_obj$edge` returned NULL and the node selector never populated.
+  mt_rotation_tree_data <- reactive({
     req(input$mt_tree_selector, mt_values$trees)
     tn <- input$mt_tree_selector
     tree_obj <- mt_values$trees[[tn]]
-    if (!is.null(tree_obj)) {
-      all_nodes <- tree_obj$edge[, 1]
-      unique_nodes <- sort(unique(all_nodes))
-      updateSelectizeInput(session, "mt_nodes_to_rotate",
-                           choices = as.character(unique_nodes),
-                           server = TRUE)
+    if (is.null(tree_obj)) return(NULL)
+    phylo_obj <- if (inherits(tree_obj, "phylo")) tree_obj else tree_obj@phylo
+    suppressWarnings(ggtree(phylo_obj)$data)
+  })
+
+  # Populate node selector with the tree's internal (rotatable) node numbers.
+  observe({
+    td <- mt_rotation_tree_data()
+    if (is.null(td)) return()
+    internal_nodes <- sort(td$node[td$isTip == FALSE])
+    updateSelectizeInput(session, "mt_nodes_to_rotate",
+                         choices = as.character(internal_nodes),
+                         server = TRUE)
+  })
+
+  # Initialize default child order for newly-selected multifurcating nodes
+  # (per selected tree), outside renderUI to avoid output-state desync.
+  observeEvent(list(input$mt_nodes_to_rotate, input$mt_tree_selector), {
+    td <- mt_rotation_tree_data()
+    sel <- input$mt_nodes_to_rotate
+    tn <- input$mt_tree_selector
+    if (is.null(td) || is.null(sel) || length(sel) == 0 || is.null(tn)) return()
+    if (is.null(mt_values$per_tree[[tn]])) return()
+    sel <- as.numeric(sel)
+    cur <- mt_values$per_tree[[tn]]$multifurc_order
+    if (is.null(cur)) cur <- list()
+    changed <- FALSE
+    for (n in sel) {
+      children <- td$node[td$parent == n & td$node != n]
+      if (length(children) <= 2) next
+      key <- as.character(n)
+      ord <- cur[[key]]
+      if (is.null(ord) || length(ord) != length(children) || !setequal(ord, children)) {
+        cur[[key]] <- children[order(td$y[match(children, td$node)])]
+        changed <- TRUE
+      }
+    }
+    if (changed) mt_values$per_tree[[tn]]$multifurc_order <- cur
+  }, ignoreInit = FALSE)
+
+  # Per-node left/right ordering control for multifurcating selected nodes.
+  output$mt_multifurcating_order_ui <- renderUI({
+    req(input$mt_enable_rotation, input$mt_rotation_type == "manual")
+    sel <- input$mt_nodes_to_rotate
+    td <- mt_rotation_tree_data()
+    tn <- input$mt_tree_selector
+    if (is.null(sel) || length(sel) == 0 || is.null(td) || is.null(tn)) return(NULL)
+    sel <- as.numeric(sel)
+    pt <- mt_values$per_tree[[tn]]
+    mforder <- if (!is.null(pt)) pt$multifurc_order else NULL
+
+    blocks <- list()
+    for (n in sel) {
+      children <- td$node[td$parent == n & td$node != n]
+      if (length(children) <= 2) next
+      key <- as.character(n)
+      ord <- if (!is.null(mforder)) mforder[[key]] else NULL
+      if (is.null(ord) || length(ord) != length(children) || !setequal(ord, children)) {
+        ord <- children[order(td$y[match(children, td$node)])]
+      }
+      arm_ui <- lapply(seq_along(ord), function(pos) {
+        cid <- ord[pos]
+        lbl <- func.child.label(td, cid)
+        tags$div(
+          style = "display:inline-block; border:1px solid #ccc; border-radius:6px; padding:4px 6px; margin:3px; background:#f8f9fa; vertical-align:top;",
+          actionButton(paste0("mt_arrowL_", n, "_", pos), label = NULL, icon = icon("chevron-left"),
+                       class = "btn-xs", style = "padding:1px 5px; margin-right:4px;"),
+          tags$span(style = "font-size:12px;", lbl),
+          actionButton(paste0("mt_arrowR_", n, "_", pos), label = NULL, icon = icon("chevron-right"),
+                       class = "btn-xs", style = "padding:1px 5px; margin-left:4px;")
+        )
+      })
+      blocks[[length(blocks) + 1]] <- tags$div(
+        style = "margin-top:8px; margin-bottom:6px; padding:6px; border:1px dashed #aaa; border-radius:6px;",
+        tags$small(tags$b(paste0("Order of branches for node ", n, " (", length(children), " branches)"))),
+        tags$br(),
+        tags$small(style = "color:#666;", HTML("left &#9664; — order across the tree — &#9654; right")),
+        tags$br(),
+        tags$div(arm_ui)
+      )
+    }
+    if (length(blocks) == 0) return(NULL)
+    tagList(blocks)
+  })
+
+  # Register arrow-button observers once per (node, position, dir); act on the
+  # currently-selected tree's order at click time.
+  mt_arrow_wired <- reactiveVal(character(0))
+  observe({
+    td <- mt_rotation_tree_data()
+    sel <- input$mt_nodes_to_rotate
+    if (is.null(td) || is.null(sel) || length(sel) == 0) return()
+    sel <- as.numeric(sel)
+    for (n in sel) {
+      children <- td$node[td$parent == n & td$node != n]
+      k <- length(children)
+      if (k <= 2) next
+      for (pos in seq_len(k)) {
+        for (dir in c("L", "R")) {
+          id <- paste0("mt_arrow", dir, "_", n, "_", pos)
+          if (!(id %in% mt_arrow_wired())) {
+            local({
+              nn <- n; pp <- pos; dd <- dir; idd <- id
+              observeEvent(input[[idd]], {
+                tn <- input$mt_tree_selector
+                if (is.null(tn) || is.null(mt_values$per_tree[[tn]])) return()
+                key <- as.character(nn)
+                ord <- mt_values$per_tree[[tn]]$multifurc_order[[key]]
+                if (is.null(ord)) return()
+                j <- if (dd == "L") pp - 1 else pp + 1
+                if (j < 1 || j > length(ord)) return()
+                tmp <- ord[pp]; ord[pp] <- ord[j]; ord[j] <- tmp
+                mt_values$per_tree[[tn]]$multifurc_order[[key]] <- ord
+              }, ignoreInit = TRUE)
+            })
+            mt_arrow_wired(c(mt_arrow_wired(), id))
+          }
+        }
+      }
     }
   })
 
@@ -1846,7 +1959,7 @@ mt_install_server <- function(input, output, session) {
       status_items <- c(status_items, list(tags$li("Secondary rotation configured")))
     }
     if (!is.null(pt$rotate) && length(pt$rotate) > 0) {
-      status_items <- c(status_items, list(tags$li(paste0("Manual rotation: nodes ", paste(pt$rotate, collapse = ", ")))))
+      status_items <- c(status_items, list(tags$li(paste0("Manual rotation: nodes ", paste(func.rotation.config.node.ids(pt$rotate), collapse = ", ")))))
     }
     if (length(status_items) == 0) return(NULL)
 
@@ -1993,17 +2106,34 @@ mt_install_server <- function(input, output, session) {
   observeEvent(input$mt_apply_manual_rotation, ignoreInit = TRUE, {
     req(input$mt_tree_selector, input$mt_nodes_to_rotate)
     tn <- input$mt_tree_selector
-    nodes <- as.numeric(input$mt_nodes_to_rotate)
-    nodes <- nodes[!is.na(nodes)]
-    if (length(nodes) == 0) {
+    td <- mt_rotation_tree_data()
+    sel <- as.numeric(input$mt_nodes_to_rotate)
+    sel <- sel[!is.na(sel)]
+    if (length(sel) == 0) {
       showNotification("Please select at least one node to rotate", type = "error", duration = 5)
       return()
     }
-    if (!is.null(mt_values$per_tree[[tn]])) {
-      mt_values$per_tree[[tn]]$rotate <- nodes
-      mt_values$per_tree[[tn]]$rotation_type <- "manual"
-      mt_values$per_tree[[tn]]$enable_rotation <- TRUE
+    if (is.null(mt_values$per_tree[[tn]])) {
+      showNotification("Tree not initialized yet", type = "error", duration = 5)
+      return()
     }
+    # Build structured config: binary nodes as scalar ids (flip), multifurcating
+    # nodes as list(node, order) using the per-tree chosen branch order.
+    mforder <- mt_values$per_tree[[tn]]$multifurc_order
+    cfg <- list()
+    for (n in sel) {
+      children <- if (!is.null(td)) td$node[td$parent == n & td$node != n] else integer(0)
+      if (length(children) > 2) {
+        ord <- if (!is.null(mforder)) mforder[[as.character(n)]] else NULL
+        if (is.null(ord) || length(ord) != length(children) || !setequal(ord, children)) ord <- children
+        cfg[[length(cfg) + 1]] <- list(node = n, order = as.numeric(ord))
+      } else {
+        cfg[[length(cfg) + 1]] <- n
+      }
+    }
+    mt_values$per_tree[[tn]]$rotate <- cfg
+    mt_values$per_tree[[tn]]$rotation_type <- "manual"
+    mt_values$per_tree[[tn]]$enable_rotation <- TRUE
     showNotification(paste0("Manual rotation applied to ", tn), type = "message")
     mt_request_render(dirty = tn)
   })
@@ -2014,6 +2144,7 @@ mt_install_server <- function(input, output, session) {
     tn <- input$mt_tree_selector
     if (!is.null(mt_values$per_tree[[tn]])) {
       mt_values$per_tree[[tn]]$rotate <- NULL
+      mt_values$per_tree[[tn]]$multifurc_order <- list()
     }
     updateSelectizeInput(session, "mt_nodes_to_rotate", selected = character(0))
     showNotification(paste0("Manual rotation cleared for ", tn), type = "warning")
