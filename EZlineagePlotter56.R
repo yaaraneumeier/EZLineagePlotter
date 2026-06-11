@@ -3043,16 +3043,149 @@ func.make.children.weight.list <- function(children, nod, tips_weight_list) {
 }
 
 
-# Function to rotate specific nodes
+# Helper: return all descendant node ids of a node (including the node itself),
+# using only the layout data frame (parent/node columns). No extra dependency.
+func.get.subtree.nodes <- function(df, root_id) {
+  acc <- c()
+  stack <- root_id
+  while (length(stack) > 0) {
+    cur <- stack[1]
+    stack <- stack[-1]
+    acc <- c(acc, cur)
+    kids <- df$node[df$parent == cur & df$node != cur]
+    if (length(kids) > 0) stack <- c(stack, kids)
+  }
+  acc
+}
+
+# Function to correctly reorder the children of a (possibly multifurcating) node.
+#
+# Unlike ggtree::flip - which only swaps two *vertically adjacent* clades and
+# therefore breaks when a node has >2 children (the middle child is left in
+# place, producing overlaps and gaps) - this works directly in the ggtree
+# treeview y-coordinate space: it re-stacks each child subtree contiguously in
+# the requested order (preserving each subtree's internal shape), then
+# recomputes every internal node's y as the mean of its children (ggtree's
+# default rectangular layout rule). The result is a clean, gap-free layout for
+# any number of children, and it composes with the existing binary flip path
+# because it too only edits y.
+#
+# desired_child_order: a permutation (vector of node ids) of node's current children.
+func.reorder.node.children <- function(tree_view, node, desired_child_order) {
+  df <- tree_view$data
+  child_ids <- df$node[df$parent == node & df$node != node]
+
+  if (length(child_ids) < 2) {
+    cat(file=stderr(), paste0("[DEBUG-ROTATION] reorder skipped for node ", node, " - less than 2 children\n"))
+    return(tree_view)
+  }
+
+  desired <- as.numeric(desired_child_order)
+
+  # Guard: order must be a true permutation of the node's *current* children.
+  # Protects against stale config saved against a different tree.
+  if (length(desired) != length(child_ids) || !setequal(desired, child_ids)) {
+    cat(file=stderr(), paste0("[DEBUG-ROTATION] reorder skipped for node ", node,
+        " - order (", paste(desired, collapse=","), ") is not a permutation of children (",
+        paste(child_ids, collapse=","), ")\n"))
+    return(tree_view)
+  }
+
+  # Subtree node ids + tip y-values for each child, in the desired order.
+  subtrees <- lapply(desired, function(c) func.get.subtree.nodes(df, c))
+  names(subtrees) <- as.character(desired)
+  child_tip_y <- lapply(subtrees, function(ns) df$y[df$node %in% ns & df$isTip])
+
+  # Anchor at the top of the whole group's current tip block, then place each
+  # child subtree contiguously in the desired order. Default ggtree tip spacing
+  # is 1, so a gap of 1 between clades reproduces integer tip positions and the
+  # overall vertical extent is unchanged (same multiset of tip y's, reordered).
+  anchor <- min(unlist(child_tip_y))
+  running <- anchor
+  for (cid in desired) {
+    ty <- child_tip_y[[as.character(cid)]]
+    old_min <- min(ty)
+    span <- max(ty) - min(ty)
+    delta <- running - old_min
+    ns <- subtrees[[as.character(cid)]]
+    df$y[df$node %in% ns] <- df$y[df$node %in% ns] + delta
+    running <- running + span + 1
+  }
+
+  # Re-settle only the path from `node` up to the root: each child subtree was
+  # shifted by a constant delta (so internal nodes inside them stay consistent
+  # with their tips), and untouched clades are left exactly as they were. We
+  # recompute y = mean of direct children y (ggtree's default rule) for `node`
+  # and each ancestor, deepest first.
+  cur <- node
+  repeat {
+    kids <- df$node[df$parent == cur & df$node != cur]
+    if (length(kids) > 0) {
+      df$y[df$node == cur] <- mean(df$y[df$node %in% kids])
+    }
+    par <- df$parent[df$node == cur]
+    if (length(par) == 0 || is.na(par) || par == cur) break  # reached the root
+    cur <- par
+  }
+
+  tree_view$data <- df
+  cat(file=stderr(), paste0("[DEBUG-ROTATION] Reordered node ", node, " children to: ",
+      paste(desired, collapse=", "), "\n"))
+  return(tree_view)
+}
+
+# Function to rotate specific nodes.
+#
+# list_nodes_to_rotate may be:
+#   - a numeric vector / list of node ids (legacy): each node is "rotated".
+#       * 2 children  -> ggtree::flip (UNCHANGED behavior)
+#       * >2 children -> correct child reversal (replaces the old buggy flip)
+#       * <2 children -> skipped
+#   - a list whose entries are either a scalar node id (as above) or a
+#     structured entry list(node = N, order = c(child ids in desired order)),
+#     used for explicit ordering of a multifurcating node's children.
 func.rotate.specific.nodes <- function(tree_TRY1, list_nodes_to_rotate) {
   cat(file=stderr(), paste0("[DEBUG-ROTATION] func.rotate.specific.nodes called\n"))
   cat(file=stderr(), paste0("[DEBUG-ROTATION] list_nodes_to_rotate = ", paste(list_nodes_to_rotate, collapse=", "), "\n"))
   cat(file=stderr(), paste0("[DEBUG-ROTATION] is.null = ", is.null(list_nodes_to_rotate), ", length = ", length(list_nodes_to_rotate), "\n"))
 
-  # Check if list_nodes_to_rotate is valid (not NA and has length > 0)
-  if (!is.null(list_nodes_to_rotate) && length(list_nodes_to_rotate) > 0 && !all(is.na(list_nodes_to_rotate))) {
-    cat(file=stderr(), paste0("[DEBUG-ROTATION] Entering rotation loop for nodes: ", paste(list_nodes_to_rotate, collapse=", "), "\n"))
-    for (nod in list_nodes_to_rotate) {
+  # Validate: not NULL and contains at least one non-NA node id.
+  flat <- suppressWarnings(as.numeric(unlist(list_nodes_to_rotate)))
+  if (is.null(list_nodes_to_rotate) || length(flat) == 0 || all(is.na(flat))) {
+    cat(file=stderr(), paste0("[DEBUG-ROTATION] No valid nodes to rotate\n"))
+    return(tree_TRY1)
+  }
+
+  # Normalize to a list of entries (scalar id or structured list(node, order)).
+  entries <- if (is.list(list_nodes_to_rotate)) list_nodes_to_rotate else as.list(list_nodes_to_rotate)
+  cat(file=stderr(), paste0("[DEBUG-ROTATION] Entering rotation loop for ", length(entries), " entr(ies)\n"))
+
+  for (entry in entries) {
+    if (is.list(entry) && !is.null(entry$node)) {
+      # Structured entry: explicit child ordering for a multifurcating node.
+      nod <- as.numeric(entry$node)
+      ord <- suppressWarnings(as.numeric(unlist(entry$order)))
+      child_ids <- tree_TRY1$data$node[tree_TRY1$data$parent == nod & tree_TRY1$data$node != nod]
+      cat(file=stderr(), paste0("[DEBUG-ROTATION] Node ", nod, " (ordered) has ", length(child_ids),
+          " children; requested order: ", paste(ord, collapse=", "), "\n"))
+
+      if (length(child_ids) < 2) {
+        cat(file=stderr(), paste0("[DEBUG-ROTATION] Skipping node ", nod, " - less than 2 children\n"))
+        next
+      } else if (length(ord) == length(child_ids) && all(!is.na(ord))) {
+        tree_TRY1 <- func.reorder.node.children(tree_TRY1, nod, ord)
+      } else if (length(child_ids) == 2) {
+        ch_idx <- which(tree_TRY1$data$parent == nod & tree_TRY1$data$node != nod)
+        cat(file=stderr(), paste0("[DEBUG-ROTATION] Flipping node ", nod, " children: ", ch_idx[1], " <-> ", ch_idx[2], "\n"))
+        tree_TRY1 <- flip(tree_TRY1, ch_idx[1], ch_idx[2])
+      } else {
+        # Multifurcating but order missing/invalid -> correct reverse.
+        tree_TRY1 <- func.reorder.node.children(tree_TRY1, nod, rev(child_ids))
+      }
+    } else {
+      # Legacy scalar node id.
+      nod <- suppressWarnings(as.numeric(entry))
+      if (is.na(nod)) next
       children <- which(tree_TRY1$data$parent == nod & tree_TRY1$data$node != nod)
       cat(file=stderr(), paste0("[DEBUG-ROTATION] Node ", nod, " has ", length(children), " children: ", paste(children, collapse=", "), "\n"))
 
@@ -3064,16 +3197,59 @@ func.rotate.specific.nodes <- function(tree_TRY1, list_nodes_to_rotate) {
         cat(file=stderr(), paste0("[DEBUG-ROTATION] Flipping node ", nod, " children: ", children[1], " <-> ", children[2], "\n"))
         tree_TRY1 <- flip(tree_TRY1, children[1], children[2])
       } else {
-        # Multifurcating node - flip first and last children
-        cat(file=stderr(), paste0("[DEBUG-ROTATION] Multifurcating node ", nod, " - flipping: ", children[1], " <-> ", children[length(children)], "\n"))
-        tree_TRY1 <- flip(tree_TRY1, children[1], children[length(children)])
+        # Multifurcating node (no explicit order) - correct reversal instead of
+        # the old buggy first<->last flip.
+        child_ids <- tree_TRY1$data$node[tree_TRY1$data$parent == nod & tree_TRY1$data$node != nod]
+        cat(file=stderr(), paste0("[DEBUG-ROTATION] Multifurcating node ", nod, " - reversing child order\n"))
+        tree_TRY1 <- func.reorder.node.children(tree_TRY1, nod, rev(child_ids))
       }
     }
-  } else {
-    cat(file=stderr(), paste0("[DEBUG-ROTATION] No valid nodes to rotate\n"))
   }
 
   return(tree_TRY1)
+}
+
+# Helper: human-readable label for a child node, for the rotation UI.
+func.child.label <- function(td, cid) {
+  row <- which(td$node == cid)
+  if (length(row) == 0) return(as.character(cid))
+  if (isTRUE(td$isTip[row])) {
+    lab <- td$label[row]
+    if (is.na(lab) || lab == "") return(paste0("tip ", cid))
+    return(as.character(lab))
+  }
+  # Internal clade: count its tips and show one example tip.
+  ns <- func.get.subtree.nodes(td, cid)
+  tip_nodes <- ns[ns %in% td$node[td$isTip]]
+  ntips <- length(tip_nodes)
+  example <- ""
+  if (ntips > 0) {
+    l <- td$label[match(tip_nodes[1], td$node)]
+    if (!is.na(l) && l != "") example <- paste0(", e.g. ", l)
+  }
+  paste0("clade ", cid, " (", ntips, " tips", example, ")")
+}
+
+# Helper: serialize a manual rotation config (list of scalar ids and/or
+# structured list(node, order) entries) into a YAML-friendly structure.
+func.serialize.rotation.config <- function(cfg) {
+  if (is.null(cfg) || length(cfg) == 0) return(list())
+  lapply(cfg, function(entry) {
+    if (is.list(entry) && !is.null(entry$node)) {
+      list(node = as.numeric(entry$node),
+           order = as.list(as.numeric(unlist(entry$order))))
+    } else {
+      as.numeric(entry)
+    }
+  })
+}
+
+# Helper: extract just the node ids (for the selectize selection) from a config.
+func.rotation.config.node.ids <- function(cfg) {
+  if (is.null(cfg) || length(cfg) == 0) return(numeric(0))
+  unlist(lapply(cfg, function(entry) {
+    if (is.list(entry) && !is.null(entry$node)) as.numeric(entry$node) else as.numeric(entry)
+  }))
 }
 
 
@@ -9462,9 +9638,13 @@ ui <- dashboardPage(
                            ), selected = "primary"),
               conditionalPanel(
                 condition = "input.rotation_type == 'manual'",
-                selectizeInput("nodes_to_rotate", "Select Nodes to Rotate", 
+                selectizeInput("nodes_to_rotate", "Select Nodes to Rotate",
                                choices = NULL, multiple = TRUE,
                                options = list(placeholder = "Select nodes to rotate")),
+                # Per-node child ordering for non-binary (multifurcating) nodes.
+                # Binary nodes just flip; nodes with >2 children get left/right
+                # arrow controls to arrange their branches across the tree.
+                uiOutput("multifurcating_order_ui"),
                 checkboxInput("highlight_selected_nodes", "Highlight Selected Nodes on Tree", value = FALSE),
                 tags$div(style = "margin-left: 20px; margin-top: -10px; margin-bottom: 10px;",
                          tags$small(style = "color: #666;", "Shows red circles on selected nodes to help you verify your selection")
@@ -10684,7 +10864,8 @@ server <- function(input, output, session) {
     ),
     rotation1_config = list(),  # Store primary rotation configuration
     rotation2_config = list(),  # Store secondary rotation configuration
-    manual_rotation_config = list(),  # Store manual rotation configuration (node list)
+    manual_rotation_config = list(),  # Store manual rotation configuration (node list / ordered entries)
+    multifurc_order = list(),  # Working child-order per multifurcating node (keyed by node id as character)
     current_plot = NULL,
     plot_counter = 0,  # Counter to force reactive updates
     progress_message = "",  # Current progress message
@@ -11576,17 +11757,32 @@ server <- function(input, output, session) {
           updateCheckboxInput(session, "enable_rotation", value = TRUE)
           updateRadioButtons(session, "rotation_type", selected = "manual")
 
-          # Load node list into manual_rotation_config
+          # Load node list into manual_rotation_config.
+          # Each YAML entry is either a scalar node id (legacy / binary) or a
+          # map {node: N, order: [c1, c2, ...]} for an explicit child ordering.
           if (!is.null(yaml_data$`visual definitions`$manual_rotation$nodes) &&
               length(yaml_data$`visual definitions`$manual_rotation$nodes) > 0) {
-            # Convert list to numeric vector
-            nodes <- unlist(yaml_data$`visual definitions`$manual_rotation$nodes)
-            values$manual_rotation_config <- as.numeric(nodes)
+            nodes_raw <- yaml_data$`visual definitions`$manual_rotation$nodes
+            cfg <- list()
+            mf <- list()
+            for (entry in nodes_raw) {
+              if (is.list(entry) && !is.null(entry$node)) {
+                nn <- as.numeric(entry$node)
+                oo <- as.numeric(unlist(entry$order))
+                cfg[[length(cfg) + 1]] <- list(node = nn, order = oo)
+                mf[[as.character(nn)]] <- oo
+              } else {
+                cfg[[length(cfg) + 1]] <- as.numeric(entry)
+              }
+            }
+            values$manual_rotation_config <- cfg
+            values$multifurc_order <- mf
+            node_ids <- func.rotation.config.node.ids(cfg)
 
             # Update UI to show the selected nodes
-            updateSelectizeInput(session, "nodes_to_rotate", selected = as.character(nodes))
-            cat(file=stderr(), "[YAML-IMPORT] Imported manual_rotation with", length(nodes), "nodes:",
-                paste(nodes, collapse = ", "), "\n")
+            updateSelectizeInput(session, "nodes_to_rotate", selected = as.character(node_ids))
+            cat(file=stderr(), "[YAML-IMPORT] Imported manual_rotation with", length(node_ids), "nodes:",
+                paste(node_ids, collapse = ", "), "\n")
           }
         }
       }
@@ -12479,9 +12675,11 @@ server <- function(input, output, session) {
       
       # Update nodes for manual rotation
       if (!is.null(values$tree_data)) {
-        updateSelectizeInput(session, "nodes_to_rotate", 
+        updateSelectizeInput(session, "nodes_to_rotate",
                              choices = values$tree_data$node[values$tree_data$isTip == FALSE])
       }
+      # New tree -> any previously chosen child orderings are stale
+      values$multifurc_order <- list()
       
       # Update YAML structure
       values$yaml_data$`Individual general definitions`$`tree path` <- list(tree_file$datapath)
@@ -12682,9 +12880,9 @@ server <- function(input, output, session) {
     }
 
     if (!is.null(values$manual_rotation_config) && length(values$manual_rotation_config) > 0 &&
-        !all(is.na(values$manual_rotation_config))) {
-      # Convert node list to YAML-friendly format
-      values$yaml_data$`visual definitions`$manual_rotation$nodes <- as.list(values$manual_rotation_config)
+        !all(is.na(suppressWarnings(as.numeric(unlist(values$manual_rotation_config)))))) {
+      # Convert node list to YAML-friendly format (scalar ids and/or ordered entries)
+      values$yaml_data$`visual definitions`$manual_rotation$nodes <- func.serialize.rotation.config(values$manual_rotation_config)
 
       # Set display based on current rotation type selection
       if (!is.null(input$enable_rotation) && input$enable_rotation &&
@@ -14888,14 +15086,24 @@ server <- function(input, output, session) {
     
     # Build Manual Rotation status
     manual_rotation_status <- if (!is.null(values$manual_rotation_config) && length(values$manual_rotation_config) > 0) {
-      node_list <- values$manual_rotation_config
+      node_ids <- func.rotation.config.node.ids(values$manual_rotation_config)
+      # Note which nodes have an explicit (non-binary) child ordering.
+      ordered_nodes <- unlist(lapply(values$manual_rotation_config, function(entry) {
+        if (is.list(entry) && !is.null(entry$node)) as.numeric(entry$node) else NULL
+      }))
+      ordered_note <- if (!is.null(ordered_nodes) && length(ordered_nodes) > 0) {
+        tags$p(style = "margin: 5px 0; padding-left: 20px; color: #666;",
+               tags$em(sprintf("Custom branch order set for node(s): %s",
+                               paste(ordered_nodes, collapse = ", "))))
+      } else NULL
       tagList(
-        tags$p(style = "margin: 5px 0;", 
-               icon("check-circle", style = "color: green;"), 
-               tags$strong(" Configured:"), 
-               sprintf(" %d nodes", length(node_list))),
-        tags$p(style = "margin: 5px 0; padding-left: 20px;", 
-               tags$strong("Nodes:"), paste(node_list, collapse = ", "))
+        tags$p(style = "margin: 5px 0;",
+               icon("check-circle", style = "color: green;"),
+               tags$strong(" Configured:"),
+               sprintf(" %d nodes", length(node_ids))),
+        tags$p(style = "margin: 5px 0; padding-left: 20px;",
+               tags$strong("Nodes:"), paste(node_ids, collapse = ", ")),
+        ordered_note
       )
     } else {
       tags$p(style = "margin: 5px 0;", 
@@ -18946,6 +19154,91 @@ server <- function(input, output, session) {
     showNotification("Secondary rotation configuration cleared!", type = "warning")
   })
   
+  # Dynamic per-node child-ordering UI for multifurcating (non-binary) nodes.
+  # Each selected node with >2 children gets a row of its branches with left/
+  # right arrow buttons; the row order is the left->right order on the tree.
+  output$multifurcating_order_ui <- renderUI({
+    req(input$enable_rotation, input$rotation_type == "manual")
+    sel <- input$nodes_to_rotate
+    td <- values$tree_data
+    if (is.null(sel) || length(sel) == 0 || is.null(td)) return(NULL)
+    sel <- as.numeric(sel)
+
+    blocks <- list()
+    for (n in sel) {
+      children <- td$node[td$parent == n & td$node != n]
+      if (length(children) <= 2) next  # binary nodes just flip - no control needed
+
+      key <- as.character(n)
+      ord <- values$multifurc_order[[key]]
+      if (is.null(ord) || length(ord) != length(children) || !setequal(ord, children)) {
+        # Default to the current visual order (by layout y).
+        ord <- children[order(td$y[match(children, td$node)])]
+        isolate({ values$multifurc_order[[key]] <- ord })
+      }
+
+      arm_ui <- lapply(seq_along(ord), function(pos) {
+        cid <- ord[pos]
+        lbl <- func.child.label(td, cid)
+        tags$div(
+          style = "display:inline-block; border:1px solid #ccc; border-radius:6px; padding:4px 6px; margin:3px; background:#f8f9fa; vertical-align:top;",
+          actionButton(paste0("arrowL_", n, "_", pos), label = NULL, icon = icon("chevron-left"),
+                       class = "btn-xs", style = "padding:1px 5px; margin-right:4px;"),
+          tags$span(style = "font-size:12px;", lbl),
+          actionButton(paste0("arrowR_", n, "_", pos), label = NULL, icon = icon("chevron-right"),
+                       class = "btn-xs", style = "padding:1px 5px; margin-left:4px;")
+        )
+      })
+
+      blocks[[length(blocks) + 1]] <- tags$div(
+        style = "margin-top:8px; margin-bottom:6px; padding:6px; border:1px dashed #aaa; border-radius:6px;",
+        tags$small(tags$b(paste0("Order of branches for node ", n, " (", length(children), " branches)"))),
+        tags$br(),
+        tags$small(style = "color:#666;", HTML("left &#9664; — order across the tree — &#9654; right")),
+        tags$br(),
+        tags$div(arm_ui)
+      )
+    }
+
+    if (length(blocks) == 0) return(NULL)
+    tagList(blocks)
+  })
+
+  # Register arrow-button observers on demand, once per (node, position, dir).
+  # A small registry prevents duplicate observers as the selection changes.
+  arrow_wired <- reactiveVal(character(0))
+  observe({
+    td <- values$tree_data
+    sel <- input$nodes_to_rotate
+    if (is.null(td) || is.null(sel) || length(sel) == 0) return()
+    sel <- as.numeric(sel)
+    for (n in sel) {
+      children <- td$node[td$parent == n & td$node != n]
+      k <- length(children)
+      if (k <= 2) next
+      for (pos in seq_len(k)) {
+        for (dir in c("L", "R")) {
+          id <- paste0("arrow", dir, "_", n, "_", pos)
+          if (!(id %in% arrow_wired())) {
+            local({
+              nn <- n; pp <- pos; dd <- dir; idd <- id
+              observeEvent(input[[idd]], {
+                key <- as.character(nn)
+                ord <- values$multifurc_order[[key]]
+                if (is.null(ord)) return()
+                j <- if (dd == "L") pp - 1 else pp + 1
+                if (j < 1 || j > length(ord)) return()  # already at an edge
+                tmp <- ord[pp]; ord[pp] <- ord[j]; ord[j] <- tmp
+                values$multifurc_order[[key]] <- ord
+              }, ignoreInit = TRUE)
+            })
+            arrow_wired(c(arrow_wired(), id))
+          }
+        }
+      }
+    }
+  })
+
   # Manual rotation apply button
   observeEvent(input$apply_manual_rotation, {
     cat(file=stderr(), "\n[DEBUG-ROTATION] apply_manual_rotation button clicked\n")
@@ -18958,9 +19251,25 @@ server <- function(input, output, session) {
       return()
     }
     
-    # Save manual rotation configuration
-    values$manual_rotation_config <- as.numeric(input$nodes_to_rotate)
-    
+    # Build the structured manual rotation configuration: binary nodes are
+    # stored as scalar ids (flip), multifurcating nodes as list(node, order).
+    td <- values$tree_data
+    sel <- as.numeric(input$nodes_to_rotate)
+    cfg <- list()
+    for (n in sel) {
+      children <- if (!is.null(td)) td$node[td$parent == n & td$node != n] else integer(0)
+      if (length(children) > 2) {
+        ord <- values$multifurc_order[[as.character(n)]]
+        if (is.null(ord) || length(ord) != length(children) || !setequal(ord, children)) {
+          ord <- children  # fall back to current order
+        }
+        cfg[[length(cfg) + 1]] <- list(node = n, order = as.numeric(ord))
+      } else {
+        cfg[[length(cfg) + 1]] <- n
+      }
+    }
+    values$manual_rotation_config <- cfg
+
     # v53: cat(file=stderr(), "\nÃ°Å¸â€Â§ MANUAL ROTATION APPLIED\n")
     # v53: cat(file=stderr(), "Ã°Å¸â€Â§ Nodes to rotate:", paste(values$manual_rotation_config, collapse=", "), "\n")
     # v53: cat(file=stderr(), "Ã°Å¸â€Â§ Regenerating plot...\n")
@@ -18972,6 +19281,7 @@ server <- function(input, output, session) {
   # Clear manual rotation button
   observeEvent(input$clear_manual_rotation, {
     values$manual_rotation_config <- list()
+    values$multifurc_order <- list()
     updateSelectizeInput(session, "nodes_to_rotate", selected = character(0))
     showNotification("Manual rotation configuration cleared!", type = "warning")
   })
@@ -21338,8 +21648,8 @@ server <- function(input, output, session) {
                         !is.null(input$rotation_type) && input$rotation_type == "manual" &&
                         !is.null(values$manual_rotation_config) && length(values$manual_rotation_config) > 0) "yes" else "no",
           nodes = if (!is.null(values$manual_rotation_config) && length(values$manual_rotation_config) > 0 &&
-                      !all(is.na(values$manual_rotation_config))) {
-            as.list(values$manual_rotation_config)
+                      !all(is.na(suppressWarnings(as.numeric(unlist(values$manual_rotation_config)))))) {
+            func.serialize.rotation.config(values$manual_rotation_config)
           } else list()
         ),
         "trim tips" = list(
