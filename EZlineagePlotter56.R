@@ -3245,21 +3245,29 @@ func.add.cluster.overlay <- function(p, cluster_overlay) {
   prm    <- cluster_overlay$params; if (is.null(prm)) prm <- list()
   getp <- function(nm, def) if (!is.null(prm[[nm]])) prm[[nm]] else def
   placement     <- getp("placement", "top")
+  dist          <- getp("dist", 0.08)
   label_size    <- getp("label_size", 4)
   label_angle   <- getp("label_angle", 0)
   bracket_thick <- getp("bracket_thickness", 1)
   band_opacity  <- getp("band_opacity", 0.15)
   strip_thick   <- getp("strip_thickness", 0.4)
+  show_labels   <- isTRUE(styles$labels)
 
   df <- p$data
   tips <- df[df$isTip == TRUE & !is.na(df$isTip), ]
   if (nrow(tips) == 0) return(p)
-  x_min <- min(df$x, na.rm = TRUE); x_max <- max(df$x, na.rm = TRUE)
-  x_span <- x_max - x_min
+  x_root <- min(df$x, na.rm = TRUE)            # root depth (top of screen)
+  x_tip  <- max(tips$x, na.rm = TRUE)          # tip depth (bottom of screen)
+  x_span <- x_tip - x_root
   if (!is.finite(x_span) || x_span <= 0) x_span <- 1
-  off  <- 0.04 * x_span   # gap between tree and bracket
-  tick <- 0.02 * x_span   # bracket end-tick length
+  off  <- max(dist, 0) * x_span   # user-controlled gap between tree and overlay
+  tick <- 0.02 * x_span           # bracket end-tick length
   sw   <- strip_thick * 0.08 * x_span  # tip strip width
+
+  # On-screen the tip labels extend BEYOND the tips (bottom). For "bottom"
+  # placement we therefore add a baseline clearance so the overlay sits clear of
+  # the tree/labels; the user fine-tunes with the Distance slider.
+  base_bottom <- 0.06 * x_span
 
   for (cl in clusters) {
     st <- as.character(cl$start_tip); en <- as.character(cl$end_tip)
@@ -3273,31 +3281,42 @@ func.add.cluster.overlay <- function(p, cluster_overlay) {
     lab <- if (!is.null(cl$label)) as.character(cl$label) else ""
     col <- if (!is.null(cl$color) && nzchar(cl$color)) cl$color else "#333333"
 
+    # Shaded band: span the FULL tree depth (root -> tips) over the tip range.
     if (isTRUE(styles$band)) {
       p <- p + ggplot2::geom_rect(
-        data = data.frame(xmin = x_min, xmax = x_max, ymin = y1 - 0.5, ymax = y2 + 0.5),
+        data = data.frame(xmin = x_root, xmax = x_tip, ymin = y1 - 0.5, ymax = y2 + 0.5),
         aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
         fill = col, alpha = band_opacity, inherit.aes = FALSE)
     }
+    # Colored strip just past the tips.
     if (isTRUE(styles$strip)) {
       p <- p + ggplot2::geom_rect(
-        data = data.frame(xmin = x_max, xmax = x_max + sw, ymin = y1 - 0.5, ymax = y2 + 0.5),
+        data = data.frame(xmin = x_tip, xmax = x_tip + sw, ymin = y1 - 0.5, ymax = y2 + 0.5),
         aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
         fill = col, alpha = 0.95, inherit.aes = FALSE)
     }
+    # Separator lines at the two boundaries, spanning the tree depth.
     if (isTRUE(styles$lines)) {
       p <- p + ggplot2::geom_segment(
-        data = data.frame(x = c(x_min, x_min), xend = c(x_max, x_max),
+        data = data.frame(x = c(x_root, x_root), xend = c(x_tip, x_tip),
                           y = c(y1 - 0.5, y2 + 0.5), yend = c(y1 - 0.5, y2 + 0.5)),
         aes(x = x, xend = xend, y = y, yend = yend),
         color = col, linewidth = bracket_thick, linetype = "dashed", inherit.aes = FALSE)
     }
+
+    # Bracket and/or label position. Top = above the root; bottom = below the
+    # tips (with baseline clearance so it doesn't cover the tree/labels).
+    if (identical(placement, "bottom")) {
+      xb   <- x_tip + base_bottom + off
+      xtick <- xb - tick
+      xlab <- xb + off * 0.6 + 0.02 * x_span
+    } else {
+      xb   <- x_root - off
+      xtick <- xb + tick
+      xlab <- xb - off * 0.6 - 0.02 * x_span
+    }
+
     if (isTRUE(styles$bracket)) {
-      if (identical(placement, "bottom")) {
-        xb <- x_max + off; xtick <- xb - tick; xlab <- xb + off
-      } else {
-        xb <- x_min - off; xtick <- xb + tick; xlab <- xb - off
-      }
       p <- p + ggplot2::geom_segment(
         data = data.frame(x = xb, xend = xb, y = y1 - 0.4, yend = y2 + 0.4),
         aes(x = x, xend = xend, y = y, yend = yend),
@@ -3307,13 +3326,14 @@ func.add.cluster.overlay <- function(p, cluster_overlay) {
                           y = c(y1 - 0.4, y2 + 0.4), yend = c(y1 - 0.4, y2 + 0.4)),
         aes(x = x, xend = xend, y = y, yend = yend),
         color = col, linewidth = bracket_thick, inherit.aes = FALSE)
-      if (nzchar(lab)) {
-        p <- p + ggplot2::geom_text(
-          data = data.frame(x = xlab, y = ymid, label = lab),
-          aes(x = x, y = y, label = label),
-          color = col, size = label_size, angle = label_angle,
-          hjust = 0.5, vjust = 0.5, inherit.aes = FALSE)
-      }
+    }
+    # Label is independent of bracket now (its own checkbox).
+    if (show_labels && nzchar(lab)) {
+      p <- p + ggplot2::geom_text(
+        data = data.frame(x = xlab, y = ymid, label = lab),
+        aes(x = x, y = y, label = label),
+        color = col, size = label_size, angle = label_angle,
+        hjust = 0.5, vjust = 0.5, inherit.aes = FALSE)
     }
   }
   cat(file=stderr(), paste0("[CLUSTER] overlay applied: ", length(clusters), " cluster(s)\n"))
@@ -9540,15 +9560,17 @@ ui <- dashboardPage(
                 ),
                 column(5,
                   tags$b("Display styles (combine any)"),
-                  checkboxInput("cluster_style_bracket", "Bracket + label", value = TRUE),
+                  checkboxInput("cluster_style_bracket", "Bracket", value = TRUE),
                   checkboxInput("cluster_style_band", "Shaded band", value = FALSE),
                   checkboxInput("cluster_style_lines", "Separator lines", value = FALSE),
                   checkboxInput("cluster_style_strip", "Colored tip strip", value = FALSE),
+                  checkboxInput("cluster_show_labels", "Show cluster labels", value = TRUE),
                   tags$hr(),
                   tags$b("Style"),
                   radioButtons("cluster_placement", "Bracket/label placement:",
                                choices = list("Top (root side)" = "top", "Bottom (tips side)" = "bottom"),
                                selected = "top", inline = TRUE),
+                  sliderInput("cluster_dist", "Distance from tree", min = 0.0, max = 0.8, value = 0.08, step = 0.01),
                   sliderInput("cluster_label_size", "Label font size", min = 1, max = 12, value = 4, step = 0.5),
                   sliderInput("cluster_label_angle", "Label angle", min = -90, max = 90, value = 0, step = 15),
                   sliderInput("cluster_bracket_thickness", "Bracket thickness", min = 0.2, max = 4, value = 1, step = 0.1),
@@ -9560,8 +9582,14 @@ ui <- dashboardPage(
               actionButton("apply_clusters", "Apply & Preview", icon = icon("eye"), class = "btn-primary"),
               actionButton("clear_clusters", "Clear", icon = icon("trash"), class = "btn-warning"),
               tags$small(style = "color:#666; display:block; margin-top:8px;",
-                         "Tip ranges follow the current display order, so set rotation/mirror first. View the result in the Tree Display preview.")
+                         "Tip ranges follow the current display order, so set rotation/mirror first.")
             )
+          )
+        ),
+        fluidRow(
+          box(
+            title = "Preview", status = "primary", solidHeader = TRUE, width = 12,
+            imageOutput("cluster_preview", height = "auto")
           )
         )
       ),
@@ -19321,10 +19349,12 @@ server <- function(input, output, session) {
         bracket = isTRUE(input$cluster_style_bracket),
         band    = isTRUE(input$cluster_style_band),
         lines   = isTRUE(input$cluster_style_lines),
-        strip   = isTRUE(input$cluster_style_strip)
+        strip   = isTRUE(input$cluster_style_strip),
+        labels  = isTRUE(input$cluster_show_labels)
       ),
       params = list(
         placement         = if (!is.null(input$cluster_placement)) input$cluster_placement else "top",
+        dist              = if (!is.null(input$cluster_dist)) input$cluster_dist else 0.08,
         label_size        = if (!is.null(input$cluster_label_size)) input$cluster_label_size else 4,
         label_angle       = if (!is.null(input$cluster_label_angle)) input$cluster_label_angle else 0,
         bracket_thickness = if (!is.null(input$cluster_bracket_thickness)) input$cluster_bracket_thickness else 1,
@@ -21322,12 +21352,23 @@ server <- function(input, output, session) {
     )
   }, deleteFile = FALSE)
   
+  # Clade Clusters tab preview (same rendered plot file as other tabs)
+  output$cluster_preview <- renderImage({
+    req(values$temp_plot_file, values$plot_counter)
+    list(
+      src = values$temp_plot_file,
+      contentType = "image/svg+xml",
+      width = "100%",
+      alt = "Cluster overlay preview"
+    )
+  }, deleteFile = FALSE)
+  outputOptions(output, "cluster_preview", suspendWhenHidden = FALSE)
+
   output$highlight_preview <- renderImage({
     # Force reactive update by depending on plot_counter
     # v53: cat(file=stderr(), "\n=== renderImage called for highlight_preview ===\n")
-    
-    req(values$temp_plot_file, values$plot_counter)
-    
+
+    req(values$temp_plot_file, values$plot_counter)    
     # v53: cat(file=stderr(), "Temp file:", values$temp_plot_file, "\n")
     # v53: cat(file=stderr(), "File exists:", file.exists(values$temp_plot_file), "\n")
     # v53: cat(file=stderr(), "Plot counter:", values$plot_counter, "\n")
