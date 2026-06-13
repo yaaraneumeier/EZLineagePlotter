@@ -19352,19 +19352,21 @@ server <- function(input, output, session) {
 
   output$cluster_rows_ui <- renderUI({
     req(input$num_clusters)
-    # Read tip choices via isolate so the rows are NOT rebuilt every render
-    # (rebuilding would wipe the label/color defaults the user set). Choices are
-    # kept in sync by the observer below.
+    # Build from stored config + fixed defaults ONLY (everything isolated), so
+    # the rows rebuild solely when the cluster count changes - never on a render
+    # or Apply. This keeps the default label ("Cluster N") and default blue
+    # color deterministic instead of racing input[[...]] reads on rebuild.
     tip_choices <- isolate(cluster_tip_choices())
+    cr <- isolate(values$cluster_rows)
     n <- max(1, input$num_clusters)
     rows <- lapply(seq_len(n), function(i) {
       s_id <- paste0("cluster_start_", i); e_id <- paste0("cluster_end_", i)
       l_id <- paste0("cluster_label_", i); c_id <- paste0("cluster_color_", i)
-      stored <- if (!is.null(values$cluster_rows) && length(values$cluster_rows) >= i) values$cluster_rows[[i]] else NULL
-      sel_s <- isolate(input[[s_id]]); if (is.null(sel_s) && !is.null(stored)) sel_s <- stored$start_tip
-      sel_e <- isolate(input[[e_id]]); if (is.null(sel_e) && !is.null(stored)) sel_e <- stored$end_tip
-      val_l <- isolate(input[[l_id]]); if (is.null(val_l) || !nzchar(val_l)) val_l <- if (!is.null(stored)) stored$label else paste0("Cluster ", i)
-      val_c <- isolate(input[[c_id]]); if (is.null(val_c) || !nzchar(val_c)) val_c <- if (!is.null(stored)) stored$color else "#3366CC"
+      stored <- if (!is.null(cr) && length(cr) >= i) cr[[i]] else NULL
+      sel_s <- if (!is.null(stored)) stored$start_tip else NULL
+      sel_e <- if (!is.null(stored)) stored$end_tip else NULL
+      val_l <- if (!is.null(stored) && !is.null(stored$label) && nzchar(stored$label)) stored$label else paste0("Cluster ", i)
+      val_c <- if (!is.null(stored) && !is.null(stored$color) && nzchar(stored$color)) stored$color else "#3366CC"
       fluidRow(
         column(3, selectizeInput(s_id, if (i == 1) "From tip" else NULL, choices = tip_choices,
                                  selected = sel_s, options = list(placeholder = "start tip"))),
