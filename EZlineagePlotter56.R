@@ -3250,6 +3250,7 @@ func.add.cluster.overlay <- function(p, cluster_overlay) {
   label_angle   <- getp("label_angle", 0)
   bracket_thick <- getp("bracket_thickness", 1)
   band_opacity  <- getp("band_opacity", 0.15)
+  band_extend   <- getp("band_extend", 0.4)
   strip_thick   <- getp("strip_thickness", 0.4)
   show_labels   <- isTRUE(styles$labels)
 
@@ -3281,17 +3282,19 @@ func.add.cluster.overlay <- function(p, cluster_overlay) {
     lab <- if (!is.null(cl$label)) as.character(cl$label) else ""
     col <- if (!is.null(cl$color) && nzchar(cl$color)) cl$color else "#333333"
 
-    # Shaded band: span the FULL tree depth (root -> tips) over the tip range.
+    # Shaded band: span the full tree depth from the root, past the tips to
+    # cover the tip-label region (extend controlled by the Band-depth slider).
     if (isTRUE(styles$band)) {
       p <- p + ggplot2::geom_rect(
-        data = data.frame(xmin = x_root, xmax = x_tip, ymin = y1 - 0.5, ymax = y2 + 0.5),
+        data = data.frame(xmin = x_root, xmax = x_tip + band_extend * x_span, ymin = y1 - 0.5, ymax = y2 + 0.5),
         aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
         fill = col, alpha = band_opacity, inherit.aes = FALSE)
     }
-    # Colored strip just past the tips.
+    # Colored strip BELOW the tree (past the tips and tip labels).
     if (isTRUE(styles$strip)) {
+      strip_x0 <- x_tip + base_bottom + off
       p <- p + ggplot2::geom_rect(
-        data = data.frame(xmin = x_tip, xmax = x_tip + sw, ymin = y1 - 0.5, ymax = y2 + 0.5),
+        data = data.frame(xmin = strip_x0, xmax = strip_x0 + sw, ymin = y1 - 0.5, ymax = y2 + 0.5),
         aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
         fill = col, alpha = 0.95, inherit.aes = FALSE)
     }
@@ -9575,6 +9578,7 @@ ui <- dashboardPage(
                   sliderInput("cluster_label_angle", "Label angle", min = -90, max = 90, value = 0, step = 15),
                   sliderInput("cluster_bracket_thickness", "Bracket thickness", min = 0.2, max = 4, value = 1, step = 0.1),
                   sliderInput("cluster_band_opacity", "Band opacity", min = 0.02, max = 0.6, value = 0.15, step = 0.01),
+                  sliderInput("cluster_band_extend", "Band depth past tips", min = 0, max = 1.5, value = 0.4, step = 0.05),
                   sliderInput("cluster_strip_thickness", "Tip strip thickness", min = 0.05, max = 2, value = 0.4, step = 0.05)
                 )
               ),
@@ -9588,7 +9592,22 @@ ui <- dashboardPage(
         ),
         fluidRow(
           box(
-            title = "Preview", status = "primary", solidHeader = TRUE, width = 12,
+            title = tagList(
+              "Preview ",
+              span(id = "cluster_status_waiting",
+                style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #f8f9fa; color: #6c757d; font-size: 12px;",
+                icon("clock"), " Waiting for data"
+              ),
+              span(id = "cluster_status_processing",
+                style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #6c757d; color: #ffffff; font-size: 12px; font-weight: bold;",
+                icon("spinner", class = "fa-spin"), " Processing..."
+              ),
+              span(id = "cluster_status_ready",
+                style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #28a745; color: #ffffff; font-size: 12px; font-weight: bold;",
+                icon("check-circle"), " Ready"
+              )
+            ),
+            status = "primary", solidHeader = TRUE, width = 12,
             imageOutput("cluster_preview", height = "auto")
           )
         )
@@ -11291,6 +11310,10 @@ server <- function(input, output, session) {
     shinyjs::hide("status_processing")
     shinyjs::hide("status_ready")
     shinyjs::hide("status_click_to_generate")
+    # Clade Clusters tab
+    shinyjs::show("cluster_status_waiting")
+    shinyjs::hide("cluster_status_processing")
+    shinyjs::hide("cluster_status_ready")
     # Classification tab
     shinyjs::show("class_status_waiting")
     shinyjs::hide("class_status_processing")
@@ -11331,6 +11354,10 @@ server <- function(input, output, session) {
     shinyjs::show("status_processing")
     shinyjs::hide("status_ready")
     shinyjs::hide("status_click_to_generate")
+    # Clade Clusters tab
+    shinyjs::hide("cluster_status_waiting")
+    shinyjs::show("cluster_status_processing")
+    shinyjs::hide("cluster_status_ready")
     # Classification tab
     shinyjs::hide("class_status_waiting")
     shinyjs::show("class_status_processing")
@@ -11371,6 +11398,10 @@ server <- function(input, output, session) {
     shinyjs::hide("status_processing")
     shinyjs::show("status_ready")
     shinyjs::hide("status_click_to_generate")
+    # Clade Clusters tab
+    shinyjs::hide("cluster_status_waiting")
+    shinyjs::hide("cluster_status_processing")
+    shinyjs::show("cluster_status_ready")
     # Classification tab
     shinyjs::hide("class_status_waiting")
     shinyjs::hide("class_status_processing")
@@ -19359,6 +19390,7 @@ server <- function(input, output, session) {
         label_angle       = if (!is.null(input$cluster_label_angle)) input$cluster_label_angle else 0,
         bracket_thickness = if (!is.null(input$cluster_bracket_thickness)) input$cluster_bracket_thickness else 1,
         band_opacity      = if (!is.null(input$cluster_band_opacity)) input$cluster_band_opacity else 0.15,
+        band_extend       = if (!is.null(input$cluster_band_extend)) input$cluster_band_extend else 0.4,
         strip_thickness   = if (!is.null(input$cluster_strip_thickness)) input$cluster_strip_thickness else 0.4
       )
     )
