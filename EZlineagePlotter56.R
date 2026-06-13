@@ -5824,6 +5824,7 @@ func.print.lineage.tree <- function(conf_yaml_path,
       ou_result <- ou
       ou <- ou_result$plot  # Extract the plot object
       rotated_tree_result <- ou_result$rotated_tree  # S2.292dev: Extract rotated tree for Newick export
+      tip_order_result <- ou_result$tip_order  # left-to-right rendered tip order
       cache_data <- ou_result$cache_data  # Store cache data to return
 
       #print("ou is")
@@ -5937,9 +5938,12 @@ func.print.lineage.tree <- function(conf_yaml_path,
     rotated_tree_result <- NULL
   }
 
+  if (!exists("tip_order_result")) tip_order_result <- NULL
+
   return(list(
     plots = out_trees,
     rotated_tree = rotated_tree_result,  # S2.292dev: Rotated tree for Newick download
+    tip_order = tip_order_result,        # left-to-right rendered tip order
     cache_data = cache_data
   ))
   #close func
@@ -9465,11 +9469,20 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
   # S2.0-PERF: Return both the plot and cache data for two-tier caching (Option 3A)
   # The cache data allows generate_plot() to store and reuse p_list_of_pairs
+  # Left-to-right tip order of the FINAL rendered tree. Under coord_flip +
+  # scale_y_reverse, ascending data-y = visual left -> right. Used to order the
+  # cluster tip pickers so they match the displayed tree.
+  tip_order_ltr <- tryCatch({
+    td2 <- p$data[p$data$isTip == TRUE & !is.na(p$data$isTip), ]
+    as.character(td2$label[order(td2$y)])
+  }, error = function(e) NULL)
+
   # S2.9-PERF: Also return updated heatmap cache
   # S2.292dev: Also return rotated tree for Newick export
   return(list(
     plot = p,
     rotated_tree = tree_newick,  # S2.292dev: Rotated tree for Newick download
+    tip_order = tip_order_ltr,   # left-to-right tip order of the rendered tree
     cache_data = list(
       p_list_of_pairs = p_list_of_pairs,
       p_list_hash = current_p_list_hash,
@@ -11098,6 +11111,7 @@ server <- function(input, output, session) {
     multifurc_order = list(),  # Working child-order per multifurcating node (keyed by node id as character)
     cluster_overlay = NULL,  # Clade cluster overlay config (clusters/styles/params)
     cluster_rows = list(),  # Working per-row cluster definitions for the UI
+    rendered_tip_order = NULL,  # Left-to-right tip order of the last rendered tree
     current_plot = NULL,
     plot_counter = 0,  # Counter to force reactive updates
     progress_message = "",  # Current progress message
@@ -19328,11 +19342,17 @@ server <- function(input, output, session) {
   # plus a label and color. Tip choices come from the layout data, in display order.
   output$cluster_rows_ui <- renderUI({
     req(input$num_clusters)
-    td <- values$tree_data
+    # Prefer the actual left-to-right order of the rendered tree (captured from
+    # the last render); fall back to the original layout order before any render.
     tip_choices <- character(0)
-    if (!is.null(td)) {
-      tr <- td[td$isTip == TRUE & !is.na(td$isTip), ]
-      tip_choices <- as.character(tr$label[order(tr$y)])
+    if (!is.null(values$rendered_tip_order) && length(values$rendered_tip_order) > 0) {
+      tip_choices <- as.character(values$rendered_tip_order)
+    } else {
+      td <- values$tree_data
+      if (!is.null(td)) {
+        tr <- td[td$isTip == TRUE & !is.na(td$isTip), ]
+        tip_choices <- as.character(tr$label[order(tr$y)])
+      }
     }
     n <- max(1, input$num_clusters)
     rows <- lapply(seq_len(n), function(i) {
@@ -19374,7 +19394,7 @@ server <- function(input, output, session) {
       showNotification("Add at least one cluster with both a start and end tip", type = "error", duration = 5)
       return()
     }
-    values$cluster_overlay <- list(
+    cluster_cfg_list <- list(
       clusters = clusters,
       styles = list(
         bracket = isTRUE(input$cluster_style_bracket),
@@ -19394,14 +19414,20 @@ server <- function(input, output, session) {
         strip_thickness   = if (!is.null(input$cluster_strip_thickness)) input$cluster_strip_thickness else 0.4
       )
     )
-    generate_plot()
+    values$cluster_overlay <- cluster_cfg_list
+    # Paint the "Processing" status first, then run the (blocking) render on the
+    # next client tick so the indicator actually updates - same approach the
+    # other tabs use instead of calling generate_plot() inline.
+    show_status_processing()
+    shinyjs::delay(50, { generate_plot() })
     showNotification("Cluster overlay applied!", type = "message")
   })
 
   observeEvent(input$clear_clusters, {
     values$cluster_overlay <- NULL
     values$cluster_rows <- list()
-    generate_plot()
+    show_status_processing()
+    shinyjs::delay(50, { generate_plot() })
     showNotification("Cluster overlay cleared", type = "warning")
   })
 
@@ -20078,6 +20104,11 @@ server <- function(input, output, session) {
         if (!is.null(tree_result$rotated_tree)) {
           values$rotated_tree <- tree_result$rotated_tree
           cat(file=stderr(), "[ROTATED-TREE] Stored rotated tree for Newick export\n")
+        }
+
+        # Store the rendered left-to-right tip order (for the cluster tip pickers)
+        if (!is.null(tree_result$tip_order)) {
+          values$rendered_tip_order <- tree_result$tip_order
         }
 
         # Store cache data for future use
