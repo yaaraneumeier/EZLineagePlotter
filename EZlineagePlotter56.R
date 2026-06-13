@@ -231,7 +231,7 @@ options(shiny.maxRequestSize = 100*1024^2)
 #       - Layer reordering now happens ONCE at the end in generate_plot()
 # S1.2: Fixed undefined x_range_min in func_highlight causing "Problem while
 #       computing aesthetics" error when adding 2+ highlights with a heatmap.
-VERSION <- "S3.11"
+VERSION <- "S3.13"
 
 # Debug output control - set to TRUE to enable verbose console logging
 # For production/stable use, keep this FALSE for better performance
@@ -9641,9 +9641,16 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #155724;",
-                     tags$h4(style = "color: #155724; margin: 0;", "Version S3.12 Stable"),
+                     tags$h4(style = "color: #155724; margin: 0;", "Version S3.13 Stable"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
-                            tags$strong("New in S3.12:"),
+                            tags$strong("New in S3.13:"),
+                            tags$ul(
+                              tags$li("Clade Clusters tab: overlay labeled cluster separations over the tree by tip range, with bracket, shaded band, separator lines and colored tip strip styles, a live preview, and length/placement controls"),
+                              tags$li("Mirror Tree (left to right) in both single and multi-tree modes"),
+                              tags$li("Fixed rotation of multifurcating nodes (3+ children, e.g. a 3-child root) with a new per-branch left/right ordering control"),
+                              tags$li("Multi-tree mode: fixed manual node rotation (node selector now populates) and added per-branch ordering")
+                            ),
+                            tags$strong("From S3.12:"),
                             tags$ul(
                               tags$li("Fix crash when YAML references CSV columns that don't exist"),
                               tags$li("Filter stray numeric values from discrete heatmap legends"),
