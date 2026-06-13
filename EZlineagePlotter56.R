@@ -3253,6 +3253,7 @@ func.add.cluster.overlay <- function(p, cluster_overlay) {
   band_opacity  <- getp("band_opacity", 0.15)
   band_extend   <- getp("band_extend", 0.4)
   strip_thick   <- getp("strip_thickness", 0.4)
+  line_extend   <- getp("line_extend", 0.4)
   show_labels   <- isTRUE(styles$labels)
 
   df <- p$data
@@ -3299,10 +3300,12 @@ func.add.cluster.overlay <- function(p, cluster_overlay) {
         aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
         fill = col, alpha = 0.95, inherit.aes = FALSE)
     }
-    # Separator lines at the two boundaries, spanning the tree depth.
+    # Separator lines at the two boundaries: from the root, past the tips by a
+    # user-controlled amount (length control, like the band/bracket).
     if (isTRUE(styles$lines)) {
+      line_xend <- x_tip + max(line_extend, 0) * x_span
       p <- p + ggplot2::geom_segment(
-        data = data.frame(x = c(x_root, x_root), xend = c(x_tip, x_tip),
+        data = data.frame(x = c(x_root, x_root), xend = c(line_xend, line_xend),
                           y = c(y1 - 0.5, y2 + 0.5), yend = c(y1 - 0.5, y2 + 0.5)),
         aes(x = x, xend = xend, y = y, yend = yend),
         color = col, linewidth = bracket_thick, linetype = "dashed", inherit.aes = FALSE)
@@ -9592,7 +9595,8 @@ ui <- dashboardPage(
                   sliderInput("cluster_bracket_length", "Bracket arm length", min = 0, max = 0.6, value = 0.04, step = 0.01),
                   sliderInput("cluster_band_opacity", "Band opacity", min = 0.02, max = 0.6, value = 0.15, step = 0.01),
                   sliderInput("cluster_band_extend", "Band depth past tips", min = 0, max = 1.5, value = 0.4, step = 0.05),
-                  sliderInput("cluster_strip_thickness", "Tip strip thickness", min = 0.05, max = 2, value = 0.4, step = 0.05)
+                  sliderInput("cluster_strip_thickness", "Tip strip thickness", min = 0.05, max = 2, value = 0.4, step = 0.05),
+                  sliderInput("cluster_line_extend", "Separator line length past tips", min = 0, max = 1.5, value = 0.4, step = 0.05)
                 )
               ),
               tags$hr(),
@@ -19430,7 +19434,8 @@ server <- function(input, output, session) {
         bracket_length    = if (!is.null(input$cluster_bracket_length)) input$cluster_bracket_length else 0.04,
         band_opacity      = if (!is.null(input$cluster_band_opacity)) input$cluster_band_opacity else 0.15,
         band_extend       = if (!is.null(input$cluster_band_extend)) input$cluster_band_extend else 0.4,
-        strip_thickness   = if (!is.null(input$cluster_strip_thickness)) input$cluster_strip_thickness else 0.4
+        strip_thickness   = if (!is.null(input$cluster_strip_thickness)) input$cluster_strip_thickness else 0.4,
+        line_extend       = if (!is.null(input$cluster_line_extend)) input$cluster_line_extend else 0.4
       )
     )
     values$cluster_overlay <- cluster_cfg_list
