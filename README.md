@@ -82,6 +82,50 @@ Run the application:
 shiny::runApp("EZlineagePlotter56.R")
 ```
 
+### Files / app structure
+
+The app ships as several files that must live in the **same directory** (they
+locate each other via the working directory):
+
+| File | Purpose |
+|------|---------|
+| `EZlineagePlotter56.R` | Single-tree app (standalone) |
+| `EZlineagePlotter56_mt.R` | Multiple-trees module (sourced by the launchers) |
+| `EZlineagePlotter56_combined.R` | Both modes in one app (single + multi) |
+| `app.R` | Entry point for Shiny Server / Connect / shinyapps.io — runs the **full** app |
+
+### Running the full app (both modes)
+
+From an R session, inside the project folder:
+```r
+shiny::runApp("EZlineagePlotter56_combined.R")
+```
+- Single Tree mode is the default.
+- Multiple Trees mode: add `?mode=multi` to the URL, or use the in-app
+  mode-switch button.
+
+### Deploying to a server (Shiny Server / Posit Connect / shinyapps.io)
+
+These platforms run an `app.R` in the application directory. A ready-made
+`app.R` is included that launches the **full** app (both modes). To deploy:
+
+1. Put all the `.R` files in one application directory, e.g.
+   `/srv/shiny-server/ezlineageplotter/`:
+   ```
+   ezlineageplotter/
+   ├── app.R
+   ├── EZlineagePlotter56.R
+   ├── EZlineagePlotter56_mt.R
+   └── EZlineagePlotter56_combined.R
+   ```
+2. Ensure the required R packages are installed for the server's R (see
+   Installation above; `ggtree`/`treeio` are Bioconductor).
+3. Point the server at that directory. Shiny Server picks up `app.R`
+   automatically; for shinyapps.io use
+   `rsconnect::deployApp("ezlineageplotter")`.
+
+Single Tree is the default URL; append `?mode=multi` for Multiple Trees mode.
+
 ### Input Files
 
 1. **Tree File**: Newick format (.nwk, .tree, .newick)
