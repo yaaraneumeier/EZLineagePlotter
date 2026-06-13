@@ -3249,6 +3249,7 @@ func.add.cluster.overlay <- function(p, cluster_overlay) {
   label_size    <- getp("label_size", 4)
   label_angle   <- getp("label_angle", 0)
   bracket_thick <- getp("bracket_thickness", 1)
+  bracket_len   <- getp("bracket_length", 0.04)
   band_opacity  <- getp("band_opacity", 0.15)
   band_extend   <- getp("band_extend", 0.4)
   strip_thick   <- getp("strip_thickness", 0.4)
@@ -3261,8 +3262,8 @@ func.add.cluster.overlay <- function(p, cluster_overlay) {
   x_tip  <- max(tips$x, na.rm = TRUE)          # tip depth (bottom of screen)
   x_span <- x_tip - x_root
   if (!is.finite(x_span) || x_span <= 0) x_span <- 1
-  off  <- max(dist, 0) * x_span   # user-controlled gap between tree and overlay
-  tick <- 0.02 * x_span           # bracket end-tick length
+  off  <- max(dist, 0) * x_span        # user-controlled gap between tree and overlay
+  tick <- max(bracket_len, 0) * x_span # bracket arm (end-tick) length
   sw   <- strip_thick * 0.08 * x_span  # tip strip width
 
   # On-screen the tip labels extend BEYOND the tips (bottom). For "bottom"
@@ -9588,6 +9589,7 @@ ui <- dashboardPage(
                   sliderInput("cluster_label_size", "Label font size", min = 1, max = 12, value = 4, step = 0.5),
                   sliderInput("cluster_label_angle", "Label angle", min = -90, max = 90, value = 0, step = 15),
                   sliderInput("cluster_bracket_thickness", "Bracket thickness", min = 0.2, max = 4, value = 1, step = 0.1),
+                  sliderInput("cluster_bracket_length", "Bracket arm length", min = 0, max = 0.6, value = 0.04, step = 0.01),
                   sliderInput("cluster_band_opacity", "Band opacity", min = 0.02, max = 0.6, value = 0.15, step = 0.01),
                   sliderInput("cluster_band_extend", "Band depth past tips", min = 0, max = 1.5, value = 0.4, step = 0.05),
                   sliderInput("cluster_strip_thickness", "Tip strip thickness", min = 0.05, max = 2, value = 0.4, step = 0.05)
@@ -19425,6 +19427,7 @@ server <- function(input, output, session) {
         label_size        = if (!is.null(input$cluster_label_size)) input$cluster_label_size else 4,
         label_angle       = if (!is.null(input$cluster_label_angle)) input$cluster_label_angle else 0,
         bracket_thickness = if (!is.null(input$cluster_bracket_thickness)) input$cluster_bracket_thickness else 1,
+        bracket_length    = if (!is.null(input$cluster_bracket_length)) input$cluster_bracket_length else 0.04,
         band_opacity      = if (!is.null(input$cluster_band_opacity)) input$cluster_band_opacity else 0.15,
         band_extend       = if (!is.null(input$cluster_band_extend)) input$cluster_band_extend else 0.4,
         strip_thickness   = if (!is.null(input$cluster_strip_thickness)) input$cluster_strip_thickness else 0.4
