@@ -3043,16 +3043,149 @@ func.make.children.weight.list <- function(children, nod, tips_weight_list) {
 }
 
 
-# Function to rotate specific nodes
+# Helper: return all descendant node ids of a node (including the node itself),
+# using only the layout data frame (parent/node columns). No extra dependency.
+func.get.subtree.nodes <- function(df, root_id) {
+  acc <- c()
+  stack <- root_id
+  while (length(stack) > 0) {
+    cur <- stack[1]
+    stack <- stack[-1]
+    acc <- c(acc, cur)
+    kids <- df$node[df$parent == cur & df$node != cur]
+    if (length(kids) > 0) stack <- c(stack, kids)
+  }
+  acc
+}
+
+# Function to correctly reorder the children of a (possibly multifurcating) node.
+#
+# Unlike ggtree::flip - which only swaps two *vertically adjacent* clades and
+# therefore breaks when a node has >2 children (the middle child is left in
+# place, producing overlaps and gaps) - this works directly in the ggtree
+# treeview y-coordinate space: it re-stacks each child subtree contiguously in
+# the requested order (preserving each subtree's internal shape), then
+# recomputes every internal node's y as the mean of its children (ggtree's
+# default rectangular layout rule). The result is a clean, gap-free layout for
+# any number of children, and it composes with the existing binary flip path
+# because it too only edits y.
+#
+# desired_child_order: a permutation (vector of node ids) of node's current children.
+func.reorder.node.children <- function(tree_view, node, desired_child_order) {
+  df <- tree_view$data
+  child_ids <- df$node[df$parent == node & df$node != node]
+
+  if (length(child_ids) < 2) {
+    cat(file=stderr(), paste0("[DEBUG-ROTATION] reorder skipped for node ", node, " - less than 2 children\n"))
+    return(tree_view)
+  }
+
+  desired <- as.numeric(desired_child_order)
+
+  # Guard: order must be a true permutation of the node's *current* children.
+  # Protects against stale config saved against a different tree.
+  if (length(desired) != length(child_ids) || !setequal(desired, child_ids)) {
+    cat(file=stderr(), paste0("[DEBUG-ROTATION] reorder skipped for node ", node,
+        " - order (", paste(desired, collapse=","), ") is not a permutation of children (",
+        paste(child_ids, collapse=","), ")\n"))
+    return(tree_view)
+  }
+
+  # Subtree node ids + tip y-values for each child, in the desired order.
+  subtrees <- lapply(desired, function(c) func.get.subtree.nodes(df, c))
+  names(subtrees) <- as.character(desired)
+  child_tip_y <- lapply(subtrees, function(ns) df$y[df$node %in% ns & df$isTip])
+
+  # Anchor at the top of the whole group's current tip block, then place each
+  # child subtree contiguously in the desired order. Default ggtree tip spacing
+  # is 1, so a gap of 1 between clades reproduces integer tip positions and the
+  # overall vertical extent is unchanged (same multiset of tip y's, reordered).
+  anchor <- min(unlist(child_tip_y))
+  running <- anchor
+  for (cid in desired) {
+    ty <- child_tip_y[[as.character(cid)]]
+    old_min <- min(ty)
+    span <- max(ty) - min(ty)
+    delta <- running - old_min
+    ns <- subtrees[[as.character(cid)]]
+    df$y[df$node %in% ns] <- df$y[df$node %in% ns] + delta
+    running <- running + span + 1
+  }
+
+  # Re-settle only the path from `node` up to the root: each child subtree was
+  # shifted by a constant delta (so internal nodes inside them stay consistent
+  # with their tips), and untouched clades are left exactly as they were. We
+  # recompute y = mean of direct children y (ggtree's default rule) for `node`
+  # and each ancestor, deepest first.
+  cur <- node
+  repeat {
+    kids <- df$node[df$parent == cur & df$node != cur]
+    if (length(kids) > 0) {
+      df$y[df$node == cur] <- mean(df$y[df$node %in% kids])
+    }
+    par <- df$parent[df$node == cur]
+    if (length(par) == 0 || is.na(par) || par == cur) break  # reached the root
+    cur <- par
+  }
+
+  tree_view$data <- df
+  cat(file=stderr(), paste0("[DEBUG-ROTATION] Reordered node ", node, " children to: ",
+      paste(desired, collapse=", "), "\n"))
+  return(tree_view)
+}
+
+# Function to rotate specific nodes.
+#
+# list_nodes_to_rotate may be:
+#   - a numeric vector / list of node ids (legacy): each node is "rotated".
+#       * 2 children  -> ggtree::flip (UNCHANGED behavior)
+#       * >2 children -> correct child reversal (replaces the old buggy flip)
+#       * <2 children -> skipped
+#   - a list whose entries are either a scalar node id (as above) or a
+#     structured entry list(node = N, order = c(child ids in desired order)),
+#     used for explicit ordering of a multifurcating node's children.
 func.rotate.specific.nodes <- function(tree_TRY1, list_nodes_to_rotate) {
   cat(file=stderr(), paste0("[DEBUG-ROTATION] func.rotate.specific.nodes called\n"))
   cat(file=stderr(), paste0("[DEBUG-ROTATION] list_nodes_to_rotate = ", paste(list_nodes_to_rotate, collapse=", "), "\n"))
   cat(file=stderr(), paste0("[DEBUG-ROTATION] is.null = ", is.null(list_nodes_to_rotate), ", length = ", length(list_nodes_to_rotate), "\n"))
 
-  # Check if list_nodes_to_rotate is valid (not NA and has length > 0)
-  if (!is.null(list_nodes_to_rotate) && length(list_nodes_to_rotate) > 0 && !all(is.na(list_nodes_to_rotate))) {
-    cat(file=stderr(), paste0("[DEBUG-ROTATION] Entering rotation loop for nodes: ", paste(list_nodes_to_rotate, collapse=", "), "\n"))
-    for (nod in list_nodes_to_rotate) {
+  # Validate: not NULL and contains at least one non-NA node id.
+  flat <- suppressWarnings(as.numeric(unlist(list_nodes_to_rotate)))
+  if (is.null(list_nodes_to_rotate) || length(flat) == 0 || all(is.na(flat))) {
+    cat(file=stderr(), paste0("[DEBUG-ROTATION] No valid nodes to rotate\n"))
+    return(tree_TRY1)
+  }
+
+  # Normalize to a list of entries (scalar id or structured list(node, order)).
+  entries <- if (is.list(list_nodes_to_rotate)) list_nodes_to_rotate else as.list(list_nodes_to_rotate)
+  cat(file=stderr(), paste0("[DEBUG-ROTATION] Entering rotation loop for ", length(entries), " entr(ies)\n"))
+
+  for (entry in entries) {
+    if (is.list(entry) && !is.null(entry$node)) {
+      # Structured entry: explicit child ordering for a multifurcating node.
+      nod <- as.numeric(entry$node)
+      ord <- suppressWarnings(as.numeric(unlist(entry$order)))
+      child_ids <- tree_TRY1$data$node[tree_TRY1$data$parent == nod & tree_TRY1$data$node != nod]
+      cat(file=stderr(), paste0("[DEBUG-ROTATION] Node ", nod, " (ordered) has ", length(child_ids),
+          " children; requested order: ", paste(ord, collapse=", "), "\n"))
+
+      if (length(child_ids) < 2) {
+        cat(file=stderr(), paste0("[DEBUG-ROTATION] Skipping node ", nod, " - less than 2 children\n"))
+        next
+      } else if (length(ord) == length(child_ids) && all(!is.na(ord))) {
+        tree_TRY1 <- func.reorder.node.children(tree_TRY1, nod, ord)
+      } else if (length(child_ids) == 2) {
+        ch_idx <- which(tree_TRY1$data$parent == nod & tree_TRY1$data$node != nod)
+        cat(file=stderr(), paste0("[DEBUG-ROTATION] Flipping node ", nod, " children: ", ch_idx[1], " <-> ", ch_idx[2], "\n"))
+        tree_TRY1 <- flip(tree_TRY1, ch_idx[1], ch_idx[2])
+      } else {
+        # Multifurcating but order missing/invalid -> correct reverse.
+        tree_TRY1 <- func.reorder.node.children(tree_TRY1, nod, rev(child_ids))
+      }
+    } else {
+      # Legacy scalar node id.
+      nod <- suppressWarnings(as.numeric(entry))
+      if (is.na(nod)) next
       children <- which(tree_TRY1$data$parent == nod & tree_TRY1$data$node != nod)
       cat(file=stderr(), paste0("[DEBUG-ROTATION] Node ", nod, " has ", length(children), " children: ", paste(children, collapse=", "), "\n"))
 
@@ -3064,16 +3197,197 @@ func.rotate.specific.nodes <- function(tree_TRY1, list_nodes_to_rotate) {
         cat(file=stderr(), paste0("[DEBUG-ROTATION] Flipping node ", nod, " children: ", children[1], " <-> ", children[2], "\n"))
         tree_TRY1 <- flip(tree_TRY1, children[1], children[2])
       } else {
-        # Multifurcating node - flip first and last children
-        cat(file=stderr(), paste0("[DEBUG-ROTATION] Multifurcating node ", nod, " - flipping: ", children[1], " <-> ", children[length(children)], "\n"))
-        tree_TRY1 <- flip(tree_TRY1, children[1], children[length(children)])
+        # Multifurcating node (no explicit order) - correct reversal instead of
+        # the old buggy first<->last flip.
+        child_ids <- tree_TRY1$data$node[tree_TRY1$data$parent == nod & tree_TRY1$data$node != nod]
+        cat(file=stderr(), paste0("[DEBUG-ROTATION] Multifurcating node ", nod, " - reversing child order\n"))
+        tree_TRY1 <- func.reorder.node.children(tree_TRY1, nod, rev(child_ids))
       }
     }
-  } else {
-    cat(file=stderr(), paste0("[DEBUG-ROTATION] No valid nodes to rotate\n"))
   }
 
   return(tree_TRY1)
+}
+
+# Function to mirror the whole tree left<->right.
+#
+# The tree is drawn with coord_flip + scale_y_reverse, so the ggtree `y`
+# coordinate is the horizontal (tip-ordering) axis on screen. Mirroring is a
+# pure reflection of that one coordinate for every node:
+#     y_new = (min(y) + max(y)) - y_old
+# Topology and branch lengths are unchanged, and because every layer (branches,
+# tip labels, bootstrap, highlights, heatmap tiles) is positioned from this same
+# tip coordinate, they all flip together and stay aligned - so the tree remains
+# accurate. Text is only repositioned, never reversed. A parent stays the mean
+# of its children, so the layout remains internally consistent.
+func.mirror.tree <- function(tree_view) {
+  df <- tree_view$data
+  if (is.null(df$y) || all(is.na(df$y))) return(tree_view)
+  reflect <- min(df$y, na.rm = TRUE) + max(df$y, na.rm = TRUE)
+  df$y <- reflect - df$y
+  tree_view$data <- df
+  cat(file=stderr(), "[DEBUG-MIRROR] Tree mirrored left<->right (reflected y)\n")
+  return(tree_view)
+}
+
+# Function to overlay clade-cluster separation on the (single-mode) tree.
+# Each cluster is a contiguous TIP RANGE: list(start_tip, end_tip, label, color).
+# The tree uses layout_dendrogram (root top, tips bottom): data `y` is the
+# horizontal tip-ordering axis and data `x` is tree depth (vertical). Overlays
+# are drawn in data coordinates (with inherit.aes = FALSE and constant colors so
+# they don't touch the tree's color/size/fill scales) and layout_dendrogram
+# transforms them consistently with the tree.
+func.add.cluster.overlay <- function(p, cluster_overlay) {
+  if (is.null(cluster_overlay)) return(p)
+  clusters <- cluster_overlay$clusters
+  if (is.null(clusters) || length(clusters) == 0) return(p)
+  styles <- cluster_overlay$styles; if (is.null(styles)) styles <- list()
+  prm    <- cluster_overlay$params; if (is.null(prm)) prm <- list()
+  getp <- function(nm, def) if (!is.null(prm[[nm]])) prm[[nm]] else def
+  placement     <- getp("placement", "top")
+  dist          <- getp("dist", 0.08)
+  label_size    <- getp("label_size", 4)
+  label_angle   <- getp("label_angle", 0)
+  bracket_thick <- getp("bracket_thickness", 1)
+  bracket_len   <- getp("bracket_length", 0.04)
+  band_opacity  <- getp("band_opacity", 0.15)
+  band_extend   <- getp("band_extend", 0.4)
+  strip_thick   <- getp("strip_thickness", 0.4)
+  line_extend   <- getp("line_extend", 0.4)
+  show_labels   <- isTRUE(styles$labels)
+
+  df <- p$data
+  tips <- df[df$isTip == TRUE & !is.na(df$isTip), ]
+  if (nrow(tips) == 0) return(p)
+  x_root <- min(df$x, na.rm = TRUE)            # root depth (top of screen)
+  x_tip  <- max(tips$x, na.rm = TRUE)          # tip depth (bottom of screen)
+  x_span <- x_tip - x_root
+  if (!is.finite(x_span) || x_span <= 0) x_span <- 1
+  off  <- max(dist, 0) * x_span        # user-controlled gap between tree and overlay
+  tick <- max(bracket_len, 0) * x_span # bracket arm (end-tick) length
+  sw   <- strip_thick * 0.08 * x_span  # tip strip width
+
+  # On-screen the tip labels extend BEYOND the tips (bottom). For "bottom"
+  # placement we therefore add a baseline clearance so the overlay sits clear of
+  # the tree/labels; the user fine-tunes with the Distance slider.
+  base_bottom <- 0.06 * x_span
+
+  for (cl in clusters) {
+    st <- as.character(cl$start_tip); en <- as.character(cl$end_tip)
+    ys <- tips$y[tips$label %in% c(st, en)]
+    if (length(ys) < 1 || all(is.na(ys))) {
+      cat(file=stderr(), paste0("[CLUSTER] skipped '", if (!is.null(cl$label)) cl$label else "", "' - tips not found: ", st, " / ", en, "\n"))
+      next
+    }
+    y1 <- min(ys, na.rm = TRUE); y2 <- max(ys, na.rm = TRUE)
+    ymid <- (y1 + y2) / 2
+    lab <- if (!is.null(cl$label)) as.character(cl$label) else ""
+    col <- if (!is.null(cl$color) && nzchar(cl$color)) cl$color else "#333333"
+
+    # Shaded band: span the full tree depth from the root, past the tips to
+    # cover the tip-label region (extend controlled by the Band-depth slider).
+    if (isTRUE(styles$band)) {
+      p <- p + ggplot2::geom_rect(
+        data = data.frame(xmin = x_root, xmax = x_tip + band_extend * x_span, ymin = y1 - 0.5, ymax = y2 + 0.5),
+        aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
+        fill = col, alpha = band_opacity, inherit.aes = FALSE)
+    }
+    # Colored strip BELOW the tree (past the tips and tip labels).
+    if (isTRUE(styles$strip)) {
+      strip_x0 <- x_tip + base_bottom + off
+      p <- p + ggplot2::geom_rect(
+        data = data.frame(xmin = strip_x0, xmax = strip_x0 + sw, ymin = y1 - 0.5, ymax = y2 + 0.5),
+        aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
+        fill = col, alpha = 0.95, inherit.aes = FALSE)
+    }
+    # Separator lines at the two boundaries: from the root, past the tips by a
+    # user-controlled amount (length control, like the band/bracket).
+    if (isTRUE(styles$lines)) {
+      line_xend <- x_tip + max(line_extend, 0) * x_span
+      p <- p + ggplot2::geom_segment(
+        data = data.frame(x = c(x_root, x_root), xend = c(line_xend, line_xend),
+                          y = c(y1 - 0.5, y2 + 0.5), yend = c(y1 - 0.5, y2 + 0.5)),
+        aes(x = x, xend = xend, y = y, yend = yend),
+        color = col, linewidth = bracket_thick, linetype = "dashed", inherit.aes = FALSE)
+    }
+
+    # Bracket and/or label position. Top = above the root; bottom = below the
+    # tips (with baseline clearance so it doesn't cover the tree/labels).
+    if (identical(placement, "bottom")) {
+      xb   <- x_tip + base_bottom + off
+      xtick <- xb - tick
+      xlab <- xb + off * 0.6 + 0.02 * x_span
+    } else {
+      xb   <- x_root - off
+      xtick <- xb + tick
+      xlab <- xb - off * 0.6 - 0.02 * x_span
+    }
+
+    if (isTRUE(styles$bracket)) {
+      p <- p + ggplot2::geom_segment(
+        data = data.frame(x = xb, xend = xb, y = y1 - 0.4, yend = y2 + 0.4),
+        aes(x = x, xend = xend, y = y, yend = yend),
+        color = col, linewidth = bracket_thick, inherit.aes = FALSE)
+      p <- p + ggplot2::geom_segment(
+        data = data.frame(x = c(xb, xb), xend = c(xtick, xtick),
+                          y = c(y1 - 0.4, y2 + 0.4), yend = c(y1 - 0.4, y2 + 0.4)),
+        aes(x = x, xend = xend, y = y, yend = yend),
+        color = col, linewidth = bracket_thick, inherit.aes = FALSE)
+    }
+    # Label is independent of bracket now (its own checkbox).
+    if (show_labels && nzchar(lab)) {
+      p <- p + ggplot2::geom_text(
+        data = data.frame(x = xlab, y = ymid, label = lab),
+        aes(x = x, y = y, label = label),
+        color = col, size = label_size, angle = label_angle,
+        hjust = 0.5, vjust = 0.5, inherit.aes = FALSE)
+    }
+  }
+  cat(file=stderr(), paste0("[CLUSTER] overlay applied: ", length(clusters), " cluster(s)\n"))
+  return(p)
+}
+
+# Helper: human-readable label for a child node, for the rotation UI.
+func.child.label <- function(td, cid) {
+  row <- which(td$node == cid)
+  if (length(row) == 0) return(as.character(cid))
+  if (isTRUE(td$isTip[row])) {
+    lab <- td$label[row]
+    if (is.na(lab) || lab == "") return(paste0("tip ", cid))
+    return(as.character(lab))
+  }
+  # Internal clade: count its tips and show one example tip.
+  ns <- func.get.subtree.nodes(td, cid)
+  tip_nodes <- ns[ns %in% td$node[td$isTip]]
+  ntips <- length(tip_nodes)
+  example <- ""
+  if (ntips > 0) {
+    l <- td$label[match(tip_nodes[1], td$node)]
+    if (!is.na(l) && l != "") example <- paste0(", e.g. ", l)
+  }
+  paste0("clade ", cid, " (", ntips, " tips", example, ")")
+}
+
+# Helper: serialize a manual rotation config (list of scalar ids and/or
+# structured list(node, order) entries) into a YAML-friendly structure.
+func.serialize.rotation.config <- function(cfg) {
+  if (is.null(cfg) || length(cfg) == 0) return(list())
+  lapply(cfg, function(entry) {
+    if (is.list(entry) && !is.null(entry$node)) {
+      list(node = as.numeric(entry$node),
+           order = as.list(as.numeric(unlist(entry$order))))
+    } else {
+      as.numeric(entry)
+    }
+  })
+}
+
+# Helper: extract just the node ids (for the selectize selection) from a config.
+func.rotation.config.node.ids <- function(cfg) {
+  if (is.null(cfg) || length(cfg) == 0) return(numeric(0))
+  unlist(lapply(cfg, function(entry) {
+    if (is.list(entry) && !is.null(entry$node)) as.numeric(entry$node) else as.numeric(entry)
+  }))
 }
 
 
@@ -3114,6 +3428,8 @@ func.print.lineage.tree <- function(conf_yaml_path,
                                     classification_in_compare=NA,
                                     flag_print_tree_data= FALSE,
                                     list_nodes_to_rotate= NA,
+                                    mirror_tree_flag= FALSE,
+                                    cluster_overlay= NULL,
                                     flag_display_nod_number_on_tree= FALSE,
                                     node_number_font_size= 3.5,
                                     highlight_manual_nodes= FALSE,
@@ -5501,7 +5817,9 @@ func.print.lineage.tree <- function(conf_yaml_path,
         cached_p_list_of_pairs = cached_p_list_of_pairs,  # S2.0-PERF: Pass cached p-values
         cached_p_list_hash = cached_p_list_hash,  # S2.0-PERF: Pass cache hash for validation
         p_list_cache = p_list_cache,  # S2.7-PERF: Multi-entry cache
-        heatmap_cache = heatmap_cache  # S2.9-PERF: Heatmap cache
+        heatmap_cache = heatmap_cache,  # S2.9-PERF: Heatmap cache
+        mirror_tree_flag = mirror_tree_flag,  # Mirror tree left<->right
+        cluster_overlay = cluster_overlay  # Clade cluster overlay (single mode)
       )
       # }
 
@@ -5510,6 +5828,7 @@ func.print.lineage.tree <- function(conf_yaml_path,
       ou_result <- ou
       ou <- ou_result$plot  # Extract the plot object
       rotated_tree_result <- ou_result$rotated_tree  # S2.292dev: Extract rotated tree for Newick export
+      tip_order_result <- ou_result$tip_order  # left-to-right rendered tip order
       cache_data <- ou_result$cache_data  # Store cache data to return
 
       #print("ou is")
@@ -5623,9 +5942,12 @@ func.print.lineage.tree <- function(conf_yaml_path,
     rotated_tree_result <- NULL
   }
 
+  if (!exists("tip_order_result")) tip_order_result <- NULL
+
   return(list(
     plots = out_trees,
     rotated_tree = rotated_tree_result,  # S2.292dev: Rotated tree for Newick download
+    tip_order = tip_order_result,        # left-to-right rendered tip order
     cache_data = cache_data
   ))
   #close func
@@ -5687,7 +6009,9 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
                                          cached_p_list_of_pairs = NULL,  # S2.0-PERF: Cached p-values (Option 3A)
                                          cached_p_list_hash = NULL,      # S2.0-PERF: Hash for cache validation
                                          p_list_cache = list(),          # S2.7-PERF: Multi-entry cache
-                                         heatmap_cache = list()) {       # S2.9-PERF: Heatmap cache
+                                         heatmap_cache = list(),         # S2.9-PERF: Heatmap cache
+                                         mirror_tree_flag = FALSE,       # Mirror tree left<->right
+                                         cluster_overlay = NULL) {       # Clade cluster overlay (single mode)
 
   # === DEBUG CHECKPOINT 4: INNER FUNCTION ENTRY ===
   # v53: cat(file=stderr(), "\nÃ°Å¸â€Â DEBUG CHECKPOINT 4: func.make.plot.tree.heat.NEW ENTRY\n")
@@ -5935,9 +6259,15 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   } else {
     tree_TRY2 <- tree_TRY1
   }
-  
+
+  # Mirror the whole tree left<->right if requested (pure layout reflection;
+  # every tip-aligned layer follows, so the tree stays accurate).
+  if (isTRUE(mirror_tree_flag)) {
+    tree_TRY2 <- func.mirror.tree(tree_TRY2)
+  }
+
   #print("J")
-  
+
   tree_newick <- tree_TRY2
   
   # Handle short tips if requested
@@ -9039,6 +9369,16 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   })
   debug_cat(paste0("============================================\n"))
 
+  # Clade cluster overlay (single mode): draw bracket/band/lines/strip for each
+  # user-defined tip range. Done last so it sits on top of the finished plot.
+  p <- tryCatch(
+    func.add.cluster.overlay(p, cluster_overlay),
+    error = function(e) {
+      cat(file=stderr(), paste0("[CLUSTER] overlay error: ", e$message, "\n"))
+      p
+    }
+  )
+
   # v88: Save the plot with comprehensive error handling and multiple fallbacks
   save_success <- FALSE
 
@@ -9133,11 +9473,19 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
   # S2.0-PERF: Return both the plot and cache data for two-tier caching (Option 3A)
   # The cache data allows generate_plot() to store and reuse p_list_of_pairs
+  # Left-to-right tip order of the FINAL rendered tree, ordered to read the way
+  # the tree displays (used to order the cluster tip pickers).
+  tip_order_ltr <- tryCatch({
+    td2 <- p$data[p$data$isTip == TRUE & !is.na(p$data$isTip), ]
+    as.character(td2$label[order(td2$y, decreasing = TRUE)])
+  }, error = function(e) NULL)
+
   # S2.9-PERF: Also return updated heatmap cache
   # S2.292dev: Also return rotated tree for Newick export
   return(list(
     plot = p,
     rotated_tree = tree_newick,  # S2.292dev: Rotated tree for Newick download
+    tip_order = tip_order_ltr,   # left-to-right tip order of the rendered tree
     cache_data = list(
       p_list_of_pairs = p_list_of_pairs,
       p_list_hash = current_p_list_hash,
@@ -9178,6 +9526,7 @@ ui <- dashboardPage(
       menuItem("Classification", tabName = "classification", icon = icon("palette")),
       menuItem("Bootstrap Values", tabName = "bootstrap", icon = icon("percentage")),
       menuItem("Highlighting", tabName = "highlighting", icon = icon("highlighter")),
+      menuItem("Clade Clusters", tabName = "clade_clusters", icon = icon("object-group")),
       menuItem("Heatmap", tabName = "heatmap", icon = icon("th")),
       menuItem("SNP Analysis", tabName = "snp_analysis", icon = icon("dna")),
       menuItem("Legend", tabName = "legend", icon = icon("list")),
@@ -9210,6 +9559,77 @@ ui <- dashboardPage(
       uiOutput("progress_bar_ui")
     ),
     tabItems(
+      # Clade Clusters Tab (single mode) - overlay cluster separation on the tree.
+      # A cluster is a contiguous TIP RANGE (from one tip to another), not a clade.
+      tabItem(
+        tabName = "clade_clusters",
+        fluidRow(
+          box(
+            title = "Clade Cluster Overlay",
+            status = "primary", solidHeader = TRUE, width = 12,
+            checkboxInput("enable_clusters", "Enable cluster overlay", value = FALSE),
+            conditionalPanel(
+              condition = "input.enable_clusters == true",
+              fluidRow(
+                column(7,
+                  tags$b("Clusters (each = a tip range)"),
+                  numericInput("num_clusters", "Number of clusters:", value = 1, min = 1, max = 30, step = 1),
+                  uiOutput("cluster_rows_ui")
+                ),
+                column(5,
+                  tags$b("Display styles (combine any)"),
+                  checkboxInput("cluster_style_bracket", "Bracket", value = TRUE),
+                  checkboxInput("cluster_style_band", "Shaded band", value = FALSE),
+                  checkboxInput("cluster_style_lines", "Separator lines", value = FALSE),
+                  checkboxInput("cluster_style_strip", "Colored tip strip", value = FALSE),
+                  checkboxInput("cluster_show_labels", "Show cluster labels", value = TRUE),
+                  tags$hr(),
+                  tags$b("Style"),
+                  radioButtons("cluster_placement", "Bracket/label placement:",
+                               choices = list("Top (root side)" = "top", "Bottom (tips side)" = "bottom"),
+                               selected = "top", inline = TRUE),
+                  sliderInput("cluster_dist", "Distance from tree", min = 0.0, max = 0.8, value = 0.08, step = 0.01),
+                  sliderInput("cluster_label_size", "Label font size", min = 1, max = 12, value = 4, step = 0.5),
+                  sliderInput("cluster_label_angle", "Label angle", min = -90, max = 90, value = 0, step = 15),
+                  sliderInput("cluster_bracket_thickness", "Bracket thickness", min = 0.2, max = 4, value = 1, step = 0.1),
+                  sliderInput("cluster_bracket_length", "Bracket arm length", min = 0, max = 0.6, value = 0.04, step = 0.01),
+                  sliderInput("cluster_band_opacity", "Band opacity", min = 0.02, max = 0.6, value = 0.15, step = 0.01),
+                  sliderInput("cluster_band_extend", "Band depth past tips", min = 0, max = 1.5, value = 0.4, step = 0.05),
+                  sliderInput("cluster_strip_thickness", "Tip strip thickness", min = 0.05, max = 2, value = 0.4, step = 0.05),
+                  sliderInput("cluster_line_extend", "Separator line length past tips", min = 0, max = 1.5, value = 0.4, step = 0.05)
+                )
+              ),
+              tags$hr(),
+              actionButton("apply_clusters", "Apply & Preview", icon = icon("eye"), class = "btn-primary"),
+              actionButton("clear_clusters", "Clear", icon = icon("trash"), class = "btn-warning"),
+              tags$small(style = "color:#666; display:block; margin-top:8px;",
+                         "Tip ranges follow the current display order, so set rotation/mirror first.")
+            )
+          )
+        ),
+        fluidRow(
+          box(
+            title = tagList(
+              "Preview ",
+              span(id = "cluster_status_waiting",
+                style = "display: inline-block; padding: 3px 10px; border-radius: 12px; background-color: #f8f9fa; color: #6c757d; font-size: 12px;",
+                icon("clock"), " Waiting for data"
+              ),
+              span(id = "cluster_status_processing",
+                style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #6c757d; color: #ffffff; font-size: 12px; font-weight: bold;",
+                icon("spinner", class = "fa-spin"), " Processing..."
+              ),
+              span(id = "cluster_status_ready",
+                style = "display: none; padding: 3px 10px; border-radius: 12px; background-color: #28a745; color: #ffffff; font-size: 12px; font-weight: bold;",
+                icon("check-circle"), " Ready"
+              )
+            ),
+            status = "primary", solidHeader = TRUE, width = 12,
+            imageOutput("cluster_preview", height = "auto")
+          )
+        )
+      ),
+
       # Data Upload Tab
       tabItem(
         tabName = "data_upload",
@@ -9443,9 +9863,12 @@ ui <- dashboardPage(
               condition = "input.use_pvalues == true",
               sliderInput("fdr_perc", "FDR Percentage", min = 0.01, max = 0.25, value = 0.1, step = 0.01)
             ),
-            checkboxInput("ladderize", "Ladderize Tree", value = FALSE)
+            checkboxInput("ladderize", "Ladderize Tree", value = FALSE),
+            checkboxInput("mirror_tree", "Mirror Tree (left ↔ right)", value = FALSE),
+            tags$div(style = "margin-left: 20px; margin-top: -10px; margin-bottom: 10px;",
+                     tags$small(style = "color: #666;", "Flips the whole tree horizontally. Topology stays accurate; labels and heatmaps follow."))
           ),
-          
+
           box(
             title = "Rotation Options",
             status = "primary",
@@ -9462,9 +9885,13 @@ ui <- dashboardPage(
                            ), selected = "primary"),
               conditionalPanel(
                 condition = "input.rotation_type == 'manual'",
-                selectizeInput("nodes_to_rotate", "Select Nodes to Rotate", 
+                selectizeInput("nodes_to_rotate", "Select Nodes to Rotate",
                                choices = NULL, multiple = TRUE,
                                options = list(placeholder = "Select nodes to rotate")),
+                # Per-node child ordering for non-binary (multifurcating) nodes.
+                # Binary nodes just flip; nodes with >2 children get left/right
+                # arrow controls to arrange their branches across the tree.
+                uiOutput("multifurcating_order_ui"),
                 checkboxInput("highlight_selected_nodes", "Highlight Selected Nodes on Tree", value = FALSE),
                 tags$div(style = "margin-left: 20px; margin-top: -10px; margin-bottom: 10px;",
                          tags$small(style = "color: #666;", "Shows red circles on selected nodes to help you verify your selection")
@@ -10684,7 +11111,11 @@ server <- function(input, output, session) {
     ),
     rotation1_config = list(),  # Store primary rotation configuration
     rotation2_config = list(),  # Store secondary rotation configuration
-    manual_rotation_config = list(),  # Store manual rotation configuration (node list)
+    manual_rotation_config = list(),  # Store manual rotation configuration (node list / ordered entries)
+    multifurc_order = list(),  # Working child-order per multifurcating node (keyed by node id as character)
+    cluster_overlay = NULL,  # Clade cluster overlay config (clusters/styles/params)
+    cluster_rows = list(),  # Working per-row cluster definitions for the UI
+    rendered_tip_order = NULL,  # Left-to-right tip order of the last rendered tree
     current_plot = NULL,
     plot_counter = 0,  # Counter to force reactive updates
     progress_message = "",  # Current progress message
@@ -10897,6 +11328,10 @@ server <- function(input, output, session) {
     shinyjs::hide("status_processing")
     shinyjs::hide("status_ready")
     shinyjs::hide("status_click_to_generate")
+    # Clade Clusters tab
+    shinyjs::show("cluster_status_waiting")
+    shinyjs::hide("cluster_status_processing")
+    shinyjs::hide("cluster_status_ready")
     # Classification tab
     shinyjs::show("class_status_waiting")
     shinyjs::hide("class_status_processing")
@@ -10937,6 +11372,10 @@ server <- function(input, output, session) {
     shinyjs::show("status_processing")
     shinyjs::hide("status_ready")
     shinyjs::hide("status_click_to_generate")
+    # Clade Clusters tab
+    shinyjs::hide("cluster_status_waiting")
+    shinyjs::show("cluster_status_processing")
+    shinyjs::hide("cluster_status_ready")
     # Classification tab
     shinyjs::hide("class_status_waiting")
     shinyjs::show("class_status_processing")
@@ -10977,6 +11416,10 @@ server <- function(input, output, session) {
     shinyjs::hide("status_processing")
     shinyjs::show("status_ready")
     shinyjs::hide("status_click_to_generate")
+    # Clade Clusters tab
+    shinyjs::hide("cluster_status_waiting")
+    shinyjs::hide("cluster_status_processing")
+    shinyjs::show("cluster_status_ready")
     # Classification tab
     shinyjs::hide("class_status_waiting")
     shinyjs::hide("class_status_processing")
@@ -11576,17 +12019,32 @@ server <- function(input, output, session) {
           updateCheckboxInput(session, "enable_rotation", value = TRUE)
           updateRadioButtons(session, "rotation_type", selected = "manual")
 
-          # Load node list into manual_rotation_config
+          # Load node list into manual_rotation_config.
+          # Each YAML entry is either a scalar node id (legacy / binary) or a
+          # map {node: N, order: [c1, c2, ...]} for an explicit child ordering.
           if (!is.null(yaml_data$`visual definitions`$manual_rotation$nodes) &&
               length(yaml_data$`visual definitions`$manual_rotation$nodes) > 0) {
-            # Convert list to numeric vector
-            nodes <- unlist(yaml_data$`visual definitions`$manual_rotation$nodes)
-            values$manual_rotation_config <- as.numeric(nodes)
+            nodes_raw <- yaml_data$`visual definitions`$manual_rotation$nodes
+            cfg <- list()
+            mf <- list()
+            for (entry in nodes_raw) {
+              if (is.list(entry) && !is.null(entry$node)) {
+                nn <- as.numeric(entry$node)
+                oo <- as.numeric(unlist(entry$order))
+                cfg[[length(cfg) + 1]] <- list(node = nn, order = oo)
+                mf[[as.character(nn)]] <- oo
+              } else {
+                cfg[[length(cfg) + 1]] <- as.numeric(entry)
+              }
+            }
+            values$manual_rotation_config <- cfg
+            values$multifurc_order <- mf
+            node_ids <- func.rotation.config.node.ids(cfg)
 
             # Update UI to show the selected nodes
-            updateSelectizeInput(session, "nodes_to_rotate", selected = as.character(nodes))
-            cat(file=stderr(), "[YAML-IMPORT] Imported manual_rotation with", length(nodes), "nodes:",
-                paste(nodes, collapse = ", "), "\n")
+            updateSelectizeInput(session, "nodes_to_rotate", selected = as.character(node_ids))
+            cat(file=stderr(), "[YAML-IMPORT] Imported manual_rotation with", length(node_ids), "nodes:",
+                paste(node_ids, collapse = ", "), "\n")
           }
         }
       }
@@ -12479,9 +12937,11 @@ server <- function(input, output, session) {
       
       # Update nodes for manual rotation
       if (!is.null(values$tree_data)) {
-        updateSelectizeInput(session, "nodes_to_rotate", 
+        updateSelectizeInput(session, "nodes_to_rotate",
                              choices = values$tree_data$node[values$tree_data$isTip == FALSE])
       }
+      # New tree -> any previously chosen child orderings are stale
+      values$multifurc_order <- list()
       
       # Update YAML structure
       values$yaml_data$`Individual general definitions`$`tree path` <- list(tree_file$datapath)
@@ -12682,9 +13142,9 @@ server <- function(input, output, session) {
     }
 
     if (!is.null(values$manual_rotation_config) && length(values$manual_rotation_config) > 0 &&
-        !all(is.na(values$manual_rotation_config))) {
-      # Convert node list to YAML-friendly format
-      values$yaml_data$`visual definitions`$manual_rotation$nodes <- as.list(values$manual_rotation_config)
+        !all(is.na(suppressWarnings(as.numeric(unlist(values$manual_rotation_config)))))) {
+      # Convert node list to YAML-friendly format (scalar ids and/or ordered entries)
+      values$yaml_data$`visual definitions`$manual_rotation$nodes <- func.serialize.rotation.config(values$manual_rotation_config)
 
       # Set display based on current rotation type selection
       if (!is.null(input$enable_rotation) && input$enable_rotation &&
@@ -14888,14 +15348,24 @@ server <- function(input, output, session) {
     
     # Build Manual Rotation status
     manual_rotation_status <- if (!is.null(values$manual_rotation_config) && length(values$manual_rotation_config) > 0) {
-      node_list <- values$manual_rotation_config
+      node_ids <- func.rotation.config.node.ids(values$manual_rotation_config)
+      # Note which nodes have an explicit (non-binary) child ordering.
+      ordered_nodes <- unlist(lapply(values$manual_rotation_config, function(entry) {
+        if (is.list(entry) && !is.null(entry$node)) as.numeric(entry$node) else NULL
+      }))
+      ordered_note <- if (!is.null(ordered_nodes) && length(ordered_nodes) > 0) {
+        tags$p(style = "margin: 5px 0; padding-left: 20px; color: #666;",
+               tags$em(sprintf("Custom branch order set for node(s): %s",
+                               paste(ordered_nodes, collapse = ", "))))
+      } else NULL
       tagList(
-        tags$p(style = "margin: 5px 0;", 
-               icon("check-circle", style = "color: green;"), 
-               tags$strong(" Configured:"), 
-               sprintf(" %d nodes", length(node_list))),
-        tags$p(style = "margin: 5px 0; padding-left: 20px;", 
-               tags$strong("Nodes:"), paste(node_list, collapse = ", "))
+        tags$p(style = "margin: 5px 0;",
+               icon("check-circle", style = "color: green;"),
+               tags$strong(" Configured:"),
+               sprintf(" %d nodes", length(node_ids))),
+        tags$p(style = "margin: 5px 0; padding-left: 20px;",
+               tags$strong("Nodes:"), paste(node_ids, collapse = ", ")),
+        ordered_note
       )
     } else {
       tags$p(style = "margin: 5px 0;", 
@@ -18862,7 +19332,132 @@ server <- function(input, output, session) {
     req(values$plot_ready)
     request_plot_update()
   }, ignoreInit = TRUE)
-  
+
+  # Mirror tree left<->right
+  observeEvent(input$mirror_tree, {
+    req(values$plot_ready)
+    request_plot_update()
+  }, ignoreInit = TRUE)
+
+  # ============================================================================
+  # CLADE CLUSTER OVERLAY (single mode)
+  # ============================================================================
+  # Dynamic cluster definition rows: each is a tip range (from tip -> to tip),
+  # plus a label and color. Tip choices come from the layout data, in display order.
+  # Tip choices in display order: prefer the actual left-to-right order of the
+  # rendered tree; fall back to layout order before any render.
+  cluster_tip_choices <- reactive({
+    if (!is.null(values$rendered_tip_order) && length(values$rendered_tip_order) > 0) {
+      return(as.character(values$rendered_tip_order))
+    }
+    td <- values$tree_data
+    if (is.null(td)) return(character(0))
+    tr <- td[td$isTip == TRUE & !is.na(td$isTip), ]
+    as.character(tr$label[order(tr$y, decreasing = TRUE)])
+  })
+
+  output$cluster_rows_ui <- renderUI({
+    req(input$num_clusters)
+    # Build from stored config + fixed defaults ONLY (everything isolated), so
+    # the rows rebuild solely when the cluster count changes - never on a render
+    # or Apply. This keeps the default label ("Cluster N") and default blue
+    # color deterministic instead of racing input[[...]] reads on rebuild.
+    tip_choices <- isolate(cluster_tip_choices())
+    cr <- isolate(values$cluster_rows)
+    n <- max(1, input$num_clusters)
+    rows <- lapply(seq_len(n), function(i) {
+      s_id <- paste0("cluster_start_", i); e_id <- paste0("cluster_end_", i)
+      l_id <- paste0("cluster_label_", i); c_id <- paste0("cluster_color_", i)
+      stored <- if (!is.null(cr) && length(cr) >= i) cr[[i]] else NULL
+      sel_s <- if (!is.null(stored)) stored$start_tip else NULL
+      sel_e <- if (!is.null(stored)) stored$end_tip else NULL
+      val_l <- if (!is.null(stored) && !is.null(stored$label) && nzchar(stored$label)) stored$label else paste0("Cluster ", i)
+      val_c <- if (!is.null(stored) && !is.null(stored$color) && nzchar(stored$color)) stored$color else "#3366CC"
+      fluidRow(
+        column(3, selectizeInput(s_id, if (i == 1) "From tip" else NULL, choices = tip_choices,
+                                 selected = sel_s, options = list(placeholder = "start tip"))),
+        column(3, selectizeInput(e_id, if (i == 1) "To tip" else NULL, choices = tip_choices,
+                                 selected = sel_e, options = list(placeholder = "end tip"))),
+        column(3, textInput(l_id, if (i == 1) "Label" else NULL, value = val_l)),
+        column(3, colourpicker::colourInput(c_id, if (i == 1) "Color" else NULL, value = val_c))
+      )
+    })
+    tagList(rows)
+  })
+
+  # Keep the from/to tip choices in sync with the displayed order WITHOUT
+  # rebuilding the rows (preserves labels, colors and current selection).
+  observe({
+    ord <- cluster_tip_choices()
+    req(input$num_clusters)
+    for (i in seq_len(input$num_clusters)) {
+      s_id <- paste0("cluster_start_", i); e_id <- paste0("cluster_end_", i)
+      updateSelectizeInput(session, s_id, choices = ord, selected = isolate(input[[s_id]]))
+      updateSelectizeInput(session, e_id, choices = ord, selected = isolate(input[[e_id]]))
+    }
+  })
+
+  observeEvent(input$apply_clusters, {
+    req(values$plot_ready)
+    n <- max(1, input$num_clusters)
+    rows <- list(); clusters <- list()
+    for (i in seq_len(n)) {
+      s <- input[[paste0("cluster_start_", i)]]
+      e <- input[[paste0("cluster_end_", i)]]
+      l <- input[[paste0("cluster_label_", i)]]
+      cc <- input[[paste0("cluster_color_", i)]]
+      rows[[i]] <- list(start_tip = s, end_tip = e, label = l, color = cc)
+      if (!is.null(s) && !is.null(e) && nzchar(s) && nzchar(e)) {
+        clusters[[length(clusters) + 1]] <- list(start_tip = s, end_tip = e, label = l, color = cc)
+      }
+    }
+    values$cluster_rows <- rows
+    if (length(clusters) == 0) {
+      showNotification("Add at least one cluster with both a start and end tip", type = "error", duration = 5)
+      return()
+    }
+    cluster_cfg_list <- list(
+      clusters = clusters,
+      styles = list(
+        bracket = isTRUE(input$cluster_style_bracket),
+        band    = isTRUE(input$cluster_style_band),
+        lines   = isTRUE(input$cluster_style_lines),
+        strip   = isTRUE(input$cluster_style_strip),
+        labels  = isTRUE(input$cluster_show_labels)
+      ),
+      params = list(
+        placement         = if (!is.null(input$cluster_placement)) input$cluster_placement else "top",
+        dist              = if (!is.null(input$cluster_dist)) input$cluster_dist else 0.08,
+        label_size        = if (!is.null(input$cluster_label_size)) input$cluster_label_size else 4,
+        label_angle       = if (!is.null(input$cluster_label_angle)) input$cluster_label_angle else 0,
+        bracket_thickness = if (!is.null(input$cluster_bracket_thickness)) input$cluster_bracket_thickness else 1,
+        bracket_length    = if (!is.null(input$cluster_bracket_length)) input$cluster_bracket_length else 0.04,
+        band_opacity      = if (!is.null(input$cluster_band_opacity)) input$cluster_band_opacity else 0.15,
+        band_extend       = if (!is.null(input$cluster_band_extend)) input$cluster_band_extend else 0.4,
+        strip_thickness   = if (!is.null(input$cluster_strip_thickness)) input$cluster_strip_thickness else 0.4,
+        line_extend       = if (!is.null(input$cluster_line_extend)) input$cluster_line_extend else 0.4
+      )
+    )
+    values$cluster_overlay <- cluster_cfg_list
+    # Paint the "Processing" status first, then run the (blocking) render on the
+    # next client tick so the indicator actually updates. Reset the cooldown so
+    # this explicit Apply is never skipped (which would leave it stuck on
+    # "Processing"); other tabs go through the debounced path.
+    show_status_processing()
+    last_plot_time(0)
+    shinyjs::delay(50, { generate_plot() })
+    showNotification("Cluster overlay applied!", type = "message")
+  })
+
+  observeEvent(input$clear_clusters, {
+    values$cluster_overlay <- NULL
+    values$cluster_rows <- list()
+    show_status_processing()
+    last_plot_time(0)
+    shinyjs::delay(50, { generate_plot() })
+    showNotification("Cluster overlay cleared", type = "warning")
+  })
+
   validate_rotation <- function(num_groups, rotation_prefix) {
     errors <- c()
     for (i in 1:num_groups) {
@@ -18946,6 +19541,116 @@ server <- function(input, output, session) {
     showNotification("Secondary rotation configuration cleared!", type = "warning")
   })
   
+  # Dynamic per-node child-ordering UI for multifurcating (non-binary) nodes.
+  # Each selected node with >2 children gets a row of its branches with left/
+  # right arrow buttons; the row order is the left->right order on the tree.
+  #
+  # Initialize the default child order for newly-selected multifurcating nodes
+  # in a normal observer (NOT inside renderUI - writing reactive state during a
+  # render desyncs the output and produces "output ... in unexpected state"
+  # client errors).
+  observeEvent(list(input$nodes_to_rotate, values$tree_data), {
+    td <- values$tree_data
+    sel <- input$nodes_to_rotate
+    if (is.null(td) || is.null(sel) || length(sel) == 0) return()
+    sel <- as.numeric(sel)
+    cur <- values$multifurc_order
+    changed <- FALSE
+    for (n in sel) {
+      children <- td$node[td$parent == n & td$node != n]
+      if (length(children) <= 2) next
+      key <- as.character(n)
+      ord <- cur[[key]]
+      if (is.null(ord) || length(ord) != length(children) || !setequal(ord, children)) {
+        cur[[key]] <- children[order(td$y[match(children, td$node)])]
+        changed <- TRUE
+      }
+    }
+    if (changed) values$multifurc_order <- cur
+  }, ignoreInit = FALSE)
+
+  output$multifurcating_order_ui <- renderUI({
+    req(input$enable_rotation, input$rotation_type == "manual")
+    sel <- input$nodes_to_rotate
+    td <- values$tree_data
+    if (is.null(sel) || length(sel) == 0 || is.null(td)) return(NULL)
+    sel <- as.numeric(sel)
+
+    blocks <- list()
+    for (n in sel) {
+      children <- td$node[td$parent == n & td$node != n]
+      if (length(children) <= 2) next  # binary nodes just flip - no control needed
+
+      key <- as.character(n)
+      ord <- values$multifurc_order[[key]]
+      if (is.null(ord) || length(ord) != length(children) || !setequal(ord, children)) {
+        # Display-only fallback (the authoritative default is set by the
+        # initialization observer above - never write reactive state here).
+        ord <- children[order(td$y[match(children, td$node)])]
+      }
+
+      arm_ui <- lapply(seq_along(ord), function(pos) {
+        cid <- ord[pos]
+        lbl <- func.child.label(td, cid)
+        tags$div(
+          style = "display:inline-block; border:1px solid #ccc; border-radius:6px; padding:4px 6px; margin:3px; background:#f8f9fa; vertical-align:top;",
+          actionButton(paste0("arrowL_", n, "_", pos), label = NULL, icon = icon("chevron-left"),
+                       class = "btn-xs", style = "padding:1px 5px; margin-right:4px;"),
+          tags$span(style = "font-size:12px;", lbl),
+          actionButton(paste0("arrowR_", n, "_", pos), label = NULL, icon = icon("chevron-right"),
+                       class = "btn-xs", style = "padding:1px 5px; margin-left:4px;")
+        )
+      })
+
+      blocks[[length(blocks) + 1]] <- tags$div(
+        style = "margin-top:8px; margin-bottom:6px; padding:6px; border:1px dashed #aaa; border-radius:6px;",
+        tags$small(tags$b(paste0("Order of branches for node ", n, " (", length(children), " branches)"))),
+        tags$br(),
+        tags$small(style = "color:#666;", HTML("left &#9664; — order across the tree — &#9654; right")),
+        tags$br(),
+        tags$div(arm_ui)
+      )
+    }
+
+    if (length(blocks) == 0) return(NULL)
+    tagList(blocks)
+  })
+
+  # Register arrow-button observers on demand, once per (node, position, dir).
+  # A small registry prevents duplicate observers as the selection changes.
+  arrow_wired <- reactiveVal(character(0))
+  observe({
+    td <- values$tree_data
+    sel <- input$nodes_to_rotate
+    if (is.null(td) || is.null(sel) || length(sel) == 0) return()
+    sel <- as.numeric(sel)
+    for (n in sel) {
+      children <- td$node[td$parent == n & td$node != n]
+      k <- length(children)
+      if (k <= 2) next
+      for (pos in seq_len(k)) {
+        for (dir in c("L", "R")) {
+          id <- paste0("arrow", dir, "_", n, "_", pos)
+          if (!(id %in% arrow_wired())) {
+            local({
+              nn <- n; pp <- pos; dd <- dir; idd <- id
+              observeEvent(input[[idd]], {
+                key <- as.character(nn)
+                ord <- values$multifurc_order[[key]]
+                if (is.null(ord)) return()
+                j <- if (dd == "L") pp - 1 else pp + 1
+                if (j < 1 || j > length(ord)) return()  # already at an edge
+                tmp <- ord[pp]; ord[pp] <- ord[j]; ord[j] <- tmp
+                values$multifurc_order[[key]] <- ord
+              }, ignoreInit = TRUE)
+            })
+            arrow_wired(c(arrow_wired(), id))
+          }
+        }
+      }
+    }
+  })
+
   # Manual rotation apply button
   observeEvent(input$apply_manual_rotation, {
     cat(file=stderr(), "\n[DEBUG-ROTATION] apply_manual_rotation button clicked\n")
@@ -18958,9 +19663,25 @@ server <- function(input, output, session) {
       return()
     }
     
-    # Save manual rotation configuration
-    values$manual_rotation_config <- as.numeric(input$nodes_to_rotate)
-    
+    # Build the structured manual rotation configuration: binary nodes are
+    # stored as scalar ids (flip), multifurcating nodes as list(node, order).
+    td <- values$tree_data
+    sel <- as.numeric(input$nodes_to_rotate)
+    cfg <- list()
+    for (n in sel) {
+      children <- if (!is.null(td)) td$node[td$parent == n & td$node != n] else integer(0)
+      if (length(children) > 2) {
+        ord <- values$multifurc_order[[as.character(n)]]
+        if (is.null(ord) || length(ord) != length(children) || !setequal(ord, children)) {
+          ord <- children  # fall back to current order
+        }
+        cfg[[length(cfg) + 1]] <- list(node = n, order = as.numeric(ord))
+      } else {
+        cfg[[length(cfg) + 1]] <- n
+      }
+    }
+    values$manual_rotation_config <- cfg
+
     # v53: cat(file=stderr(), "\nÃ°Å¸â€Â§ MANUAL ROTATION APPLIED\n")
     # v53: cat(file=stderr(), "Ã°Å¸â€Â§ Nodes to rotate:", paste(values$manual_rotation_config, collapse=", "), "\n")
     # v53: cat(file=stderr(), "Ã°Å¸â€Â§ Regenerating plot...\n")
@@ -18972,6 +19693,7 @@ server <- function(input, output, session) {
   # Clear manual rotation button
   observeEvent(input$clear_manual_rotation, {
     values$manual_rotation_config <- list()
+    values$multifurc_order <- list()
     updateSelectizeInput(session, "nodes_to_rotate", selected = character(0))
     showNotification("Manual rotation configuration cleared!", type = "warning")
   })
@@ -19340,12 +20062,14 @@ server <- function(input, output, session) {
         units_out = units_val,
         debug_mode = FALSE,
         compare_two_trees = FALSE,
-        list_nodes_to_rotate = if (!is.null(values$manual_rotation_config) && 
+        list_nodes_to_rotate = if (!is.null(values$manual_rotation_config) &&
                                    length(values$manual_rotation_config) > 0) {
           values$manual_rotation_config
         } else {
           NA
         },
+        mirror_tree_flag = isTRUE(input$mirror_tree),
+        cluster_overlay = if (isTRUE(input$enable_clusters)) values$cluster_overlay else NULL,
         flag_display_nod_number_on_tree = display_nodes_to_pass,
         node_number_font_size = font_size_to_pass,
         highlight_manual_nodes = highlight_flag_to_pass,
@@ -19407,6 +20131,11 @@ server <- function(input, output, session) {
         if (!is.null(tree_result$rotated_tree)) {
           values$rotated_tree <- tree_result$rotated_tree
           cat(file=stderr(), "[ROTATED-TREE] Stored rotated tree for Newick export\n")
+        }
+
+        # Store the rendered left-to-right tip order (for the cluster tip pickers)
+        if (!is.null(tree_result$tip_order)) {
+          values$rendered_tip_order <- tree_result$tip_order
         }
 
         # Store cache data for future use
@@ -20713,12 +21442,23 @@ server <- function(input, output, session) {
     )
   }, deleteFile = FALSE)
   
+  # Clade Clusters tab preview (same rendered plot file as other tabs)
+  output$cluster_preview <- renderImage({
+    req(values$temp_plot_file, values$plot_counter)
+    list(
+      src = values$temp_plot_file,
+      contentType = "image/svg+xml",
+      width = "100%",
+      alt = "Cluster overlay preview"
+    )
+  }, deleteFile = FALSE)
+  outputOptions(output, "cluster_preview", suspendWhenHidden = FALSE)
+
   output$highlight_preview <- renderImage({
     # Force reactive update by depending on plot_counter
     # v53: cat(file=stderr(), "\n=== renderImage called for highlight_preview ===\n")
-    
-    req(values$temp_plot_file, values$plot_counter)
-    
+
+    req(values$temp_plot_file, values$plot_counter)    
     # v53: cat(file=stderr(), "Temp file:", values$temp_plot_file, "\n")
     # v53: cat(file=stderr(), "File exists:", file.exists(values$temp_plot_file), "\n")
     # v53: cat(file=stderr(), "Plot counter:", values$plot_counter, "\n")
@@ -21338,8 +22078,8 @@ server <- function(input, output, session) {
                         !is.null(input$rotation_type) && input$rotation_type == "manual" &&
                         !is.null(values$manual_rotation_config) && length(values$manual_rotation_config) > 0) "yes" else "no",
           nodes = if (!is.null(values$manual_rotation_config) && length(values$manual_rotation_config) > 0 &&
-                      !all(is.na(values$manual_rotation_config))) {
-            as.list(values$manual_rotation_config)
+                      !all(is.na(suppressWarnings(as.numeric(unlist(values$manual_rotation_config)))))) {
+            func.serialize.rotation.config(values$manual_rotation_config)
           } else list()
         ),
         "trim tips" = list(
