@@ -9570,8 +9570,7 @@ ui <- dashboardPage(
                 column(7,
                   tags$b("Clusters (each = a tip range)"),
                   numericInput("num_clusters", "Number of clusters:", value = 1, min = 1, max = 30, step = 1),
-                  uiOutput("cluster_rows_ui"),
-                  checkboxInput("cluster_highlight_preview", "Highlight selected ranges on preview", value = FALSE)
+                  uiOutput("cluster_rows_ui")
                 ),
                 column(5,
                   tags$b("Display styles (combine any)"),
@@ -19431,9 +19430,11 @@ server <- function(input, output, session) {
     )
     values$cluster_overlay <- cluster_cfg_list
     # Paint the "Processing" status first, then run the (blocking) render on the
-    # next client tick so the indicator actually updates - same approach the
-    # other tabs use instead of calling generate_plot() inline.
+    # next client tick so the indicator actually updates. Reset the cooldown so
+    # this explicit Apply is never skipped (which would leave it stuck on
+    # "Processing"); other tabs go through the debounced path.
     show_status_processing()
+    last_plot_time(0)
     shinyjs::delay(50, { generate_plot() })
     showNotification("Cluster overlay applied!", type = "message")
   })
@@ -19442,6 +19443,7 @@ server <- function(input, output, session) {
     values$cluster_overlay <- NULL
     values$cluster_rows <- list()
     show_status_processing()
+    last_plot_time(0)
     shinyjs::delay(50, { generate_plot() })
     showNotification("Cluster overlay cleared", type = "warning")
   })
