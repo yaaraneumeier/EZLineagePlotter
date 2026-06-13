@@ -11537,6 +11537,9 @@ server <- function(input, output, session) {
         display = "no",
         nodes = list()
       ),
+      "clade_clusters" = list(
+        display = "no"
+      ),
       "trim tips" = list(
         display = "yes",
         length = 0.05
@@ -12053,6 +12056,70 @@ server <- function(input, output, session) {
             cat(file=stderr(), "[YAML-IMPORT] Imported manual_rotation with", length(node_ids), "nodes:",
                 paste(node_ids, collapse = ", "), "\n")
           }
+        }
+      }
+
+      # Load Clade clusters settings
+      cc_yaml <- yaml_data$`visual definitions`$clade_clusters
+      if (!is.null(cc_yaml)) {
+        cc_chk <- function(v) if (is.null(v)) FALSE else func.check.bin.val.from.conf(v)
+        cc_enable <- cc_chk(cc_yaml$display)
+        updateCheckboxInput(session, "enable_clusters", value = cc_enable)
+        st <- cc_yaml$styles
+        pr <- cc_yaml$params
+        if (!is.null(st)) {
+          updateCheckboxInput(session, "cluster_style_bracket", value = cc_chk(st$bracket))
+          updateCheckboxInput(session, "cluster_style_band",    value = cc_chk(st$band))
+          updateCheckboxInput(session, "cluster_style_lines",   value = cc_chk(st$lines))
+          updateCheckboxInput(session, "cluster_style_strip",   value = cc_chk(st$strip))
+          updateCheckboxInput(session, "cluster_show_labels",   value = cc_chk(st$labels))
+        }
+        if (!is.null(pr)) {
+          if (!is.null(pr$placement))         updateRadioButtons(session, "cluster_placement", selected = pr$placement)
+          if (!is.null(pr$dist))              updateSliderInput(session, "cluster_dist", value = as.numeric(pr$dist))
+          if (!is.null(pr$label_size))        updateSliderInput(session, "cluster_label_size", value = as.numeric(pr$label_size))
+          if (!is.null(pr$label_angle))       updateSliderInput(session, "cluster_label_angle", value = as.numeric(pr$label_angle))
+          if (!is.null(pr$bracket_thickness)) updateSliderInput(session, "cluster_bracket_thickness", value = as.numeric(pr$bracket_thickness))
+          if (!is.null(pr$bracket_length))    updateSliderInput(session, "cluster_bracket_length", value = as.numeric(pr$bracket_length))
+          if (!is.null(pr$band_opacity))      updateSliderInput(session, "cluster_band_opacity", value = as.numeric(pr$band_opacity))
+          if (!is.null(pr$band_extend))       updateSliderInput(session, "cluster_band_extend", value = as.numeric(pr$band_extend))
+          if (!is.null(pr$strip_thickness))   updateSliderInput(session, "cluster_strip_thickness", value = as.numeric(pr$strip_thickness))
+          if (!is.null(pr$line_extend))       updateSliderInput(session, "cluster_line_extend", value = as.numeric(pr$line_extend))
+        }
+        if (!is.null(cc_yaml$clusters) && length(cc_yaml$clusters) > 0) {
+          clusters <- lapply(cc_yaml$clusters, function(x) list(
+            start_tip = as.character(x$start_tip),
+            end_tip   = as.character(x$end_tip),
+            label     = as.character(x$label),
+            color     = as.character(x$color)
+          ))
+          values$cluster_rows <- clusters
+          updateNumericInput(session, "num_clusters", value = length(clusters))
+          cluster_ui_refresh(isolate(cluster_ui_refresh()) + 1)  # force rows to rebuild with imported values
+          # Rebuild the applied overlay so it renders without re-clicking Apply
+          values$cluster_overlay <- list(
+            clusters = clusters,
+            styles = list(
+              bracket = cc_chk(st$bracket),
+              band    = cc_chk(st$band),
+              lines   = cc_chk(st$lines),
+              strip   = cc_chk(st$strip),
+              labels  = cc_chk(st$labels)
+            ),
+            params = list(
+              placement         = if (!is.null(pr$placement)) pr$placement else "top",
+              dist              = if (!is.null(pr$dist)) as.numeric(pr$dist) else 0.08,
+              label_size        = if (!is.null(pr$label_size)) as.numeric(pr$label_size) else 4,
+              label_angle       = if (!is.null(pr$label_angle)) as.numeric(pr$label_angle) else 0,
+              bracket_thickness = if (!is.null(pr$bracket_thickness)) as.numeric(pr$bracket_thickness) else 1,
+              bracket_length    = if (!is.null(pr$bracket_length)) as.numeric(pr$bracket_length) else 0.04,
+              band_opacity      = if (!is.null(pr$band_opacity)) as.numeric(pr$band_opacity) else 0.15,
+              band_extend       = if (!is.null(pr$band_extend)) as.numeric(pr$band_extend) else 0.4,
+              strip_thickness   = if (!is.null(pr$strip_thickness)) as.numeric(pr$strip_thickness) else 0.4,
+              line_extend       = if (!is.null(pr$line_extend)) as.numeric(pr$line_extend) else 0.4
+            )
+          )
+          cat(file=stderr(), "[YAML-IMPORT] Imported clade_clusters with", length(clusters), "cluster(s)\n")
         }
       }
 
@@ -13167,6 +13234,31 @@ server <- function(input, output, session) {
       # No manual rotation config, set display to no but keep structure
       values$yaml_data$`visual definitions`$manual_rotation$display <- "no"
       values$yaml_data$`visual definitions`$manual_rotation$nodes <- list()
+    }
+
+    # Clade clusters (single mode): persist the applied overlay config.
+    co <- values$cluster_overlay
+    if (!is.null(co) && !is.null(co$clusters) && length(co$clusters) > 0) {
+      values$yaml_data$`visual definitions`$clade_clusters <- list(
+        display = if (isTRUE(input$enable_clusters)) "yes" else "no",
+        styles = list(
+          bracket = if (isTRUE(co$styles$bracket)) "yes" else "no",
+          band    = if (isTRUE(co$styles$band))    "yes" else "no",
+          lines   = if (isTRUE(co$styles$lines))   "yes" else "no",
+          strip   = if (isTRUE(co$styles$strip))   "yes" else "no",
+          labels  = if (isTRUE(co$styles$labels))  "yes" else "no"
+        ),
+        params = co$params,
+        clusters = lapply(co$clusters, function(cl) list(
+          start_tip = as.character(cl$start_tip),
+          end_tip   = as.character(cl$end_tip),
+          label     = as.character(cl$label),
+          color     = as.character(cl$color)
+        ))
+      )
+      cat(file=stderr(), sprintf("[YAML-UPDATE] Saved clade_clusters: %d cluster(s)\n", length(co$clusters)))
+    } else {
+      values$yaml_data$`visual definitions`$clade_clusters <- list(display = "no")
     }
 
     # Update advanced settings only if they exist
@@ -19351,6 +19443,10 @@ server <- function(input, output, session) {
   # ============================================================================
   # Dynamic cluster definition rows: each is a tip range (from tip -> to tip),
   # plus a label and color. Tip choices come from the layout data, in display order.
+  # Bumped to force the cluster rows UI to rebuild (e.g. after a YAML import),
+  # without making it rebuild on every Apply (which caused label/color resets).
+  cluster_ui_refresh <- reactiveVal(0)
+
   # Tip choices in display order: prefer the actual left-to-right order of the
   # rendered tree; fall back to layout order before any render.
   cluster_tip_choices <- reactive({
@@ -19365,6 +19461,7 @@ server <- function(input, output, session) {
 
   output$cluster_rows_ui <- renderUI({
     req(input$num_clusters)
+    cluster_ui_refresh()  # rebuild when explicitly requested (e.g. YAML import)
     # Build from stored config + fixed defaults ONLY (everything isolated), so
     # the rows rebuild solely when the cluster count changes - never on a render
     # or Apply. This keeps the default label ("Cluster N") and default blue
@@ -22089,6 +22186,27 @@ server <- function(input, output, session) {
             func.serialize.rotation.config(values$manual_rotation_config)
           } else list()
         ),
+        "clade_clusters" = if (!is.null(values$cluster_overlay) &&
+                               !is.null(values$cluster_overlay$clusters) &&
+                               length(values$cluster_overlay$clusters) > 0) {
+          list(
+            display = if (isTRUE(input$enable_clusters)) "yes" else "no",
+            styles = list(
+              bracket = if (isTRUE(values$cluster_overlay$styles$bracket)) "yes" else "no",
+              band    = if (isTRUE(values$cluster_overlay$styles$band))    "yes" else "no",
+              lines   = if (isTRUE(values$cluster_overlay$styles$lines))   "yes" else "no",
+              strip   = if (isTRUE(values$cluster_overlay$styles$strip))   "yes" else "no",
+              labels  = if (isTRUE(values$cluster_overlay$styles$labels))  "yes" else "no"
+            ),
+            params = values$cluster_overlay$params,
+            clusters = lapply(values$cluster_overlay$clusters, function(cl) list(
+              start_tip = as.character(cl$start_tip),
+              end_tip   = as.character(cl$end_tip),
+              label     = as.character(cl$label),
+              color     = as.character(cl$color)
+            ))
+          )
+        } else list(display = "no"),
         "trim tips" = list(
           display = if (input$trim_tips) "yes" else "no",
           length = input$tip_length
