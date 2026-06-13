@@ -9469,12 +9469,11 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
   # S2.0-PERF: Return both the plot and cache data for two-tier caching (Option 3A)
   # The cache data allows generate_plot() to store and reuse p_list_of_pairs
-  # Left-to-right tip order of the FINAL rendered tree. Under coord_flip +
-  # scale_y_reverse, ascending data-y = visual left -> right. Used to order the
-  # cluster tip pickers so they match the displayed tree.
+  # Left-to-right tip order of the FINAL rendered tree, ordered to read the way
+  # the tree displays (used to order the cluster tip pickers).
   tip_order_ltr <- tryCatch({
     td2 <- p$data[p$data$isTip == TRUE & !is.na(p$data$isTip), ]
-    as.character(td2$label[order(td2$y)])
+    as.character(td2$label[order(td2$y, decreasing = TRUE)])
   }, error = function(e) NULL)
 
   # S2.9-PERF: Also return updated heatmap cache
@@ -19340,20 +19339,24 @@ server <- function(input, output, session) {
   # ============================================================================
   # Dynamic cluster definition rows: each is a tip range (from tip -> to tip),
   # plus a label and color. Tip choices come from the layout data, in display order.
+  # Tip choices in display order: prefer the actual left-to-right order of the
+  # rendered tree; fall back to layout order before any render.
+  cluster_tip_choices <- reactive({
+    if (!is.null(values$rendered_tip_order) && length(values$rendered_tip_order) > 0) {
+      return(as.character(values$rendered_tip_order))
+    }
+    td <- values$tree_data
+    if (is.null(td)) return(character(0))
+    tr <- td[td$isTip == TRUE & !is.na(td$isTip), ]
+    as.character(tr$label[order(tr$y, decreasing = TRUE)])
+  })
+
   output$cluster_rows_ui <- renderUI({
     req(input$num_clusters)
-    # Prefer the actual left-to-right order of the rendered tree (captured from
-    # the last render); fall back to the original layout order before any render.
-    tip_choices <- character(0)
-    if (!is.null(values$rendered_tip_order) && length(values$rendered_tip_order) > 0) {
-      tip_choices <- as.character(values$rendered_tip_order)
-    } else {
-      td <- values$tree_data
-      if (!is.null(td)) {
-        tr <- td[td$isTip == TRUE & !is.na(td$isTip), ]
-        tip_choices <- as.character(tr$label[order(tr$y)])
-      }
-    }
+    # Read tip choices via isolate so the rows are NOT rebuilt every render
+    # (rebuilding would wipe the label/color defaults the user set). Choices are
+    # kept in sync by the observer below.
+    tip_choices <- isolate(cluster_tip_choices())
     n <- max(1, input$num_clusters)
     rows <- lapply(seq_len(n), function(i) {
       s_id <- paste0("cluster_start_", i); e_id <- paste0("cluster_end_", i)
@@ -19361,8 +19364,8 @@ server <- function(input, output, session) {
       stored <- if (!is.null(values$cluster_rows) && length(values$cluster_rows) >= i) values$cluster_rows[[i]] else NULL
       sel_s <- isolate(input[[s_id]]); if (is.null(sel_s) && !is.null(stored)) sel_s <- stored$start_tip
       sel_e <- isolate(input[[e_id]]); if (is.null(sel_e) && !is.null(stored)) sel_e <- stored$end_tip
-      val_l <- isolate(input[[l_id]]); if (is.null(val_l)) val_l <- if (!is.null(stored)) stored$label else paste0("Cluster ", i)
-      val_c <- isolate(input[[c_id]]); if (is.null(val_c)) val_c <- if (!is.null(stored)) stored$color else "#3366CC"
+      val_l <- isolate(input[[l_id]]); if (is.null(val_l) || !nzchar(val_l)) val_l <- if (!is.null(stored)) stored$label else paste0("Cluster ", i)
+      val_c <- isolate(input[[c_id]]); if (is.null(val_c) || !nzchar(val_c)) val_c <- if (!is.null(stored)) stored$color else "#3366CC"
       fluidRow(
         column(3, selectizeInput(s_id, if (i == 1) "From tip" else NULL, choices = tip_choices,
                                  selected = sel_s, options = list(placeholder = "start tip"))),
@@ -19373,6 +19376,18 @@ server <- function(input, output, session) {
       )
     })
     tagList(rows)
+  })
+
+  # Keep the from/to tip choices in sync with the displayed order WITHOUT
+  # rebuilding the rows (preserves labels, colors and current selection).
+  observe({
+    ord <- cluster_tip_choices()
+    req(input$num_clusters)
+    for (i in seq_len(input$num_clusters)) {
+      s_id <- paste0("cluster_start_", i); e_id <- paste0("cluster_end_", i)
+      updateSelectizeInput(session, s_id, choices = ord, selected = isolate(input[[s_id]]))
+      updateSelectizeInput(session, e_id, choices = ord, selected = isolate(input[[e_id]]))
+    }
   })
 
   observeEvent(input$apply_clusters, {
