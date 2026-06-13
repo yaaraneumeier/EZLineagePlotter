@@ -3520,7 +3520,11 @@ func.print.lineage.tree <- function(conf_yaml_path,
   if (flag_csv_read_func=="fread"){
     fread_rownames(csv_path, row.var = rowname_param)
   } else {
-    readfile <- read.csv(csv_path)
+    # data.table::fread is far faster than read.csv. Apply make.names() so the
+    # column names match read.csv's check.names=TRUE behavior (e.g. "Cell type"
+    # -> "Cell.type"), keeping all downstream column lookups identical.
+    readfile <- data.table::fread(csv_path, data.table = FALSE)
+    names(readfile) <- make.names(names(readfile))
   }
   cat(file=stderr(), sprintf("[PROF-TREE] CSV read (in func): %.3f sec\n", as.numeric(Sys.time() - .prof_section_start)))
   #print("readfile is")
