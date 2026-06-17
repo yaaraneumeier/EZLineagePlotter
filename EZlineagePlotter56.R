@@ -18691,7 +18691,8 @@ server <- function(input, output, session) {
           show_guides = FALSE,
           # Row labels
           show_row_labels = if (!is.null(input[[paste0("heatmap_show_row_labels_", i)]])) input[[paste0("heatmap_show_row_labels_", i)]] else FALSE,
-          row_label_source = "colnames",
+          row_label_source = if (!is.null(input[[paste0("heatmap_row_label_source_", i)]])) input[[paste0("heatmap_row_label_source_", i)]] else "colnames",
+          custom_row_labels = if (!is.null(input[[paste0("heatmap_custom_row_labels_", i)]])) input[[paste0("heatmap_custom_row_labels_", i)]] else "",
           row_label_font_size = if (!is.null(input[[paste0("heatmap_row_label_font_size_", i)]])) input[[paste0("heatmap_row_label_font_size_", i)]] else 2.5,
           row_label_offset = if (!is.null(input[[paste0("heatmap_row_label_offset_", i)]])) input[[paste0("heatmap_row_label_offset_", i)]] else 1.0,
           row_label_align = if (!is.null(input[[paste0("heatmap_row_label_align_", i)]])) input[[paste0("heatmap_row_label_align_", i)]] else "left",
