@@ -10070,7 +10070,7 @@ ui <- dashboardPage(
             width = 4,
             selectInput("classification_column", "Select Classification Column", choices = NULL, selected = character(0)),
             textInput("classification_title", "Legend Title", value = "Cell type"),
-            selectInput("no_cluster_color", "No Cluster Color", choices = c("gray", "black", "white", "red"), selected = "gray"),
+            colourInput("no_cluster_color", "No Cluster Color", value = "gray", allowTransparent = FALSE),
             actionButton("update_classification_preview", "Update Preview", icon = icon("eye"), class = "btn-info"),
             actionButton("add_classification", "Save Classification", icon = icon("save"), class = "btn-success"),
             actionButton("remove_classification", "Remove Selected", icon = icon("minus"), class = "btn-danger"),
@@ -12327,7 +12327,7 @@ server <- function(input, output, session) {
             
             if (!is.null(def$non_cluster_color)) {
               class_item$no_cluster_color <- def$non_cluster_color
-              updateSelectInput(session, "no_cluster_color", selected = def$non_cluster_color)
+              updateColourInput(session, "no_cluster_color", value = def$non_cluster_color)
             } else {
               class_item$no_cluster_color <- "gray"
             }
@@ -14766,8 +14766,8 @@ server <- function(input, output, session) {
         n_filled <- n_filled + 1
       }
     }
-    # Palette "NA" -> No-cluster color
-    updateSelectInput(session, "no_cluster_color", selected = "gray")
+    # Palette "NA" -> No-cluster color (exact palette gray)
+    updateColourInput(session, "no_cluster_color", value = "#7D7D7D")
     showNotification(paste0("Applied paper palette (", n_filled, " categories)"),
                      type = "message", duration = 2)
   }, ignoreInit = TRUE)
