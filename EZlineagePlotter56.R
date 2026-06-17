@@ -233,6 +233,10 @@ options(shiny.maxRequestSize = 100*1024^2)
 #       computing aesthetics" error when adding 2+ highlights with a heatmap.
 VERSION <- "S3.13"
 
+# Maximum number of heatmaps. Referenced by the add-heatmap guard, the UI text,
+# and every per-heatmap observer/output loop, so changing the cap is one edit.
+MAX_HEATMAPS <- 15
+
 # Debug output control - set to TRUE to enable verbose console logging
 # For production/stable use, keep this FALSE for better performance
 DEBUG_VERBOSE <- FALSE
@@ -10232,7 +10236,7 @@ ui <- dashboardPage(
                                     icon = icon("plus"), class = "btn-success",
                                     style = "margin-bottom: 15px;"),
                        tags$span(class = "text-muted", style = "margin-left: 10px;",
-                                 "Maximum 15 heatmaps allowed")
+                                 paste0("Maximum ", MAX_HEATMAPS, " heatmaps allowed"))
                 )
               ),
               
@@ -16398,11 +16402,10 @@ server <- function(input, output, session) {
   
   # Add new heatmap
   observeEvent(input$add_new_heatmap, {
-    # Max heatmaps. Keep this in sync with the per-heatmap observer/output loops
-    # below (lapply(1:15, ...) etc.) - they must cover every allowed index or the
-    # extra heatmaps render but their controls do nothing.
-    if (length(values$heatmap_configs) >= 15) {
-      showNotification("Maximum 15 heatmaps allowed", type = "warning")
+    # Max heatmaps (MAX_HEATMAPS). The per-heatmap observer/output loops below all
+    # use lapply(1:MAX_HEATMAPS, ...), so changing the constant covers everything.
+    if (length(values$heatmap_configs) >= MAX_HEATMAPS) {
+      showNotification(paste0("Maximum ", MAX_HEATMAPS, " heatmaps allowed"), type = "warning")
       return()
     }
 
@@ -16497,7 +16500,7 @@ server <- function(input, output, session) {
 
   # Generic observer for heatmap removal buttons
   observe({
-    lapply(1:15, function(i) {
+    lapply(1:MAX_HEATMAPS, function(i) {
       observeEvent(input[[paste0("heatmap_remove_", i)]], {
         if (i <= length(values$heatmap_configs)) {
           values$heatmap_configs <- values$heatmap_configs[-i]
@@ -16529,7 +16532,7 @@ server <- function(input, output, session) {
 
   # Generic observer for move up buttons
   observe({
-    lapply(2:15, function(i) {
+    lapply(2:MAX_HEATMAPS, function(i) {
       observeEvent(input[[paste0("heatmap_up_", i)]], {
         if (i <= length(values$heatmap_configs) && i > 1) {
           configs <- values$heatmap_configs
@@ -16550,7 +16553,7 @@ server <- function(input, output, session) {
 
   # Generic observer for move down buttons
   observe({
-    lapply(1:14, function(i) {
+    lapply(1:(MAX_HEATMAPS - 1), function(i) {
       observeEvent(input[[paste0("heatmap_down_", i)]], {
         if (i < length(values$heatmap_configs)) {
           configs <- values$heatmap_configs
@@ -16571,7 +16574,7 @@ server <- function(input, output, session) {
   
   # Observer to update heatmap config when inputs change
   observe({
-    lapply(1:15, function(i) {
+    lapply(1:MAX_HEATMAPS, function(i) {
       # v56: Columns change (plural for multiple column support)
       observeEvent(input[[paste0("heatmap_columns_", i)]], {
         if (i <= length(values$heatmap_configs)) {
@@ -17288,7 +17291,7 @@ server <- function(input, output, session) {
 
   # v62: Render palette previews for discrete heatmaps
   observe({
-    lapply(1:15, function(i) {
+    lapply(1:MAX_HEATMAPS, function(i) {
       output[[paste0("heatmap_discrete_palette_preview_", i)]] <- renderUI({
         palette_name <- input[[paste0("heatmap_discrete_palette_", i)]]
         if (is.null(palette_name)) palette_name <- "Set1"
@@ -17321,7 +17324,7 @@ server <- function(input, output, session) {
 
   # v62: Render palette previews for continuous heatmaps
   observe({
-    lapply(1:15, function(i) {
+    lapply(1:MAX_HEATMAPS, function(i) {
       output[[paste0("heatmap_cont_palette_preview_", i)]] <- renderUI({
         palette_name <- input[[paste0("heatmap_cont_palette_", i)]]
         if (is.null(palette_name)) palette_name <- "Blues"
@@ -17356,7 +17359,7 @@ server <- function(input, output, session) {
 
   # v64: Render palette previews for discrete heatmaps
   observe({
-    lapply(1:15, function(i) {
+    lapply(1:MAX_HEATMAPS, function(i) {
       output[[paste0("heatmap_discrete_palette_preview_", i)]] <- renderUI({
         palette_name <- input[[paste0("heatmap_discrete_palette_", i)]]
         if (is.null(palette_name)) palette_name <- "Set1"
@@ -17416,7 +17419,7 @@ server <- function(input, output, session) {
   # v127: Dynamic detected type display - updates when column selection changes
   # This replaces the static label that was set at UI render time
   observe({
-    lapply(1:15, function(i) {
+    lapply(1:MAX_HEATMAPS, function(i) {
       output[[paste0("heatmap_detected_type_display_", i)]] <- renderUI({
         # Take dependency on column selection to reactively update
         cols_selected <- input[[paste0("heatmap_columns_", i)]]
@@ -17513,7 +17516,7 @@ server <- function(input, output, session) {
   # v108: New reactive renderUI for type-specific settings (discrete vs continuous)
   # This replaces the old conditionalPanels which used a hardcoded detected_type
   observe({
-    lapply(1:15, function(i) {
+    lapply(1:MAX_HEATMAPS, function(i) {
       output[[paste0("heatmap_type_settings_ui_", i)]] <- renderUI({
         # Take dependency on column selection to reactively update when columns change
         cols_selected <- input[[paste0("heatmap_columns_", i)]]
@@ -17823,7 +17826,7 @@ server <- function(input, output, session) {
 
   # v108: Render custom labels UI (mapping or comma-separated)
   observe({
-    lapply(1:15, function(i) {
+    lapply(1:MAX_HEATMAPS, function(i) {
       output[[paste0("heatmap_custom_labels_ui_", i)]] <- renderUI({
         # Depend on label source selection and column selection
         label_source <- input[[paste0("heatmap_row_label_source_", i)]]
@@ -17899,7 +17902,7 @@ server <- function(input, output, session) {
   # S2.0: Render RData sample mapping column selector
   # Shows when auto-match fails and user needs to select which CSV column has the sample names
   observe({
-    lapply(1:15, function(i) {
+    lapply(1:MAX_HEATMAPS, function(i) {
       output[[paste0("heatmap_rdata_mapping_ui_", i)]] <- renderUI({
         # Only show for RData data source
         data_source <- input[[paste0("heatmap_data_source_", i)]]
@@ -17982,7 +17985,7 @@ server <- function(input, output, session) {
 
   # S2.0: Observer to update rdata_mapping_column when user selects a column
   observe({
-    lapply(1:15, function(i) {
+    lapply(1:MAX_HEATMAPS, function(i) {
       observeEvent(input[[paste0("heatmap_rdata_mapping_col_", i)]], {
         selected_col <- input[[paste0("heatmap_rdata_mapping_col_", i)]]
         if (!is.null(selected_col) && selected_col != "") {
@@ -17999,7 +18002,7 @@ server <- function(input, output, session) {
 
   # v70: Render discrete color pickers for each heatmap - with NA color and dropdown menus
   observe({
-    lapply(1:15, function(i) {
+    lapply(1:MAX_HEATMAPS, function(i) {
       output[[paste0("heatmap_discrete_colors_ui_", i)]] <- renderUI({
         # v69: Use columns (plural) - get unique values from first column
         cols_selected <- input[[paste0("heatmap_columns_", i)]]
@@ -18210,7 +18213,7 @@ server <- function(input, output, session) {
 
   # v70: Observer to update heatmap color pickers when R color name dropdown changes
   observe({
-    lapply(1:15, function(i) {
+    lapply(1:MAX_HEATMAPS, function(i) {
       # Observe changes to color name dropdowns for each value (up to 30 values)
       lapply(1:30, function(j) {
         observeEvent(input[[paste0("heatmap_", i, "_color_name_", j)]], {
@@ -18243,7 +18246,7 @@ server <- function(input, output, session) {
   # This is more robust than color comparison because it prevents ALL saves during the
   # critical window when UI is rebuilding.
   observe({
-    lapply(1:15, function(i) {
+    lapply(1:MAX_HEATMAPS, function(i) {
       lapply(1:30, function(j) {
         observeEvent(input[[paste0("heatmap_", i, "_color_", j)]], {
           # S2.8-FIX: Check inhibit flag first - skip ALL saves during UI rebuild
@@ -18427,7 +18430,7 @@ server <- function(input, output, session) {
 
   # v69: Observer for "Apply Palette to All" buttons for heatmaps
   observe({
-    lapply(1:15, function(i) {
+    lapply(1:MAX_HEATMAPS, function(i) {
       observeEvent(input[[paste0("apply_heatmap_palette_", i)]], {
         cols_selected <- input[[paste0("heatmap_columns_", i)]]
         if (is.null(cols_selected) || length(cols_selected) == 0 || is.null(values$csv_data)) {
