@@ -8264,6 +8264,14 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
         show_colnames_for_heatmap <- flag_colnames[j1]
       }
 
+      # RData CNV heatmaps have hundreds/thousands of genomic-bin columns; drawing
+      # them as column names renders as a black smear next to the heatmap, so
+      # always suppress column names for RData heatmaps.
+      if (!is.null(heat_param) && !is.null(heat_param[['data_source']]) &&
+          identical(heat_param[['data_source']], "rdata")) {
+        show_colnames_for_heatmap <- FALSE
+      }
+
       if (show_colnames_for_heatmap == FALSE) {
         dt <- dxdf440_for_heat[[j1]]
         colnames_len <- length(colnames(dt))
