@@ -231,7 +231,7 @@ options(shiny.maxRequestSize = 100*1024^2)
 #       - Layer reordering now happens ONCE at the end in generate_plot()
 # S1.2: Fixed undefined x_range_min in func_highlight causing "Problem while
 #       computing aesthetics" error when adding 2+ highlights with a heatmap.
-VERSION <- "S3.13"
+VERSION <- "S3.14"
 
 # Maximum number of heatmaps. Referenced by the add-heatmap guard, the UI text,
 # and every per-heatmap observer/output loop, so changing the cap is one edit.
@@ -9824,9 +9824,17 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #155724;",
-                     tags$h4(style = "color: #155724; margin: 0;", "Version S3.13 Stable"),
+                     tags$h4(style = "color: #155724; margin: 0;", "Version S3.14 Stable"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
-                            tags$strong("New in S3.13:"),
+                            tags$strong("New in S3.14:"),
+                            tags$ul(
+                              tags$li("Clade Clusters: define clusters from a CSV column - tips sharing a column value are grouped, and a value split across the tree is drawn as several clades sharing its name, each with its own color"),
+                              tags$li("Classification tab: 'Paper palette' option when a column's categories match the preset palette, with editable per-category fill colors"),
+                              tags$li("Support up to 15 heatmaps (was 6); fixed heatmaps 7+ not responding to color/title changes"),
+                              tags$li("Fixed custom row label not displaying on RData CNV heatmaps"),
+                              tags$li("Faster CSV loading (data.table::fread)")
+                            ),
+                            tags$strong("From S3.13:"),
                             tags$ul(
                               tags$li("Clade Clusters tab: overlay labeled cluster separations over the tree by tip range, with bracket, shaded band, separator lines and colored tip strip styles, a live preview, and length/placement controls"),
                               tags$li("Mirror Tree (left to right) in both single and multi-tree modes"),
