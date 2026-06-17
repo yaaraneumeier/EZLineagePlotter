@@ -14760,7 +14760,7 @@ server <- function(input, output, session) {
     unique_values <- unique_values[!is.na(unique_values)]
     n_filled <- 0
     for (i in seq_along(unique_values)) {
-      col <- PAPER_PALETTE_NORM[func.norm.cat(unique_values[i])]  # single [ -> NA if no match
+      col <- PAPER_PALETTE_NORM[func.norm.cat(unique_values[i])]  # single-bracket index yields NA if no match
       if (!is.na(col)) {
         updateColourInput(session, paste0("class_color_", i), value = unname(col))
         n_filled <- n_filled + 1
