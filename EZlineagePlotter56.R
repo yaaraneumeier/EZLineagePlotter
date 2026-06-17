@@ -3267,8 +3267,6 @@ func.mirror.tree <- function(tree_view) {
 # transforms them consistently with the tree.
 func.add.cluster.overlay <- function(p, cluster_overlay) {
   if (is.null(cluster_overlay)) return(p)
-  clusters <- cluster_overlay$clusters
-  if (is.null(clusters) || length(clusters) == 0) return(p)
   styles <- cluster_overlay$styles; if (is.null(styles)) styles <- list()
   prm    <- cluster_overlay$params; if (is.null(prm)) prm <- list()
   getp <- function(nm, def) if (!is.null(prm[[nm]])) prm[[nm]] else def
@@ -3287,6 +3285,41 @@ func.add.cluster.overlay <- function(p, cluster_overlay) {
   df <- p$data
   tips <- df[df$isTip == TRUE & !is.na(df$isTip), ]
   if (nrow(tips) == 0) return(p)
+
+  # Determine the cluster ranges: either user-defined manual ranges, or
+  # contiguous runs of equal value from a CSV column. In column mode, tips are
+  # walked in display order (by y) and each run of identical value becomes its
+  # own range - so one value can appear as several separate clades sharing a name.
+  if (identical(cluster_overlay$mode, "column")) {
+    tv   <- cluster_overlay$tip_values   # named: tip label -> value
+    cols <- cluster_overlay$colors       # named: value -> hex
+    if (is.null(tv) || length(tv) == 0) return(p)
+    ot   <- tips[order(tips$y), ]
+    vals <- as.character(tv[as.character(ot$label)])
+    vals[is.na(vals) | vals == ""] <- "NA"
+    clusters <- list()
+    nO <- length(vals)
+    if (nO > 0) {
+      run_start <- 1
+      for (k in 2:(nO + 1)) {
+        if (k > nO || !identical(vals[k], vals[run_start])) {
+          v <- vals[run_start]
+          clusters[[length(clusters) + 1]] <- list(
+            start_tip = as.character(ot$label[run_start]),
+            end_tip   = as.character(ot$label[k - 1]),
+            label     = v,
+            color     = if (!is.null(cols) && !is.null(cols[[v]])) cols[[v]] else "#333333"
+          )
+          run_start <- k
+        }
+      }
+    }
+    cat(file=stderr(), paste0("[CLUSTER] column mode: ", length(clusters), " run(s) from ", nO, " tips\n"))
+  } else {
+    clusters <- cluster_overlay$clusters
+  }
+  if (is.null(clusters) || length(clusters) == 0) return(p)
+
   x_root <- min(df$x, na.rm = TRUE)            # root depth (top of screen)
   x_tip  <- max(tips$x, na.rm = TRUE)          # tip depth (bottom of screen)
   x_span <- x_tip - x_root
@@ -7740,15 +7773,6 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
           # v105: Add row labels if enabled
           show_row_labels <- if (!is.null(heat_param[['show_row_labels']])) heat_param[['show_row_labels']] else FALSE
-          # S2.93: Always-on visibility (debug_cat is gated on DEBUG_VERBOSE). This
-          # confirms whether the row-label block runs at all and whether
-          # show_row_labels was threaded into heat_param for this heatmap.
-          cat(file=stderr(), paste0("[ROWLABEL-RENDER] heatmap ", heat_idx,
-              ": show_row_labels=", show_row_labels,
-              " (heat_param present=", ('show_row_labels' %in% names(heat_param)),
-              "), data_source=", ifelse(is.null(heat_param[['data_source']]), "NULL", heat_param[['data_source']]),
-              ", row_label_source=", ifelse(is.null(heat_param[['row_label_source']]), "NULL", heat_param[['row_label_source']]),
-              ", custom_row_labels='", ifelse(is.null(heat_param[['custom_row_labels']]), "", heat_param[['custom_row_labels']]), "'\n"))
           if (isTRUE(show_row_labels) || identical(show_row_labels, "yes") || identical(show_row_labels, "TRUE")) {
             debug_cat(paste0("  Adding row labels...\n"))
 
@@ -7789,12 +7813,6 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
                 # No usable custom label: suppress labels entirely (no smear).
                 labels_to_use <- character(0)
               }
-              # S2.93: Always-on confirmation that the RData label path was taken,
-              # whether a single centered block title is drawn, and with what text.
-              cat(file=stderr(), paste0("[ROWLABEL-RENDER] RData label path: ",
-                  "single_block_label=", single_block_label,
-                  ", ncol(heat_data)=", ncol(heat_data),
-                  ", labels_to_use=[", paste(labels_to_use, collapse=", "), "]\n"))
             } else if (row_label_source == "mapping" && length(label_mapping) > 0) {
               # v108: Use per-column label mapping
               labels_to_use <- sapply(colnames(heat_data), function(col_name) {
@@ -7903,12 +7921,6 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             )
             debug_cat(paste0("  Row labels added successfully\n"))
             debug_cat(paste0("  Label position: label_y_pos=", label_y_pos, ", angle=", colnames_angle, ", hjust=", hjust_val, ", vjust=", vjust_val, "\n"))
-            # S2.93: Always-on confirmation that the geom_text label layer was added,
-            # with the resolved position so the user can see it is on-panel.
-            cat(file=stderr(), paste0("[ROWLABEL-RENDER] Added geom_text label layer: n=", nrow(label_df),
-                ", single_block_label=", isTRUE(single_block_label),
-                ", x=", paste(round(label_df$x, 3), collapse=","),
-                ", y=", round(label_y_pos, 3), "\n"))
             }  # end if (length(labels_to_use) > 0)
           }
 
@@ -9482,6 +9494,37 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   })
   debug_cat(paste0("============================================\n"))
 
+  # Clade clusters "from CSV column" mode: map each tip to its value in the chosen
+  # column (reusing the same CSV/ID matching + trimming used elsewhere), so the
+  # overlay can form contiguous runs. NA/blank become the "NA" cluster.
+  if (!is.null(cluster_overlay) && identical(cluster_overlay$mode, "column") &&
+      !is.null(cluster_overlay$column)) {
+    ccol <- cluster_overlay$column
+    cluster_overlay$tip_values <- tryCatch({
+      if (!is.null(readfile) && ccol %in% names(readfile)) {
+        tdf <- p$data[p$data$isTip == TRUE & !is.na(p$data$isTip), ]
+        idcol_vals <- as.character(readfile[[title.id]])
+        idcol_num  <- suppressWarnings(as.numeric(idcol_vals))
+        vals <- vapply(as.character(tdf$label), function(tl) {
+          key <- if (isTRUE(id_tip_trim_flag)) substr(tl, id_tip_trim_start, id_tip_trim_end) else tl
+          row <- which(idcol_vals == as.character(key))
+          if (length(row) == 0) {
+            kn <- suppressWarnings(as.numeric(key))
+            if (!is.na(kn)) row <- which(idcol_num == kn)
+          }
+          if (length(row) > 0) {
+            v <- as.character(readfile[[ccol]][row[1]])
+            if (is.na(v) || v == "") "NA" else v
+          } else "NA"
+        }, character(1))
+        names(vals) <- as.character(tdf$label)
+        vals
+      } else NULL
+    }, error = function(e) {
+      cat(file=stderr(), paste0("[CLUSTER] tip-value map error: ", e$message, "\n")); NULL
+    })
+  }
+
   # Clade cluster overlay (single mode): draw bracket/band/lines/strip for each
   # user-defined tip range. Done last so it sits on top of the finished plot.
   p <- tryCatch(
@@ -9685,9 +9728,23 @@ ui <- dashboardPage(
               condition = "input.enable_clusters == true",
               fluidRow(
                 column(7,
-                  tags$b("Clusters (each = a tip range)"),
-                  numericInput("num_clusters", "Number of clusters:", value = 1, min = 1, max = 30, step = 1),
-                  uiOutput("cluster_rows_ui")
+                  radioButtons("cluster_source", "Define clusters by:",
+                               choices = c("Manual tip ranges" = "manual", "CSV column" = "column"),
+                               selected = "manual"),
+                  conditionalPanel(
+                    condition = "input.cluster_source == 'manual'",
+                    tags$b("Clusters (each = a tip range)"),
+                    numericInput("num_clusters", "Number of clusters:", value = 1, min = 1, max = 30, step = 1),
+                    uiOutput("cluster_rows_ui")
+                  ),
+                  conditionalPanel(
+                    condition = "input.cluster_source == 'column'",
+                    selectInput("cluster_csv_column", "Cluster column (from CSV):", choices = NULL),
+                    tags$small(style = "color:#666;", "Tips are grouped by this column's value; a value split across the tree is drawn as several clades with the same name. Blank/NA -> 'NA'."),
+                    tags$hr(),
+                    tags$b("Cluster colors"),
+                    uiOutput("cluster_col_colors_ui")
+                  )
                 ),
                 column(5,
                   tags$b("Display styles (combine any)"),
@@ -12199,7 +12256,44 @@ server <- function(input, output, session) {
           if (!is.null(pr$strip_thickness))   updateSliderInput(session, "cluster_strip_thickness", value = as.numeric(pr$strip_thickness))
           if (!is.null(pr$line_extend))       updateSliderInput(session, "cluster_line_extend", value = as.numeric(pr$line_extend))
         }
-        if (!is.null(cc_yaml$clusters) && length(cc_yaml$clusters) > 0) {
+        cc_params <- list(
+          placement         = if (!is.null(pr$placement)) pr$placement else "top",
+          dist              = if (!is.null(pr$dist)) as.numeric(pr$dist) else 0.08,
+          label_size        = if (!is.null(pr$label_size)) as.numeric(pr$label_size) else 4,
+          label_angle       = if (!is.null(pr$label_angle)) as.numeric(pr$label_angle) else 0,
+          bracket_thickness = if (!is.null(pr$bracket_thickness)) as.numeric(pr$bracket_thickness) else 1,
+          bracket_length    = if (!is.null(pr$bracket_length)) as.numeric(pr$bracket_length) else 0.04,
+          band_opacity      = if (!is.null(pr$band_opacity)) as.numeric(pr$band_opacity) else 0.15,
+          band_extend       = if (!is.null(pr$band_extend)) as.numeric(pr$band_extend) else 0.4,
+          strip_thickness   = if (!is.null(pr$strip_thickness)) as.numeric(pr$strip_thickness) else 0.4,
+          line_extend       = if (!is.null(pr$line_extend)) as.numeric(pr$line_extend) else 0.4
+        )
+        cc_styles <- list(
+          bracket = cc_chk(st$bracket),
+          band    = cc_chk(st$band),
+          lines   = cc_chk(st$lines),
+          strip   = cc_chk(st$strip),
+          labels  = cc_chk(st$labels)
+        )
+        if (identical(as.character(cc_yaml$mode), "column") && !is.null(cc_yaml$column)) {
+          # CSV-column cluster mode
+          ccol <- as.character(cc_yaml$column)
+          colors <- list()
+          if (!is.null(cc_yaml$colors)) {
+            for (ent in cc_yaml$colors) {
+              colors[[as.character(ent$value)]] <- as.character(ent$color)
+            }
+          }
+          updateRadioButtons(session, "cluster_source", selected = "column")
+          updateSelectInput(session, "cluster_csv_column", selected = ccol)
+          values$cluster_col_imported_colors <- colors  # renderUI picks these up as defaults
+          values$cluster_overlay <- list(
+            mode = "column", column = ccol, colors = colors,
+            styles = cc_styles, params = cc_params
+          )
+          cat(file=stderr(), "[YAML-IMPORT] Imported clade_clusters (column '", ccol, "', ",
+              length(colors), " value(s))\n", sep = "")
+        } else if (!is.null(cc_yaml$clusters) && length(cc_yaml$clusters) > 0) {
           clusters <- lapply(cc_yaml$clusters, function(x) list(
             start_tip = as.character(x$start_tip),
             end_tip   = as.character(x$end_tip),
@@ -12207,30 +12301,15 @@ server <- function(input, output, session) {
             color     = as.character(x$color)
           ))
           values$cluster_rows <- clusters
+          updateRadioButtons(session, "cluster_source", selected = "manual")
           updateNumericInput(session, "num_clusters", value = length(clusters))
           cluster_ui_refresh(isolate(cluster_ui_refresh()) + 1)  # force rows to rebuild with imported values
           # Rebuild the applied overlay so it renders without re-clicking Apply
           values$cluster_overlay <- list(
+            mode = "manual",
             clusters = clusters,
-            styles = list(
-              bracket = cc_chk(st$bracket),
-              band    = cc_chk(st$band),
-              lines   = cc_chk(st$lines),
-              strip   = cc_chk(st$strip),
-              labels  = cc_chk(st$labels)
-            ),
-            params = list(
-              placement         = if (!is.null(pr$placement)) pr$placement else "top",
-              dist              = if (!is.null(pr$dist)) as.numeric(pr$dist) else 0.08,
-              label_size        = if (!is.null(pr$label_size)) as.numeric(pr$label_size) else 4,
-              label_angle       = if (!is.null(pr$label_angle)) as.numeric(pr$label_angle) else 0,
-              bracket_thickness = if (!is.null(pr$bracket_thickness)) as.numeric(pr$bracket_thickness) else 1,
-              bracket_length    = if (!is.null(pr$bracket_length)) as.numeric(pr$bracket_length) else 0.04,
-              band_opacity      = if (!is.null(pr$band_opacity)) as.numeric(pr$band_opacity) else 0.15,
-              band_extend       = if (!is.null(pr$band_extend)) as.numeric(pr$band_extend) else 0.4,
-              strip_thickness   = if (!is.null(pr$strip_thickness)) as.numeric(pr$strip_thickness) else 0.4,
-              line_extend       = if (!is.null(pr$line_extend)) as.numeric(pr$line_extend) else 0.4
-            )
+            styles = cc_styles,
+            params = cc_params
           )
           cat(file=stderr(), "[YAML-IMPORT] Imported clade_clusters with", length(clusters), "cluster(s)\n")
         }
@@ -12894,6 +12973,7 @@ server <- function(input, output, session) {
     # Force update of UI elements based on currently loaded data
     updateSelectInput(session, "classification_column", choices = names(values$csv_data), selected = character(0))
     updateSelectInput(session, "highlight_column", choices = names(values$csv_data), selected = character(0))
+    updateSelectInput(session, "cluster_csv_column", choices = names(values$csv_data), selected = character(0))
 
     cat(file=stderr(), "[YAML-IMPORT] imported_settings:", paste(imported_settings, collapse=", "), "\n")
 
@@ -13351,9 +13431,13 @@ server <- function(input, output, session) {
 
     # Clade clusters (single mode): persist the applied overlay config.
     co <- values$cluster_overlay
-    if (!is.null(co) && !is.null(co$clusters) && length(co$clusters) > 0) {
-      values$yaml_data$`visual definitions`$clade_clusters <- list(
+    cc_has_manual <- !is.null(co) && !is.null(co$clusters) && length(co$clusters) > 0
+    cc_has_column <- !is.null(co) && identical(co$mode, "column") &&
+                     !is.null(co$column) && nzchar(co$column)
+    if (cc_has_manual || cc_has_column) {
+      cc_block <- list(
         display = if (isTRUE(input$enable_clusters)) "yes" else "no",
+        mode    = if (cc_has_column) "column" else "manual",
         styles = list(
           bracket = if (isTRUE(co$styles$bracket)) "yes" else "no",
           band    = if (isTRUE(co$styles$band))    "yes" else "no",
@@ -13361,15 +13445,26 @@ server <- function(input, output, session) {
           strip   = if (isTRUE(co$styles$strip))   "yes" else "no",
           labels  = if (isTRUE(co$styles$labels))  "yes" else "no"
         ),
-        params = co$params,
-        clusters = lapply(co$clusters, function(cl) list(
+        params = co$params
+      )
+      if (cc_has_column) {
+        cc_block$column <- as.character(co$column)
+        cc_block$colors <- lapply(names(co$colors), function(v) list(
+          value = as.character(v),
+          color = as.character(co$colors[[v]])
+        ))
+        cat(file=stderr(), sprintf("[YAML-UPDATE] Saved clade_clusters (column '%s', %d value(s))\n",
+                                   co$column, length(co$colors)))
+      } else {
+        cc_block$clusters <- lapply(co$clusters, function(cl) list(
           start_tip = as.character(cl$start_tip),
           end_tip   = as.character(cl$end_tip),
           label     = as.character(cl$label),
           color     = as.character(cl$color)
         ))
-      )
-      cat(file=stderr(), sprintf("[YAML-UPDATE] Saved clade_clusters: %d cluster(s)\n", length(co$clusters)))
+        cat(file=stderr(), sprintf("[YAML-UPDATE] Saved clade_clusters: %d cluster(s)\n", length(co$clusters)))
+      }
+      values$yaml_data$`visual definitions`$clade_clusters <- cc_block
     } else {
       values$yaml_data$`visual definitions`$clade_clusters <- list(display = "no")
     }
@@ -19661,48 +19756,92 @@ server <- function(input, output, session) {
     }
   })
 
+  # Distinct values of the chosen cluster column (blank/NA -> "NA"), sorted.
+  cluster_col_values <- reactive({
+    req(input$cluster_csv_column)
+    csv <- if (!is.null(values$filtered_csv) && nrow(values$filtered_csv) > 0) values$filtered_csv else values$csv_data
+    if (is.null(csv) || !(input$cluster_csv_column %in% names(csv))) return(character(0))
+    v <- as.character(csv[[input$cluster_csv_column]])
+    v[is.na(v) | v == ""] <- "NA"
+    sort(unique(v))
+  })
+
+  # Per-value color pickers for column mode (rebuilds only when the column changes).
+  output$cluster_col_colors_ui <- renderUI({
+    vals <- cluster_col_values()
+    if (length(vals) == 0) return(tags$small(style = "color:#666;", "Pick a column."))
+    if (length(vals) > 50) {
+      return(tags$div(class = "alert alert-warning",
+                      paste0("That column has ", length(vals), " distinct values - too many for cluster coloring (max 50).")))
+    }
+    defcols <- grDevices::rainbow(length(vals))
+    imported <- isolate(values$cluster_col_imported_colors)
+    rows <- lapply(seq_along(vals), function(i) {
+      v <- vals[i]
+      dv <- if (!is.null(imported) && !is.null(imported[[v]])) imported[[v]]
+            else if (identical(v, "NA")) "#7D7D7D" else defcols[i]
+      fluidRow(
+        column(7, tags$div(style = "padding-top:7px;", v)),
+        column(5, colourInput(paste0("cluster_colval_", i), NULL, value = dv, allowTransparent = FALSE))
+      )
+    })
+    tagList(rows)
+  })
+
   observeEvent(input$apply_clusters, {
     req(values$plot_ready)
-    n <- max(1, input$num_clusters)
-    rows <- list(); clusters <- list()
-    for (i in seq_len(n)) {
-      s <- input[[paste0("cluster_start_", i)]]
-      e <- input[[paste0("cluster_end_", i)]]
-      l <- input[[paste0("cluster_label_", i)]]
-      cc <- input[[paste0("cluster_color_", i)]]
-      rows[[i]] <- list(start_tip = s, end_tip = e, label = l, color = cc)
-      if (!is.null(s) && !is.null(e) && nzchar(s) && nzchar(e)) {
-        clusters[[length(clusters) + 1]] <- list(start_tip = s, end_tip = e, label = l, color = cc)
-      }
-    }
-    values$cluster_rows <- rows
-    if (length(clusters) == 0) {
-      showNotification("Add at least one cluster with both a start and end tip", type = "error", duration = 5)
-      return()
-    }
-    cluster_cfg_list <- list(
-      clusters = clusters,
-      styles = list(
-        bracket = isTRUE(input$cluster_style_bracket),
-        band    = isTRUE(input$cluster_style_band),
-        lines   = isTRUE(input$cluster_style_lines),
-        strip   = isTRUE(input$cluster_style_strip),
-        labels  = isTRUE(input$cluster_show_labels)
-      ),
-      params = list(
-        placement         = if (!is.null(input$cluster_placement)) input$cluster_placement else "top",
-        dist              = if (!is.null(input$cluster_dist)) input$cluster_dist else 0.08,
-        label_size        = if (!is.null(input$cluster_label_size)) input$cluster_label_size else 4,
-        label_angle       = if (!is.null(input$cluster_label_angle)) input$cluster_label_angle else 0,
-        bracket_thickness = if (!is.null(input$cluster_bracket_thickness)) input$cluster_bracket_thickness else 1,
-        bracket_length    = if (!is.null(input$cluster_bracket_length)) input$cluster_bracket_length else 0.04,
-        band_opacity      = if (!is.null(input$cluster_band_opacity)) input$cluster_band_opacity else 0.15,
-        band_extend       = if (!is.null(input$cluster_band_extend)) input$cluster_band_extend else 0.4,
-        strip_thickness   = if (!is.null(input$cluster_strip_thickness)) input$cluster_strip_thickness else 0.4,
-        line_extend       = if (!is.null(input$cluster_line_extend)) input$cluster_line_extend else 0.4
-      )
+    styles <- list(
+      bracket = isTRUE(input$cluster_style_bracket),
+      band    = isTRUE(input$cluster_style_band),
+      lines   = isTRUE(input$cluster_style_lines),
+      strip   = isTRUE(input$cluster_style_strip),
+      labels  = isTRUE(input$cluster_show_labels)
     )
-    values$cluster_overlay <- cluster_cfg_list
+    params <- list(
+      placement         = if (!is.null(input$cluster_placement)) input$cluster_placement else "top",
+      dist              = if (!is.null(input$cluster_dist)) input$cluster_dist else 0.08,
+      label_size        = if (!is.null(input$cluster_label_size)) input$cluster_label_size else 4,
+      label_angle       = if (!is.null(input$cluster_label_angle)) input$cluster_label_angle else 0,
+      bracket_thickness = if (!is.null(input$cluster_bracket_thickness)) input$cluster_bracket_thickness else 1,
+      bracket_length    = if (!is.null(input$cluster_bracket_length)) input$cluster_bracket_length else 0.04,
+      band_opacity      = if (!is.null(input$cluster_band_opacity)) input$cluster_band_opacity else 0.15,
+      band_extend       = if (!is.null(input$cluster_band_extend)) input$cluster_band_extend else 0.4,
+      strip_thickness   = if (!is.null(input$cluster_strip_thickness)) input$cluster_strip_thickness else 0.4,
+      line_extend       = if (!is.null(input$cluster_line_extend)) input$cluster_line_extend else 0.4
+    )
+
+    if (identical(input$cluster_source, "column")) {
+      ccol <- input$cluster_csv_column
+      if (is.null(ccol) || ccol == "") {
+        showNotification("Pick a cluster column", type = "error", duration = 5); return()
+      }
+      vals <- cluster_col_values()
+      colors <- list()
+      for (i in seq_along(vals)) {
+        cc <- input[[paste0("cluster_colval_", i)]]
+        colors[[as.character(vals[i])]] <- if (!is.null(cc) && nzchar(cc)) cc else "#333333"
+      }
+      values$cluster_overlay <- list(mode = "column", column = ccol, colors = colors,
+                                     styles = styles, params = params)
+    } else {
+      n <- max(1, input$num_clusters)
+      rows <- list(); clusters <- list()
+      for (i in seq_len(n)) {
+        s <- input[[paste0("cluster_start_", i)]]
+        e <- input[[paste0("cluster_end_", i)]]
+        l <- input[[paste0("cluster_label_", i)]]
+        cc <- input[[paste0("cluster_color_", i)]]
+        rows[[i]] <- list(start_tip = s, end_tip = e, label = l, color = cc)
+        if (!is.null(s) && !is.null(e) && nzchar(s) && nzchar(e)) {
+          clusters[[length(clusters) + 1]] <- list(start_tip = s, end_tip = e, label = l, color = cc)
+        }
+      }
+      values$cluster_rows <- rows
+      if (length(clusters) == 0) {
+        showNotification("Add at least one cluster with both a start and end tip", type = "error", duration = 5); return()
+      }
+      values$cluster_overlay <- list(mode = "manual", clusters = clusters, styles = styles, params = params)
+    }
     # Paint the "Processing" status first, then run the (blocking) render on the
     # next client tick so the indicator actually updates. Reset the cooldown so
     # this explicit Apply is never skipped (which would leave it stuck on
@@ -22346,27 +22485,40 @@ server <- function(input, output, session) {
             func.serialize.rotation.config(values$manual_rotation_config)
           } else list()
         ),
-        "clade_clusters" = if (!is.null(values$cluster_overlay) &&
-                               !is.null(values$cluster_overlay$clusters) &&
-                               length(values$cluster_overlay$clusters) > 0) {
-          list(
-            display = if (isTRUE(input$enable_clusters)) "yes" else "no",
-            styles = list(
-              bracket = if (isTRUE(values$cluster_overlay$styles$bracket)) "yes" else "no",
-              band    = if (isTRUE(values$cluster_overlay$styles$band))    "yes" else "no",
-              lines   = if (isTRUE(values$cluster_overlay$styles$lines))   "yes" else "no",
-              strip   = if (isTRUE(values$cluster_overlay$styles$strip))   "yes" else "no",
-              labels  = if (isTRUE(values$cluster_overlay$styles$labels))  "yes" else "no"
-            ),
-            params = values$cluster_overlay$params,
-            clusters = lapply(values$cluster_overlay$clusters, function(cl) list(
-              start_tip = as.character(cl$start_tip),
-              end_tip   = as.character(cl$end_tip),
-              label     = as.character(cl$label),
-              color     = as.character(cl$color)
-            ))
-          )
-        } else list(display = "no"),
+        "clade_clusters" = local({
+          co <- values$cluster_overlay
+          cc_has_manual <- !is.null(co) && !is.null(co$clusters) && length(co$clusters) > 0
+          cc_has_column <- !is.null(co) && identical(co$mode, "column") &&
+                           !is.null(co$column) && nzchar(co$column)
+          if (cc_has_manual || cc_has_column) {
+            blk <- list(
+              display = if (isTRUE(input$enable_clusters)) "yes" else "no",
+              mode    = if (cc_has_column) "column" else "manual",
+              styles = list(
+                bracket = if (isTRUE(co$styles$bracket)) "yes" else "no",
+                band    = if (isTRUE(co$styles$band))    "yes" else "no",
+                lines   = if (isTRUE(co$styles$lines))   "yes" else "no",
+                strip   = if (isTRUE(co$styles$strip))   "yes" else "no",
+                labels  = if (isTRUE(co$styles$labels))  "yes" else "no"
+              ),
+              params = co$params
+            )
+            if (cc_has_column) {
+              blk$column <- as.character(co$column)
+              blk$colors <- lapply(names(co$colors), function(v) list(
+                value = as.character(v), color = as.character(co$colors[[v]])
+              ))
+            } else {
+              blk$clusters <- lapply(co$clusters, function(cl) list(
+                start_tip = as.character(cl$start_tip),
+                end_tip   = as.character(cl$end_tip),
+                label     = as.character(cl$label),
+                color     = as.character(cl$color)
+              ))
+            }
+            blk
+          } else list(display = "no")
+        }),
         "trim tips" = list(
           display = if (input$trim_tips) "yes" else "no",
           length = input$tip_length
