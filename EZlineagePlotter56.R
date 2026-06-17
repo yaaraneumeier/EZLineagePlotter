@@ -5784,6 +5784,48 @@ func.print.lineage.tree <- function(conf_yaml_path,
       # v53: cat(file=stderr(), "Ã°Å¸â€Â Passing manual_nodes_to_highlight:", paste(manual_nodes_to_highlight, collapse=", "), "\n")
       # v53: debug_cat("================================================\n\n")
       
+      # Clade clusters "from CSV column": build a tip-label -> column-value map
+      # here, where readfile440 (the per-individual CSV) is in scope, and inject it
+      # into cluster_overlay so the overlay can form contiguous runs. Tips are keyed
+      # by the tree's tip labels (matching p$data$label in the overlay), reusing the
+      # same trim+ID matching used elsewhere. Blank/NA become the "NA" cluster.
+      if (!is.null(cluster_overlay) && identical(cluster_overlay$mode, "column") &&
+          !is.null(cluster_overlay$column)) {
+        ccol_cl <- cluster_overlay$column
+        cluster_overlay$tip_values <- tryCatch({
+          tip_labels <- if (!is.null(tree440$tip.label)) as.character(tree440$tip.label) else character(0)
+          if (length(tip_labels) > 0 && exists("readfile440") && !is.null(readfile440) &&
+              ccol_cl %in% names(readfile440)) {
+            idcol_vals <- as.character(readfile440[[title.id]])
+            idcol_num  <- suppressWarnings(as.numeric(idcol_vals))
+            vals <- vapply(tip_labels, function(tl) {
+              key <- if (isTRUE(id_tip_trim_flag)) substr(tl, id_tip_trim_start, id_tip_trim_end) else tl
+              row <- which(idcol_vals == as.character(key))
+              if (length(row) == 0) {
+                kn <- suppressWarnings(as.numeric(key))
+                if (!is.na(kn)) row <- which(idcol_num == kn)
+              }
+              if (length(row) > 0) {
+                v <- as.character(readfile440[[ccol_cl]][row[1]])
+                if (is.na(v) || v == "") "NA" else v
+              } else "NA"
+            }, character(1))
+            names(vals) <- tip_labels
+            cat(file=stderr(), paste0("[CLUSTER] built tip-value map: ", length(vals),
+                " tips from column '", ccol_cl, "'\n"))
+            vals
+          } else {
+            cat(file=stderr(), paste0("[CLUSTER] column '", ccol_cl,
+                "' not usable for tip-value map (in CSV: ",
+                (exists("readfile440") && !is.null(readfile440) && ccol_cl %in% names(readfile440)),
+                ", n_tips: ", length(tip_labels), ")\n"))
+            NULL
+          }
+        }, error = function(e) {
+          cat(file=stderr(), paste0("[CLUSTER] tip-value map error: ", e$message, "\n")); NULL
+        })
+      }
+
       ou <-     func.make.plot.tree.heat.NEW(
         tree440 = tree440,
         dx_rx_types1_short = dx_rx_types1_short,
@@ -9494,39 +9536,10 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   })
   debug_cat(paste0("============================================\n"))
 
-  # Clade clusters "from CSV column" mode: map each tip to its value in the chosen
-  # column (reusing the same CSV/ID matching + trimming used elsewhere), so the
-  # overlay can form contiguous runs. NA/blank become the "NA" cluster.
-  if (!is.null(cluster_overlay) && identical(cluster_overlay$mode, "column") &&
-      !is.null(cluster_overlay$column)) {
-    ccol <- cluster_overlay$column
-    cluster_overlay$tip_values <- tryCatch({
-      if (!is.null(readfile) && ccol %in% names(readfile)) {
-        tdf <- p$data[p$data$isTip == TRUE & !is.na(p$data$isTip), ]
-        idcol_vals <- as.character(readfile[[title.id]])
-        idcol_num  <- suppressWarnings(as.numeric(idcol_vals))
-        vals <- vapply(as.character(tdf$label), function(tl) {
-          key <- if (isTRUE(id_tip_trim_flag)) substr(tl, id_tip_trim_start, id_tip_trim_end) else tl
-          row <- which(idcol_vals == as.character(key))
-          if (length(row) == 0) {
-            kn <- suppressWarnings(as.numeric(key))
-            if (!is.na(kn)) row <- which(idcol_num == kn)
-          }
-          if (length(row) > 0) {
-            v <- as.character(readfile[[ccol]][row[1]])
-            if (is.na(v) || v == "") "NA" else v
-          } else "NA"
-        }, character(1))
-        names(vals) <- as.character(tdf$label)
-        vals
-      } else NULL
-    }, error = function(e) {
-      cat(file=stderr(), paste0("[CLUSTER] tip-value map error: ", e$message, "\n")); NULL
-    })
-  }
-
   # Clade cluster overlay (single mode): draw bracket/band/lines/strip for each
-  # user-defined tip range. Done last so it sits on top of the finished plot.
+  # user-defined tip range. Done last so it sits on top of the finished plot. In
+  # "from CSV column" mode, cluster_overlay$tip_values (tip label -> column value)
+  # is built by the caller (func.print.lineage.tree, where the CSV is in scope).
   p <- tryCatch(
     func.add.cluster.overlay(p, cluster_overlay),
     error = function(e) {
