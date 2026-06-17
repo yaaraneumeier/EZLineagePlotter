@@ -13086,8 +13086,13 @@ server <- function(input, output, session) {
                         selected = "")   
       
       # Update highlight column dropdown
-      # Update highlight column dropdown  
-      updateSelectInput(session, "highlight_column", 
+      # Update highlight column dropdown
+      updateSelectInput(session, "highlight_column",
+                        choices = c("-- Select Column --" = "", names(csv_data)),
+                        selected = "")
+
+      # Update clade-cluster column dropdown (Clade Clusters tab, "From CSV column")
+      updateSelectInput(session, "cluster_csv_column",
                         choices = c("-- Select Column --" = "", names(csv_data)),
                         selected = "")
       
