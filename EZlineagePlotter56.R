@@ -7728,8 +7728,35 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             # drawn as ONE centered title beside the whole block.
             single_block_label <- FALSE
 
+            # RData CNV heatmaps have hundreds/thousands of genomic-bin columns.
+            # Drawing one label per column (the "colnames"/mapping sources, or any
+            # fall-through) piles those bin names into a black smear beside the
+            # heatmap. For RData heatmaps we therefore never emit per-column
+            # labels: if the user supplied a single custom label it becomes one
+            # centered block title; otherwise no row labels are drawn.
+            is_rdata_heatmap <- !is.null(heat_param[['data_source']]) &&
+                                identical(heat_param[['data_source']], "rdata")
+
             # Determine labels to use
-            if (row_label_source == "mapping" && length(label_mapping) > 0) {
+            if (is_rdata_heatmap) {
+              custom_labels_clean <- trimws(strsplit(custom_row_labels, ",")[[1]])
+              custom_labels_clean <- custom_labels_clean[nzchar(custom_labels_clean)]
+              if (row_label_source == "custom" && length(custom_labels_clean) >= 1) {
+                # Custom label(s) on the CNV block. For the usual many-column case
+                # draw the first as ONE centered title beside the block; for a rare
+                # single-column RData heatmap fall through to normal per-column
+                # placement (which is just one label, no smear).
+                labels_to_use <- custom_labels_clean
+                if (ncol(heat_data) > 1) {
+                  single_block_label <- TRUE
+                } else {
+                  labels_to_use <- labels_to_use[1]
+                }
+              } else {
+                # No usable custom label: suppress labels entirely (no smear).
+                labels_to_use <- character(0)
+              }
+            } else if (row_label_source == "mapping" && length(label_mapping) > 0) {
               # v108: Use per-column label mapping
               labels_to_use <- sapply(colnames(heat_data), function(col_name) {
                 if (!is.null(label_mapping[[col_name]]) && nchar(label_mapping[[col_name]]) > 0) {
@@ -7756,6 +7783,12 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             }
 
             debug_cat(paste0("  Row labels: ", paste(labels_to_use, collapse=", "), "\n"))
+
+            if (length(labels_to_use) == 0) {
+              # Nothing to draw (e.g. RData heatmap with no usable custom label).
+              # Skip the label layer entirely so no genomic-bin smear is rendered.
+              debug_cat(paste0("  No row labels to draw - skipping label layer\n"))
+            } else {
 
             # v113: Improved row labels positioning
             # Labels appear below the heatmap (at lower y values than the tips)
@@ -7831,6 +7864,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             )
             debug_cat(paste0("  Row labels added successfully\n"))
             debug_cat(paste0("  Label position: label_y_pos=", label_y_pos, ", angle=", colnames_angle, ", hjust=", hjust_val, ", vjust=", vjust_val, "\n"))
+            }  # end if (length(labels_to_use) > 0)
           }
 
           # v116/v119: Add tip guide lines (vertical lines from tips through heatmap)
