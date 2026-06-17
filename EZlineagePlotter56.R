@@ -237,6 +237,30 @@ VERSION <- "S3.13"
 # and every per-heatmap observer/output loop, so changing the cap is one edit.
 MAX_HEATMAPS <- 15
 
+# ============================================================
+# Paper palette (lab-standard cell-type colors, colorblind-safe).
+# Offered in the Classification tab when a column's categories all match
+# these names (matched after normalizing: lowercased, non-alphanumerics
+# stripped - so "Cellline"/"endothelial cell" match "Cell line"/"Endothelial
+# cell"). The palette "NA" maps to the No-cluster color.
+# ============================================================
+PAPER_PALETTE <- c(
+  "CTC"                = "#CF0201",
+  "PT"                 = "#F891D2",
+  "Metastasis"         = "#EC7209",
+  "Cell line"          = "#EDD70F",
+  "DCC"                = "#8B3D8D",
+  "Endothelial cell"   = "#2A66C0",
+  "Epithelial cell"    = "#2E9E4E",
+  "Hematopoietic cell" = "#0020C8",
+  "NA"                 = "#7D7D7D"
+)
+# Normalize a category name for tolerant matching.
+func.norm.cat <- function(x) gsub("[^a-z0-9]", "", tolower(as.character(x)))
+# Normalized lookup: normalized-name -> hex color.
+PAPER_PALETTE_NORM <- setNames(unname(PAPER_PALETTE), func.norm.cat(names(PAPER_PALETTE)))
+
+
 # Debug output control - set to TRUE to enable verbose console logging
 # For production/stable use, keep this FALSE for better performance
 DEBUG_VERBOSE <- FALSE
@@ -14666,8 +14690,27 @@ server <- function(input, output, session) {
         )
       })
       
+      # Paper palette option: only when EVERY category in this column matches a
+      # palette name (normalized). The existing pickers stay; this just offers a
+      # radio that fills them with the lab-standard colors.
+      paper_match <- length(unique_values) > 0 &&
+        all(func.norm.cat(unique_values) %in% names(PAPER_PALETTE_NORM))
+      paper_palette_ui <- if (paper_match) {
+        fluidRow(column(12,
+          tags$div(style = "background-color: #eef7ee; padding: 10px; margin-bottom: 15px; border-radius: 5px; border: 1px solid #cfe3cf;",
+            tags$h5("Paper palette", style = "margin-top: 0;"),
+            tags$small(style = "color: #555;",
+                       "This column's categories match the lab-standard palette. Choosing it fills the colors below (still editable); 'NA' uses the No-cluster color."),
+            radioButtons("class_color_source", NULL,
+                         choices = c("Manual colors" = "manual", "Paper palette" = "paper"),
+                         selected = "manual", inline = TRUE)
+          )
+        ))
+      } else NULL
+
       tagList(
         palette_ui,
+        paper_palette_ui,
         tags$h5("Individual Colors:"),
         class_values
       )
@@ -14703,6 +14746,32 @@ server <- function(input, output, session) {
   }, ignoreInit = TRUE)  # S2.0-PERF: Prevent firing on tab switch
   #}
   
+  # Paper palette: fill each value's color picker BY NAME (normalized match),
+  # and map the palette "NA" to the No-cluster color (gray). Pickers stay editable.
+  observeEvent(input$class_color_source, {
+    req(input$class_color_source == "paper", input$classification_column)
+    csv_to_use <- if (!is.null(values$filtered_csv) && nrow(values$filtered_csv) > 0) {
+      values$filtered_csv
+    } else {
+      values$csv_data
+    }
+    req(csv_to_use)
+    unique_values <- unique(csv_to_use[[input$classification_column]])
+    unique_values <- unique_values[!is.na(unique_values)]
+    n_filled <- 0
+    for (i in seq_along(unique_values)) {
+      col <- PAPER_PALETTE_NORM[func.norm.cat(unique_values[i])]  # single [ -> NA if no match
+      if (!is.na(col)) {
+        updateColourInput(session, paste0("class_color_", i), value = unname(col))
+        n_filled <- n_filled + 1
+      }
+    }
+    # Palette "NA" -> No-cluster color
+    updateSelectInput(session, "no_cluster_color", selected = "gray")
+    showNotification(paste0("Applied paper palette (", n_filled, " categories)"),
+                     type = "message", duration = 2)
+  }, ignoreInit = TRUE)
+
   # Observer for Apply Palette button
   observeEvent(input$apply_palette, {
     req(values$csv_data, input$classification_column, input$color_palette_choice)
