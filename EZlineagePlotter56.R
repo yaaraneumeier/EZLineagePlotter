@@ -7724,6 +7724,10 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             custom_row_labels <- if (!is.null(heat_param[['custom_row_labels']])) heat_param[['custom_row_labels']] else ""
             label_mapping <- if (!is.null(heat_param[['label_mapping']])) heat_param[['label_mapping']] else list()
 
+            # A single custom label on a many-column heatmap (e.g. RData CNV) is
+            # drawn as ONE centered title beside the whole block.
+            single_block_label <- FALSE
+
             # Determine labels to use
             if (row_label_source == "mapping" && length(label_mapping) > 0) {
               # v108: Use per-column label mapping
@@ -7737,8 +7741,11 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
               debug_cat(paste0("  Using label mapping for ", length(labels_to_use), " columns\n"))
             } else if (row_label_source == "custom" && nchar(custom_row_labels) > 0) {
               labels_to_use <- trimws(strsplit(custom_row_labels, ",")[[1]])
-              # Pad or truncate to match number of columns
-              if (length(labels_to_use) < ncol(heat_data)) {
+              labels_to_use <- labels_to_use[nzchar(labels_to_use)]  # drop blanks
+              if (length(labels_to_use) == 1 && ncol(heat_data) > 1) {
+                # One label for a many-column heatmap -> centered block title
+                single_block_label <- TRUE
+              } else if (length(labels_to_use) < ncol(heat_data)) {
                 labels_to_use <- c(labels_to_use, rep("", ncol(heat_data) - length(labels_to_use)))
               } else if (length(labels_to_use) > ncol(heat_data)) {
                 labels_to_use <- labels_to_use[1:ncol(heat_data)]
@@ -7769,20 +7776,31 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             # v109: Get colnames angle from heat_param if available
             colnames_angle <- if (!is.null(heat_param[['colnames_angle']])) as.numeric(heat_param[['colnames_angle']]) else 0
 
-            # Create label data - one label per column (visual "row")
-            label_df <- data.frame(
-              x = numeric(ncol(heat_data)),  # Will be set per column
-              y = label_y_pos,               # All labels at same y position
-              label = labels_to_use,
-              stringsAsFactors = FALSE
-            )
+            if (isTRUE(single_block_label)) {
+              # One centered label spanning the whole heatmap block (x = center
+              # of all columns), drawn at the same edge as normal row labels.
+              label_df <- data.frame(
+                x = mean(c(min(tile_df$x, na.rm = TRUE), max(tile_df$x, na.rm = TRUE))),
+                y = label_y_pos,
+                label = labels_to_use[1],
+                stringsAsFactors = FALSE
+              )
+            } else {
+              # Create label data - one label per column (visual "row")
+              label_df <- data.frame(
+                x = numeric(ncol(heat_data)),  # Will be set per column
+                y = label_y_pos,               # All labels at same y position
+                label = labels_to_use,
+                stringsAsFactors = FALSE
+              )
 
-            # Set x position for each label to match its column position
-            for (col_idx in 1:ncol(heat_data)) {
-              col_tiles <- tile_df[tile_df$column == colnames(heat_data)[col_idx], ]
-              if (nrow(col_tiles) > 0) {
-                # Use the column's x position (all tiles in a column have same x)
-                label_df$x[col_idx] <- unique(col_tiles$x)[1]
+              # Set x position for each label to match its column position
+              for (col_idx in 1:ncol(heat_data)) {
+                col_tiles <- tile_df[tile_df$column == colnames(heat_data)[col_idx], ]
+                if (nrow(col_tiles) > 0) {
+                  # Use the column's x position (all tiles in a column have same x)
+                  label_df$x[col_idx] <- unique(col_tiles$x)[1]
+                }
               }
             }
 
@@ -7806,7 +7824,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
               data = label_df,
               aes(x = x, y = y, label = label),
               size = row_label_font_size,
-              hjust = hjust_val,
+              hjust = if (isTRUE(single_block_label)) 0.5 else hjust_val,
               vjust = vjust_val,
               angle = colnames_angle,
               inherit.aes = FALSE
