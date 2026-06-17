@@ -231,7 +231,35 @@ options(shiny.maxRequestSize = 100*1024^2)
 #       - Layer reordering now happens ONCE at the end in generate_plot()
 # S1.2: Fixed undefined x_range_min in func_highlight causing "Problem while
 #       computing aesthetics" error when adding 2+ highlights with a heatmap.
-VERSION <- "S3.13"
+VERSION <- "S3.14"
+
+# Maximum number of heatmaps. Referenced by the add-heatmap guard, the UI text,
+# and every per-heatmap observer/output loop, so changing the cap is one edit.
+MAX_HEATMAPS <- 15
+
+# ============================================================
+# Paper palette (lab-standard cell-type colors, colorblind-safe).
+# Offered in the Classification tab when a column's categories all match
+# these names (matched after normalizing: lowercased, non-alphanumerics
+# stripped - so "Cellline"/"endothelial cell" match "Cell line"/"Endothelial
+# cell"). The palette "NA" maps to the No-cluster color.
+# ============================================================
+PAPER_PALETTE <- c(
+  "CTC"                = "#CF0201",
+  "PT"                 = "#F891D2",
+  "Metastasis"         = "#EC7209",
+  "Cell line"          = "#EDD70F",
+  "DCC"                = "#8B3D8D",
+  "Endothelial cell"   = "#2A66C0",
+  "Epithelial cell"    = "#2E9E4E",
+  "Hematopoietic cell" = "#0020C8",
+  "NA"                 = "#7D7D7D"
+)
+# Normalize a category name for tolerant matching.
+func.norm.cat <- function(x) gsub("[^a-z0-9]", "", tolower(as.character(x)))
+# Normalized lookup: normalized-name -> hex color.
+PAPER_PALETTE_NORM <- setNames(unname(PAPER_PALETTE), func.norm.cat(names(PAPER_PALETTE)))
+
 
 # Debug output control - set to TRUE to enable verbose console logging
 # For production/stable use, keep this FALSE for better performance
@@ -3239,8 +3267,6 @@ func.mirror.tree <- function(tree_view) {
 # transforms them consistently with the tree.
 func.add.cluster.overlay <- function(p, cluster_overlay) {
   if (is.null(cluster_overlay)) return(p)
-  clusters <- cluster_overlay$clusters
-  if (is.null(clusters) || length(clusters) == 0) return(p)
   styles <- cluster_overlay$styles; if (is.null(styles)) styles <- list()
   prm    <- cluster_overlay$params; if (is.null(prm)) prm <- list()
   getp <- function(nm, def) if (!is.null(prm[[nm]])) prm[[nm]] else def
@@ -3259,6 +3285,41 @@ func.add.cluster.overlay <- function(p, cluster_overlay) {
   df <- p$data
   tips <- df[df$isTip == TRUE & !is.na(df$isTip), ]
   if (nrow(tips) == 0) return(p)
+
+  # Determine the cluster ranges: either user-defined manual ranges, or
+  # contiguous runs of equal value from a CSV column. In column mode, tips are
+  # walked in display order (by y) and each run of identical value becomes its
+  # own range - so one value can appear as several separate clades sharing a name.
+  if (identical(cluster_overlay$mode, "column")) {
+    tv   <- cluster_overlay$tip_values   # named: tip label -> value
+    cols <- cluster_overlay$colors       # named: value -> hex
+    if (is.null(tv) || length(tv) == 0) return(p)
+    ot   <- tips[order(tips$y), ]
+    vals <- as.character(tv[as.character(ot$label)])
+    vals[is.na(vals) | vals == ""] <- "NA"
+    clusters <- list()
+    nO <- length(vals)
+    if (nO > 0) {
+      run_start <- 1
+      for (k in 2:(nO + 1)) {
+        if (k > nO || !identical(vals[k], vals[run_start])) {
+          v <- vals[run_start]
+          clusters[[length(clusters) + 1]] <- list(
+            start_tip = as.character(ot$label[run_start]),
+            end_tip   = as.character(ot$label[k - 1]),
+            label     = v,
+            color     = if (!is.null(cols) && !is.null(cols[[v]])) cols[[v]] else "#333333"
+          )
+          run_start <- k
+        }
+      }
+    }
+    cat(file=stderr(), paste0("[CLUSTER] column mode: ", length(clusters), " run(s) from ", nO, " tips\n"))
+  } else {
+    clusters <- cluster_overlay$clusters
+  }
+  if (is.null(clusters) || length(clusters) == 0) return(p)
+
   x_root <- min(df$x, na.rm = TRUE)            # root depth (top of screen)
   x_tip  <- max(tips$x, na.rm = TRUE)          # tip depth (bottom of screen)
   x_span <- x_tip - x_root
@@ -5723,6 +5784,48 @@ func.print.lineage.tree <- function(conf_yaml_path,
       # v53: cat(file=stderr(), "Ã°Å¸â€Â Passing manual_nodes_to_highlight:", paste(manual_nodes_to_highlight, collapse=", "), "\n")
       # v53: debug_cat("================================================\n\n")
       
+      # Clade clusters "from CSV column": build a tip-label -> column-value map
+      # here, where readfile440 (the per-individual CSV) is in scope, and inject it
+      # into cluster_overlay so the overlay can form contiguous runs. Tips are keyed
+      # by the tree's tip labels (matching p$data$label in the overlay), reusing the
+      # same trim+ID matching used elsewhere. Blank/NA become the "NA" cluster.
+      if (!is.null(cluster_overlay) && identical(cluster_overlay$mode, "column") &&
+          !is.null(cluster_overlay$column)) {
+        ccol_cl <- cluster_overlay$column
+        cluster_overlay$tip_values <- tryCatch({
+          tip_labels <- if (!is.null(tree440$tip.label)) as.character(tree440$tip.label) else character(0)
+          if (length(tip_labels) > 0 && exists("readfile440") && !is.null(readfile440) &&
+              ccol_cl %in% names(readfile440)) {
+            idcol_vals <- as.character(readfile440[[title.id]])
+            idcol_num  <- suppressWarnings(as.numeric(idcol_vals))
+            vals <- vapply(tip_labels, function(tl) {
+              key <- if (isTRUE(id_tip_trim_flag)) substr(tl, id_tip_trim_start, id_tip_trim_end) else tl
+              row <- which(idcol_vals == as.character(key))
+              if (length(row) == 0) {
+                kn <- suppressWarnings(as.numeric(key))
+                if (!is.na(kn)) row <- which(idcol_num == kn)
+              }
+              if (length(row) > 0) {
+                v <- as.character(readfile440[[ccol_cl]][row[1]])
+                if (is.na(v) || v == "") "NA" else v
+              } else "NA"
+            }, character(1))
+            names(vals) <- tip_labels
+            cat(file=stderr(), paste0("[CLUSTER] built tip-value map: ", length(vals),
+                " tips from column '", ccol_cl, "'\n"))
+            vals
+          } else {
+            cat(file=stderr(), paste0("[CLUSTER] column '", ccol_cl,
+                "' not usable for tip-value map (in CSV: ",
+                (exists("readfile440") && !is.null(readfile440) && ccol_cl %in% names(readfile440)),
+                ", n_tips: ", length(tip_labels), ")\n"))
+            NULL
+          }
+        }, error = function(e) {
+          cat(file=stderr(), paste0("[CLUSTER] tip-value map error: ", e$message, "\n")); NULL
+        })
+      }
+
       ou <-     func.make.plot.tree.heat.NEW(
         tree440 = tree440,
         dx_rx_types1_short = dx_rx_types1_short,
@@ -7712,7 +7815,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
           # v105: Add row labels if enabled
           show_row_labels <- if (!is.null(heat_param[['show_row_labels']])) heat_param[['show_row_labels']] else FALSE
-          if (show_row_labels) {
+          if (isTRUE(show_row_labels) || identical(show_row_labels, "yes") || identical(show_row_labels, "TRUE")) {
             debug_cat(paste0("  Adding row labels...\n"))
 
             row_label_source <- if (!is.null(heat_param[['row_label_source']])) heat_param[['row_label_source']] else "colnames"
@@ -7720,8 +7823,39 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             custom_row_labels <- if (!is.null(heat_param[['custom_row_labels']])) heat_param[['custom_row_labels']] else ""
             label_mapping <- if (!is.null(heat_param[['label_mapping']])) heat_param[['label_mapping']] else list()
 
+            # A single custom label on a many-column heatmap (e.g. RData CNV) is
+            # drawn as ONE centered title beside the whole block.
+            single_block_label <- FALSE
+
+            # RData CNV heatmaps have hundreds/thousands of genomic-bin columns.
+            # Drawing one label per column (the "colnames"/mapping sources, or any
+            # fall-through) piles those bin names into a black smear beside the
+            # heatmap. For RData heatmaps we therefore never emit per-column
+            # labels: if the user supplied a single custom label it becomes one
+            # centered block title; otherwise no row labels are drawn.
+            is_rdata_heatmap <- !is.null(heat_param[['data_source']]) &&
+                                identical(heat_param[['data_source']], "rdata")
+
             # Determine labels to use
-            if (row_label_source == "mapping" && length(label_mapping) > 0) {
+            if (is_rdata_heatmap) {
+              custom_labels_clean <- trimws(strsplit(custom_row_labels, ",")[[1]])
+              custom_labels_clean <- custom_labels_clean[nzchar(custom_labels_clean)]
+              if (row_label_source == "custom" && length(custom_labels_clean) >= 1) {
+                # Custom label(s) on the CNV block. For the usual many-column case
+                # draw the first as ONE centered title beside the block; for a rare
+                # single-column RData heatmap fall through to normal per-column
+                # placement (which is just one label, no smear).
+                labels_to_use <- custom_labels_clean
+                if (ncol(heat_data) > 1) {
+                  single_block_label <- TRUE
+                } else {
+                  labels_to_use <- labels_to_use[1]
+                }
+              } else {
+                # No usable custom label: suppress labels entirely (no smear).
+                labels_to_use <- character(0)
+              }
+            } else if (row_label_source == "mapping" && length(label_mapping) > 0) {
               # v108: Use per-column label mapping
               labels_to_use <- sapply(colnames(heat_data), function(col_name) {
                 if (!is.null(label_mapping[[col_name]]) && nchar(label_mapping[[col_name]]) > 0) {
@@ -7733,8 +7867,11 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
               debug_cat(paste0("  Using label mapping for ", length(labels_to_use), " columns\n"))
             } else if (row_label_source == "custom" && nchar(custom_row_labels) > 0) {
               labels_to_use <- trimws(strsplit(custom_row_labels, ",")[[1]])
-              # Pad or truncate to match number of columns
-              if (length(labels_to_use) < ncol(heat_data)) {
+              labels_to_use <- labels_to_use[nzchar(labels_to_use)]  # drop blanks
+              if (length(labels_to_use) == 1 && ncol(heat_data) > 1) {
+                # One label for a many-column heatmap -> centered block title
+                single_block_label <- TRUE
+              } else if (length(labels_to_use) < ncol(heat_data)) {
                 labels_to_use <- c(labels_to_use, rep("", ncol(heat_data) - length(labels_to_use)))
               } else if (length(labels_to_use) > ncol(heat_data)) {
                 labels_to_use <- labels_to_use[1:ncol(heat_data)]
@@ -7745,6 +7882,12 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             }
 
             debug_cat(paste0("  Row labels: ", paste(labels_to_use, collapse=", "), "\n"))
+
+            if (length(labels_to_use) == 0) {
+              # Nothing to draw (e.g. RData heatmap with no usable custom label).
+              # Skip the label layer entirely so no genomic-bin smear is rendered.
+              debug_cat(paste0("  No row labels to draw - skipping label layer\n"))
+            } else {
 
             # v113: Improved row labels positioning
             # Labels appear below the heatmap (at lower y values than the tips)
@@ -7765,20 +7908,31 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             # v109: Get colnames angle from heat_param if available
             colnames_angle <- if (!is.null(heat_param[['colnames_angle']])) as.numeric(heat_param[['colnames_angle']]) else 0
 
-            # Create label data - one label per column (visual "row")
-            label_df <- data.frame(
-              x = numeric(ncol(heat_data)),  # Will be set per column
-              y = label_y_pos,               # All labels at same y position
-              label = labels_to_use,
-              stringsAsFactors = FALSE
-            )
+            if (isTRUE(single_block_label)) {
+              # One centered label spanning the whole heatmap block (x = center
+              # of all columns), drawn at the same edge as normal row labels.
+              label_df <- data.frame(
+                x = mean(c(min(tile_df$x, na.rm = TRUE), max(tile_df$x, na.rm = TRUE))),
+                y = label_y_pos,
+                label = labels_to_use[1],
+                stringsAsFactors = FALSE
+              )
+            } else {
+              # Create label data - one label per column (visual "row")
+              label_df <- data.frame(
+                x = numeric(ncol(heat_data)),  # Will be set per column
+                y = label_y_pos,               # All labels at same y position
+                label = labels_to_use,
+                stringsAsFactors = FALSE
+              )
 
-            # Set x position for each label to match its column position
-            for (col_idx in 1:ncol(heat_data)) {
-              col_tiles <- tile_df[tile_df$column == colnames(heat_data)[col_idx], ]
-              if (nrow(col_tiles) > 0) {
-                # Use the column's x position (all tiles in a column have same x)
-                label_df$x[col_idx] <- unique(col_tiles$x)[1]
+              # Set x position for each label to match its column position
+              for (col_idx in 1:ncol(heat_data)) {
+                col_tiles <- tile_df[tile_df$column == colnames(heat_data)[col_idx], ]
+                if (nrow(col_tiles) > 0) {
+                  # Use the column's x position (all tiles in a column have same x)
+                  label_df$x[col_idx] <- unique(col_tiles$x)[1]
+                }
               }
             }
 
@@ -7802,13 +7956,14 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
               data = label_df,
               aes(x = x, y = y, label = label),
               size = row_label_font_size,
-              hjust = hjust_val,
+              hjust = if (isTRUE(single_block_label)) 0.5 else hjust_val,
               vjust = vjust_val,
               angle = colnames_angle,
               inherit.aes = FALSE
             )
             debug_cat(paste0("  Row labels added successfully\n"))
             debug_cat(paste0("  Label position: label_y_pos=", label_y_pos, ", angle=", colnames_angle, ", hjust=", hjust_val, ", vjust=", vjust_val, "\n"))
+            }  # end if (length(labels_to_use) > 0)
           }
 
           # v116/v119: Add tip guide lines (vertical lines from tips through heatmap)
@@ -8240,6 +8395,14 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
         show_colnames_for_heatmap <- heat_param[['show_colnames']]
       } else if (!is.na(flag_colnames[1]) && j1 <= length(flag_colnames)) {
         show_colnames_for_heatmap <- flag_colnames[j1]
+      }
+
+      # RData CNV heatmaps have hundreds/thousands of genomic-bin columns; drawing
+      # them as column names renders as a black smear next to the heatmap, so
+      # always suppress column names for RData heatmaps.
+      if (!is.null(heat_param) && !is.null(heat_param[['data_source']]) &&
+          identical(heat_param[['data_source']], "rdata")) {
+        show_colnames_for_heatmap <- FALSE
       }
 
       if (show_colnames_for_heatmap == FALSE) {
@@ -9374,7 +9537,9 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
   debug_cat(paste0("============================================\n"))
 
   # Clade cluster overlay (single mode): draw bracket/band/lines/strip for each
-  # user-defined tip range. Done last so it sits on top of the finished plot.
+  # user-defined tip range. Done last so it sits on top of the finished plot. In
+  # "from CSV column" mode, cluster_overlay$tip_values (tip label -> column value)
+  # is built by the caller (func.print.lineage.tree, where the CSV is in scope).
   p <- tryCatch(
     func.add.cluster.overlay(p, cluster_overlay),
     error = function(e) {
@@ -9576,9 +9741,23 @@ ui <- dashboardPage(
               condition = "input.enable_clusters == true",
               fluidRow(
                 column(7,
-                  tags$b("Clusters (each = a tip range)"),
-                  numericInput("num_clusters", "Number of clusters:", value = 1, min = 1, max = 30, step = 1),
-                  uiOutput("cluster_rows_ui")
+                  radioButtons("cluster_source", "Define clusters by:",
+                               choices = c("Manual tip ranges" = "manual", "CSV column" = "column"),
+                               selected = "manual"),
+                  conditionalPanel(
+                    condition = "input.cluster_source == 'manual'",
+                    tags$b("Clusters (each = a tip range)"),
+                    numericInput("num_clusters", "Number of clusters:", value = 1, min = 1, max = 30, step = 1),
+                    uiOutput("cluster_rows_ui")
+                  ),
+                  conditionalPanel(
+                    condition = "input.cluster_source == 'column'",
+                    selectInput("cluster_csv_column", "Cluster column (from CSV):", choices = NULL),
+                    tags$small(style = "color:#666;", "Tips are grouped by this column's value; a value split across the tree is drawn as several clades with the same name. Blank/NA -> 'NA'."),
+                    tags$hr(),
+                    tags$b("Cluster colors"),
+                    uiOutput("cluster_col_colors_ui")
+                  )
                 ),
                 column(5,
                   tags$b("Display styles (combine any)"),
@@ -9645,9 +9824,17 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #155724;",
-                     tags$h4(style = "color: #155724; margin: 0;", "Version S3.13 Stable"),
+                     tags$h4(style = "color: #155724; margin: 0;", "Version S3.14 Stable"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
-                            tags$strong("New in S3.13:"),
+                            tags$strong("New in S3.14:"),
+                            tags$ul(
+                              tags$li("Clade Clusters: define clusters from a CSV column - tips sharing a column value are grouped, and a value split across the tree is drawn as several clades sharing its name, each with its own color"),
+                              tags$li("Classification tab: 'Paper palette' option when a column's categories match the preset palette, with editable per-category fill colors"),
+                              tags$li("Support up to 15 heatmaps (was 6); fixed heatmaps 7+ not responding to color/title changes"),
+                              tags$li("Fixed custom row label not displaying on RData CNV heatmaps"),
+                              tags$li("Faster CSV loading (data.table::fread)")
+                            ),
+                            tags$strong("From S3.13:"),
                             tags$ul(
                               tags$li("Clade Clusters tab: overlay labeled cluster separations over the tree by tip range, with bracket, shaded band, separator lines and colored tip strip styles, a live preview, and length/placement controls"),
                               tags$li("Mirror Tree (left to right) in both single and multi-tree modes"),
@@ -9961,7 +10148,7 @@ ui <- dashboardPage(
             width = 4,
             selectInput("classification_column", "Select Classification Column", choices = NULL, selected = character(0)),
             textInput("classification_title", "Legend Title", value = "Cell type"),
-            selectInput("no_cluster_color", "No Cluster Color", choices = c("gray", "black", "white", "red"), selected = "gray"),
+            colourInput("no_cluster_color", "No Cluster Color", value = "gray", allowTransparent = FALSE),
             actionButton("update_classification_preview", "Update Preview", icon = icon("eye"), class = "btn-info"),
             actionButton("add_classification", "Save Classification", icon = icon("save"), class = "btn-success"),
             actionButton("remove_classification", "Remove Selected", icon = icon("minus"), class = "btn-danger"),
@@ -10232,7 +10419,7 @@ ui <- dashboardPage(
                                     icon = icon("plus"), class = "btn-success",
                                     style = "margin-bottom: 15px;"),
                        tags$span(class = "text-muted", style = "margin-left: 10px;",
-                                 "Maximum 10 heatmaps allowed")  # v141: Increased from 6 to 10
+                                 paste0("Maximum ", MAX_HEATMAPS, " heatmaps allowed"))
                 )
               ),
               
@@ -12090,7 +12277,44 @@ server <- function(input, output, session) {
           if (!is.null(pr$strip_thickness))   updateSliderInput(session, "cluster_strip_thickness", value = as.numeric(pr$strip_thickness))
           if (!is.null(pr$line_extend))       updateSliderInput(session, "cluster_line_extend", value = as.numeric(pr$line_extend))
         }
-        if (!is.null(cc_yaml$clusters) && length(cc_yaml$clusters) > 0) {
+        cc_params <- list(
+          placement         = if (!is.null(pr$placement)) pr$placement else "top",
+          dist              = if (!is.null(pr$dist)) as.numeric(pr$dist) else 0.08,
+          label_size        = if (!is.null(pr$label_size)) as.numeric(pr$label_size) else 4,
+          label_angle       = if (!is.null(pr$label_angle)) as.numeric(pr$label_angle) else 0,
+          bracket_thickness = if (!is.null(pr$bracket_thickness)) as.numeric(pr$bracket_thickness) else 1,
+          bracket_length    = if (!is.null(pr$bracket_length)) as.numeric(pr$bracket_length) else 0.04,
+          band_opacity      = if (!is.null(pr$band_opacity)) as.numeric(pr$band_opacity) else 0.15,
+          band_extend       = if (!is.null(pr$band_extend)) as.numeric(pr$band_extend) else 0.4,
+          strip_thickness   = if (!is.null(pr$strip_thickness)) as.numeric(pr$strip_thickness) else 0.4,
+          line_extend       = if (!is.null(pr$line_extend)) as.numeric(pr$line_extend) else 0.4
+        )
+        cc_styles <- list(
+          bracket = cc_chk(st$bracket),
+          band    = cc_chk(st$band),
+          lines   = cc_chk(st$lines),
+          strip   = cc_chk(st$strip),
+          labels  = cc_chk(st$labels)
+        )
+        if (identical(as.character(cc_yaml$mode), "column") && !is.null(cc_yaml$column)) {
+          # CSV-column cluster mode
+          ccol <- as.character(cc_yaml$column)
+          colors <- list()
+          if (!is.null(cc_yaml$colors)) {
+            for (ent in cc_yaml$colors) {
+              colors[[as.character(ent$value)]] <- as.character(ent$color)
+            }
+          }
+          updateRadioButtons(session, "cluster_source", selected = "column")
+          updateSelectInput(session, "cluster_csv_column", selected = ccol)
+          values$cluster_col_imported_colors <- colors  # renderUI picks these up as defaults
+          values$cluster_overlay <- list(
+            mode = "column", column = ccol, colors = colors,
+            styles = cc_styles, params = cc_params
+          )
+          cat(file=stderr(), "[YAML-IMPORT] Imported clade_clusters (column '", ccol, "', ",
+              length(colors), " value(s))\n", sep = "")
+        } else if (!is.null(cc_yaml$clusters) && length(cc_yaml$clusters) > 0) {
           clusters <- lapply(cc_yaml$clusters, function(x) list(
             start_tip = as.character(x$start_tip),
             end_tip   = as.character(x$end_tip),
@@ -12098,30 +12322,15 @@ server <- function(input, output, session) {
             color     = as.character(x$color)
           ))
           values$cluster_rows <- clusters
+          updateRadioButtons(session, "cluster_source", selected = "manual")
           updateNumericInput(session, "num_clusters", value = length(clusters))
           cluster_ui_refresh(isolate(cluster_ui_refresh()) + 1)  # force rows to rebuild with imported values
           # Rebuild the applied overlay so it renders without re-clicking Apply
           values$cluster_overlay <- list(
+            mode = "manual",
             clusters = clusters,
-            styles = list(
-              bracket = cc_chk(st$bracket),
-              band    = cc_chk(st$band),
-              lines   = cc_chk(st$lines),
-              strip   = cc_chk(st$strip),
-              labels  = cc_chk(st$labels)
-            ),
-            params = list(
-              placement         = if (!is.null(pr$placement)) pr$placement else "top",
-              dist              = if (!is.null(pr$dist)) as.numeric(pr$dist) else 0.08,
-              label_size        = if (!is.null(pr$label_size)) as.numeric(pr$label_size) else 4,
-              label_angle       = if (!is.null(pr$label_angle)) as.numeric(pr$label_angle) else 0,
-              bracket_thickness = if (!is.null(pr$bracket_thickness)) as.numeric(pr$bracket_thickness) else 1,
-              bracket_length    = if (!is.null(pr$bracket_length)) as.numeric(pr$bracket_length) else 0.04,
-              band_opacity      = if (!is.null(pr$band_opacity)) as.numeric(pr$band_opacity) else 0.15,
-              band_extend       = if (!is.null(pr$band_extend)) as.numeric(pr$band_extend) else 0.4,
-              strip_thickness   = if (!is.null(pr$strip_thickness)) as.numeric(pr$strip_thickness) else 0.4,
-              line_extend       = if (!is.null(pr$line_extend)) as.numeric(pr$line_extend) else 0.4
-            )
+            styles = cc_styles,
+            params = cc_params
           )
           cat(file=stderr(), "[YAML-IMPORT] Imported clade_clusters with", length(clusters), "cluster(s)\n")
         }
@@ -12218,7 +12427,7 @@ server <- function(input, output, session) {
             
             if (!is.null(def$non_cluster_color)) {
               class_item$no_cluster_color <- def$non_cluster_color
-              updateSelectInput(session, "no_cluster_color", selected = def$non_cluster_color)
+              updateColourInput(session, "no_cluster_color", value = def$non_cluster_color)
             } else {
               class_item$no_cluster_color <- "gray"
             }
@@ -12785,6 +12994,7 @@ server <- function(input, output, session) {
     # Force update of UI elements based on currently loaded data
     updateSelectInput(session, "classification_column", choices = names(values$csv_data), selected = character(0))
     updateSelectInput(session, "highlight_column", choices = names(values$csv_data), selected = character(0))
+    updateSelectInput(session, "cluster_csv_column", choices = names(values$csv_data), selected = character(0))
 
     cat(file=stderr(), "[YAML-IMPORT] imported_settings:", paste(imported_settings, collapse=", "), "\n")
 
@@ -12884,8 +13094,13 @@ server <- function(input, output, session) {
                         selected = "")   
       
       # Update highlight column dropdown
-      # Update highlight column dropdown  
-      updateSelectInput(session, "highlight_column", 
+      # Update highlight column dropdown
+      updateSelectInput(session, "highlight_column",
+                        choices = c("-- Select Column --" = "", names(csv_data)),
+                        selected = "")
+
+      # Update clade-cluster column dropdown (Clade Clusters tab, "From CSV column")
+      updateSelectInput(session, "cluster_csv_column",
                         choices = c("-- Select Column --" = "", names(csv_data)),
                         selected = "")
       
@@ -13242,9 +13457,13 @@ server <- function(input, output, session) {
 
     # Clade clusters (single mode): persist the applied overlay config.
     co <- values$cluster_overlay
-    if (!is.null(co) && !is.null(co$clusters) && length(co$clusters) > 0) {
-      values$yaml_data$`visual definitions`$clade_clusters <- list(
+    cc_has_manual <- !is.null(co) && !is.null(co$clusters) && length(co$clusters) > 0
+    cc_has_column <- !is.null(co) && identical(co$mode, "column") &&
+                     !is.null(co$column) && nzchar(co$column)
+    if (cc_has_manual || cc_has_column) {
+      cc_block <- list(
         display = if (isTRUE(input$enable_clusters)) "yes" else "no",
+        mode    = if (cc_has_column) "column" else "manual",
         styles = list(
           bracket = if (isTRUE(co$styles$bracket)) "yes" else "no",
           band    = if (isTRUE(co$styles$band))    "yes" else "no",
@@ -13252,15 +13471,26 @@ server <- function(input, output, session) {
           strip   = if (isTRUE(co$styles$strip))   "yes" else "no",
           labels  = if (isTRUE(co$styles$labels))  "yes" else "no"
         ),
-        params = co$params,
-        clusters = lapply(co$clusters, function(cl) list(
+        params = co$params
+      )
+      if (cc_has_column) {
+        cc_block$column <- as.character(co$column)
+        cc_block$colors <- lapply(names(co$colors), function(v) list(
+          value = as.character(v),
+          color = as.character(co$colors[[v]])
+        ))
+        cat(file=stderr(), sprintf("[YAML-UPDATE] Saved clade_clusters (column '%s', %d value(s))\n",
+                                   co$column, length(co$colors)))
+      } else {
+        cc_block$clusters <- lapply(co$clusters, function(cl) list(
           start_tip = as.character(cl$start_tip),
           end_tip   = as.character(cl$end_tip),
           label     = as.character(cl$label),
           color     = as.character(cl$color)
         ))
-      )
-      cat(file=stderr(), sprintf("[YAML-UPDATE] Saved clade_clusters: %d cluster(s)\n", length(co$clusters)))
+        cat(file=stderr(), sprintf("[YAML-UPDATE] Saved clade_clusters: %d cluster(s)\n", length(co$clusters)))
+      }
+      values$yaml_data$`visual definitions`$clade_clusters <- cc_block
     } else {
       values$yaml_data$`visual definitions`$clade_clusters <- list(display = "no")
     }
@@ -14581,8 +14811,27 @@ server <- function(input, output, session) {
         )
       })
       
+      # Paper palette option: only when EVERY category in this column matches a
+      # palette name (normalized). The existing pickers stay; this just offers a
+      # radio that fills them with the lab-standard colors.
+      paper_match <- length(unique_values) > 0 &&
+        all(func.norm.cat(unique_values) %in% names(PAPER_PALETTE_NORM))
+      paper_palette_ui <- if (paper_match) {
+        fluidRow(column(12,
+          tags$div(style = "background-color: #eef7ee; padding: 10px; margin-bottom: 15px; border-radius: 5px; border: 1px solid #cfe3cf;",
+            tags$h5("Paper palette", style = "margin-top: 0;"),
+            tags$small(style = "color: #555;",
+                       "This column's categories match the lab-standard palette. Choosing it fills the colors below (still editable); 'NA' uses the No-cluster color."),
+            radioButtons("class_color_source", NULL,
+                         choices = c("Manual colors" = "manual", "Paper palette" = "paper"),
+                         selected = "manual", inline = TRUE)
+          )
+        ))
+      } else NULL
+
       tagList(
         palette_ui,
+        paper_palette_ui,
         tags$h5("Individual Colors:"),
         class_values
       )
@@ -14618,6 +14867,32 @@ server <- function(input, output, session) {
   }, ignoreInit = TRUE)  # S2.0-PERF: Prevent firing on tab switch
   #}
   
+  # Paper palette: fill each value's color picker BY NAME (normalized match),
+  # and map the palette "NA" to the No-cluster color (gray). Pickers stay editable.
+  observeEvent(input$class_color_source, {
+    req(input$class_color_source == "paper", input$classification_column)
+    csv_to_use <- if (!is.null(values$filtered_csv) && nrow(values$filtered_csv) > 0) {
+      values$filtered_csv
+    } else {
+      values$csv_data
+    }
+    req(csv_to_use)
+    unique_values <- unique(csv_to_use[[input$classification_column]])
+    unique_values <- unique_values[!is.na(unique_values)]
+    n_filled <- 0
+    for (i in seq_along(unique_values)) {
+      col <- PAPER_PALETTE_NORM[func.norm.cat(unique_values[i])]  # single-bracket index yields NA if no match
+      if (!is.na(col)) {
+        updateColourInput(session, paste0("class_color_", i), value = unname(col))
+        n_filled <- n_filled + 1
+      }
+    }
+    # Palette "NA" -> No-cluster color (exact palette gray)
+    updateColourInput(session, "no_cluster_color", value = "#7D7D7D")
+    showNotification(paste0("Applied paper palette (", n_filled, " categories)"),
+                     type = "message", duration = 2)
+  }, ignoreInit = TRUE)
+
   # Observer for Apply Palette button
   observeEvent(input$apply_palette, {
     req(values$csv_data, input$classification_column, input$color_palette_choice)
@@ -16398,9 +16673,10 @@ server <- function(input, output, session) {
   
   # Add new heatmap
   observeEvent(input$add_new_heatmap, {
-    # v141: Increased max heatmaps from 6 to 10
-    if (length(values$heatmap_configs) >= 10) {
-      showNotification("Maximum 10 heatmaps allowed", type = "warning")
+    # Max heatmaps (MAX_HEATMAPS). The per-heatmap observer/output loops below all
+    # use lapply(1:MAX_HEATMAPS, ...), so changing the constant covers everything.
+    if (length(values$heatmap_configs) >= MAX_HEATMAPS) {
+      showNotification(paste0("Maximum ", MAX_HEATMAPS, " heatmaps allowed"), type = "warning")
       return()
     }
 
@@ -16495,7 +16771,7 @@ server <- function(input, output, session) {
 
   # Generic observer for heatmap removal buttons
   observe({
-    lapply(1:6, function(i) {
+    lapply(1:MAX_HEATMAPS, function(i) {
       observeEvent(input[[paste0("heatmap_remove_", i)]], {
         if (i <= length(values$heatmap_configs)) {
           values$heatmap_configs <- values$heatmap_configs[-i]
@@ -16527,7 +16803,7 @@ server <- function(input, output, session) {
 
   # Generic observer for move up buttons
   observe({
-    lapply(2:6, function(i) {
+    lapply(2:MAX_HEATMAPS, function(i) {
       observeEvent(input[[paste0("heatmap_up_", i)]], {
         if (i <= length(values$heatmap_configs) && i > 1) {
           configs <- values$heatmap_configs
@@ -16548,7 +16824,7 @@ server <- function(input, output, session) {
 
   # Generic observer for move down buttons
   observe({
-    lapply(1:5, function(i) {
+    lapply(1:(MAX_HEATMAPS - 1), function(i) {
       observeEvent(input[[paste0("heatmap_down_", i)]], {
         if (i < length(values$heatmap_configs)) {
           configs <- values$heatmap_configs
@@ -16569,7 +16845,7 @@ server <- function(input, output, session) {
   
   # Observer to update heatmap config when inputs change
   observe({
-    lapply(1:6, function(i) {
+    lapply(1:MAX_HEATMAPS, function(i) {
       # v56: Columns change (plural for multiple column support)
       observeEvent(input[[paste0("heatmap_columns_", i)]], {
         if (i <= length(values$heatmap_configs)) {
@@ -17286,7 +17562,7 @@ server <- function(input, output, session) {
 
   # v62: Render palette previews for discrete heatmaps
   observe({
-    lapply(1:6, function(i) {
+    lapply(1:MAX_HEATMAPS, function(i) {
       output[[paste0("heatmap_discrete_palette_preview_", i)]] <- renderUI({
         palette_name <- input[[paste0("heatmap_discrete_palette_", i)]]
         if (is.null(palette_name)) palette_name <- "Set1"
@@ -17319,7 +17595,7 @@ server <- function(input, output, session) {
 
   # v62: Render palette previews for continuous heatmaps
   observe({
-    lapply(1:6, function(i) {
+    lapply(1:MAX_HEATMAPS, function(i) {
       output[[paste0("heatmap_cont_palette_preview_", i)]] <- renderUI({
         palette_name <- input[[paste0("heatmap_cont_palette_", i)]]
         if (is.null(palette_name)) palette_name <- "Blues"
@@ -17354,7 +17630,7 @@ server <- function(input, output, session) {
 
   # v64: Render palette previews for discrete heatmaps
   observe({
-    lapply(1:6, function(i) {
+    lapply(1:MAX_HEATMAPS, function(i) {
       output[[paste0("heatmap_discrete_palette_preview_", i)]] <- renderUI({
         palette_name <- input[[paste0("heatmap_discrete_palette_", i)]]
         if (is.null(palette_name)) palette_name <- "Set1"
@@ -17414,7 +17690,7 @@ server <- function(input, output, session) {
   # v127: Dynamic detected type display - updates when column selection changes
   # This replaces the static label that was set at UI render time
   observe({
-    lapply(1:6, function(i) {
+    lapply(1:MAX_HEATMAPS, function(i) {
       output[[paste0("heatmap_detected_type_display_", i)]] <- renderUI({
         # Take dependency on column selection to reactively update
         cols_selected <- input[[paste0("heatmap_columns_", i)]]
@@ -17511,7 +17787,7 @@ server <- function(input, output, session) {
   # v108: New reactive renderUI for type-specific settings (discrete vs continuous)
   # This replaces the old conditionalPanels which used a hardcoded detected_type
   observe({
-    lapply(1:6, function(i) {
+    lapply(1:MAX_HEATMAPS, function(i) {
       output[[paste0("heatmap_type_settings_ui_", i)]] <- renderUI({
         # Take dependency on column selection to reactively update when columns change
         cols_selected <- input[[paste0("heatmap_columns_", i)]]
@@ -17821,7 +18097,7 @@ server <- function(input, output, session) {
 
   # v108: Render custom labels UI (mapping or comma-separated)
   observe({
-    lapply(1:6, function(i) {
+    lapply(1:MAX_HEATMAPS, function(i) {
       output[[paste0("heatmap_custom_labels_ui_", i)]] <- renderUI({
         # Depend on label source selection and column selection
         label_source <- input[[paste0("heatmap_row_label_source_", i)]]
@@ -17897,7 +18173,7 @@ server <- function(input, output, session) {
   # S2.0: Render RData sample mapping column selector
   # Shows when auto-match fails and user needs to select which CSV column has the sample names
   observe({
-    lapply(1:6, function(i) {
+    lapply(1:MAX_HEATMAPS, function(i) {
       output[[paste0("heatmap_rdata_mapping_ui_", i)]] <- renderUI({
         # Only show for RData data source
         data_source <- input[[paste0("heatmap_data_source_", i)]]
@@ -17980,7 +18256,7 @@ server <- function(input, output, session) {
 
   # S2.0: Observer to update rdata_mapping_column when user selects a column
   observe({
-    lapply(1:6, function(i) {
+    lapply(1:MAX_HEATMAPS, function(i) {
       observeEvent(input[[paste0("heatmap_rdata_mapping_col_", i)]], {
         selected_col <- input[[paste0("heatmap_rdata_mapping_col_", i)]]
         if (!is.null(selected_col) && selected_col != "") {
@@ -17997,7 +18273,7 @@ server <- function(input, output, session) {
 
   # v70: Render discrete color pickers for each heatmap - with NA color and dropdown menus
   observe({
-    lapply(1:6, function(i) {
+    lapply(1:MAX_HEATMAPS, function(i) {
       output[[paste0("heatmap_discrete_colors_ui_", i)]] <- renderUI({
         # v69: Use columns (plural) - get unique values from first column
         cols_selected <- input[[paste0("heatmap_columns_", i)]]
@@ -18208,7 +18484,7 @@ server <- function(input, output, session) {
 
   # v70: Observer to update heatmap color pickers when R color name dropdown changes
   observe({
-    lapply(1:6, function(i) {
+    lapply(1:MAX_HEATMAPS, function(i) {
       # Observe changes to color name dropdowns for each value (up to 30 values)
       lapply(1:30, function(j) {
         observeEvent(input[[paste0("heatmap_", i, "_color_name_", j)]], {
@@ -18241,7 +18517,7 @@ server <- function(input, output, session) {
   # This is more robust than color comparison because it prevents ALL saves during the
   # critical window when UI is rebuilding.
   observe({
-    lapply(1:6, function(i) {
+    lapply(1:MAX_HEATMAPS, function(i) {
       lapply(1:30, function(j) {
         observeEvent(input[[paste0("heatmap_", i, "_color_", j)]], {
           # S2.8-FIX: Check inhibit flag first - skip ALL saves during UI rebuild
@@ -18425,7 +18701,7 @@ server <- function(input, output, session) {
 
   # v69: Observer for "Apply Palette to All" buttons for heatmaps
   observe({
-    lapply(1:6, function(i) {
+    lapply(1:MAX_HEATMAPS, function(i) {
       observeEvent(input[[paste0("apply_heatmap_palette_", i)]], {
         cols_selected <- input[[paste0("heatmap_columns_", i)]]
         if (is.null(cols_selected) || length(cols_selected) == 0 || is.null(values$csv_data)) {
@@ -18605,7 +18881,8 @@ server <- function(input, output, session) {
           show_guides = FALSE,
           # Row labels
           show_row_labels = if (!is.null(input[[paste0("heatmap_show_row_labels_", i)]])) input[[paste0("heatmap_show_row_labels_", i)]] else FALSE,
-          row_label_source = "colnames",
+          row_label_source = if (!is.null(input[[paste0("heatmap_row_label_source_", i)]])) input[[paste0("heatmap_row_label_source_", i)]] else "colnames",
+          custom_row_labels = if (!is.null(input[[paste0("heatmap_custom_row_labels_", i)]])) input[[paste0("heatmap_custom_row_labels_", i)]] else "",
           row_label_font_size = if (!is.null(input[[paste0("heatmap_row_label_font_size_", i)]])) input[[paste0("heatmap_row_label_font_size_", i)]] else 2.5,
           row_label_offset = if (!is.null(input[[paste0("heatmap_row_label_offset_", i)]])) input[[paste0("heatmap_row_label_offset_", i)]] else 1.0,
           row_label_align = if (!is.null(input[[paste0("heatmap_row_label_align_", i)]])) input[[paste0("heatmap_row_label_align_", i)]] else "left",
@@ -19505,48 +19782,92 @@ server <- function(input, output, session) {
     }
   })
 
+  # Distinct values of the chosen cluster column (blank/NA -> "NA"), sorted.
+  cluster_col_values <- reactive({
+    req(input$cluster_csv_column)
+    csv <- if (!is.null(values$filtered_csv) && nrow(values$filtered_csv) > 0) values$filtered_csv else values$csv_data
+    if (is.null(csv) || !(input$cluster_csv_column %in% names(csv))) return(character(0))
+    v <- as.character(csv[[input$cluster_csv_column]])
+    v[is.na(v) | v == ""] <- "NA"
+    sort(unique(v))
+  })
+
+  # Per-value color pickers for column mode (rebuilds only when the column changes).
+  output$cluster_col_colors_ui <- renderUI({
+    vals <- cluster_col_values()
+    if (length(vals) == 0) return(tags$small(style = "color:#666;", "Pick a column."))
+    if (length(vals) > 50) {
+      return(tags$div(class = "alert alert-warning",
+                      paste0("That column has ", length(vals), " distinct values - too many for cluster coloring (max 50).")))
+    }
+    defcols <- grDevices::rainbow(length(vals))
+    imported <- isolate(values$cluster_col_imported_colors)
+    rows <- lapply(seq_along(vals), function(i) {
+      v <- vals[i]
+      dv <- if (!is.null(imported) && !is.null(imported[[v]])) imported[[v]]
+            else if (identical(v, "NA")) "#7D7D7D" else defcols[i]
+      fluidRow(
+        column(7, tags$div(style = "padding-top:7px;", v)),
+        column(5, colourInput(paste0("cluster_colval_", i), NULL, value = dv, allowTransparent = FALSE))
+      )
+    })
+    tagList(rows)
+  })
+
   observeEvent(input$apply_clusters, {
     req(values$plot_ready)
-    n <- max(1, input$num_clusters)
-    rows <- list(); clusters <- list()
-    for (i in seq_len(n)) {
-      s <- input[[paste0("cluster_start_", i)]]
-      e <- input[[paste0("cluster_end_", i)]]
-      l <- input[[paste0("cluster_label_", i)]]
-      cc <- input[[paste0("cluster_color_", i)]]
-      rows[[i]] <- list(start_tip = s, end_tip = e, label = l, color = cc)
-      if (!is.null(s) && !is.null(e) && nzchar(s) && nzchar(e)) {
-        clusters[[length(clusters) + 1]] <- list(start_tip = s, end_tip = e, label = l, color = cc)
-      }
-    }
-    values$cluster_rows <- rows
-    if (length(clusters) == 0) {
-      showNotification("Add at least one cluster with both a start and end tip", type = "error", duration = 5)
-      return()
-    }
-    cluster_cfg_list <- list(
-      clusters = clusters,
-      styles = list(
-        bracket = isTRUE(input$cluster_style_bracket),
-        band    = isTRUE(input$cluster_style_band),
-        lines   = isTRUE(input$cluster_style_lines),
-        strip   = isTRUE(input$cluster_style_strip),
-        labels  = isTRUE(input$cluster_show_labels)
-      ),
-      params = list(
-        placement         = if (!is.null(input$cluster_placement)) input$cluster_placement else "top",
-        dist              = if (!is.null(input$cluster_dist)) input$cluster_dist else 0.08,
-        label_size        = if (!is.null(input$cluster_label_size)) input$cluster_label_size else 4,
-        label_angle       = if (!is.null(input$cluster_label_angle)) input$cluster_label_angle else 0,
-        bracket_thickness = if (!is.null(input$cluster_bracket_thickness)) input$cluster_bracket_thickness else 1,
-        bracket_length    = if (!is.null(input$cluster_bracket_length)) input$cluster_bracket_length else 0.04,
-        band_opacity      = if (!is.null(input$cluster_band_opacity)) input$cluster_band_opacity else 0.15,
-        band_extend       = if (!is.null(input$cluster_band_extend)) input$cluster_band_extend else 0.4,
-        strip_thickness   = if (!is.null(input$cluster_strip_thickness)) input$cluster_strip_thickness else 0.4,
-        line_extend       = if (!is.null(input$cluster_line_extend)) input$cluster_line_extend else 0.4
-      )
+    styles <- list(
+      bracket = isTRUE(input$cluster_style_bracket),
+      band    = isTRUE(input$cluster_style_band),
+      lines   = isTRUE(input$cluster_style_lines),
+      strip   = isTRUE(input$cluster_style_strip),
+      labels  = isTRUE(input$cluster_show_labels)
     )
-    values$cluster_overlay <- cluster_cfg_list
+    params <- list(
+      placement         = if (!is.null(input$cluster_placement)) input$cluster_placement else "top",
+      dist              = if (!is.null(input$cluster_dist)) input$cluster_dist else 0.08,
+      label_size        = if (!is.null(input$cluster_label_size)) input$cluster_label_size else 4,
+      label_angle       = if (!is.null(input$cluster_label_angle)) input$cluster_label_angle else 0,
+      bracket_thickness = if (!is.null(input$cluster_bracket_thickness)) input$cluster_bracket_thickness else 1,
+      bracket_length    = if (!is.null(input$cluster_bracket_length)) input$cluster_bracket_length else 0.04,
+      band_opacity      = if (!is.null(input$cluster_band_opacity)) input$cluster_band_opacity else 0.15,
+      band_extend       = if (!is.null(input$cluster_band_extend)) input$cluster_band_extend else 0.4,
+      strip_thickness   = if (!is.null(input$cluster_strip_thickness)) input$cluster_strip_thickness else 0.4,
+      line_extend       = if (!is.null(input$cluster_line_extend)) input$cluster_line_extend else 0.4
+    )
+
+    if (identical(input$cluster_source, "column")) {
+      ccol <- input$cluster_csv_column
+      if (is.null(ccol) || ccol == "") {
+        showNotification("Pick a cluster column", type = "error", duration = 5); return()
+      }
+      vals <- cluster_col_values()
+      colors <- list()
+      for (i in seq_along(vals)) {
+        cc <- input[[paste0("cluster_colval_", i)]]
+        colors[[as.character(vals[i])]] <- if (!is.null(cc) && nzchar(cc)) cc else "#333333"
+      }
+      values$cluster_overlay <- list(mode = "column", column = ccol, colors = colors,
+                                     styles = styles, params = params)
+    } else {
+      n <- max(1, input$num_clusters)
+      rows <- list(); clusters <- list()
+      for (i in seq_len(n)) {
+        s <- input[[paste0("cluster_start_", i)]]
+        e <- input[[paste0("cluster_end_", i)]]
+        l <- input[[paste0("cluster_label_", i)]]
+        cc <- input[[paste0("cluster_color_", i)]]
+        rows[[i]] <- list(start_tip = s, end_tip = e, label = l, color = cc)
+        if (!is.null(s) && !is.null(e) && nzchar(s) && nzchar(e)) {
+          clusters[[length(clusters) + 1]] <- list(start_tip = s, end_tip = e, label = l, color = cc)
+        }
+      }
+      values$cluster_rows <- rows
+      if (length(clusters) == 0) {
+        showNotification("Add at least one cluster with both a start and end tip", type = "error", duration = 5); return()
+      }
+      values$cluster_overlay <- list(mode = "manual", clusters = clusters, styles = styles, params = params)
+    }
     # Paint the "Processing" status first, then run the (blocking) render on the
     # next client tick so the indicator actually updates. Reset the cooldown so
     # this explicit Apply is never skipped (which would leave it stuck on
@@ -22190,27 +22511,40 @@ server <- function(input, output, session) {
             func.serialize.rotation.config(values$manual_rotation_config)
           } else list()
         ),
-        "clade_clusters" = if (!is.null(values$cluster_overlay) &&
-                               !is.null(values$cluster_overlay$clusters) &&
-                               length(values$cluster_overlay$clusters) > 0) {
-          list(
-            display = if (isTRUE(input$enable_clusters)) "yes" else "no",
-            styles = list(
-              bracket = if (isTRUE(values$cluster_overlay$styles$bracket)) "yes" else "no",
-              band    = if (isTRUE(values$cluster_overlay$styles$band))    "yes" else "no",
-              lines   = if (isTRUE(values$cluster_overlay$styles$lines))   "yes" else "no",
-              strip   = if (isTRUE(values$cluster_overlay$styles$strip))   "yes" else "no",
-              labels  = if (isTRUE(values$cluster_overlay$styles$labels))  "yes" else "no"
-            ),
-            params = values$cluster_overlay$params,
-            clusters = lapply(values$cluster_overlay$clusters, function(cl) list(
-              start_tip = as.character(cl$start_tip),
-              end_tip   = as.character(cl$end_tip),
-              label     = as.character(cl$label),
-              color     = as.character(cl$color)
-            ))
-          )
-        } else list(display = "no"),
+        "clade_clusters" = local({
+          co <- values$cluster_overlay
+          cc_has_manual <- !is.null(co) && !is.null(co$clusters) && length(co$clusters) > 0
+          cc_has_column <- !is.null(co) && identical(co$mode, "column") &&
+                           !is.null(co$column) && nzchar(co$column)
+          if (cc_has_manual || cc_has_column) {
+            blk <- list(
+              display = if (isTRUE(input$enable_clusters)) "yes" else "no",
+              mode    = if (cc_has_column) "column" else "manual",
+              styles = list(
+                bracket = if (isTRUE(co$styles$bracket)) "yes" else "no",
+                band    = if (isTRUE(co$styles$band))    "yes" else "no",
+                lines   = if (isTRUE(co$styles$lines))   "yes" else "no",
+                strip   = if (isTRUE(co$styles$strip))   "yes" else "no",
+                labels  = if (isTRUE(co$styles$labels))  "yes" else "no"
+              ),
+              params = co$params
+            )
+            if (cc_has_column) {
+              blk$column <- as.character(co$column)
+              blk$colors <- lapply(names(co$colors), function(v) list(
+                value = as.character(v), color = as.character(co$colors[[v]])
+              ))
+            } else {
+              blk$clusters <- lapply(co$clusters, function(cl) list(
+                start_tip = as.character(cl$start_tip),
+                end_tip   = as.character(cl$end_tip),
+                label     = as.character(cl$label),
+                color     = as.character(cl$color)
+              ))
+            }
+            blk
+          } else list(display = "no")
+        }),
         "trim tips" = list(
           display = if (input$trim_tips) "yes" else "no",
           length = input$tip_length

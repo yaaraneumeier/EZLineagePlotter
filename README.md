@@ -2,11 +2,19 @@
 
 A Shiny application for visualizing and analyzing phylogenetic trees with rich annotation capabilities.
 
-## Version S1.6 (Stable Release)
+## Version S3.14 (Stable Release)
 
-### What's New in S1.6
-- **Performance Optimizations**: Faster rendering with optimized layer management and batched updates
-- **Bug Fixes**: Legend background color works correctly, fixed multiple highlights with heatmap issue
+### What's New in S3.14
+- **Clade Clusters from a CSV column**: group tips that share a column value into named clusters; a value split across the tree is drawn as several clades sharing its name, each with its own color
+- **Paper palette**: in the Classification tab, when a column's categories match the preset palette, fill the colors from it (editable per category)
+- **Up to 15 heatmaps**: raised the limit from 6 and fixed heatmaps 7+ not responding to color/title changes
+- **CNV heatmap fix**: custom row label now displays correctly on RData CNV heatmaps
+- **Faster CSV loading** via `data.table::fread`
+
+### Earlier highlights
+- **S3.13**: Clade Clusters overlay by tip range (bracket / shaded band / separator lines / colored tip strip), Mirror Tree (single + multi mode), multifurcating-node rotation with per-branch left/right ordering, multi-tree manual rotation fix
+- **S2.0**: RData CNV heatmaps from QDNAseq/scIMPACT pipelines
+- **S1.6**: Performance optimizations and legend/highlight bug fixes
 
 ## Features
 
@@ -144,7 +152,7 @@ Single Tree is the default URL; append `?mode=multi` for Multiple Trees mode.
 
 ## Debug Mode
 
-Debug output is disabled by default for performance. To enable verbose logging, edit line 87 in `EZlineagePlotter56.R`:
+Debug output is disabled by default for performance. To enable verbose logging, set `DEBUG_VERBOSE <- TRUE` near the top of `EZlineagePlotter56.R`:
 
 ```r
 DEBUG_VERBOSE <- TRUE
