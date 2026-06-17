@@ -7716,7 +7716,16 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
 
           # v105: Add row labels if enabled
           show_row_labels <- if (!is.null(heat_param[['show_row_labels']])) heat_param[['show_row_labels']] else FALSE
-          if (show_row_labels) {
+          # S2.93: Always-on visibility (debug_cat is gated on DEBUG_VERBOSE). This
+          # confirms whether the row-label block runs at all and whether
+          # show_row_labels was threaded into heat_param for this heatmap.
+          cat(file=stderr(), paste0("[ROWLABEL-RENDER] heatmap ", heat_idx,
+              ": show_row_labels=", show_row_labels,
+              " (heat_param present=", ('show_row_labels' %in% names(heat_param)),
+              "), data_source=", ifelse(is.null(heat_param[['data_source']]), "NULL", heat_param[['data_source']]),
+              ", row_label_source=", ifelse(is.null(heat_param[['row_label_source']]), "NULL", heat_param[['row_label_source']]),
+              ", custom_row_labels='", ifelse(is.null(heat_param[['custom_row_labels']]), "", heat_param[['custom_row_labels']]), "'\n"))
+          if (isTRUE(show_row_labels) || identical(show_row_labels, "yes") || identical(show_row_labels, "TRUE")) {
             debug_cat(paste0("  Adding row labels...\n"))
 
             row_label_source <- if (!is.null(heat_param[['row_label_source']])) heat_param[['row_label_source']] else "colnames"
@@ -7756,6 +7765,12 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
                 # No usable custom label: suppress labels entirely (no smear).
                 labels_to_use <- character(0)
               }
+              # S2.93: Always-on confirmation that the RData label path was taken,
+              # whether a single centered block title is drawn, and with what text.
+              cat(file=stderr(), paste0("[ROWLABEL-RENDER] RData label path: ",
+                  "single_block_label=", single_block_label,
+                  ", ncol(heat_data)=", ncol(heat_data),
+                  ", labels_to_use=[", paste(labels_to_use, collapse=", "), "]\n"))
             } else if (row_label_source == "mapping" && length(label_mapping) > 0) {
               # v108: Use per-column label mapping
               labels_to_use <- sapply(colnames(heat_data), function(col_name) {
@@ -7864,6 +7879,12 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             )
             debug_cat(paste0("  Row labels added successfully\n"))
             debug_cat(paste0("  Label position: label_y_pos=", label_y_pos, ", angle=", colnames_angle, ", hjust=", hjust_val, ", vjust=", vjust_val, "\n"))
+            # S2.93: Always-on confirmation that the geom_text label layer was added,
+            # with the resolved position so the user can see it is on-panel.
+            cat(file=stderr(), paste0("[ROWLABEL-RENDER] Added geom_text label layer: n=", nrow(label_df),
+                ", single_block_label=", isTRUE(single_block_label),
+                ", x=", paste(round(label_df$x, 3), collapse=","),
+                ", y=", round(label_y_pos, 3), "\n"))
             }  # end if (length(labels_to_use) > 0)
           }
 
