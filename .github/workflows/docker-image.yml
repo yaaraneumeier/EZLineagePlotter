@@ -1,0 +1,49 @@
+name: Build & publish Docker image
+
+# Builds the EZLineagePlotter container and publishes it to the GitHub
+# Container Registry (ghcr.io). Runs automatically when a release is
+# published, and can also be triggered by hand from the Actions tab.
+#
+# No external secrets needed: it authenticates with the built-in GITHUB_TOKEN.
+# After the first successful run, make the package public once in
+#   GitHub -> your profile -> Packages -> ezlineageplotter -> Package settings.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/ezlineageplotter
+          tags: |
+            type=raw,value=latest
+            type=ref,event=tag
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}

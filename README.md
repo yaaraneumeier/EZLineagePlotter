@@ -112,6 +112,22 @@ shiny::runApp("EZlineagePlotter56_combined.R")
 - Multiple Trees mode: add `?mode=multi` to the URL, or use the in-app
   mode-switch button.
 
+### Running locally with Docker (no R install needed)
+
+For a single user who just wants to run the full app on their own computer
+(Windows/macOS/Linux) without installing R or any packages, use the bundled
+container image. See **[RUN_WITH_DOCKER.md](RUN_WITH_DOCKER.md)** for the
+step-by-step guide. In short, once Docker Desktop is installed:
+
+```bash
+docker run --rm -p 3838:3838 ghcr.io/yaaraneumeier/ezlineageplotter:latest
+```
+
+then open http://localhost:3838. Double-click launchers
+(`run-ezlineageplotter.bat` / `.command` / `.sh`) are provided so non-technical
+users don't have to touch a terminal. The image is built and published
+automatically by the `Build & publish Docker image` GitHub Action.
+
 ### Deploying to a server (Shiny Server / Posit Connect / shinyapps.io)
 
 These platforms run an `app.R` in the application directory. A ready-made
