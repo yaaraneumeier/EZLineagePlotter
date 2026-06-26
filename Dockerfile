@@ -27,6 +27,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libtiff5-dev \
       libxml2-dev \
       fonts-dejavu-core \
+      fonts-dejavu \
+      fonts-liberation \
  && rm -rf /var/lib/apt/lists/*
 
 # R packages (CRAN + Bioconductor). BiocManager::install handles both and picks
@@ -50,4 +52,4 @@ EXPOSE 3838
 
 # Serve the full app (single + multiple-trees modes) on all interfaces so the
 # host browser can reach it. Single Tree is the default; ?mode=multi for multi.
-CMD ["R", "-q", "-e", "shiny::runApp('/app', host = '0.0.0.0', port = 3838, launch.browser = FALSE)"]
+CMD ["R", "-q", "-e", "options(shiny.devmode = FALSE, shiny.autoreload = FALSE); shiny::runApp('/app', host = '0.0.0.0', port = 3838, launch.browser = FALSE)"]
