@@ -26,6 +26,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libjpeg-dev \
       libtiff5-dev \
       libxml2-dev \
+      fonts-dejavu-core \
  && rm -rf /var/lib/apt/lists/*
 
 # R packages (CRAN + Bioconductor). BiocManager::install handles both and picks
@@ -35,7 +36,7 @@ RUN R -q -e 'options(Ncpus = parallel::detectCores()); \
   pkgs <- c("shiny","shinydashboard","shinyjs","shinyWidgets","shinyBS","colourpicker","DT", \
             "ape","dplyr","ggplot2","ggforce","yaml","stringr","scales","tidyverse", \
             "ggnewscale","gridExtra","cowplot","jpeg","png","combinat","infotheo","aricode", \
-            "showtext","sysfonts","data.table","RColorBrewer","htmltools","later", \
+            "showtext","sysfonts","svglite","data.table","RColorBrewer","htmltools","later", \
             "ggtree","treeio"); \
   BiocManager::install(pkgs, update = FALSE, ask = FALSE); \
   miss <- pkgs[!pkgs %in% rownames(installed.packages())]; \
