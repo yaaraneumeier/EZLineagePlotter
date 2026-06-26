@@ -17,13 +17,23 @@ It works the same on **Windows, macOS, and Linux**.
   administrator rights; if you can't install it, ask IT, or use the RStudio
   method in the main README instead.)
 
-### 2. Get the launcher file for your system
-From this repository, download the one that matches your computer:
-- **Windows:** `run-ezlineageplotter.bat`
-- **macOS:** `run-ezlineageplotter.command`
-- **Linux:** `run-ezlineageplotter.sh`
+### 2. Download the launcher for your system (just one file)
+Go to the **Releases** page and, under **Assets**, download the single file that
+matches your computer:
 
-Put it anywhere convenient (e.g. your Desktop).
+**https://github.com/yaaraneumeier/EZLineagePlotter/releases/latest**
+
+| File | Your system |
+|------|-------------|
+| `run-ezlineageplotter.bat` | **Windows** |
+| `run-ezlineageplotter.command` | **macOS** |
+| `run-ezlineageplotter.sh` | **Linux** |
+
+You only need the one file for your operating system. Put it anywhere
+convenient (e.g. your Desktop).
+
+> Prefer not to download anything? You can skip the launcher entirely and run a
+> single command instead — see *"For a hands-on user"* below.
 
 ---
 
