@@ -91,51 +91,82 @@ cmp.make.X.score <- function(d1, d2) {
   cross
 }
 
+# Compute the rectangular tree layout via ggtree (only to get x/y coordinates),
+# returned as a plain data frame. ggtree may emit harmless fortify() warnings
+# with newer ggplot2 — suppress them; the coordinates are still valid.
+cmp.layout <- function(tree) {
+  d <- suppressWarnings(ggtree::ggtree(tree)$data)
+  as.data.frame(d)[, c("parent", "node", "x", "y", "isTip", "label")]
+}
+
+# Reconstruct the rectangular ("elbow") edge segments of a tree from its layout:
+# a horizontal segment at the child's y from the parent's x to the child's x,
+# and a vertical segment at the parent's x from the parent's y to the child's y.
+cmp.edges <- function(d) {
+  pc <- d[, c("node", "x", "y")]
+  names(pc) <- c("node", "px", "py")
+  m <- merge(d, pc, by.x = "parent", by.y = "node", all.x = TRUE)
+  m <- m[!is.na(m$px) & m$node != m$parent, ]   # drop the root (parent == node)
+  h <- data.frame(x = m$px, xend = m$x,  y = m$y,  yend = m$y)   # horizontal
+  v <- data.frame(x = m$px, xend = m$px, y = m$py, yend = m$y)   # vertical
+  rbind(h, v)
+}
+
 # Build the tanglegram ggplot: tree A on the left, tree B mirrored on the right,
-# grey lines connecting tips that share a canonical id. Gray trees for now
-# (classification coloring arrives in a later milestone). Returns a list with
-# the ggplot ($plot), the crossing score ($score) and shared-tip count ($shared).
+# grey lines connecting tips that share a canonical id. Drawn entirely with
+# geom_segment (version-robust; no geom_tree layer). Gray for now (classification
+# coloring arrives later). Returns list($plot, $score, $shared).
 cmp.draw.tanglegram <- function(treeA, treeB) {
-  p1 <- ggtree::ggtree(treeA, size = 1)
-  p2 <- ggtree::ggtree(treeB, size = 1)
+  dA <- cmp.layout(treeA)
+  dB <- cmp.layout(treeB)
 
   # Depth-normalize x so both trees reach the same maximum depth.
-  mx1 <- max(p1$data$x, na.rm = TRUE)
-  mx2 <- max(p2$data$x, na.rm = TRUE)
-  desired <- max(mx1, mx2)
-  if (is.finite(desired) && mx1 > 0) p1$data$x <- p1$data$x * desired / mx1
-  if (is.finite(desired) && mx2 > 0) p2$data$x <- p2$data$x * desired / mx2
+  mxA <- max(dA$x, na.rm = TRUE); mxB <- max(dB$x, na.rm = TRUE)
+  desired <- max(mxA, mxB)
+  if (is.finite(desired) && mxA > 0) dA$x <- dA$x * desired / mxA
+  if (is.finite(desired) && mxB > 0) dB$x <- dB$x * desired / mxB
 
   # Put both trees on a common vertical span so they line up.
-  yr <- range(c(p1$data$y, p2$data$y), na.rm = TRUE)
+  yr <- range(c(dA$y, dB$y), na.rm = TRUE)
   if (diff(yr) > 0) {
-    p1$data$y <- scales::rescale(p1$data$y, to = yr)
-    p2$data$y <- scales::rescale(p2$data$y, to = yr)
+    dA$y <- scales::rescale(dA$y, to = yr)
+    dB$y <- scales::rescale(dB$y, to = yr)
   }
 
-  d1 <- p1$data
-  d2 <- p2$data
+  score <- cmp.make.X.score(dA, dB)   # computed before mirroring (uses y only)
 
   # Mirror tree B and push it to the right of tree A (with a small gap).
-  gap <- 0.15 * max(d1$x, na.rm = TRUE)
+  gap <- 0.15 * max(dA$x, na.rm = TRUE)
   if (!is.finite(gap) || gap <= 0) gap <- 1
-  d2$x <- max(d2$x, na.rm = TRUE) - d2$x + max(d1$x, na.rm = TRUE) + gap
+  dB$x <- max(dB$x, na.rm = TRUE) - dB$x + max(dA$x, na.rm = TRUE) + gap
 
-  score <- cmp.make.X.score(d1, d2)
+  eA <- cmp.edges(dA)
+  eB <- cmp.edges(dB)
 
-  pp <- p1 + ggtree::geom_tree(data = d2, size = 1)
+  tA <- dA[dA$isTip %in% TRUE, c("x", "y", "label")]
+  tB <- dB[dB$isTip %in% TRUE, c("x", "y", "label")]
+  shared_labels <- intersect(as.character(tA$label), as.character(tB$label))
+  conn <- NULL
+  if (length(shared_labels) > 0) {
+    conn <- do.call(rbind, lapply(shared_labels, function(lb) {
+      a <- tA[as.character(tA$label) == lb, ][1, ]
+      b <- tB[as.character(tB$label) == lb, ][1, ]
+      data.frame(x = a$x, xend = b$x, y = a$y, yend = b$y)
+    }))
+  }
 
-  left  <- d1[d1$isTip == TRUE & !is.na(d1$isTip), c("x", "y", "label")]
-  right <- d2[d2$isTip == TRUE & !is.na(d2$isTip), c("x", "y", "label")]
-  dd <- rbind(as.data.frame(left), as.data.frame(right))
-  shared <- length(intersect(as.character(left$label), as.character(right$label)))
+  p <- ggplot2::ggplot() +
+    ggplot2::geom_segment(data = eA, ggplot2::aes(x = x, xend = xend, y = y, yend = yend),
+                          color = "grey20", linewidth = 0.5) +
+    ggplot2::geom_segment(data = eB, ggplot2::aes(x = x, xend = xend, y = y, yend = yend),
+                          color = "grey20", linewidth = 0.5)
+  if (!is.null(conn) && nrow(conn) > 0) {
+    p <- p + ggplot2::geom_segment(data = conn, ggplot2::aes(x = x, xend = xend, y = y, yend = yend),
+                                   color = "grey60", linewidth = 0.35)
+  }
+  p <- p + ggplot2::theme_void()
 
-  plt <- pp +
-    ggplot2::geom_line(ggplot2::aes(x = x, y = y, group = label),
-                       data = dd, color = "grey60", linewidth = 0.4) +
-    ggplot2::theme_void()
-
-  list(plot = plt, score = score, shared = shared)
+  list(plot = p, score = score, shared = length(shared_labels))
 }
 
 # ---------------------------------------------------------------
