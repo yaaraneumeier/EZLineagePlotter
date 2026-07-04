@@ -168,11 +168,13 @@ cmp_tabItem_upload <- function() {
                     accept = c(".newick", ".nwk", ".tree", ".txt")),
           fileInput("cmp_treeB", "Tree B (Newick):",
                     accept = c(".newick", ".nwk", ".tree", ".txt")),
-          fileInput("cmp_csv", "Classification CSV:", accept = c(".csv")),
-          selectInput("cmp_id_column", "ID column (in CSV):", choices = NULL),
+          fileInput("cmp_csv", "Classification CSV (optional, for coloring):", accept = c(".csv")),
+          selectInput("cmp_id_column", "ID column (for classification):", choices = NULL),
           actionButton("cmp_check_match", "Check tip matching", class = "btn-info"),
           tags$p(style = "color:#999;font-size:12px;margin-top:8px;",
-                 "Tips are matched to CSV IDs with the app's general matcher (exact / numeric / prefix).")
+                 "Tip matching compares the two trees' labels directly with the app's general matcher ",
+                 "(exact / numeric / prefix) — no CSV needed. The CSV/ID column is only used later for ",
+                 "classification coloring.")
       ),
       box(title = "2. Tip matching", status = "primary", solidHeader = TRUE, width = 7,
           uiOutput("cmp_match_report"),
@@ -253,39 +255,48 @@ cmp_install_server <- function(input, output, session) {
     if (!is.null(df)) updateSelectInput(session, "cmp_id_column", choices = names(df), selected = names(df)[1])
   })
 
-  # --- Tip matching (uses the app's general matcher) ---
+  # --- Tip matching: match Tree A's tips DIRECTLY against Tree B's tips with the
+  # app's general matcher (exact / numeric / prefix). The CSV is NOT needed here;
+  # it is only used for classification coloring (later milestone). ---
   observeEvent(input$cmp_check_match, {
     if (is.null(cmp_values$treeA) || is.null(cmp_values$treeB)) {
       showNotification("Upload both trees first.", type = "error"); return()
     }
-    if (is.null(cmp_values$csv_data) || is.null(input$cmp_id_column) || input$cmp_id_column == "") {
-      showNotification("Upload a CSV and choose the ID column.", type = "error"); return()
-    }
-    csv_ids <- cmp_values$csv_data[[input$cmp_id_column]]
-    canonA <- cmp.canonical.ids(cmp_values$treeA$tip.label, csv_ids)
-    canonB <- cmp.canonical.ids(cmp_values$treeB$tip.label, csv_ids)
-    idsA <- unique(stats::na.omit(canonA))
-    idsB <- unique(stats::na.omit(canonB))
-    shared <- intersect(idsA, idsB)
+    labA <- as.character(cmp_values$treeA$tip.label)
+    labB <- as.character(cmp_values$treeB$tip.label)
+
+    # Map each B tip label to an A tip label (or NA if it has no counterpart).
+    res <- match_tree_ids_with_csv(labB, labA)   # single-mode global matcher
+    mapB <- res$mapping
+    canonB <- vapply(labB, function(l) {
+      v <- mapB[[l]]
+      if (is.null(v) || length(v) == 0) NA_character_ else as.character(v[1])
+    }, character(1))
+    names(canonB) <- labB
+
+    matched_A <- unique(stats::na.omit(canonB))  # A labels that have a B counterpart
+    shared <- intersect(labA, matched_A)
     cmp_values$match <- list(
-      canonA = canonA, canonB = canonB,
-      shared = shared, aOnly = setdiff(idsA, idsB), bOnly = setdiff(idsB, idsA),
-      nA = length(cmp_values$treeA$tip.label), nB = length(cmp_values$treeB$tip.label),
-      mappedA = length(idsA), mappedB = length(idsB)
+      canonA = setNames(labA, labA),             # A maps to itself
+      canonB = canonB,                           # B label -> matched A label (NA = unmatched)
+      shared = shared,
+      aOnly = setdiff(labA, shared),             # A tips with no B counterpart
+      bOnly = labB[is.na(canonB)],               # B tips with no A counterpart
+      nA = length(labA), nB = length(labB)
     )
   })
 
   output$cmp_match_report <- renderUI({
     m <- cmp_values$match
-    if (is.null(m)) return(tags$p(style = "color:#888;", "Upload two trees + CSV, pick the ID column, then click “Check tip matching.”"))
+    if (is.null(m)) return(tags$p(style = "color:#888;", "Upload two trees, then click “Check tip matching.”"))
     fmt <- function(v, k = 10) if (length(v) == 0) "(none)" else paste(c(utils::head(v, k), if (length(v) > k) paste0("… (+", length(v) - k, " more)")), collapse = ", ")
     tagList(
-      tags$p(sprintf("Tree A: %d tips, %d mapped to a CSV ID.", m$nA, m$mappedA)),
-      tags$p(sprintf("Tree B: %d tips, %d mapped to a CSV ID.", m$nB, m$mappedB)),
-      tags$p(tags$b(sprintf("Shared IDs: %d", length(m$shared)))),
+      tags$p(sprintf("Tree A: %d tips.", m$nA)),
+      tags$p(sprintf("Tree B: %d tips.", m$nB)),
+      tags$p(tags$b(sprintf("Shared tips: %d", length(m$shared)))),
       if (length(m$aOnly) > 0) tags$p(style = "color:#a00;", sprintf("Only in A (%d): %s", length(m$aOnly), fmt(m$aOnly))),
       if (length(m$bOnly) > 0) tags$p(style = "color:#a00;", sprintf("Only in B (%d): %s", length(m$bOnly), fmt(m$bOnly))),
-      if (length(m$shared) == 0) tags$p(style = "color:#a00;font-weight:bold;", "No shared tips — check the ID column / label formats.")
+      if (length(m$shared) == 0) tags$p(style = "color:#a00;font-weight:bold;", "No shared tips — the two trees' tip labels don't match (check label formats).")
     )
   })
 
