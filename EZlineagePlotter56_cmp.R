@@ -107,16 +107,21 @@ cmp.edges <- function(d) {
   names(pc) <- c("node", "px", "py")
   m <- merge(d, pc, by.x = "parent", by.y = "node", all.x = TRUE)
   m <- m[!is.na(m$px) & m$node != m$parent, ]   # drop the root (parent == node)
-  h <- data.frame(x = m$px, xend = m$x,  y = m$y,  yend = m$y)   # horizontal
-  v <- data.frame(x = m$px, xend = m$px, y = m$py, yend = m$y)   # vertical
+  # Horizontal segment is the "branch"; tag it with the tip label when the child
+  # is a tip, so it can be colored by classification later.
+  h <- data.frame(x = m$px, xend = m$x,  y = m$y,  yend = m$y,
+                  tip_label = ifelse(m$isTip %in% TRUE, as.character(m$label), NA_character_),
+                  stringsAsFactors = FALSE)
+  v <- data.frame(x = m$px, xend = m$px, y = m$py, yend = m$y,
+                  tip_label = NA_character_, stringsAsFactors = FALSE)
   rbind(h, v)
 }
 
-# Build the tanglegram ggplot: tree A on the left, tree B mirrored on the right,
-# grey lines connecting tips that share a canonical id. Drawn entirely with
-# geom_segment (version-robust; no geom_tree layer). Gray for now (classification
-# coloring arrives later). Returns list($plot, $score, $shared).
-cmp.draw.tanglegram <- function(treeA, treeB) {
+# Build the tanglegram GEOMETRY (positions only, no coloring): tree A on the
+# left, tree B mirrored on the right, and the tip-connecting segments. This is
+# what a "version" stores; coloring is applied separately at render time.
+# Returns list($eA, $eB, $conn, $score, $shared).
+cmp.build.geometry <- function(treeA, treeB) {
   dA <- cmp.layout(treeA)
   dB <- cmp.layout(treeB)
 
@@ -155,18 +160,63 @@ cmp.draw.tanglegram <- function(treeA, treeB) {
     }))
   }
 
+  list(eA = eA, eB = eB, conn = conn, score = score, shared = length(shared_labels))
+}
+
+# Render a geometry to a ggplot. If class_map (canonical label -> class value)
+# and palette (class value -> hex, plus optional "NA" entry) are supplied, tip
+# ("branch") edges are colored by class; the backbone and connectors stay gray.
+cmp.render.tanglegram <- function(geom, class_map = NULL, palette = NULL) {
+  edge_color <- function(e) {
+    col <- rep("grey20", nrow(e))
+    if (!is.null(class_map) && !is.null(palette)) {
+      ti <- which(!is.na(e$tip_label))
+      if (length(ti) > 0) {
+        cls <- class_map[e$tip_label[ti]]
+        cols <- unname(palette[cls])
+        na_col <- if ("NA" %in% names(palette)) palette[["NA"]] else "grey70"
+        cols[is.na(cols)] <- na_col
+        col[ti] <- cols
+      }
+    }
+    e$col <- col
+    e
+  }
+  eA <- edge_color(geom$eA)
+  eB <- edge_color(geom$eB)
+
   p <- ggplot2::ggplot() +
-    ggplot2::geom_segment(data = eA, ggplot2::aes(x = x, xend = xend, y = y, yend = yend),
-                          color = "grey20", linewidth = 0.5) +
-    ggplot2::geom_segment(data = eB, ggplot2::aes(x = x, xend = xend, y = y, yend = yend),
-                          color = "grey20", linewidth = 0.5)
-  if (!is.null(conn) && nrow(conn) > 0) {
-    p <- p + ggplot2::geom_segment(data = conn, ggplot2::aes(x = x, xend = xend, y = y, yend = yend),
+    ggplot2::geom_segment(data = eA, ggplot2::aes(x = x, xend = xend, y = y, yend = yend, color = col),
+                          linewidth = 0.6) +
+    ggplot2::geom_segment(data = eB, ggplot2::aes(x = x, xend = xend, y = y, yend = yend, color = col),
+                          linewidth = 0.6)
+  if (!is.null(geom$conn) && nrow(geom$conn) > 0) {
+    p <- p + ggplot2::geom_segment(data = geom$conn,
+                                   ggplot2::aes(x = x, xend = xend, y = y, yend = yend),
                                    color = "grey60", linewidth = 0.35)
   }
-  p <- p + ggplot2::theme_void()
+  p + ggplot2::scale_color_identity() + ggplot2::theme_void()
+}
 
-  list(plot = p, score = score, shared = length(shared_labels))
+# For a set of tip labels, look up each tip's class value from the CSV (tip ->
+# CSV ID via the app matcher -> class column), keyed by the tip's CANONICAL label.
+cmp.tip.classes <- function(labels, canon, csv_ids, csv_class) {
+  labels <- as.character(labels)
+  res <- match_tree_ids_with_csv(labels, csv_ids)
+  mp <- res$mapping
+  csv_ids_chr <- as.character(csv_ids)
+  out <- list()
+  for (l in labels) {
+    cid <- mp[[l]]
+    cls <- NA_character_
+    if (!is.null(cid) && length(cid) > 0) {
+      idx <- match(as.character(cid[1]), csv_ids_chr)
+      if (!is.na(idx)) cls <- as.character(csv_class[idx])
+    }
+    key <- if (!is.null(canon[[l]]) && !is.na(canon[[l]])) canon[[l]] else l
+    out[[key]] <- cls
+  }
+  unlist(out)
 }
 
 # ---------------------------------------------------------------
@@ -222,8 +272,19 @@ cmp_tabItem_upload <- function() {
 
 cmp_tabItem_classification <- function() {
   tabItem(tabName = "cmp_classification",
-    fluidRow(cmp_placeholder("Classification",
-      "Pick one CSV column and palette, applied to BOTH trees so the comparison is meaningful. Trees start gray."))
+    fluidRow(
+      box(title = "Classification (shared)", status = "primary", solidHeader = TRUE, width = 5,
+          tags$p("Color the tips of BOTH trees by one CSV column, using the same column and palette so the comparison is meaningful."),
+          selectInput("cmp_class_column", "Classification column (in CSV):", choices = NULL),
+          tags$small(style = "color:#666;",
+                     "Needs the CSV and the ID column from the Upload tab. Only tips get colored; the backbone stays gray."),
+          tags$hr(),
+          actionButton("cmp_apply_class", "Apply classification", class = "btn-success"),
+          actionButton("cmp_clear_class", "Clear (gray)", class = "btn-default")
+      ),
+      box(title = "Colors", status = "primary", solidHeader = TRUE, width = 7,
+          uiOutput("cmp_class_colors_ui"))
+    )
   )
 }
 
@@ -265,9 +326,10 @@ cmp_install_server <- function(input, output, session) {
   cmp_values <- reactiveValues(
     treeA = NULL, treeB = NULL,          # phylo objects (raw)
     csv_data = NULL,
-    match = NULL,                        # list(canonA, canonB, shared, aOnly, bOnly, summary)
-    fig = NULL,                          # ggplot of current comparison
-    score = NULL, shared = NULL
+    match = NULL,                        # list(canonA, canonB, shared, aOnly, bOnly, ...)
+    geom = NULL,                         # tanglegram geometry (positions) from Build
+    class_map = NULL,                    # canonical label -> class value
+    palette = NULL                       # class value -> hex (plus "NA")
   )
 
   # --- File uploads ---
@@ -283,7 +345,11 @@ cmp_install_server <- function(input, output, session) {
     df <- tryCatch(data.table::fread(input$cmp_csv$datapath, data.table = FALSE),
                    error = function(e) { showNotification(paste("CSV:", e$message), type = "error"); NULL })
     cmp_values$csv_data <- df
-    if (!is.null(df)) updateSelectInput(session, "cmp_id_column", choices = names(df), selected = names(df)[1])
+    if (!is.null(df)) {
+      updateSelectInput(session, "cmp_id_column", choices = names(df), selected = names(df)[1])
+      updateSelectInput(session, "cmp_class_column",
+                        choices = c("-- Select Column --" = "", names(df)), selected = "")
+    }
   })
 
   # --- Tip matching: match Tree A's tips DIRECTLY against Tree B's tips with the
@@ -337,37 +403,95 @@ cmp_install_server <- function(input, output, session) {
     if (is.null(m)) { showNotification("Run “Check tip matching” first.", type = "error"); return() }
     if (length(m$shared) == 0) { showNotification("No shared tips to compare.", type = "error"); return() }
 
-    res <- tryCatch({
+    geom <- tryCatch({
       tA <- cmp.relabel.tree(cmp_values$treeA, m$canonA)
       tB <- cmp.relabel.tree(cmp_values$treeB, m$canonB)
       if (identical(input$cmp_prune, "shared")) {
         tA <- cmp.prune.to.shared(tA, m$shared)
         tB <- cmp.prune.to.shared(tB, m$shared)
       }
-      cmp.draw.tanglegram(tA, tB)
+      cmp.build.geometry(tA, tB)
     }, error = function(e) { showNotification(paste("Build failed:", e$message), type = "error"); NULL })
 
-    if (!is.null(res)) {
-      cmp_values$fig <- res$plot
-      cmp_values$score <- res$score
-      cmp_values$shared <- res$shared
+    if (!is.null(geom)) {
+      cmp_values$geom <- geom
       showNotification("Comparison built — see the Compare / Untangle tab.", type = "message")
     }
   })
 
+  # --- Classification (shared column + palette, applied to both trees) ---
+  # canonical label -> class value, for all tips of both trees (A takes precedence
+  # on shared tips). Depends on the CSV, ID column, class column and the match.
+  cmp_class_map_raw <- reactive({
+    m <- cmp_values$match; csv <- cmp_values$csv_data
+    if (is.null(m) || is.null(csv)) return(NULL)
+    if (is.null(input$cmp_id_column) || input$cmp_id_column == "" ||
+        is.null(input$cmp_class_column) || input$cmp_class_column == "") return(NULL)
+    if (!(input$cmp_id_column %in% names(csv)) || !(input$cmp_class_column %in% names(csv))) return(NULL)
+    csv_ids <- csv[[input$cmp_id_column]]; csv_class <- csv[[input$cmp_class_column]]
+    cA <- cmp.tip.classes(cmp_values$treeA$tip.label, m$canonA, csv_ids, csv_class)
+    cB <- cmp.tip.classes(cmp_values$treeB$tip.label, m$canonB, csv_ids, csv_class)
+    merged <- cB
+    merged[names(cA)] <- cA
+    merged
+  })
+
+  cmp_class_values <- reactive({
+    cm <- cmp_class_map_raw(); if (is.null(cm)) return(character(0))
+    sort(unique(stats::na.omit(unname(cm))))
+  })
+
+  output$cmp_class_colors_ui <- renderUI({
+    vals <- cmp_class_values()
+    if (length(vals) == 0) return(tags$small(style = "color:#666;",
+      "Pick the ID column (Upload tab) and a classification column to see the categories."))
+    if (length(vals) > 50) return(tags$div(class = "alert alert-warning",
+      paste0("That column has ", length(vals), " distinct values — too many to color (max 50).")))
+    defcols <- grDevices::rainbow(length(vals))
+    rows <- lapply(seq_along(vals), function(i) {
+      fluidRow(
+        column(7, tags$div(style = "padding-top:7px;", vals[i])),
+        column(5, colourInput(paste0("cmp_classcol_", i), NULL, value = defcols[i], allowTransparent = FALSE))
+      )
+    })
+    tagList(rows)
+  })
+
+  observeEvent(input$cmp_apply_class, {
+    vals <- cmp_class_values()
+    if (length(vals) == 0) { showNotification("Pick an ID column and a classification column first.", type = "error"); return() }
+    pal <- setNames(vapply(seq_along(vals), function(i) {
+      cc <- input[[paste0("cmp_classcol_", i)]]
+      if (is.null(cc) || !nzchar(cc)) "#333333" else cc
+    }, character(1)), vals)
+    pal[["NA"]] <- "grey70"   # tips with no class
+    cmp_values$class_map <- cmp_class_map_raw()
+    cmp_values$palette <- pal
+    showNotification("Classification applied.", type = "message")
+  })
+
+  observeEvent(input$cmp_clear_class, {
+    cmp_values$class_map <- NULL
+    cmp_values$palette <- NULL
+    showNotification("Coloring cleared (gray).", type = "message")
+  })
+
+  # --- Preview + score (render reactively; coloring is applied at render) ---
   output$cmp_preview <- renderPlot({
-    if (is.null(cmp_values$fig)) {
+    g <- cmp_values$geom
+    if (is.null(g)) {
       plot.new()
       text(0.5, 0.6, "Comparison mode", cex = 1.6, font = 2)
-      text(0.5, 0.42, "Upload two trees + CSV, check matching, then Build comparison.", cex = 1.05, col = "#666666")
+      text(0.5, 0.42, "Upload two trees, check matching, then Build comparison.", cex = 1.05, col = "#666666")
     } else {
-      print(cmp_values$fig)
+      print(cmp.render.tanglegram(g, cmp_values$class_map, cmp_values$palette))
     }
   })
 
   output$cmp_score <- renderText({
-    if (is.null(cmp_values$score)) "No comparison built yet."
-    else sprintf("Original: %d crossings over %d shared tips.", cmp_values$score, cmp_values$shared)
+    g <- cmp_values$geom
+    if (is.null(g)) "No comparison built yet."
+    else sprintf("Original: %d crossings over %d shared tips.", g$score, g$shared)
   })
 
   output$cmp_yaml_output <- renderText({ "No comparison configured yet." })
