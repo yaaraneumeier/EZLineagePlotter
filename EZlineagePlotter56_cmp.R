@@ -278,6 +278,7 @@ cmp_tabItem_classification <- function() {
           selectInput("cmp_class_column", "Classification column (in CSV):", choices = NULL),
           tags$small(style = "color:#666;",
                      "Needs the CSV and the ID column from the Upload tab. Only tips get colored; the backbone stays gray."),
+          uiOutput("cmp_class_status"),
           tags$hr(),
           actionButton("cmp_apply_class", "Apply classification", class = "btn-success"),
           actionButton("cmp_clear_class", "Clear (gray)", class = "btn-default")
@@ -420,31 +421,52 @@ cmp_install_server <- function(input, output, session) {
   })
 
   # --- Classification (shared column + palette, applied to both trees) ---
-  # canonical label -> class value, for all tips of both trees (A takes precedence
-  # on shared tips). Depends on the CSV, ID column, class column and the match.
-  cmp_class_map_raw <- reactive({
+  # Returns list(map = canonical label -> class value, reason = why empty,
+  # mapped = #tips with a class, total = #tips). Tip class comes from the CSV
+  # (tip -> CSV ID via the app matcher -> class column). A takes precedence on
+  # shared tips.
+  cmp_class_info <- reactive({
     m <- cmp_values$match; csv <- cmp_values$csv_data
-    if (is.null(m) || is.null(csv)) return(NULL)
-    if (is.null(input$cmp_id_column) || input$cmp_id_column == "" ||
-        is.null(input$cmp_class_column) || input$cmp_class_column == "") return(NULL)
-    if (!(input$cmp_id_column %in% names(csv)) || !(input$cmp_class_column %in% names(csv))) return(NULL)
-    csv_ids <- csv[[input$cmp_id_column]]; csv_class <- csv[[input$cmp_class_column]]
+    if (is.null(m)) return(list(map = NULL, reason = "Run “Check tip matching” on the Upload tab first."))
+    if (is.null(csv)) return(list(map = NULL, reason = "Upload a CSV on the Upload tab."))
+    idc <- input$cmp_id_column; clc <- input$cmp_class_column
+    if (is.null(idc) || idc == "" || !(idc %in% names(csv)))
+      return(list(map = NULL, reason = "Select the ID column on the Upload tab (the column that holds the tree tip IDs)."))
+    if (is.null(clc) || clc == "" || !(clc %in% names(csv)))
+      return(list(map = NULL, reason = "Select a classification column above."))
+    csv_ids <- csv[[idc]]; csv_class <- csv[[clc]]
     cA <- cmp.tip.classes(cmp_values$treeA$tip.label, m$canonA, csv_ids, csv_class)
     cB <- cmp.tip.classes(cmp_values$treeB$tip.label, m$canonB, csv_ids, csv_class)
     merged <- cB
-    merged[names(cA)] <- cA
-    merged
+    if (!is.null(cA) && length(cA) > 0) merged[names(cA)] <- cA
+    mapped <- if (is.null(merged)) 0 else sum(!is.na(merged))
+    total  <- if (is.null(merged)) 0 else length(merged)
+    cat(file = stderr(), sprintf("[CMP-CLASS] id_col='%s' class_col='%s' -> mapped %d/%d tips\n",
+                                 idc, clc, mapped, total))
+    reason <- if (mapped == 0)
+      sprintf("0 of %d tips matched the CSV using ID column '%s'. Pick the ID column that holds the tree tip IDs (Upload tab).", total, idc)
+      else ""
+    list(map = merged, reason = reason, mapped = mapped, total = total, id_col = idc)
   })
 
   cmp_class_values <- reactive({
-    cm <- cmp_class_map_raw(); if (is.null(cm)) return(character(0))
-    sort(unique(stats::na.omit(unname(cm))))
+    info <- cmp_class_info()
+    if (is.null(info$map)) return(character(0))
+    sort(unique(stats::na.omit(unname(info$map))))
+  })
+
+  output$cmp_class_status <- renderUI({
+    info <- cmp_class_info()
+    if (is.null(info$map) || info$mapped == 0)
+      tags$p(style = "color:#a00;", if (nzchar(info$reason)) info$reason else "")
+    else
+      tags$p(style = "color:#155724;", sprintf("Mapped %d of %d tips using ID column '%s'.", info$mapped, info$total, info$id_col))
   })
 
   output$cmp_class_colors_ui <- renderUI({
     vals <- cmp_class_values()
     if (length(vals) == 0) return(tags$small(style = "color:#666;",
-      "Pick the ID column (Upload tab) and a classification column to see the categories."))
+      "No categories yet — see the status message on the left."))
     if (length(vals) > 50) return(tags$div(class = "alert alert-warning",
       paste0("That column has ", length(vals), " distinct values — too many to color (max 50).")))
     defcols <- grDevices::rainbow(length(vals))
@@ -458,14 +480,18 @@ cmp_install_server <- function(input, output, session) {
   })
 
   observeEvent(input$cmp_apply_class, {
+    info <- cmp_class_info()
     vals <- cmp_class_values()
-    if (length(vals) == 0) { showNotification("Pick an ID column and a classification column first.", type = "error"); return() }
+    if (length(vals) == 0) {
+      showNotification(if (!is.null(info$reason) && nzchar(info$reason)) info$reason else "Nothing to classify.",
+                       type = "error", duration = 8); return()
+    }
     pal <- setNames(vapply(seq_along(vals), function(i) {
       cc <- input[[paste0("cmp_classcol_", i)]]
       if (is.null(cc) || !nzchar(cc)) "#333333" else cc
     }, character(1)), vals)
     pal[["NA"]] <- "grey70"   # tips with no class
-    cmp_values$class_map <- cmp_class_map_raw()
+    cmp_values$class_map <- cmp_class_info()$map
     cmp_values$palette <- pal
     showNotification("Classification applied.", type = "message")
   })
