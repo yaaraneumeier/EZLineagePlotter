@@ -21149,7 +21149,25 @@ server <- function(input, output, session) {
         if (!isTRUE(legend_settings$show_classification)) {
           guides_list$colour <- "none"
         } else {
-          guides_list$colour <- guide_legend(reverse = reverse_order)
+          # v181: Preserve the classification "Legend Title" here. This guides()
+          # override replaces the colour guide set earlier (with the title), so
+          # without re-supplying the title it reverts to the default. Pull the
+          # title from the active/preview classification (same selection logic as
+          # the YAML builder).
+          class_leg_title <- if (!is.null(values$temp_classification_preview)) {
+            values$temp_classification_preview$title
+          } else if (!is.null(values$active_classification_index) &&
+                     !is.null(values$classifications) &&
+                     length(values$classifications) >= values$active_classification_index) {
+            values$classifications[[values$active_classification_index]]$title
+          } else if (!is.null(values$classifications) && length(values$classifications) > 0) {
+            values$classifications[[length(values$classifications)]]$title
+          } else NULL
+          guides_list$colour <- if (!is.null(class_leg_title) && nzchar(class_leg_title)) {
+            guide_legend(title = class_leg_title, reverse = reverse_order)
+          } else {
+            guide_legend(reverse = reverse_order)
+          }
         }
 
         # v180: P value uses size aesthetic
