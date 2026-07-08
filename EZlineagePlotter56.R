@@ -231,7 +231,7 @@ options(shiny.maxRequestSize = 100*1024^2)
 #       - Layer reordering now happens ONCE at the end in generate_plot()
 # S1.2: Fixed undefined x_range_min in func_highlight causing "Problem while
 #       computing aesthetics" error when adding 2+ highlights with a heatmap.
-VERSION <- "S3.14"
+VERSION <- "S3.15"
 
 # Maximum number of heatmaps. Referenced by the add-heatmap guard, the UI text,
 # and every per-heatmap observer/output loop, so changing the cap is one edit.
@@ -9824,9 +9824,16 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #155724;",
-                     tags$h4(style = "color: #155724; margin: 0;", "Version S3.14 Stable"),
+                     tags$h4(style = "color: #155724; margin: 0;", "Version S3.15 Stable"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
-                            tags$strong("New in S3.14:"),
+                            tags$strong("New in S3.15:"),
+                            tags$ul(
+                              tags$li("Fixed the classification 'Legend Title' being ignored - it now renames the classification color legend"),
+                              tags$li("Legend tab: 'Title & Keys Alignment' (left/center/right) to center the legend title over its keys"),
+                              tags$li("Legend tab: 'Key to Label Spacing' to add a gap between each key and its label"),
+                              tags$li("Turned off Shiny dev mode for end users, so the preview updates on a normal reload (no hard refresh needed)")
+                            ),
+                            tags$strong("From S3.14:"),
                             tags$ul(
                               tags$li("Clade Clusters: define clusters from a CSV column - tips sharing a column value are grouped, and a value split across the tree is drawn as several clades sharing its name, each with its own color"),
                               tags$li("Classification tab: 'Paper palette' option when a column's categories match the preset palette, with editable per-category fill colors"),
