@@ -231,7 +231,7 @@ options(shiny.maxRequestSize = 100*1024^2)
 #       - Layer reordering now happens ONCE at the end in generate_plot()
 # S1.2: Fixed undefined x_range_min in func_highlight causing "Problem while
 #       computing aesthetics" error when adding 2+ highlights with a heatmap.
-VERSION <- "S3.14"
+VERSION <- "S3.15"
 
 # Maximum number of heatmaps. Referenced by the add-heatmap guard, the UI text,
 # and every per-heatmap observer/output loop, so changing the cap is one edit.
@@ -9824,9 +9824,16 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #155724;",
-                     tags$h4(style = "color: #155724; margin: 0;", "Version S3.14 Stable"),
+                     tags$h4(style = "color: #155724; margin: 0;", "Version S3.15 Stable"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
-                            tags$strong("New in S3.14:"),
+                            tags$strong("New in S3.15:"),
+                            tags$ul(
+                              tags$li("Fixed the classification 'Legend Title' being ignored - it now renames the classification color legend"),
+                              tags$li("Legend tab: 'Title & Keys Alignment' (left/center/right) to center the legend title over its keys"),
+                              tags$li("Legend tab: 'Key to Label Spacing' to add a gap between each key and its label"),
+                              tags$li("Turned off Shiny dev mode for end users, so the preview updates on a normal reload (no hard refresh needed)")
+                            ),
+                            tags$strong("From S3.14:"),
                             tags$ul(
                               tags$li("Clade Clusters: define clusters from a CSV column - tips sharing a column value are grouped, and a value split across the tree is drawn as several clades sharing its name, each with its own color"),
                               tags$li("Classification tab: 'Paper palette' option when a column's categories match the preset palette, with editable per-category fill colors"),
@@ -10851,6 +10858,13 @@ ui <- dashboardPage(
                           min = 0, max = 2, value = 0.2, step = 0.05),  # v180: Renamed for clarity
               sliderInput("legend_key_spacing", "Between Keys Spacing",
                           min = 0, max = 2, value = 0.1, step = 0.05),  # v180: Actual key spacing
+              # v181: Horizontal gap between the key (color square) and its label
+              sliderInput("legend_key_label_spacing", "Key to Label Spacing",
+                          min = 0, max = 1, value = 0, step = 0.05),
+              # v181: Horizontal alignment of the legend title over its keys/labels
+              radioButtons("legend_title_align", "Title & Keys Alignment",
+                           choices = c("Left" = "left", "Center" = "center", "Right" = "right"),
+                           selected = "left", inline = TRUE),
               tags$hr(style = "margin: 10px 0;"),
               tags$p(class = "text-muted", tags$small("Legend item order:")),
               checkboxInput("legend_reverse_order", "Reverse item order in legends", value = FALSE),
@@ -19331,6 +19345,10 @@ server <- function(input, output, session) {
       spacing_vertical = input$legend_spacing_vertical,
       title_key_spacing = input$legend_title_key_spacing,  # v180: Title to keys spacing
       key_spacing = input$legend_key_spacing,              # v180: Between keys spacing
+      # v181: Horizontal alignment of legend title/keys (left/center/right)
+      title_align = if (!is.null(input$legend_title_align)) input$legend_title_align else "left",
+      # v181: Extra horizontal gap between key square and its label (cm)
+      key_label_spacing = if (!is.null(input$legend_key_label_spacing)) input$legend_key_label_spacing else 0,
       # Layout controls
       reverse_order = input$legend_reverse_order,
       # v180: Background controls
@@ -21104,12 +21122,24 @@ server <- function(input, output, session) {
         # S2.292dev: Added font_family to legend text elements
         # S2.292dev-FIX: Also set text element as parent to ensure font propagates
         cat(file=stderr(), sprintf("[FONT-THEME] Setting legend.title and legend.text with family='%s'\n", font_family))
+        # v181: Legend title/keys horizontal alignment (left/center/right)
+        title_hjust <- switch(if (!is.null(legend_settings$title_align)) legend_settings$title_align else "left",
+                              left = 0, center = 0.5, right = 1, 0)
+        # v181: Extra gap between the key square and its label = left margin on the
+        # label text. Only add it when > 0 so the default look is unchanged.
+        kl_spacing <- if (!is.null(legend_settings$key_label_spacing)) legend_settings$key_label_spacing else 0
+        legend_text_el <- if (kl_spacing > 0) {
+          element_text(size = legend_settings$text_size, family = font_family, hjust = title_hjust,
+                       margin = margin(l = kl_spacing, unit = "cm"))
+        } else {
+          element_text(size = legend_settings$text_size, family = font_family, hjust = title_hjust)
+        }
         legend_theme <- theme(
           # Set base text family for all text elements (parent)
           text = element_text(family = font_family),
           legend.position = legend_settings$position,
-          legend.title = element_text(size = legend_settings$title_size, face = "bold", family = font_family),
-          legend.text = element_text(size = legend_settings$text_size, family = font_family),
+          legend.title = element_text(size = legend_settings$title_size, face = "bold", family = font_family, hjust = title_hjust),
+          legend.text = legend_text_el,
           legend.key.size = unit(legend_settings$key_size, "lines"),
           legend.key.width = unit(key_width, "lines"),    # v180: Custom key width
           legend.key.height = unit(key_height, "lines"),  # v180: Custom key height
@@ -21149,7 +21179,25 @@ server <- function(input, output, session) {
         if (!isTRUE(legend_settings$show_classification)) {
           guides_list$colour <- "none"
         } else {
-          guides_list$colour <- guide_legend(reverse = reverse_order)
+          # v181: Preserve the classification "Legend Title" here. This guides()
+          # override replaces the colour guide set earlier (with the title), so
+          # without re-supplying the title it reverts to the default. Pull the
+          # title from the active/preview classification (same selection logic as
+          # the YAML builder).
+          class_leg_title <- if (!is.null(values$temp_classification_preview)) {
+            values$temp_classification_preview$title
+          } else if (!is.null(values$active_classification_index) &&
+                     !is.null(values$classifications) &&
+                     length(values$classifications) >= values$active_classification_index) {
+            values$classifications[[values$active_classification_index]]$title
+          } else if (!is.null(values$classifications) && length(values$classifications) > 0) {
+            values$classifications[[length(values$classifications)]]$title
+          } else NULL
+          guides_list$colour <- if (!is.null(class_leg_title) && nzchar(class_leg_title)) {
+            guide_legend(title = class_leg_title, reverse = reverse_order)
+          } else {
+            guide_legend(reverse = reverse_order)
+          }
         }
 
         # v180: P value uses size aesthetic
@@ -23477,7 +23525,10 @@ server <- function(input, output, session) {
 
 #HEREEE
 
-shiny::devmode(TRUE)
+# Dev mode OFF for end users: dev mode serves un-versioned full Shiny JS and
+# enables autoreload, which leaves the browser holding stale assets after a
+# restart (needing a hard refresh). Keep it off.
+shiny::devmode(FALSE)
 ######part RUN
 
 # Run the application
