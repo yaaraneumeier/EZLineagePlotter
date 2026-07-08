@@ -102,5 +102,9 @@ server <- function(input, output, session) {
   }
 }
 
-shiny::devmode(TRUE)
+# Dev mode is intentionally OFF for end users: it serves un-versioned, full
+# Shiny JS and enables file-autoreload, which leaves the browser holding stale
+# assets after a restart (requiring a hard refresh). It also overrode the
+# container's shiny.devmode=FALSE. Keep it off here.
+shiny::devmode(FALSE)
 shinyApp(ui = ui, server = server)

@@ -23495,7 +23495,10 @@ server <- function(input, output, session) {
 
 #HEREEE
 
-shiny::devmode(TRUE)
+# Dev mode OFF for end users: dev mode serves un-versioned full Shiny JS and
+# enables autoreload, which leaves the browser holding stale assets after a
+# restart (needing a hard refresh). Keep it off.
+shiny::devmode(FALSE)
 ######part RUN
 
 # Run the application
