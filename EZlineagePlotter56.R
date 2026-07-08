@@ -10851,6 +10851,9 @@ ui <- dashboardPage(
                           min = 0, max = 2, value = 0.2, step = 0.05),  # v180: Renamed for clarity
               sliderInput("legend_key_spacing", "Between Keys Spacing",
                           min = 0, max = 2, value = 0.1, step = 0.05),  # v180: Actual key spacing
+              # v181: Horizontal gap between the key (color square) and its label
+              sliderInput("legend_key_label_spacing", "Key to Label Spacing",
+                          min = 0, max = 1, value = 0, step = 0.05),
               # v181: Horizontal alignment of the legend title over its keys/labels
               radioButtons("legend_title_align", "Title & Keys Alignment",
                            choices = c("Left" = "left", "Center" = "center", "Right" = "right"),
@@ -19337,6 +19340,8 @@ server <- function(input, output, session) {
       key_spacing = input$legend_key_spacing,              # v180: Between keys spacing
       # v181: Horizontal alignment of legend title/keys (left/center/right)
       title_align = if (!is.null(input$legend_title_align)) input$legend_title_align else "left",
+      # v181: Extra horizontal gap between key square and its label (cm)
+      key_label_spacing = if (!is.null(input$legend_key_label_spacing)) input$legend_key_label_spacing else 0,
       # Layout controls
       reverse_order = input$legend_reverse_order,
       # v180: Background controls
@@ -21113,12 +21118,21 @@ server <- function(input, output, session) {
         # v181: Legend title/keys horizontal alignment (left/center/right)
         title_hjust <- switch(if (!is.null(legend_settings$title_align)) legend_settings$title_align else "left",
                               left = 0, center = 0.5, right = 1, 0)
+        # v181: Extra gap between the key square and its label = left margin on the
+        # label text. Only add it when > 0 so the default look is unchanged.
+        kl_spacing <- if (!is.null(legend_settings$key_label_spacing)) legend_settings$key_label_spacing else 0
+        legend_text_el <- if (kl_spacing > 0) {
+          element_text(size = legend_settings$text_size, family = font_family, hjust = title_hjust,
+                       margin = margin(l = kl_spacing, unit = "cm"))
+        } else {
+          element_text(size = legend_settings$text_size, family = font_family, hjust = title_hjust)
+        }
         legend_theme <- theme(
           # Set base text family for all text elements (parent)
           text = element_text(family = font_family),
           legend.position = legend_settings$position,
           legend.title = element_text(size = legend_settings$title_size, face = "bold", family = font_family, hjust = title_hjust),
-          legend.text = element_text(size = legend_settings$text_size, family = font_family, hjust = title_hjust),
+          legend.text = legend_text_el,
           legend.key.size = unit(legend_settings$key_size, "lines"),
           legend.key.width = unit(key_width, "lines"),    # v180: Custom key width
           legend.key.height = unit(key_height, "lines"),  # v180: Custom key height
