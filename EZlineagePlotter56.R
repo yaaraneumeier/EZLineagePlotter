@@ -12656,6 +12656,11 @@ server <- function(input, output, session) {
           row_label_offset = if (!is.null(h$row_label_offset)) as.numeric(h$row_label_offset) else 1.0,
           row_label_align = if (!is.null(h$row_label_align)) h$row_label_align else "left",
           label_mapping = if (!is.null(h$label_mapping)) h$label_mapping else list(),
+          # v182: Row mask settings
+          mask_enable = if (!is.null(h$mask_enable)) func.check.bin.val.from.conf(h$mask_enable) else FALSE,
+          mask_column = if (!is.null(h$mask_column)) h$mask_column else "",
+          mask_values = if (!is.null(h$mask_values)) as.list(unlist(h$mask_values)) else list(),
+          mask_style = if (!is.null(h$mask_style)) h$mask_style else "gray",
           discrete_palette = if (!is.null(h$discrete_palette)) h$discrete_palette else "Set1",
           # S1.62dev: Import custom discrete colors from YAML instead of hardcoding
           custom_discrete = if (!is.null(h$custom_discrete)) func.check.bin.val.from.conf(h$custom_discrete) else FALSE,
@@ -16679,6 +16684,32 @@ server <- function(input, output, session) {
           uiOutput(paste0("heatmap_custom_labels_ui_", i))
         ),
 
+        # v182: Row mask — gray out whole rows whose CSV column value matches
+        tags$div(
+          style = "background-color: #f0f0f5; padding: 10px; border-radius: 5px; margin-top: 10px; margin-bottom: 10px;",
+          tags$h5(icon("eye-slash"), " Gray out rows by a column"),
+          fluidRow(
+            column(4,
+                   checkboxInput(paste0("heatmap_mask_enable_", i), "Enable row masking",
+                                 value = if (!is.null(cfg$mask_enable)) cfg$mask_enable else FALSE)
+            ),
+            column(4,
+                   selectInput(paste0("heatmap_mask_column_", i), "Mask column (CSV)",
+                               choices = c("-- select --" = "", names(values$csv_data)),
+                               selected = if (!is.null(cfg$mask_column)) cfg$mask_column else "")
+            ),
+            column(4,
+                   radioButtons(paste0("heatmap_mask_style_", i), "Style",
+                                choices = c("Gray fill" = "gray", "Background" = "background", "Dots" = "dots"),
+                                selected = if (!is.null(cfg$mask_style)) cfg$mask_style else "gray",
+                                inline = TRUE)
+            )
+          ),
+          uiOutput(paste0("heatmap_mask_values_ui_", i)),
+          tags$small(style = "color:#666;",
+                     "Rows (samples) whose value in this column is one of the selected values get masked in THIS heatmap only.")
+        ),
+
         # v108: Replaced conditionalPanels with uiOutput for reactive type detection
         # This ensures the color settings show up immediately when columns are selected
         uiOutput(paste0("heatmap_type_settings_ui_", i))
@@ -16747,7 +16778,12 @@ server <- function(input, output, session) {
       cnv_wgd_per_cell = FALSE,
       cnv_wgd_column = NULL,
       # S2.8: Display mode (basic = geom_tile, detailed = geom_raster like pheatmap)
-      cnv_display_mode = "basic"
+      cnv_display_mode = "basic",
+      # v182: Per-heatmap row mask — gray out rows whose CSV column value matches
+      mask_enable = FALSE,
+      mask_column = "",
+      mask_values = list(),
+      mask_style = "gray"   # gray | background | dots
     )
     
     values$heatmap_configs <- c(values$heatmap_configs, list(new_config))
@@ -17234,6 +17270,29 @@ server <- function(input, output, session) {
           }
         }
       }, ignoreInit = TRUE)
+
+      # v182: Row mask observers (sync mask controls into the heatmap config)
+      observeEvent(input[[paste0("heatmap_mask_enable_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          values$heatmap_configs[[i]]$mask_enable <- isTRUE(input[[paste0("heatmap_mask_enable_", i)]])
+        }
+      }, ignoreInit = TRUE)
+      observeEvent(input[[paste0("heatmap_mask_column_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          values$heatmap_configs[[i]]$mask_column <- input[[paste0("heatmap_mask_column_", i)]]
+        }
+      }, ignoreInit = TRUE)
+      observeEvent(input[[paste0("heatmap_mask_style_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          values$heatmap_configs[[i]]$mask_style <- input[[paste0("heatmap_mask_style_", i)]]
+        }
+      }, ignoreInit = TRUE)
+      observeEvent(input[[paste0("heatmap_mask_values_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          v <- input[[paste0("heatmap_mask_values_", i)]]
+          values$heatmap_configs[[i]]$mask_values <- if (is.null(v)) list() else as.list(v)
+        }
+      }, ignoreInit = TRUE, ignoreNULL = FALSE)
 
       # v107: Row labels settings (with guards to prevent reactive loop)
       # Changed ignoreInit to TRUE since values are now initialized in new_config
@@ -18183,6 +18242,28 @@ server <- function(input, output, session) {
         }
 
         return(NULL)
+      })
+    })
+  })
+
+  # v182: Render the "mask values" multiselect for each heatmap (distinct values of
+  # the chosen mask column). Rebuilds when the column/enable changes.
+  observe({
+    lapply(1:MAX_HEATMAPS, function(i) {
+      output[[paste0("heatmap_mask_values_ui_", i)]] <- renderUI({
+        enable <- input[[paste0("heatmap_mask_enable_", i)]]
+        col <- input[[paste0("heatmap_mask_column_", i)]]
+        if (!isTRUE(enable)) return(NULL)
+        if (is.null(col) || col == "") return(tags$small(style = "color:#666;", "Pick a mask column above."))
+        csv <- if (!is.null(values$filtered_csv) && nrow(values$filtered_csv) > 0) values$filtered_csv else values$csv_data
+        if (is.null(csv) || !(col %in% names(csv))) return(NULL)
+        vals <- as.character(csv[[col]])
+        vals <- sort(unique(vals[!is.na(vals) & vals != ""]))
+        cfg <- isolate(values$heatmap_configs[[i]])
+        sel <- if (!is.null(cfg$mask_values)) unlist(cfg$mask_values) else character(0)
+        selectizeInput(paste0("heatmap_mask_values_", i), "Values that gray out the row",
+                       choices = vals, selected = intersect(sel, vals), multiple = TRUE,
+                       options = list(placeholder = "Select one or more values..."))
       })
     })
   })
@@ -22384,6 +22465,11 @@ server <- function(input, output, session) {
             }
             lm
           }),
+          # v182: Row mask settings
+          mask_enable = if (!is.null(cfg$mask_enable) && cfg$mask_enable) "yes" else "no",
+          mask_column = if (!is.null(cfg$mask_column)) cfg$mask_column else "",
+          mask_values = if (!is.null(cfg$mask_values) && length(cfg$mask_values) > 0) as.list(unlist(cfg$mask_values)) else list(),
+          mask_style = if (!is.null(cfg$mask_style)) cfg$mask_style else "gray",
           # S1.62dev: Grid settings (were missing from export)
           show_grid = if (!is.null(cfg$show_grid) && cfg$show_grid) "yes" else "no",
           grid_color = if (!is.null(cfg$grid_color)) cfg$grid_color else "#000000",
