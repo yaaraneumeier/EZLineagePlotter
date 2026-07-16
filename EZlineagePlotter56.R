@@ -3857,7 +3857,36 @@ func.print.lineage.tree <- function(conf_yaml_path,
       # v53: print("readfile440 is ")
       # v53: print(readfile440)
     }
-    
+
+    # v182: Row-mask helper — reads the per-heatmap mask settings from the YAML
+    # heatmap def and, when enabled, computes a per-tip value of the mask column
+    # (tip label -> CSV mask column, via title.id + tip trimming). readfile440,
+    # title.id, tree440 and the id_tip_trim_* args are captured from this scope.
+    func.heatmap.mask.params <- function(param, heat_map_i_def) {
+      param[['mask_enable']] <- if ('mask_enable' %in% names(heat_map_i_def)) func.check.bin.val.from.conf(heat_map_i_def[['mask_enable']]) else FALSE
+      param[['mask_column']] <- if ('mask_column' %in% names(heat_map_i_def)) heat_map_i_def[['mask_column']] else ""
+      param[['mask_style']]  <- if ('mask_style'  %in% names(heat_map_i_def)) heat_map_i_def[['mask_style']]  else "gray"
+      param[['mask_values']] <- if ('mask_values' %in% names(heat_map_i_def)) as.character(unlist(heat_map_i_def[['mask_values']])) else character(0)
+      param[['mask_tip_values']] <- tryCatch({
+        mc <- param[['mask_column']]
+        if (isTRUE(param[['mask_enable']]) && !is.null(mc) && nzchar(mc) &&
+            exists('readfile440') && !is.null(readfile440) && mc %in% names(readfile440)) {
+          idcol <- as.character(readfile440[[title.id]])
+          idnum <- suppressWarnings(as.numeric(idcol))
+          tl <- as.character(tree440$tip.label)
+          v <- vapply(tl, function(x) {
+            key <- if (isTRUE(id_tip_trim_flag)) substr(x, id_tip_trim_start, id_tip_trim_end) else x
+            row <- which(idcol == as.character(key))
+            if (length(row) == 0) { kn <- suppressWarnings(as.numeric(key)); if (!is.na(kn)) row <- which(idnum == kn) }
+            if (length(row) > 0) as.character(readfile440[[mc]][row[1]]) else NA_character_
+          }, character(1))
+          names(v) <- tl
+          v
+        } else NULL
+      }, error = function(e) { cat(file=stderr(), paste0("[HEATMAP-MASK] tip-value error: ", e$message, "\n")); NULL })
+      param
+    }
+
     
     
     
@@ -4241,6 +4270,8 @@ func.print.lineage.tree <- function(conf_yaml_path,
               } else {
                 param[['label_mapping']] <- list()
               }
+              # v182: Row mask — read settings + compute per-tip mask value
+              param <- func.heatmap.mask.params(param, heat_map_i_def)
 
               # v117/v121: Get tip guide line settings (for discrete heatmaps)
               # v121: Added comprehensive debug logging
@@ -4513,6 +4544,8 @@ func.print.lineage.tree <- function(conf_yaml_path,
               } else {
                 param[['label_mapping']] <- list()
               }
+              # v182: Row mask — read settings + compute per-tip mask value
+              param <- func.heatmap.mask.params(param, heat_map_i_def)
 
               # v117/v121: Get tip guide line settings (for continuous heatmaps)
               # v121: Added comprehensive debug logging
@@ -7141,6 +7174,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
               y = y_pos,
               value = if (is_discrete) tile_value else tile_value,
               column = col_name,
+              tip_label = tip_label,   # v182: for row masking
               stringsAsFactors = FALSE
             )
           }
@@ -7665,6 +7699,32 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
           }
 
           debug_cat(paste0("  geom_tile added successfully\n"))
+
+          # v182: Row mask overlay — gray/blank/dot the rows whose mask-column
+          # value matches, over THIS heatmap's cells. Constant fill (not mapped)
+          # so it never touches the heatmap's fill scale.
+          if (isTRUE(heat_param[['mask_enable']])) {
+            mask_vals <- as.character(heat_param[['mask_values']])
+            mask_tipv <- heat_param[['mask_tip_values']]   # named tip_label -> value
+            mask_style <- if (!is.null(heat_param[['mask_style']])) heat_param[['mask_style']] else "gray"
+            if (!is.null(mask_tipv) && length(mask_vals) > 0) {
+              masked_tips <- names(mask_tipv)[as.character(mask_tipv) %in% mask_vals]
+              overlay_df <- tile_df[as.character(tile_df$tip_label) %in% masked_tips, c("x", "y"), drop = FALSE]
+              if (nrow(overlay_df) > 0) {
+                if (identical(mask_style, "dots")) {
+                  p <- p + ggplot2::geom_point(data = overlay_df, ggplot2::aes(x = x, y = y),
+                                               inherit.aes = FALSE, shape = 16, size = 0.45, color = "black")
+                } else {
+                  fillcol <- if (identical(mask_style, "background")) "white" else "grey70"
+                  p <- p + ggplot2::geom_tile(data = overlay_df, ggplot2::aes(x = x, y = y),
+                                              inherit.aes = FALSE, fill = fillcol,
+                                              width = tile_width, height = tile_height)
+                }
+                cat(file=stderr(), paste0("[HEATMAP-MASK] heatmap ", heat_idx, ": masked ",
+                    length(masked_tips), " row(s), style=", mask_style, "\n"))
+              }
+            }
+          }
 
           # v100: Add color scale using user-selected colors
           na_color <- if (!is.null(heat_param[['na_color']])) heat_param[['na_color']] else "grey90"
@@ -12818,6 +12878,11 @@ server <- function(input, output, session) {
           # v182: carry the per-column label mapping into the render list so custom
           # column names show immediately after reopening (not only after re-Apply)
           label_mapping = if (!is.null(cfg$label_mapping)) cfg$label_mapping else list(),
+          # v182: Row mask settings (carry into render list)
+          mask_enable = if (!is.null(cfg$mask_enable)) cfg$mask_enable else FALSE,
+          mask_column = if (!is.null(cfg$mask_column)) cfg$mask_column else "",
+          mask_values = if (!is.null(cfg$mask_values)) cfg$mask_values else list(),
+          mask_style = if (!is.null(cfg$mask_style)) cfg$mask_style else "gray",
           # S2.8: WGD normalization settings
           cnv_wgd_norm = if (!is.null(cfg$cnv_wgd_norm)) cfg$cnv_wgd_norm else FALSE,
           cnv_wgd_per_cell = if (!is.null(cfg$cnv_wgd_per_cell)) cfg$cnv_wgd_per_cell else FALSE,
@@ -13871,6 +13936,13 @@ server <- function(input, output, session) {
             if (!is.null(heatmap_entry$label_mapping) && length(heatmap_entry$label_mapping) > 0) {
               heatmap_item[[as.character(j)]]$label_mapping <- heatmap_entry$label_mapping
             }
+            # v182: Row mask settings
+            heatmap_item[[as.character(j)]]$mask_enable <- if (!is.null(heatmap_entry$mask_enable) && heatmap_entry$mask_enable) "yes" else "no"
+            heatmap_item[[as.character(j)]]$mask_column <- if (!is.null(heatmap_entry$mask_column)) heatmap_entry$mask_column else ""
+            heatmap_item[[as.character(j)]]$mask_style <- if (!is.null(heatmap_entry$mask_style)) heatmap_entry$mask_style else "gray"
+            if (!is.null(heatmap_entry$mask_values) && length(heatmap_entry$mask_values) > 0) {
+              heatmap_item[[as.character(j)]]$mask_values <- as.list(unlist(heatmap_entry$mask_values))
+            }
 
             # S2.0-RDATA: Add data source for RData heatmaps (was missing - caused RData heatmaps to fail in custom classification path!)
             # Note: cnv_matrix is NOT serialized to YAML - it's passed as a parameter to func.print.lineage.tree
@@ -14144,6 +14216,13 @@ server <- function(input, output, session) {
           # v108: Add label mapping
           if (!is.null(heatmap_entry$label_mapping) && length(heatmap_entry$label_mapping) > 0) {
             heatmap_item[[as.character(j)]]$label_mapping <- heatmap_entry$label_mapping
+          }
+          # v182: Row mask settings
+          heatmap_item[[as.character(j)]]$mask_enable <- if (!is.null(heatmap_entry$mask_enable) && heatmap_entry$mask_enable) "yes" else "no"
+          heatmap_item[[as.character(j)]]$mask_column <- if (!is.null(heatmap_entry$mask_column)) heatmap_entry$mask_column else ""
+          heatmap_item[[as.character(j)]]$mask_style <- if (!is.null(heatmap_entry$mask_style)) heatmap_entry$mask_style else "gray"
+          if (!is.null(heatmap_entry$mask_values) && length(heatmap_entry$mask_values) > 0) {
+            heatmap_item[[as.character(j)]]$mask_values <- as.list(unlist(heatmap_entry$mask_values))
           }
 
           # S1.62dev: Add data source for RData heatmaps
@@ -18255,8 +18334,12 @@ server <- function(input, output, session) {
         col <- input[[paste0("heatmap_mask_column_", i)]]
         if (!isTRUE(enable)) return(NULL)
         if (is.null(col) || col == "") return(tags$small(style = "color:#666;", "Pick a mask column above."))
-        csv <- if (!is.null(values$filtered_csv) && nrow(values$filtered_csv) > 0) values$filtered_csv else values$csv_data
-        if (is.null(csv) || !(col %in% names(csv))) return(NULL)
+        # Use ONLY the per-patient filtered CSV (matched to the tree tips) so the
+        # values shown are the ones relevant to this individual, not the whole CSV.
+        csv <- values$filtered_csv
+        if (is.null(csv) || nrow(csv) == 0)
+          return(tags$small(style = "color:#a00;", "Load data and click “Process Data & Match IDs” first."))
+        if (!(col %in% names(csv))) return(NULL)
         vals <- as.character(csv[[col]])
         vals <- sort(unique(vals[!is.na(vals) & vals != ""]))
         cfg <- isolate(values$heatmap_configs[[i]])
@@ -18994,7 +19077,12 @@ server <- function(input, output, session) {
           high = if (!is.null(cfg$high_color)) cfg$high_color else "#0000FF", # For rendering code
           midpoint = if (!is.null(cfg$midpoint)) cfg$midpoint else 2,  # Center at diploid (2)
           use_midpoint = TRUE,  # Always use midpoint for CNV
-          na_color = "grey90"
+          na_color = "grey90",
+          # v182: Row mask settings
+          mask_enable = if (!is.null(cfg$mask_enable)) cfg$mask_enable else FALSE,
+          mask_column = if (!is.null(cfg$mask_column)) cfg$mask_column else "",
+          mask_values = if (!is.null(cfg$mask_values)) cfg$mask_values else list(),
+          mask_style = if (!is.null(cfg$mask_style)) cfg$mask_style else "gray"
         )
 
         # S2.292dev-DEBUG: Log chromosome boundary settings
@@ -19216,7 +19304,12 @@ server <- function(input, output, session) {
         row_label_offset = if (!is.null(row_label_offset)) row_label_offset else 1.0,  # v111
         row_label_align = if (!is.null(row_label_align)) row_label_align else "left",  # v111
         custom_row_labels = if (!is.null(custom_row_labels)) custom_row_labels else "",
-        label_mapping = label_mapping  # v108: Per-column label mapping
+        label_mapping = label_mapping,  # v108: Per-column label mapping
+        # v182: Row mask settings
+        mask_enable = if (!is.null(cfg$mask_enable)) cfg$mask_enable else FALSE,
+        mask_column = if (!is.null(cfg$mask_column)) cfg$mask_column else "",
+        mask_values = if (!is.null(cfg$mask_values)) cfg$mask_values else list(),
+        mask_style = if (!is.null(cfg$mask_style)) cfg$mask_style else "gray"
       )
       
       # S2.11-DEBUG: Trace through discrete color handling
