@@ -12810,6 +12810,9 @@ server <- function(input, output, session) {
           row_label_offset = if (!is.null(cfg$row_label_offset)) cfg$row_label_offset else 1.0,
           row_label_align = if (!is.null(cfg$row_label_align)) cfg$row_label_align else "left",
           custom_row_labels = if (!is.null(cfg$custom_row_labels)) cfg$custom_row_labels else "",
+          # v182: carry the per-column label mapping into the render list so custom
+          # column names show immediately after reopening (not only after re-Apply)
+          label_mapping = if (!is.null(cfg$label_mapping)) cfg$label_mapping else list(),
           # S2.8: WGD normalization settings
           cnv_wgd_norm = if (!is.null(cfg$cnv_wgd_norm)) cfg$cnv_wgd_norm else FALSE,
           cnv_wgd_per_cell = if (!is.null(cfg$cnv_wgd_per_cell)) cfg$cnv_wgd_per_cell else FALSE,
@@ -22365,7 +22368,22 @@ server <- function(input, output, session) {
           row_label_offset = if (!is.null(cfg$row_label_offset)) cfg$row_label_offset else 1.0,
           row_label_align = if (!is.null(cfg$row_label_align)) cfg$row_label_align else "left",
           custom_row_labels = if (!is.null(cfg$custom_row_labels)) cfg$custom_row_labels else "",
-          label_mapping = if (!is.null(cfg$label_mapping)) cfg$label_mapping else list(),
+          # v182: Capture the LIVE per-column label mapping from the inputs at save
+          # time. Previously only cfg$label_mapping was read, but the mapping edits
+          # are never written back into heatmap_configs (they only reach
+          # values$heatmaps via Apply), so the config saved empty and nothing was
+          # restored on reopen. Rebuild it from the mapping text inputs here.
+          label_mapping = local({
+            lm <- if (!is.null(cfg$label_mapping)) cfg$label_mapping else list()
+            if (!is.null(cfg$row_label_source) && cfg$row_label_source == "mapping" &&
+                !is.null(cfg$columns) && length(cfg$columns) > 0) {
+              for (j in seq_along(cfg$columns)) {
+                v <- input[[paste0("heatmap_", i, "_label_", j)]]
+                if (!is.null(v) && nzchar(trimws(v))) lm[[cfg$columns[j]]] <- v
+              }
+            }
+            lm
+          }),
           # S1.62dev: Grid settings (were missing from export)
           show_grid = if (!is.null(cfg$show_grid) && cfg$show_grid) "yes" else "no",
           grid_color = if (!is.null(cfg$grid_color)) cfg$grid_color else "#000000",
