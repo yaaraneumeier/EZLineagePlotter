@@ -512,6 +512,26 @@ func.check.bin.val.from.conf <- function(val) {
   return(out)
 }
 
+# v183: Normalize an extra_legends structure (from YAML or elsewhere) into the
+# canonical compact form: a list of entries, each list(title, breaks, [labels]).
+# breaks is a numeric vector; labels (optional) is a character vector.
+normalize_extra_legends <- function(el) {
+  if (is.null(el) || length(el) == 0) return(list())
+  out <- lapply(el, function(e) {
+    if (is.null(e)) return(NULL)
+    br <- suppressWarnings(as.numeric(unlist(e$breaks)))
+    br <- br[!is.na(br)]
+    entry <- list(
+      title = if (!is.null(e$title)) as.character(e$title)[1] else "",
+      breaks = br
+    )
+    lb <- if (!is.null(e$labels)) as.character(unlist(e$labels)) else character(0)
+    if (length(lb) > 0) entry$labels <- lb
+    entry
+  })
+  out[!vapply(out, is.null, logical(1))]
+}
+
 # v82: Enhanced function to repair corrupted ggtree/ggplot mapping attribute
 # This fixes the error: "@mapping must be <ggplot2::mapping>, not S3<data.frame>"
 # which occurs in newer versions of ggplot2 (3.4+) when gheatmap or other operations
@@ -4273,6 +4293,8 @@ func.print.lineage.tree <- function(conf_yaml_path,
               }
               # v182: Row mask — read settings + compute per-tip mask value
               param <- func.heatmap.mask.params(param, heat_map_i_def)
+              # v183: Extra manual legends — carry into render param
+              param[['extra_legends']] <- if ('extra_legends' %in% names(heat_map_i_def)) normalize_extra_legends(heat_map_i_def[['extra_legends']]) else list()
 
               # v117/v121: Get tip guide line settings (for discrete heatmaps)
               # v121: Added comprehensive debug logging
@@ -4547,6 +4569,8 @@ func.print.lineage.tree <- function(conf_yaml_path,
               }
               # v182: Row mask — read settings + compute per-tip mask value
               param <- func.heatmap.mask.params(param, heat_map_i_def)
+              # v183: Extra manual legends — carry into render param
+              param[['extra_legends']] <- if ('extra_legends' %in% names(heat_map_i_def)) normalize_extra_legends(heat_map_i_def[['extra_legends']]) else list()
 
               # v117/v121: Get tip guide line settings (for continuous heatmaps)
               # v121: Added comprehensive debug logging
@@ -10989,6 +11013,28 @@ ui <- dashboardPage(
             # v179: Removed Highlight Legend Settings and Bootstrap Legend Settings
             # These are no longer needed since legends now use native ggplot positioning
 
+            # v183: Extra heatmap legends box - add manual legend(s) for a heatmap
+            box(
+              title = NULL,
+              status = "info",
+              solidHeader = FALSE,
+              width = 12,
+              collapsible = TRUE,
+              collapsed = TRUE,
+              tags$h4(icon("layer-group"), " Extra Heatmap Legends", style = "margin-top: 0;"),
+              tags$p(class = "text-muted", tags$small(
+                "Optional. Add one or more extra color bars for a continuous heatmap ",
+                "(same colors as the heatmap) with a Title and tick values/labels you ",
+                "set by hand. Useful when the same colors should be shown under more than ",
+                "one scale/name. Extra legends stack next to the heatmap's own legend."
+              )),
+              uiOutput("extra_legends_heatmap_select_ui"),
+              uiOutput("extra_legends_entries_ui"),
+              tags$hr(style = "margin: 10px 0;"),
+              actionButton("apply_extra_legends", "Apply Extra Legends",
+                           class = "btn-info btn-block", icon = icon("check"))
+            ),
+
             # Apply button
             box(
               title = NULL,
@@ -12751,6 +12797,8 @@ server <- function(input, output, session) {
           mask_values = if (!is.null(h$mask_values)) as.list(unlist(h$mask_values)) else list(),
           mask_style = if (!is.null(h$mask_style)) h$mask_style else "gray",
           mask_color = if (!is.null(h$mask_color)) h$mask_color else "#808080",
+          # v183: Extra manual legends
+          extra_legends = normalize_extra_legends(h$extra_legends),
           discrete_palette = if (!is.null(h$discrete_palette)) h$discrete_palette else "Set1",
           # S1.62dev: Import custom discrete colors from YAML instead of hardcoding
           custom_discrete = if (!is.null(h$custom_discrete)) func.check.bin.val.from.conf(h$custom_discrete) else FALSE,
@@ -12914,6 +12962,8 @@ server <- function(input, output, session) {
           mask_values = if (!is.null(cfg$mask_values)) cfg$mask_values else list(),
           mask_style = if (!is.null(cfg$mask_style)) cfg$mask_style else "gray",
           mask_color = if (!is.null(cfg$mask_color)) cfg$mask_color else "#808080",
+          # v183: Extra manual legends (carry into render list)
+          extra_legends = normalize_extra_legends(cfg$extra_legends),
           # S2.8: WGD normalization settings
           cnv_wgd_norm = if (!is.null(cfg$cnv_wgd_norm)) cfg$cnv_wgd_norm else FALSE,
           cnv_wgd_per_cell = if (!is.null(cfg$cnv_wgd_per_cell)) cfg$cnv_wgd_per_cell else FALSE,
@@ -13975,6 +14025,15 @@ server <- function(input, output, session) {
             if (!is.null(heatmap_entry$mask_values) && length(heatmap_entry$mask_values) > 0) {
               heatmap_item[[as.character(j)]]$mask_values <- as.list(unlist(heatmap_entry$mask_values))
             }
+            # v183: Extra manual legends
+            if (!is.null(heatmap_entry$extra_legends) && length(heatmap_entry$extra_legends) > 0) {
+              heatmap_item[[as.character(j)]]$extra_legends <- lapply(heatmap_entry$extra_legends, function(e) {
+                entry <- list(title = if (!is.null(e$title)) e$title else "",
+                              breaks = as.list(e$breaks))
+                if (!is.null(e$labels) && length(e$labels) > 0) entry$labels <- as.list(e$labels)
+                entry
+              })
+            }
 
             # S2.0-RDATA: Add data source for RData heatmaps (was missing - caused RData heatmaps to fail in custom classification path!)
             # Note: cnv_matrix is NOT serialized to YAML - it's passed as a parameter to func.print.lineage.tree
@@ -14256,6 +14315,15 @@ server <- function(input, output, session) {
           heatmap_item[[as.character(j)]]$mask_color <- if (!is.null(heatmap_entry$mask_color)) heatmap_entry$mask_color else "#808080"
           if (!is.null(heatmap_entry$mask_values) && length(heatmap_entry$mask_values) > 0) {
             heatmap_item[[as.character(j)]]$mask_values <- as.list(unlist(heatmap_entry$mask_values))
+          }
+          # v183: Extra manual legends
+          if (!is.null(heatmap_entry$extra_legends) && length(heatmap_entry$extra_legends) > 0) {
+            heatmap_item[[as.character(j)]]$extra_legends <- lapply(heatmap_entry$extra_legends, function(e) {
+              entry <- list(title = if (!is.null(e$title)) e$title else "",
+                            breaks = as.list(e$breaks))
+              if (!is.null(e$labels) && length(e$labels) > 0) entry$labels <- as.list(e$labels)
+              entry
+            })
           }
 
           # S1.62dev: Add data source for RData heatmaps
@@ -16899,7 +16967,10 @@ server <- function(input, output, session) {
       mask_column = "",
       mask_values = list(),
       mask_style = "gray",  # gray (solid) | background | dots
-      mask_color = "#808080"
+      mask_color = "#808080",
+      # v183: Extra (manual) legends for this heatmap — same colors, custom
+      # title + tick values/labels. Each = list(title, breaks, labels).
+      extra_legends = list()
     )
     
     values$heatmap_configs <- c(values$heatmap_configs, list(new_config))
@@ -19125,7 +19196,9 @@ server <- function(input, output, session) {
           mask_column = if (!is.null(cfg$mask_column)) cfg$mask_column else "",
           mask_values = if (!is.null(cfg$mask_values)) cfg$mask_values else list(),
           mask_style = if (!is.null(cfg$mask_style)) cfg$mask_style else "gray",
-          mask_color = if (!is.null(cfg$mask_color)) cfg$mask_color else "#808080"
+          mask_color = if (!is.null(cfg$mask_color)) cfg$mask_color else "#808080",
+          # v183: Extra manual legends for this heatmap
+          extra_legends = if (!is.null(cfg$extra_legends)) cfg$extra_legends else list()
         )
 
         # S2.292dev-DEBUG: Log chromosome boundary settings
@@ -19353,9 +19426,11 @@ server <- function(input, output, session) {
         mask_column = if (!is.null(cfg$mask_column)) cfg$mask_column else "",
         mask_values = if (!is.null(cfg$mask_values)) cfg$mask_values else list(),
         mask_style = if (!is.null(cfg$mask_style)) cfg$mask_style else "gray",
-        mask_color = if (!is.null(cfg$mask_color)) cfg$mask_color else "#808080"
+        mask_color = if (!is.null(cfg$mask_color)) cfg$mask_color else "#808080",
+        # v183: Extra manual legends for this heatmap
+        extra_legends = if (!is.null(cfg$extra_legends)) cfg$extra_legends else list()
       )
-      
+
       # S2.11-DEBUG: Trace through discrete color handling
       cat(file=stderr(), paste0("[S2.11-DEBUG] Heatmap ", i, " actual_type='", actual_type, "'\n"))
 
@@ -19597,6 +19672,132 @@ server <- function(input, output, session) {
     generate_plot()
 
     showNotification("Legend settings applied", type = "message")
+  })
+
+  # ============================================
+  # v183: EXTRA HEATMAP LEGENDS
+  # Add manual color bar(s) for a heatmap with a custom title + tick
+  # values/labels (same colors as the heatmap). Stored per-heatmap in
+  # values$heatmap_configs[[i]]$extra_legends as a compact list of entries:
+  #   list(title = "...", breaks = c(...), labels = c(...) | NULL)
+  # ============================================
+  MAX_EXTRA_LEGENDS <- 4
+
+  # Parse a comma-separated string of numbers into a numeric vector (drop blanks/NAs)
+  parse_extra_breaks <- function(txt) {
+    if (is.null(txt) || !nzchar(trimws(txt))) return(numeric(0))
+    parts <- trimws(strsplit(txt, ",", fixed = TRUE)[[1]])
+    parts <- parts[nzchar(parts)]
+    nums <- suppressWarnings(as.numeric(parts))
+    nums[!is.na(nums)]
+  }
+  # Parse a comma-separated string of labels into a character vector (keep order)
+  parse_extra_labels <- function(txt) {
+    if (is.null(txt) || !nzchar(trimws(txt))) return(character(0))
+    trimws(strsplit(txt, ",", fixed = TRUE)[[1]])
+  }
+
+  # Dropdown to pick which heatmap gets the extra legend(s)
+  output$extra_legends_heatmap_select_ui <- renderUI({
+    cfgs <- values$heatmap_configs
+    if (is.null(cfgs) || length(cfgs) == 0) {
+      return(tags$p(class = "text-muted", tags$small(
+        "No heatmaps defined yet. Add a heatmap in the Heatmap tab first."
+      )))
+    }
+    choices <- stats::setNames(
+      as.character(seq_along(cfgs)),
+      vapply(seq_along(cfgs), function(i) {
+        ttl <- cfgs[[i]]$title
+        if (is.null(ttl) || !nzchar(ttl)) ttl <- paste0("Heatmap ", i)
+        paste0(i, ": ", ttl)
+      }, character(1))
+    )
+    selectInput("extra_legends_heatmap", "Heatmap", choices = choices,
+                selected = if (!is.null(input$extra_legends_heatmap) &&
+                               input$extra_legends_heatmap %in% choices)
+                             input$extra_legends_heatmap else choices[[1]])
+  })
+
+  # Entry blocks for the selected heatmap (prefilled from its stored extra_legends)
+  output$extra_legends_entries_ui <- renderUI({
+    sel <- input$extra_legends_heatmap
+    cfgs <- values$heatmap_configs
+    if (is.null(sel) || is.null(cfgs) || length(cfgs) == 0) return(NULL)
+    i <- suppressWarnings(as.integer(sel))
+    if (is.na(i) || i < 1 || i > length(cfgs)) return(NULL)
+    stored <- cfgs[[i]]$extra_legends
+    if (is.null(stored)) stored <- list()
+
+    blocks <- lapply(seq_len(MAX_EXTRA_LEGENDS), function(k) {
+      entry <- if (k <= length(stored)) stored[[k]] else NULL
+      enabled <- !is.null(entry)
+      ttl_val <- if (!is.null(entry$title)) entry$title else ""
+      brk_val <- if (!is.null(entry$breaks)) paste(entry$breaks, collapse = ", ") else ""
+      lab_val <- if (!is.null(entry$labels) && length(entry$labels) > 0)
+                   paste(entry$labels, collapse = ", ") else ""
+      tags$div(
+        style = "border: 1px solid #ddd; border-radius: 4px; padding: 8px; margin-bottom: 8px;",
+        checkboxInput(paste0("extra_legend_enable_", k),
+                      paste0("Extra legend ", k), value = enabled),
+        conditionalPanel(
+          condition = paste0("input.extra_legend_enable_", k, " == true"),
+          textInput(paste0("extra_legend_title_", k), "Title", value = ttl_val),
+          textInput(paste0("extra_legend_breaks_", k),
+                    "Tick values (comma-separated numbers)", value = brk_val),
+          textInput(paste0("extra_legend_labels_", k),
+                    "Tick labels (optional, comma-separated)", value = lab_val),
+          tags$p(class = "text-muted", tags$small(
+            "Leave labels blank to show the tick values themselves."
+          ))
+        )
+      )
+    })
+    tagList(blocks)
+  })
+
+  # Apply: collect enabled slots into the heatmap's extra_legends and re-render
+  observeEvent(input$apply_extra_legends, {
+    sel <- input$extra_legends_heatmap
+    if (is.null(sel)) {
+      showNotification("Pick a heatmap first", type = "warning")
+      return()
+    }
+    i <- suppressWarnings(as.integer(sel))
+    if (is.na(i) || is.null(values$heatmap_configs) || i < 1 ||
+        i > length(values$heatmap_configs)) {
+      showNotification("Selected heatmap no longer exists", type = "warning")
+      return()
+    }
+
+    new_extra <- list()
+    for (k in seq_len(MAX_EXTRA_LEGENDS)) {
+      if (isTRUE(input[[paste0("extra_legend_enable_", k)]])) {
+        brks <- parse_extra_breaks(input[[paste0("extra_legend_breaks_", k)]])
+        labs <- parse_extra_labels(input[[paste0("extra_legend_labels_", k)]])
+        ttl <- input[[paste0("extra_legend_title_", k)]]
+        if (is.null(ttl)) ttl <- ""
+        # Only keep an entry that has at least a title or some ticks
+        if (nzchar(trimws(ttl)) || length(brks) > 0) {
+          entry <- list(title = ttl, breaks = brks)
+          if (length(labs) > 0) entry$labels <- labs
+          new_extra[[length(new_extra) + 1]] <- entry
+        }
+      }
+    }
+
+    values$heatmap_configs[[i]]$extra_legends <- new_extra
+    # If this heatmap is already applied to the plot, update it there too
+    if (!is.null(values$heatmaps) && i <= length(values$heatmaps)) {
+      values$heatmaps[[i]]$extra_legends <- new_extra
+    }
+    cat(file=stderr(), sprintf("[EXTRA-LEGENDS] Heatmap %d: %d extra legend(s) applied\n",
+                               i, length(new_extra)))
+
+    generate_plot()
+    showNotification(
+      sprintf("Applied %d extra legend(s) to heatmap %d", length(new_extra), i),
+      type = "message")
   })
 
   # ============================================
@@ -22608,6 +22809,15 @@ server <- function(input, output, session) {
           mask_values = if (!is.null(cfg$mask_values) && length(cfg$mask_values) > 0) as.list(unlist(cfg$mask_values)) else list(),
           mask_style = if (!is.null(cfg$mask_style)) cfg$mask_style else "gray",
           mask_color = if (!is.null(cfg$mask_color)) cfg$mask_color else "#808080",
+          # v183: Extra manual legends
+          extra_legends = if (!is.null(cfg$extra_legends) && length(cfg$extra_legends) > 0) {
+            lapply(cfg$extra_legends, function(e) {
+              entry <- list(title = if (!is.null(e$title)) e$title else "",
+                            breaks = as.list(e$breaks))
+              if (!is.null(e$labels) && length(e$labels) > 0) entry$labels <- as.list(e$labels)
+              entry
+            })
+          } else list(),
           # S1.62dev: Grid settings (were missing from export)
           show_grid = if (!is.null(cfg$show_grid) && cfg$show_grid) "yes" else "no",
           grid_color = if (!is.null(cfg$grid_color)) cfg$grid_color else "#000000",
