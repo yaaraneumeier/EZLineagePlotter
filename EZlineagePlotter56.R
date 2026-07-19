@@ -11032,6 +11032,15 @@ ui <- dashboardPage(
               tags$p(class = "text-muted", tags$small(
                 "Note: Legend item order is determined by the data order. ",
                 "Use this checkbox to reverse it."
+              )),
+              # v183: Arrange legends in a horizontal row instead of stacking
+              tags$hr(style = "margin: 10px 0;"),
+              tags$p(class = "text-muted", tags$small("Legend arrangement:")),
+              checkboxInput("legend_box_horizontal",
+                            "Arrange legends side by side (horizontal row)", value = FALSE),
+              tags$p(class = "text-muted", tags$small(
+                "Places all legends (including a heatmap's extra legends) next to ",
+                "each other in a row rather than stacked vertically."
               ))
             ),
 
@@ -11549,6 +11558,7 @@ server <- function(input, output, session) {
       title_key_spacing = 0.2,
       key_spacing = 0.2,
       reverse_order = FALSE,
+      box_horizontal = FALSE,
       box_background = "transparent",
       margin = 0.2
     ),
@@ -19695,6 +19705,8 @@ server <- function(input, output, session) {
       key_label_spacing = if (!is.null(input$legend_key_label_spacing)) input$legend_key_label_spacing else 0,
       # Layout controls
       reverse_order = input$legend_reverse_order,
+      # v183: Arrange legends horizontally (side by side) instead of stacked
+      box_horizontal = isTRUE(input$legend_box_horizontal),
       # v180: Background controls
       box_background = input$legend_box_background,
       margin = input$legend_margin
@@ -19838,6 +19850,10 @@ server <- function(input, output, session) {
     # If this heatmap is already applied to the plot, update it there too
     if (!is.null(values$heatmaps) && i <= length(values$heatmaps)) {
       values$heatmaps[[i]]$extra_legends <- new_extra
+    }
+    # v183: Honor the side-by-side arrangement checkbox from this same Apply
+    if (is.list(values$legend_settings)) {
+      values$legend_settings$box_horizontal <- isTRUE(input$legend_box_horizontal)
     }
     cat(file=stderr(), sprintf("[EXTRA-LEGENDS] Heatmap %d: %d extra legend(s) applied\n",
                                i, length(new_extra)))
@@ -21624,7 +21640,8 @@ server <- function(input, output, session) {
           legend.box.background = element_rect(fill = box_bg, colour = NA),  # v180: Outer box background
           legend.margin = margin(legend_margin_val, legend_margin_val, legend_margin_val, legend_margin_val, "cm"),  # v180
           # v125: For top/bottom, arrange legends horizontally but stack items vertically
-          legend.box = if (is_horizontal_position) "horizontal" else "vertical",
+          # v183: Or when the user explicitly asks for side-by-side legends
+          legend.box = if (is_horizontal_position || isTRUE(legend_settings$box_horizontal)) "horizontal" else "vertical",
           legend.direction = if (is_horizontal_position) "vertical" else "vertical"
         )
 
