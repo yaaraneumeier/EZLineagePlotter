@@ -7279,9 +7279,9 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             cat(file=stderr(), paste0("[S2.8-DETAILED] Adjusted tile_width: ", tile_width_detailed, " (original: ", tile_width, ")\n"))
 
             # Get color parameters
-            low_color <- if (!is.null(heat_param[['low']]) && !is.na(heat_param[['low']])) heat_param[['low']] else "#FF0000"
+            low_color <- if (!is.null(heat_param[['low']]) && !is.na(heat_param[['low']])) heat_param[['low']] else "#0000FF"
             mid_color <- if (!is.null(heat_param[['mid']]) && !is.na(heat_param[['mid']])) heat_param[['mid']] else "#FFFFFF"
-            high_color <- if (!is.null(heat_param[['high']]) && !is.na(heat_param[['high']])) heat_param[['high']] else "#0000FF"
+            high_color <- if (!is.null(heat_param[['high']]) && !is.na(heat_param[['high']])) heat_param[['high']] else "#FF0000"
             midpoint <- if (!is.null(heat_param[['midpoint']]) && !is.na(heat_param[['midpoint']])) as.numeric(heat_param[['midpoint']]) else 2
             na_color <- if (!is.null(heat_param[['na_color']])) heat_param[['na_color']] else "grey90"
 
@@ -17025,17 +17025,17 @@ server <- function(input, output, session) {
             cat(file=stderr(), paste0("\n[DEBUG-COLOR] Data source changed to 'rdata' for heatmap ", i, "\n"))
             values$heatmap_configs[[i]]$type <- "continuous"
             values$heatmap_configs[[i]]$auto_type <- FALSE
-            # S1.62dev: Set red-white-blue color scheme for CNV (red=loss, blue=gain)
-            values$heatmap_configs[[i]]$low_color <- "#FF0000"   # Red for deletion/loss
+            # Blue-white-red color scheme for CNV (blue=loss, red=gain)
+            values$heatmap_configs[[i]]$low_color <- "#0000FF"   # Blue for deletion/loss
             values$heatmap_configs[[i]]$mid_color <- "#FFFFFF"   # White for neutral
-            values$heatmap_configs[[i]]$high_color <- "#0000FF"  # Blue for amplification/gain
+            values$heatmap_configs[[i]]$high_color <- "#FF0000"  # Red for amplification/gain
             values$heatmap_configs[[i]]$use_midpoint <- TRUE
             values$heatmap_configs[[i]]$midpoint <- 2  # Diploid baseline
-            cat(file=stderr(), paste0("[DEBUG-COLOR] Set config colors: low=#FF0000, mid=#FFFFFF, high=#0000FF\n"))
+            cat(file=stderr(), paste0("[DEBUG-COLOR] Set config colors: low=#0000FF, mid=#FFFFFF, high=#FF0000\n"))
             # S1.62dev: Update UI color pickers to reflect the new colors
-            updateColourInput(session, paste0("heatmap_low_color_", i), value = "#FF0000")
+            updateColourInput(session, paste0("heatmap_low_color_", i), value = "#0000FF")
             updateColourInput(session, paste0("heatmap_mid_color_", i), value = "#FFFFFF")
-            updateColourInput(session, paste0("heatmap_high_color_", i), value = "#0000FF")
+            updateColourInput(session, paste0("heatmap_high_color_", i), value = "#FF0000")
             updateCheckboxInput(session, paste0("heatmap_use_midpoint_", i), value = TRUE)
             updateNumericInput(session, paste0("heatmap_midpoint_", i), value = 2)
             cat(file=stderr(), "[DEBUG-COLOR] Called updateColourInput for low/mid/high colors\n")
@@ -18005,20 +18005,20 @@ server <- function(input, output, session) {
                      tags$label("Low (Deletion)"),
                      tags$div(style = "display: flex; gap: 5px; align-items: center;",
                        colourInput(paste0("heatmap_low_color_", i), NULL,
-                                   value = if (!is.null(cfg$low_color)) cfg$low_color else "#FF0000"),
+                                   value = if (!is.null(cfg$low_color)) cfg$low_color else "#0000FF"),
                        textInput(paste0("heatmap_low_color_hex_", i), NULL,
-                                 value = if (!is.null(cfg$low_color)) cfg$low_color else "#FF0000",
+                                 value = if (!is.null(cfg$low_color)) cfg$low_color else "#0000FF",
                                  width = "90px")
                      )
               ),
               column(4,
-                     # S1.62dev: Default blue for amplification/gain
+                     # Default red for amplification/gain
                      tags$label("High (Amplification)"),
                      tags$div(style = "display: flex; gap: 5px; align-items: center;",
                        colourInput(paste0("heatmap_high_color_", i), NULL,
-                                   value = if (!is.null(cfg$high_color)) cfg$high_color else "#0000FF"),
+                                   value = if (!is.null(cfg$high_color)) cfg$high_color else "#FF0000"),
                        textInput(paste0("heatmap_high_color_hex_", i), NULL,
-                                 value = if (!is.null(cfg$high_color)) cfg$high_color else "#0000FF",
+                                 value = if (!is.null(cfg$high_color)) cfg$high_color else "#FF0000",
                                  width = "90px")
                      )
               )
@@ -19094,12 +19094,12 @@ server <- function(input, output, session) {
           row_label_align = if (!is.null(input[[paste0("heatmap_row_label_align_", i)]])) input[[paste0("heatmap_row_label_align_", i)]] else "left",
           # S1.62dev: Color settings - red-white-blue for CNV (red=loss, blue=gain)
           # Note: Both 'low'/'mid'/'high' (for rendering) and 'low_color'/'mid_color'/'high_color' (for UI) are set
-          low_color = if (!is.null(cfg$low_color)) cfg$low_color else "#FF0000",   # Red for deletion/loss
+          low_color = if (!is.null(cfg$low_color)) cfg$low_color else "#0000FF",   # Blue for deletion/loss
           mid_color = if (!is.null(cfg$mid_color)) cfg$mid_color else "#FFFFFF",   # White for neutral
-          high_color = if (!is.null(cfg$high_color)) cfg$high_color else "#0000FF", # Blue for amplification/gain
-          low = if (!is.null(cfg$low_color)) cfg$low_color else "#FF0000",   # For rendering code
+          high_color = if (!is.null(cfg$high_color)) cfg$high_color else "#FF0000", # Red for amplification/gain
+          low = if (!is.null(cfg$low_color)) cfg$low_color else "#0000FF",   # For rendering code
           mid = if (!is.null(cfg$mid_color)) cfg$mid_color else "#FFFFFF",   # For rendering code
-          high = if (!is.null(cfg$high_color)) cfg$high_color else "#0000FF", # For rendering code
+          high = if (!is.null(cfg$high_color)) cfg$high_color else "#FF0000", # For rendering code
           midpoint = if (!is.null(cfg$midpoint)) cfg$midpoint else 2,  # Center at diploid (2)
           use_midpoint = TRUE,  # Always use midpoint for CNV
           na_color = "grey90",
