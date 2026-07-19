@@ -3866,6 +3866,7 @@ func.print.lineage.tree <- function(conf_yaml_path,
       param[['mask_enable']] <- if ('mask_enable' %in% names(heat_map_i_def)) func.check.bin.val.from.conf(heat_map_i_def[['mask_enable']]) else FALSE
       param[['mask_column']] <- if ('mask_column' %in% names(heat_map_i_def)) heat_map_i_def[['mask_column']] else ""
       param[['mask_style']]  <- if ('mask_style'  %in% names(heat_map_i_def)) heat_map_i_def[['mask_style']]  else "gray"
+      param[['mask_color']]  <- if ('mask_color'  %in% names(heat_map_i_def)) heat_map_i_def[['mask_color']]  else "#808080"
       param[['mask_values']] <- if ('mask_values' %in% names(heat_map_i_def)) as.character(unlist(heat_map_i_def[['mask_values']])) else character(0)
       param[['mask_tip_values']] <- tryCatch({
         mc <- param[['mask_column']]
@@ -7709,17 +7710,24 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             mask_vals <- as.character(heat_param[['mask_values']])
             mask_tipv <- heat_param[['mask_tip_values']]   # named tip_label -> value
             mask_style <- if (!is.null(heat_param[['mask_style']])) heat_param[['mask_style']] else "gray"
+            mask_color <- if (!is.null(heat_param[['mask_color']]) && nzchar(heat_param[['mask_color']])) heat_param[['mask_color']] else "#808080"
             if (!is.null(mask_tipv) && length(mask_vals) > 0) {
               masked_tips <- names(mask_tipv)[as.character(mask_tipv) %in% mask_vals]
               overlay_df <- tile_df[as.character(tile_df$tip_label) %in% masked_tips, c("x", "y"), drop = FALSE]
               if (nrow(overlay_df) > 0) {
                 mask_w <- if (isTRUE(is_rdata_detailed) && exists("tile_width_detailed")) tile_width_detailed else tile_width
                 if (identical(mask_style, "dots")) {
+                  # Sparse dots over the visible colors: keep ~25 evenly spaced
+                  # columns per row so they read as dots, not a solid line.
+                  xs <- sort(unique(overlay_df$x))
+                  step <- max(1, floor(length(xs) / 25))
+                  keep_x <- xs[seq(1, length(xs), by = step)]
+                  dots_df <- overlay_df[overlay_df$x %in% keep_x, , drop = FALSE]
                   p_with_tiles <- p_with_tiles + ggplot2::geom_point(
-                    data = overlay_df, ggplot2::aes(x = x, y = y),
-                    inherit.aes = FALSE, shape = 16, size = 0.45, color = "black")
+                    data = dots_df, ggplot2::aes(x = x, y = y),
+                    inherit.aes = FALSE, shape = 16, size = 0.7, color = mask_color)
                 } else {
-                  fillcol <- if (identical(mask_style, "background")) "white" else "grey70"
+                  fillcol <- if (identical(mask_style, "background")) "white" else mask_color
                   p_with_tiles <- p_with_tiles + ggplot2::geom_tile(
                     data = overlay_df, ggplot2::aes(x = x, y = y),
                     inherit.aes = FALSE, fill = fillcol, width = mask_w, height = tile_height)
@@ -12725,6 +12733,7 @@ server <- function(input, output, session) {
           mask_column = if (!is.null(h$mask_column)) h$mask_column else "",
           mask_values = if (!is.null(h$mask_values)) as.list(unlist(h$mask_values)) else list(),
           mask_style = if (!is.null(h$mask_style)) h$mask_style else "gray",
+          mask_color = if (!is.null(h$mask_color)) h$mask_color else "#808080",
           discrete_palette = if (!is.null(h$discrete_palette)) h$discrete_palette else "Set1",
           # S1.62dev: Import custom discrete colors from YAML instead of hardcoding
           custom_discrete = if (!is.null(h$custom_discrete)) func.check.bin.val.from.conf(h$custom_discrete) else FALSE,
@@ -12887,6 +12896,7 @@ server <- function(input, output, session) {
           mask_column = if (!is.null(cfg$mask_column)) cfg$mask_column else "",
           mask_values = if (!is.null(cfg$mask_values)) cfg$mask_values else list(),
           mask_style = if (!is.null(cfg$mask_style)) cfg$mask_style else "gray",
+          mask_color = if (!is.null(cfg$mask_color)) cfg$mask_color else "#808080",
           # S2.8: WGD normalization settings
           cnv_wgd_norm = if (!is.null(cfg$cnv_wgd_norm)) cfg$cnv_wgd_norm else FALSE,
           cnv_wgd_per_cell = if (!is.null(cfg$cnv_wgd_per_cell)) cfg$cnv_wgd_per_cell else FALSE,
@@ -13944,6 +13954,7 @@ server <- function(input, output, session) {
             heatmap_item[[as.character(j)]]$mask_enable <- if (!is.null(heatmap_entry$mask_enable) && heatmap_entry$mask_enable) "yes" else "no"
             heatmap_item[[as.character(j)]]$mask_column <- if (!is.null(heatmap_entry$mask_column)) heatmap_entry$mask_column else ""
             heatmap_item[[as.character(j)]]$mask_style <- if (!is.null(heatmap_entry$mask_style)) heatmap_entry$mask_style else "gray"
+            heatmap_item[[as.character(j)]]$mask_color <- if (!is.null(heatmap_entry$mask_color)) heatmap_entry$mask_color else "#808080"
             if (!is.null(heatmap_entry$mask_values) && length(heatmap_entry$mask_values) > 0) {
               heatmap_item[[as.character(j)]]$mask_values <- as.list(unlist(heatmap_entry$mask_values))
             }
@@ -14225,6 +14236,7 @@ server <- function(input, output, session) {
           heatmap_item[[as.character(j)]]$mask_enable <- if (!is.null(heatmap_entry$mask_enable) && heatmap_entry$mask_enable) "yes" else "no"
           heatmap_item[[as.character(j)]]$mask_column <- if (!is.null(heatmap_entry$mask_column)) heatmap_entry$mask_column else ""
           heatmap_item[[as.character(j)]]$mask_style <- if (!is.null(heatmap_entry$mask_style)) heatmap_entry$mask_style else "gray"
+          heatmap_item[[as.character(j)]]$mask_color <- if (!is.null(heatmap_entry$mask_color)) heatmap_entry$mask_color else "#808080"
           if (!is.null(heatmap_entry$mask_values) && length(heatmap_entry$mask_values) > 0) {
             heatmap_item[[as.character(j)]]$mask_values <- as.list(unlist(heatmap_entry$mask_values))
           }
@@ -16783,9 +16795,12 @@ server <- function(input, output, session) {
             ),
             column(4,
                    radioButtons(paste0("heatmap_mask_style_", i), "Style",
-                                choices = c("Gray fill" = "gray", "Background" = "background", "Dots" = "dots"),
+                                choices = c("Solid fill" = "gray", "Background" = "background", "Dots" = "dots"),
                                 selected = if (!is.null(cfg$mask_style)) cfg$mask_style else "gray",
-                                inline = TRUE)
+                                inline = TRUE),
+                   colourInput(paste0("heatmap_mask_color_", i), "Mask color (fill / dots)",
+                               value = if (!is.null(cfg$mask_color)) cfg$mask_color else "#808080",
+                               allowTransparent = FALSE)
             )
           ),
           uiOutput(paste0("heatmap_mask_values_ui_", i)),
@@ -16866,7 +16881,8 @@ server <- function(input, output, session) {
       mask_enable = FALSE,
       mask_column = "",
       mask_values = list(),
-      mask_style = "gray"   # gray | background | dots
+      mask_style = "gray",  # gray (solid) | background | dots
+      mask_color = "#808080"
     )
     
     values$heatmap_configs <- c(values$heatmap_configs, list(new_config))
@@ -17368,6 +17384,11 @@ server <- function(input, output, session) {
       observeEvent(input[[paste0("heatmap_mask_style_", i)]], {
         if (i <= length(values$heatmap_configs)) {
           values$heatmap_configs[[i]]$mask_style <- input[[paste0("heatmap_mask_style_", i)]]
+        }
+      }, ignoreInit = TRUE)
+      observeEvent(input[[paste0("heatmap_mask_color_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          values$heatmap_configs[[i]]$mask_color <- input[[paste0("heatmap_mask_color_", i)]]
         }
       }, ignoreInit = TRUE)
       observeEvent(input[[paste0("heatmap_mask_values_", i)]], {
@@ -19086,7 +19107,8 @@ server <- function(input, output, session) {
           mask_enable = if (!is.null(cfg$mask_enable)) cfg$mask_enable else FALSE,
           mask_column = if (!is.null(cfg$mask_column)) cfg$mask_column else "",
           mask_values = if (!is.null(cfg$mask_values)) cfg$mask_values else list(),
-          mask_style = if (!is.null(cfg$mask_style)) cfg$mask_style else "gray"
+          mask_style = if (!is.null(cfg$mask_style)) cfg$mask_style else "gray",
+          mask_color = if (!is.null(cfg$mask_color)) cfg$mask_color else "#808080"
         )
 
         # S2.292dev-DEBUG: Log chromosome boundary settings
@@ -19313,7 +19335,8 @@ server <- function(input, output, session) {
         mask_enable = if (!is.null(cfg$mask_enable)) cfg$mask_enable else FALSE,
         mask_column = if (!is.null(cfg$mask_column)) cfg$mask_column else "",
         mask_values = if (!is.null(cfg$mask_values)) cfg$mask_values else list(),
-        mask_style = if (!is.null(cfg$mask_style)) cfg$mask_style else "gray"
+        mask_style = if (!is.null(cfg$mask_style)) cfg$mask_style else "gray",
+        mask_color = if (!is.null(cfg$mask_color)) cfg$mask_color else "#808080"
       )
       
       # S2.11-DEBUG: Trace through discrete color handling
@@ -22567,6 +22590,7 @@ server <- function(input, output, session) {
           mask_column = if (!is.null(cfg$mask_column)) cfg$mask_column else "",
           mask_values = if (!is.null(cfg$mask_values) && length(cfg$mask_values) > 0) as.list(unlist(cfg$mask_values)) else list(),
           mask_style = if (!is.null(cfg$mask_style)) cfg$mask_style else "gray",
+          mask_color = if (!is.null(cfg$mask_color)) cfg$mask_color else "#808080",
           # S1.62dev: Grid settings (were missing from export)
           show_grid = if (!is.null(cfg$show_grid) && cfg$show_grid) "yes" else "no",
           grid_color = if (!is.null(cfg$grid_color)) cfg$grid_color else "#000000",
