@@ -7444,16 +7444,33 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
                 value = seq(value_min, value_max, length.out = 5)
               )
 
+              # v183: The tiles are colored with a MIDPOINT-centered mapping (value
+              # == midpoint -> mid_color, each side scaled to its own range). The
+              # legend must use the same mapping, otherwise the colors on the
+              # legend correspond to the wrong values. Place mid_color at the
+              # midpoint's relative position instead of a plain linear gradient.
+              mid_pos <- if (is.finite(value_max - value_min) && (value_max - value_min) != 0)
+                           (midpoint - value_min) / (value_max - value_min) else 0.5
               p_with_tiles <- p_with_tiles +
                 ggnewscale::new_scale_fill() +
                 geom_point(data = legend_df, aes(x = x, y = y, fill = value),
                            alpha = 0, shape = 22, inherit.aes = FALSE) +
-                scale_fill_gradientn(
-                  colors = detailed_palette,
-                  limits = c(value_min, value_max),
-                  name = heatmap_title,
-                  na.value = na_color
-                )
+                (if (is.finite(mid_pos) && mid_pos > 0 && mid_pos < 1) {
+                  scale_fill_gradientn(
+                    colors = c(low_color, mid_color, high_color),
+                    values = c(0, mid_pos, 1),
+                    limits = c(value_min, value_max),
+                    name = heatmap_title,
+                    na.value = na_color
+                  )
+                } else {
+                  scale_fill_gradientn(
+                    colors = detailed_palette,
+                    limits = c(value_min, value_max),
+                    name = heatmap_title,
+                    na.value = na_color
+                  )
+                })
 
               debug_cat(paste0("  S2.8 Added geom_tile with ", length(detailed_palette), " pre-computed colors\n"))
             } else {
