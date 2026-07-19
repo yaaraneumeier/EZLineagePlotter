@@ -7496,6 +7496,54 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
                   )
                 })
 
+              # v183: Extra manual legends — additional colour bars that reuse
+              # the heatmap's exact colours/range, each with a custom title and
+              # hand-set tick values/labels. They stack next to the main legend.
+              extra_legends_def <- heat_param[['extra_legends']]
+              if (!is.null(extra_legends_def) && length(extra_legends_def) > 0) {
+                for (el in extra_legends_def) {
+                  if (is.null(el)) next
+                  el_title <- if (!is.null(el$title)) as.character(el$title)[1] else ""
+                  el_breaks <- suppressWarnings(as.numeric(unlist(el$breaks)))
+                  el_breaks <- el_breaks[!is.na(el_breaks)]
+                  el_labels <- if (!is.null(el$labels)) as.character(unlist(el$labels)) else character(0)
+                  # Keep labels paired with breaks, then drop ticks outside the bar range
+                  labels_paired <- length(el_labels) == length(el_breaks) && length(el_breaks) > 0
+                  in_range <- el_breaks >= value_min & el_breaks <= value_max
+                  if (labels_paired) el_labels <- el_labels[in_range]
+                  el_breaks <- el_breaks[in_range]
+                  brk_arg <- if (length(el_breaks) > 0) el_breaks else ggplot2::waiver()
+                  lab_arg <- if (length(el_breaks) > 0 && length(el_labels) == length(el_breaks)) el_labels else ggplot2::waiver()
+                  el_legend_df <- data.frame(
+                    x = rep(min(tile_df$x), 5),
+                    y = rep(min(tile_df$y), 5),
+                    value = seq(value_min, value_max, length.out = 5)
+                  )
+                  p_with_tiles <- p_with_tiles +
+                    ggnewscale::new_scale_fill() +
+                    geom_point(data = el_legend_df, aes(x = x, y = y, fill = value),
+                               alpha = 0, shape = 22, inherit.aes = FALSE) +
+                    (if (is.finite(mid_pos) && mid_pos > 0 && mid_pos < 1) {
+                      scale_fill_gradientn(
+                        colors = c(low_color, mid_color, high_color),
+                        values = c(0, mid_pos, 1),
+                        limits = c(value_min, value_max),
+                        breaks = brk_arg, labels = lab_arg,
+                        name = el_title, na.value = na_color
+                      )
+                    } else {
+                      scale_fill_gradientn(
+                        colors = detailed_palette,
+                        limits = c(value_min, value_max),
+                        breaks = brk_arg, labels = lab_arg,
+                        name = el_title, na.value = na_color
+                      )
+                    })
+                  cat(file=stderr(), sprintf("[EXTRA-LEGENDS-RENDER] Added extra legend '%s' with %d tick(s)\n",
+                                             el_title, length(el_breaks)))
+                }
+              }
+
               debug_cat(paste0("  S2.8 Added geom_tile with ", length(detailed_palette), " pre-computed colors\n"))
             } else {
               # Fallback to basic geom_tile if no data
