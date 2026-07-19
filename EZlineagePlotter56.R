@@ -5994,6 +5994,7 @@ func.print.lineage.tree <- function(conf_yaml_path,
       ou <- ou_result$plot  # Extract the plot object
       rotated_tree_result <- ou_result$rotated_tree  # S2.292dev: Extract rotated tree for Newick export
       tip_order_result <- ou_result$tip_order  # left-to-right rendered tip order
+      cluster_tip_values_result <- ou_result$cluster_tip_values  # v183: column-mode clade map
       cache_data <- ou_result$cache_data  # Store cache data to return
 
       #print("ou is")
@@ -6108,11 +6109,13 @@ func.print.lineage.tree <- function(conf_yaml_path,
   }
 
   if (!exists("tip_order_result")) tip_order_result <- NULL
+  if (!exists("cluster_tip_values_result")) cluster_tip_values_result <- NULL
 
   return(list(
     plots = out_trees,
     rotated_tree = rotated_tree_result,  # S2.292dev: Rotated tree for Newick download
     tip_order = tip_order_result,        # left-to-right rendered tip order
+    cluster_tip_values = cluster_tip_values_result,  # v183: column-mode clade map
     cache_data = cache_data
   ))
   #close func
@@ -9816,6 +9819,8 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     plot = p,
     rotated_tree = tree_newick,  # S2.292dev: Rotated tree for Newick download
     tip_order = tip_order_ltr,   # left-to-right tip order of the rendered tree
+    # v183: column-mode clade map (tip label -> column value), for CSV download
+    cluster_tip_values = if (!is.null(cluster_overlay)) cluster_overlay$tip_values else NULL,
     cache_data = list(
       p_list_of_pairs = p_list_of_pairs,
       p_list_hash = current_p_list_hash,
@@ -9970,6 +9975,36 @@ ui <- dashboardPage(
             ),
             status = "primary", solidHeader = TRUE, width = 12,
             imageOutput("cluster_preview", height = "auto")
+          )
+        ),
+        # v183: Download tip order + tip->clade mapping (current left-to-right order)
+        fluidRow(
+          box(
+            title = "Download tip order & clade mapping",
+            status = "info", solidHeader = TRUE, width = 12, collapsible = TRUE,
+            tags$p(class = "text-muted",
+                   "Exports use the tree's current left-to-right display order, so set rotation/mirror (and Apply) first."),
+            fluidRow(
+              column(6,
+                tags$b("1) Tip names in tree order"),
+                radioButtons("cluster_tiplist_format", "Format:",
+                             choices = c("One name per line" = "lines",
+                                         "Comma-separated (single line)" = "comma",
+                                         "CSV column (header 'tip')" = "csv"),
+                             selected = "lines"),
+                downloadButton("download_tip_order", "Download tip list",
+                               class = "btn-info")
+              ),
+              column(6,
+                tags$b("2) Tip → clade mapping"),
+                tags$p(class = "text-muted", tags$small(
+                  "One row per tip in tree order: tip name, a TAB, then its clade ",
+                  "name. Tips with no clade get 'NAN'. Apply a cluster overlay first ",
+                  "so clades are defined.")),
+                downloadButton("download_tip_clades", "Download mapping (TSV)",
+                               class = "btn-info")
+              )
+            )
           )
         )
       ),
@@ -11520,6 +11555,7 @@ server <- function(input, output, session) {
     cluster_overlay = NULL,  # Clade cluster overlay config (clusters/styles/params)
     cluster_rows = list(),  # Working per-row cluster definitions for the UI
     rendered_tip_order = NULL,  # Left-to-right tip order of the last rendered tree
+    rendered_tip_values_col = NULL,  # v183: column-mode clade map (tip -> value) from last render
     current_plot = NULL,
     plot_counter = 0,  # Counter to force reactive updates
     progress_message = "",  # Current progress message
@@ -20391,6 +20427,83 @@ server <- function(input, output, session) {
     showNotification("Cluster overlay cleared", type = "warning")
   })
 
+  # v183: Ordered tip list + tip->clade mapping downloads (Clade Clusters tab).
+  # Ordered tips follow the current left-to-right display order of the tree.
+  cluster_ordered_tips <- reactive({
+    if (!is.null(values$rendered_tip_order) && length(values$rendered_tip_order) > 0) {
+      as.character(values$rendered_tip_order)
+    } else {
+      cluster_tip_choices()
+    }
+  })
+
+  # Build a tip -> clade-name mapping for the current overlay (both modes).
+  # Tips belonging to no cluster get "NAN".
+  cluster_tip_clade_map <- reactive({
+    tips <- cluster_ordered_tips()
+    if (length(tips) == 0) return(stats::setNames(character(0), character(0)))
+    co <- values$cluster_overlay
+    clade <- rep("NAN", length(tips)); names(clade) <- tips
+    if (is.null(co)) return(clade)
+    if (identical(co$mode, "column")) {
+      # Clade = the tip's column value (the "NA" group stays "NA", matching the plot)
+      tv <- values$rendered_tip_values_col
+      if (!is.null(tv)) {
+        hit <- tips %in% names(tv)
+        vv <- as.character(tv[tips[hit]])
+        vv[is.na(vv) | vv == ""] <- "NA"
+        clade[hit] <- vv
+      }
+    } else if (identical(co$mode, "manual")) {
+      cls <- co$clusters
+      if (!is.null(cls)) {
+        idx <- stats::setNames(seq_along(tips), tips)
+        for (cl in cls) {
+          s <- as.character(cl$start_tip); e <- as.character(cl$end_tip)
+          if (is.null(s) || is.null(e) || !(s %in% tips) || !(e %in% tips)) next
+          i1 <- idx[[s]]; i2 <- idx[[e]]
+          lo <- min(i1, i2); hi <- max(i1, i2)
+          lab <- if (!is.null(cl$label) && nzchar(cl$label)) as.character(cl$label) else "NAN"
+          # First cluster covering a tip wins (don't overwrite an assignment)
+          for (k in lo:hi) if (identical(clade[[k]], "NAN")) clade[k] <- lab
+        }
+      }
+    }
+    clade
+  })
+
+  output$download_tip_order <- downloadHandler(
+    filename = function() {
+      ext <- if (identical(input$cluster_tiplist_format, "csv")) "csv" else "txt"
+      paste0("tip_order_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".", ext)
+    },
+    content = function(file) {
+      tips <- cluster_ordered_tips()
+      fmt <- input$cluster_tiplist_format
+      if (identical(fmt, "comma")) {
+        writeLines(paste(tips, collapse = ", "), file)
+      } else if (identical(fmt, "csv")) {
+        writeLines(c("tip", tips), file)
+      } else {
+        writeLines(tips, file)
+      }
+      cat(file=stderr(), sprintf("[TIP-EXPORT] Wrote %d tips (format=%s)\n", length(tips), fmt))
+    }
+  )
+
+  output$download_tip_clades <- downloadHandler(
+    filename = function() {
+      paste0("tip_clades_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".tsv")
+    },
+    content = function(file) {
+      clade <- cluster_tip_clade_map()
+      tips <- names(clade)
+      lines <- paste(tips, as.character(clade), sep = "\t")
+      writeLines(lines, file)
+      cat(file=stderr(), sprintf("[TIP-EXPORT] Wrote tip->clade mapping for %d tips\n", length(tips)))
+    }
+  )
+
   validate_rotation <- function(num_groups, rotation_prefix) {
     errors <- c()
     for (i in 1:num_groups) {
@@ -21070,6 +21183,8 @@ server <- function(input, output, session) {
         if (!is.null(tree_result$tip_order)) {
           values$rendered_tip_order <- tree_result$tip_order
         }
+        # v183: Store the column-mode clade map (tip -> value) for CSV download
+        values$rendered_tip_values_col <- tree_result$cluster_tip_values
 
         # Store cache data for future use
         if (!is.null(tree_result$cache_data)) {
