@@ -7701,8 +7701,10 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
           debug_cat(paste0("  geom_tile added successfully\n"))
 
           # v182: Row mask overlay — gray/blank/dot the rows whose mask-column
-          # value matches, over THIS heatmap's cells. Constant fill (not mapped)
-          # so it never touches the heatmap's fill scale.
+          # value matches, over THIS heatmap's cells. Added to p_with_tiles (the
+          # plot the tryCatch actually returns) with constant fill (not mapped)
+          # so it never touches the heatmap's fill scale. Uses the same tile width
+          # as the tiles (detailed mode has its own width).
           if (isTRUE(heat_param[['mask_enable']])) {
             mask_vals <- as.character(heat_param[['mask_values']])
             mask_tipv <- heat_param[['mask_tip_values']]   # named tip_label -> value
@@ -7711,14 +7713,16 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
               masked_tips <- names(mask_tipv)[as.character(mask_tipv) %in% mask_vals]
               overlay_df <- tile_df[as.character(tile_df$tip_label) %in% masked_tips, c("x", "y"), drop = FALSE]
               if (nrow(overlay_df) > 0) {
+                mask_w <- if (isTRUE(is_rdata_detailed) && exists("tile_width_detailed")) tile_width_detailed else tile_width
                 if (identical(mask_style, "dots")) {
-                  p <- p + ggplot2::geom_point(data = overlay_df, ggplot2::aes(x = x, y = y),
-                                               inherit.aes = FALSE, shape = 16, size = 0.45, color = "black")
+                  p_with_tiles <- p_with_tiles + ggplot2::geom_point(
+                    data = overlay_df, ggplot2::aes(x = x, y = y),
+                    inherit.aes = FALSE, shape = 16, size = 0.45, color = "black")
                 } else {
                   fillcol <- if (identical(mask_style, "background")) "white" else "grey70"
-                  p <- p + ggplot2::geom_tile(data = overlay_df, ggplot2::aes(x = x, y = y),
-                                              inherit.aes = FALSE, fill = fillcol,
-                                              width = tile_width, height = tile_height)
+                  p_with_tiles <- p_with_tiles + ggplot2::geom_tile(
+                    data = overlay_df, ggplot2::aes(x = x, y = y),
+                    inherit.aes = FALSE, fill = fillcol, width = mask_w, height = tile_height)
                 }
                 cat(file=stderr(), paste0("[HEATMAP-MASK] heatmap ", heat_idx, ": masked ",
                     length(masked_tips), " row(s), style=", mask_style, "\n"))
