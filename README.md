@@ -2,16 +2,18 @@
 
 A Shiny application for visualizing and analyzing phylogenetic trees with rich annotation capabilities.
 
-## Version S3.14 (Stable Release)
+## Version S3.16 (Stable Release)
 
-### What's New in S3.14
-- **Clade Clusters from a CSV column**: group tips that share a column value into named clusters; a value split across the tree is drawn as several clades sharing its name, each with its own color
-- **Paper palette**: in the Classification tab, when a column's categories match the preset palette, fill the colors from it (editable per category)
-- **Up to 15 heatmaps**: raised the limit from 6 and fixed heatmaps 7+ not responding to color/title changes
-- **CNV heatmap fix**: custom row label now displays correctly on RData CNV heatmaps
-- **Faster CSV loading** via `data.table::fread`
+### What's New in S3.16
+- **Extra heatmap legends**: add one or more manual color bars for a continuous/CNV heatmap (same colors) with your own title and tick values/labels, from the Legend tab
+- **Side-by-side legends**: a Legend-tab option to arrange legends in a horizontal row (so a heatmap's own legend and its extra legend sit next to each other) instead of stacked
+- **Row mask**: gray out whole heatmap rows by a CSV column value, with solid / background / dots styles and a chosen mask color
+- **Clade Clusters downloads**: export the tip names in current left-to-right tree order (one per line, comma-separated, or CSV), and a tip→clade mapping (TSV; tips with no clade written `NAN`)
+- **Fixes**: heatmap column-name mapping now saves to the config; RData CNV heatmap legend value scale now matches the midpoint-centered colors; RData CNV default colors are now low = blue, high = red
 
 ### Earlier highlights
+- **S3.15**: Classification 'Legend Title' fix, legend Title/Keys alignment (left/center/right), key-to-label spacing, dev mode off (no hard refresh needed)
+- **S3.14**: Clade Clusters from a CSV column, Classification 'Paper palette', up to 15 heatmaps (fixed 7+ color/title), RData CNV custom row label fix, faster CSV loading (`data.table::fread`)
 - **S3.13**: Clade Clusters overlay by tip range (bracket / shaded band / separator lines / colored tip strip), Mirror Tree (single + multi mode), multifurcating-node rotation with per-branch left/right ordering, multi-tree manual rotation fix
 - **S2.0**: RData CNV heatmaps from QDNAseq/scIMPACT pipelines
 - **S1.6**: Performance optimizations and legend/highlight bug fixes
