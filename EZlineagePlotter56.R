@@ -10020,9 +10020,19 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #155724;",
-                     tags$h4(style = "color: #155724; margin: 0;", "Version S3.15 Stable"),
+                     tags$h4(style = "color: #155724; margin: 0;", "Version S3.16 Stable"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
-                            tags$strong("New in S3.15:"),
+                            tags$strong("New in S3.16:"),
+                            tags$ul(
+                              tags$li("Extra heatmap legends: add one or more manual color bars for a continuous/CNV heatmap (same colors) with your own title and tick values/labels, from the Legend tab"),
+                              tags$li("Legend tab: 'Arrange legends side by side (horizontal row)' to place a heatmap's legends next to each other instead of stacked"),
+                              tags$li("Row mask: gray out whole heatmap rows by a CSV column value, with solid / background / dots styles and a chosen mask color"),
+                              tags$li("Clade Clusters tab: download the tip names in current left-to-right tree order (one per line, comma-separated, or CSV), and a tip -> clade mapping (TSV; tips with no clade written 'NAN')"),
+                              tags$li("Fixed heatmap column-name mapping not being saved to the config"),
+                              tags$li("Fixed the value scale on RData CNV heatmap legends (now matches the midpoint-centered colors)"),
+                              tags$li("RData CNV default colors: low = blue, high = red")
+                            ),
+                            tags$strong("From S3.15:"),
                             tags$ul(
                               tags$li("Fixed the classification 'Legend Title' being ignored - it now renames the classification color legend"),
                               tags$li("Legend tab: 'Title & Keys Alignment' (left/center/right) to center the legend title over its keys"),
