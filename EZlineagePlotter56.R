@@ -512,6 +512,26 @@ func.check.bin.val.from.conf <- function(val) {
   return(out)
 }
 
+# v183: Normalize an extra_legends structure (from YAML or elsewhere) into the
+# canonical compact form: a list of entries, each list(title, breaks, [labels]).
+# breaks is a numeric vector; labels (optional) is a character vector.
+normalize_extra_legends <- function(el) {
+  if (is.null(el) || length(el) == 0) return(list())
+  out <- lapply(el, function(e) {
+    if (is.null(e)) return(NULL)
+    br <- suppressWarnings(as.numeric(unlist(e$breaks)))
+    br <- br[!is.na(br)]
+    entry <- list(
+      title = if (!is.null(e$title)) as.character(e$title)[1] else "",
+      breaks = br
+    )
+    lb <- if (!is.null(e$labels)) as.character(unlist(e$labels)) else character(0)
+    if (length(lb) > 0) entry$labels <- lb
+    entry
+  })
+  out[!vapply(out, is.null, logical(1))]
+}
+
 # v82: Enhanced function to repair corrupted ggtree/ggplot mapping attribute
 # This fixes the error: "@mapping must be <ggplot2::mapping>, not S3<data.frame>"
 # which occurs in newer versions of ggplot2 (3.4+) when gheatmap or other operations
@@ -3857,7 +3877,37 @@ func.print.lineage.tree <- function(conf_yaml_path,
       # v53: print("readfile440 is ")
       # v53: print(readfile440)
     }
-    
+
+    # v182: Row-mask helper — reads the per-heatmap mask settings from the YAML
+    # heatmap def and, when enabled, computes a per-tip value of the mask column
+    # (tip label -> CSV mask column, via title.id + tip trimming). readfile440,
+    # title.id, tree440 and the id_tip_trim_* args are captured from this scope.
+    func.heatmap.mask.params <- function(param, heat_map_i_def) {
+      param[['mask_enable']] <- if ('mask_enable' %in% names(heat_map_i_def)) func.check.bin.val.from.conf(heat_map_i_def[['mask_enable']]) else FALSE
+      param[['mask_column']] <- if ('mask_column' %in% names(heat_map_i_def)) heat_map_i_def[['mask_column']] else ""
+      param[['mask_style']]  <- if ('mask_style'  %in% names(heat_map_i_def)) heat_map_i_def[['mask_style']]  else "gray"
+      param[['mask_color']]  <- if ('mask_color'  %in% names(heat_map_i_def)) heat_map_i_def[['mask_color']]  else "#808080"
+      param[['mask_values']] <- if ('mask_values' %in% names(heat_map_i_def)) as.character(unlist(heat_map_i_def[['mask_values']])) else character(0)
+      param[['mask_tip_values']] <- tryCatch({
+        mc <- param[['mask_column']]
+        if (isTRUE(param[['mask_enable']]) && !is.null(mc) && nzchar(mc) &&
+            exists('readfile440') && !is.null(readfile440) && mc %in% names(readfile440)) {
+          idcol <- as.character(readfile440[[title.id]])
+          idnum <- suppressWarnings(as.numeric(idcol))
+          tl <- as.character(tree440$tip.label)
+          v <- vapply(tl, function(x) {
+            key <- if (isTRUE(id_tip_trim_flag)) substr(x, id_tip_trim_start, id_tip_trim_end) else x
+            row <- which(idcol == as.character(key))
+            if (length(row) == 0) { kn <- suppressWarnings(as.numeric(key)); if (!is.na(kn)) row <- which(idnum == kn) }
+            if (length(row) > 0) as.character(readfile440[[mc]][row[1]]) else NA_character_
+          }, character(1))
+          names(v) <- tl
+          v
+        } else NULL
+      }, error = function(e) { cat(file=stderr(), paste0("[HEATMAP-MASK] tip-value error: ", e$message, "\n")); NULL })
+      param
+    }
+
     
     
     
@@ -4241,6 +4291,10 @@ func.print.lineage.tree <- function(conf_yaml_path,
               } else {
                 param[['label_mapping']] <- list()
               }
+              # v182: Row mask — read settings + compute per-tip mask value
+              param <- func.heatmap.mask.params(param, heat_map_i_def)
+              # v183: Extra manual legends — carry into render param
+              param[['extra_legends']] <- if ('extra_legends' %in% names(heat_map_i_def)) normalize_extra_legends(heat_map_i_def[['extra_legends']]) else list()
 
               # v117/v121: Get tip guide line settings (for discrete heatmaps)
               # v121: Added comprehensive debug logging
@@ -4513,6 +4567,10 @@ func.print.lineage.tree <- function(conf_yaml_path,
               } else {
                 param[['label_mapping']] <- list()
               }
+              # v182: Row mask — read settings + compute per-tip mask value
+              param <- func.heatmap.mask.params(param, heat_map_i_def)
+              # v183: Extra manual legends — carry into render param
+              param[['extra_legends']] <- if ('extra_legends' %in% names(heat_map_i_def)) normalize_extra_legends(heat_map_i_def[['extra_legends']]) else list()
 
               # v117/v121: Get tip guide line settings (for continuous heatmaps)
               # v121: Added comprehensive debug logging
@@ -5936,6 +5994,7 @@ func.print.lineage.tree <- function(conf_yaml_path,
       ou <- ou_result$plot  # Extract the plot object
       rotated_tree_result <- ou_result$rotated_tree  # S2.292dev: Extract rotated tree for Newick export
       tip_order_result <- ou_result$tip_order  # left-to-right rendered tip order
+      cluster_tip_values_result <- ou_result$cluster_tip_values  # v183: column-mode clade map
       cache_data <- ou_result$cache_data  # Store cache data to return
 
       #print("ou is")
@@ -6050,11 +6109,13 @@ func.print.lineage.tree <- function(conf_yaml_path,
   }
 
   if (!exists("tip_order_result")) tip_order_result <- NULL
+  if (!exists("cluster_tip_values_result")) cluster_tip_values_result <- NULL
 
   return(list(
     plots = out_trees,
     rotated_tree = rotated_tree_result,  # S2.292dev: Rotated tree for Newick download
     tip_order = tip_order_result,        # left-to-right rendered tip order
+    cluster_tip_values = cluster_tip_values_result,  # v183: column-mode clade map
     cache_data = cache_data
   ))
   #close func
@@ -7141,6 +7202,7 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
               y = y_pos,
               value = if (is_discrete) tile_value else tile_value,
               column = col_name,
+              tip_label = tip_label,   # v182: for row masking
               stringsAsFactors = FALSE
             )
           }
@@ -7244,9 +7306,9 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
             cat(file=stderr(), paste0("[S2.8-DETAILED] Adjusted tile_width: ", tile_width_detailed, " (original: ", tile_width, ")\n"))
 
             # Get color parameters
-            low_color <- if (!is.null(heat_param[['low']]) && !is.na(heat_param[['low']])) heat_param[['low']] else "#FF0000"
+            low_color <- if (!is.null(heat_param[['low']]) && !is.na(heat_param[['low']])) heat_param[['low']] else "#0000FF"
             mid_color <- if (!is.null(heat_param[['mid']]) && !is.na(heat_param[['mid']])) heat_param[['mid']] else "#FFFFFF"
-            high_color <- if (!is.null(heat_param[['high']]) && !is.na(heat_param[['high']])) heat_param[['high']] else "#0000FF"
+            high_color <- if (!is.null(heat_param[['high']]) && !is.na(heat_param[['high']])) heat_param[['high']] else "#FF0000"
             midpoint <- if (!is.null(heat_param[['midpoint']]) && !is.na(heat_param[['midpoint']])) as.numeric(heat_param[['midpoint']]) else 2
             na_color <- if (!is.null(heat_param[['na_color']])) heat_param[['na_color']] else "grey90"
 
@@ -7409,16 +7471,81 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
                 value = seq(value_min, value_max, length.out = 5)
               )
 
+              # v183: The tiles are colored with a MIDPOINT-centered mapping (value
+              # == midpoint -> mid_color, each side scaled to its own range). The
+              # legend must use the same mapping, otherwise the colors on the
+              # legend correspond to the wrong values. Place mid_color at the
+              # midpoint's relative position instead of a plain linear gradient.
+              mid_pos <- if (is.finite(value_max - value_min) && (value_max - value_min) != 0)
+                           (midpoint - value_min) / (value_max - value_min) else 0.5
               p_with_tiles <- p_with_tiles +
                 ggnewscale::new_scale_fill() +
                 geom_point(data = legend_df, aes(x = x, y = y, fill = value),
                            alpha = 0, shape = 22, inherit.aes = FALSE) +
-                scale_fill_gradientn(
-                  colors = detailed_palette,
-                  limits = c(value_min, value_max),
-                  name = heatmap_title,
-                  na.value = na_color
-                )
+                (if (is.finite(mid_pos) && mid_pos > 0 && mid_pos < 1) {
+                  scale_fill_gradientn(
+                    colors = c(low_color, mid_color, high_color),
+                    values = c(0, mid_pos, 1),
+                    limits = c(value_min, value_max),
+                    name = heatmap_title,
+                    na.value = na_color
+                  )
+                } else {
+                  scale_fill_gradientn(
+                    colors = detailed_palette,
+                    limits = c(value_min, value_max),
+                    name = heatmap_title,
+                    na.value = na_color
+                  )
+                })
+
+              # v183: Extra manual legends — additional colour bars that reuse
+              # the heatmap's exact colours/range, each with a custom title and
+              # hand-set tick values/labels. They stack next to the main legend.
+              extra_legends_def <- heat_param[['extra_legends']]
+              if (!is.null(extra_legends_def) && length(extra_legends_def) > 0) {
+                for (el in extra_legends_def) {
+                  if (is.null(el)) next
+                  el_title <- if (!is.null(el$title)) as.character(el$title)[1] else ""
+                  el_breaks <- suppressWarnings(as.numeric(unlist(el$breaks)))
+                  el_breaks <- el_breaks[!is.na(el_breaks)]
+                  el_labels <- if (!is.null(el$labels)) as.character(unlist(el$labels)) else character(0)
+                  # Keep labels paired with breaks, then drop ticks outside the bar range
+                  labels_paired <- length(el_labels) == length(el_breaks) && length(el_breaks) > 0
+                  in_range <- el_breaks >= value_min & el_breaks <= value_max
+                  if (labels_paired) el_labels <- el_labels[in_range]
+                  el_breaks <- el_breaks[in_range]
+                  brk_arg <- if (length(el_breaks) > 0) el_breaks else ggplot2::waiver()
+                  lab_arg <- if (length(el_breaks) > 0 && length(el_labels) == length(el_breaks)) el_labels else ggplot2::waiver()
+                  el_legend_df <- data.frame(
+                    x = rep(min(tile_df$x), 5),
+                    y = rep(min(tile_df$y), 5),
+                    value = seq(value_min, value_max, length.out = 5)
+                  )
+                  p_with_tiles <- p_with_tiles +
+                    ggnewscale::new_scale_fill() +
+                    geom_point(data = el_legend_df, aes(x = x, y = y, fill = value),
+                               alpha = 0, shape = 22, inherit.aes = FALSE) +
+                    (if (is.finite(mid_pos) && mid_pos > 0 && mid_pos < 1) {
+                      scale_fill_gradientn(
+                        colors = c(low_color, mid_color, high_color),
+                        values = c(0, mid_pos, 1),
+                        limits = c(value_min, value_max),
+                        breaks = brk_arg, labels = lab_arg,
+                        name = el_title, na.value = na_color
+                      )
+                    } else {
+                      scale_fill_gradientn(
+                        colors = detailed_palette,
+                        limits = c(value_min, value_max),
+                        breaks = brk_arg, labels = lab_arg,
+                        name = el_title, na.value = na_color
+                      )
+                    })
+                  cat(file=stderr(), sprintf("[EXTRA-LEGENDS-RENDER] Added extra legend '%s' with %d tick(s)\n",
+                                             el_title, length(el_breaks)))
+                }
+              }
 
               debug_cat(paste0("  S2.8 Added geom_tile with ", length(detailed_palette), " pre-computed colors\n"))
             } else {
@@ -7665,6 +7792,43 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
           }
 
           debug_cat(paste0("  geom_tile added successfully\n"))
+
+          # v182: Row mask overlay — gray/blank/dot the rows whose mask-column
+          # value matches, over THIS heatmap's cells. Added to p_with_tiles (the
+          # plot the tryCatch actually returns) with constant fill (not mapped)
+          # so it never touches the heatmap's fill scale. Uses the same tile width
+          # as the tiles (detailed mode has its own width).
+          if (isTRUE(heat_param[['mask_enable']])) {
+            mask_vals <- as.character(heat_param[['mask_values']])
+            mask_tipv <- heat_param[['mask_tip_values']]   # named tip_label -> value
+            mask_style <- if (!is.null(heat_param[['mask_style']])) heat_param[['mask_style']] else "gray"
+            mask_color <- if (!is.null(heat_param[['mask_color']]) && nzchar(heat_param[['mask_color']])) heat_param[['mask_color']] else "#808080"
+            if (!is.null(mask_tipv) && length(mask_vals) > 0) {
+              masked_tips <- names(mask_tipv)[as.character(mask_tipv) %in% mask_vals]
+              overlay_df <- tile_df[as.character(tile_df$tip_label) %in% masked_tips, c("x", "y"), drop = FALSE]
+              if (nrow(overlay_df) > 0) {
+                mask_w <- if (isTRUE(is_rdata_detailed) && exists("tile_width_detailed")) tile_width_detailed else tile_width
+                if (identical(mask_style, "dots")) {
+                  # Sparse dots over the visible colors: keep ~25 evenly spaced
+                  # columns per row so they read as dots, not a solid line.
+                  xs <- sort(unique(overlay_df$x))
+                  step <- max(1, floor(length(xs) / 25))
+                  keep_x <- xs[seq(1, length(xs), by = step)]
+                  dots_df <- overlay_df[overlay_df$x %in% keep_x, , drop = FALSE]
+                  p_with_tiles <- p_with_tiles + ggplot2::geom_point(
+                    data = dots_df, ggplot2::aes(x = x, y = y),
+                    inherit.aes = FALSE, shape = 16, size = 0.7, color = mask_color)
+                } else {
+                  fillcol <- if (identical(mask_style, "background")) "white" else mask_color
+                  p_with_tiles <- p_with_tiles + ggplot2::geom_tile(
+                    data = overlay_df, ggplot2::aes(x = x, y = y),
+                    inherit.aes = FALSE, fill = fillcol, width = mask_w, height = tile_height)
+                }
+                cat(file=stderr(), paste0("[HEATMAP-MASK] heatmap ", heat_idx, ": masked ",
+                    length(masked_tips), " row(s), style=", mask_style, "\n"))
+              }
+            }
+          }
 
           # v100: Add color scale using user-selected colors
           na_color <- if (!is.null(heat_param[['na_color']])) heat_param[['na_color']] else "grey90"
@@ -9655,6 +9819,8 @@ func.make.plot.tree.heat.NEW <- function(tree440, dx_rx_types1_short, list_id_by
     plot = p,
     rotated_tree = tree_newick,  # S2.292dev: Rotated tree for Newick download
     tip_order = tip_order_ltr,   # left-to-right tip order of the rendered tree
+    # v183: column-mode clade map (tip label -> column value), for CSV download
+    cluster_tip_values = if (!is.null(cluster_overlay)) cluster_overlay$tip_values else NULL,
     cache_data = list(
       p_list_of_pairs = p_list_of_pairs,
       p_list_hash = current_p_list_hash,
@@ -9810,6 +9976,36 @@ ui <- dashboardPage(
             status = "primary", solidHeader = TRUE, width = 12,
             imageOutput("cluster_preview", height = "auto")
           )
+        ),
+        # v183: Download tip order + tip->clade mapping (current left-to-right order)
+        fluidRow(
+          box(
+            title = "Download tip order & clade mapping",
+            status = "info", solidHeader = TRUE, width = 12, collapsible = TRUE,
+            tags$p(class = "text-muted",
+                   "Exports use the tree's current left-to-right display order, so set rotation/mirror (and Apply) first."),
+            fluidRow(
+              column(6,
+                tags$b("1) Tip names in tree order"),
+                radioButtons("cluster_tiplist_format", "Format:",
+                             choices = c("One name per line" = "lines",
+                                         "Comma-separated (single line)" = "comma",
+                                         "CSV column (header 'tip')" = "csv"),
+                             selected = "lines"),
+                downloadButton("download_tip_order", "Download tip list",
+                               class = "btn-info")
+              ),
+              column(6,
+                tags$b("2) Tip → clade mapping"),
+                tags$p(class = "text-muted", tags$small(
+                  "One row per tip in tree order: tip name, a TAB, then its clade ",
+                  "name. Tips with no clade get 'NAN'. Apply a cluster overlay first ",
+                  "so clades are defined.")),
+                downloadButton("download_tip_clades", "Download mapping (TSV)",
+                               class = "btn-info")
+              )
+            )
+          )
         )
       ),
 
@@ -9824,9 +10020,19 @@ ui <- dashboardPage(
             width = 12,
             collapsible = TRUE,
             tags$div(style = "background: #d4edda; padding: 15px; border-radius: 5px; border: 2px solid #155724;",
-                     tags$h4(style = "color: #155724; margin: 0;", "Version S3.15 Stable"),
+                     tags$h4(style = "color: #155724; margin: 0;", "Version S3.16 Stable"),
                      tags$p(style = "margin: 10px 0 0 0; color: #155724;",
-                            tags$strong("New in S3.15:"),
+                            tags$strong("New in S3.16:"),
+                            tags$ul(
+                              tags$li("Extra heatmap legends: add one or more manual color bars for a continuous/CNV heatmap (same colors) with your own title and tick values/labels, from the Legend tab"),
+                              tags$li("Legend tab: 'Arrange legends side by side (horizontal row)' to place a heatmap's legends next to each other instead of stacked"),
+                              tags$li("Row mask: gray out whole heatmap rows by a CSV column value, with solid / background / dots styles and a chosen mask color"),
+                              tags$li("Clade Clusters tab: download the tip names in current left-to-right tree order (one per line, comma-separated, or CSV), and a tip -> clade mapping (TSV; tips with no clade written 'NAN')"),
+                              tags$li("Fixed heatmap column-name mapping not being saved to the config"),
+                              tags$li("Fixed the value scale on RData CNV heatmap legends (now matches the midpoint-centered colors)"),
+                              tags$li("RData CNV default colors: low = blue, high = red")
+                            ),
+                            tags$strong("From S3.15:"),
                             tags$ul(
                               tags$li("Fixed the classification 'Legend Title' being ignored - it now renames the classification color legend"),
                               tags$li("Legend tab: 'Title & Keys Alignment' (left/center/right) to center the legend title over its keys"),
@@ -10871,6 +11077,15 @@ ui <- dashboardPage(
               tags$p(class = "text-muted", tags$small(
                 "Note: Legend item order is determined by the data order. ",
                 "Use this checkbox to reverse it."
+              )),
+              # v183: Arrange legends in a horizontal row instead of stacking
+              tags$hr(style = "margin: 10px 0;"),
+              tags$p(class = "text-muted", tags$small("Legend arrangement:")),
+              checkboxInput("legend_box_horizontal",
+                            "Arrange legends side by side (horizontal row)", value = FALSE),
+              tags$p(class = "text-muted", tags$small(
+                "Places all legends (including a heatmap's extra legends) next to ",
+                "each other in a row rather than stacked vertically."
               ))
             ),
 
@@ -10899,6 +11114,28 @@ ui <- dashboardPage(
 
             # v179: Removed Highlight Legend Settings and Bootstrap Legend Settings
             # These are no longer needed since legends now use native ggplot positioning
+
+            # v183: Extra heatmap legends box - add manual legend(s) for a heatmap
+            box(
+              title = NULL,
+              status = "info",
+              solidHeader = FALSE,
+              width = 12,
+              collapsible = TRUE,
+              collapsed = TRUE,
+              tags$h4(icon("layer-group"), " Extra Heatmap Legends", style = "margin-top: 0;"),
+              tags$p(class = "text-muted", tags$small(
+                "Optional. Add one or more extra color bars for a continuous heatmap ",
+                "(same colors as the heatmap) with a Title and tick values/labels you ",
+                "set by hand. Useful when the same colors should be shown under more than ",
+                "one scale/name. Extra legends stack next to the heatmap's own legend."
+              )),
+              uiOutput("extra_legends_heatmap_select_ui"),
+              uiOutput("extra_legends_entries_ui"),
+              tags$hr(style = "margin: 10px 0;"),
+              actionButton("apply_extra_legends", "Apply Extra Legends",
+                           class = "btn-info btn-block", icon = icon("check"))
+            ),
 
             # Apply button
             box(
@@ -11328,6 +11565,7 @@ server <- function(input, output, session) {
     cluster_overlay = NULL,  # Clade cluster overlay config (clusters/styles/params)
     cluster_rows = list(),  # Working per-row cluster definitions for the UI
     rendered_tip_order = NULL,  # Left-to-right tip order of the last rendered tree
+    rendered_tip_values_col = NULL,  # v183: column-mode clade map (tip -> value) from last render
     current_plot = NULL,
     plot_counter = 0,  # Counter to force reactive updates
     progress_message = "",  # Current progress message
@@ -11366,6 +11604,7 @@ server <- function(input, output, session) {
       title_key_spacing = 0.2,
       key_spacing = 0.2,
       reverse_order = FALSE,
+      box_horizontal = FALSE,
       box_background = "transparent",
       margin = 0.2
     ),
@@ -12656,6 +12895,14 @@ server <- function(input, output, session) {
           row_label_offset = if (!is.null(h$row_label_offset)) as.numeric(h$row_label_offset) else 1.0,
           row_label_align = if (!is.null(h$row_label_align)) h$row_label_align else "left",
           label_mapping = if (!is.null(h$label_mapping)) h$label_mapping else list(),
+          # v182: Row mask settings
+          mask_enable = if (!is.null(h$mask_enable)) func.check.bin.val.from.conf(h$mask_enable) else FALSE,
+          mask_column = if (!is.null(h$mask_column)) h$mask_column else "",
+          mask_values = if (!is.null(h$mask_values)) as.list(unlist(h$mask_values)) else list(),
+          mask_style = if (!is.null(h$mask_style)) h$mask_style else "gray",
+          mask_color = if (!is.null(h$mask_color)) h$mask_color else "#808080",
+          # v183: Extra manual legends
+          extra_legends = normalize_extra_legends(h$extra_legends),
           discrete_palette = if (!is.null(h$discrete_palette)) h$discrete_palette else "Set1",
           # S1.62dev: Import custom discrete colors from YAML instead of hardcoding
           custom_discrete = if (!is.null(h$custom_discrete)) func.check.bin.val.from.conf(h$custom_discrete) else FALSE,
@@ -12810,6 +13057,17 @@ server <- function(input, output, session) {
           row_label_offset = if (!is.null(cfg$row_label_offset)) cfg$row_label_offset else 1.0,
           row_label_align = if (!is.null(cfg$row_label_align)) cfg$row_label_align else "left",
           custom_row_labels = if (!is.null(cfg$custom_row_labels)) cfg$custom_row_labels else "",
+          # v182: carry the per-column label mapping into the render list so custom
+          # column names show immediately after reopening (not only after re-Apply)
+          label_mapping = if (!is.null(cfg$label_mapping)) cfg$label_mapping else list(),
+          # v182: Row mask settings (carry into render list)
+          mask_enable = if (!is.null(cfg$mask_enable)) cfg$mask_enable else FALSE,
+          mask_column = if (!is.null(cfg$mask_column)) cfg$mask_column else "",
+          mask_values = if (!is.null(cfg$mask_values)) cfg$mask_values else list(),
+          mask_style = if (!is.null(cfg$mask_style)) cfg$mask_style else "gray",
+          mask_color = if (!is.null(cfg$mask_color)) cfg$mask_color else "#808080",
+          # v183: Extra manual legends (carry into render list)
+          extra_legends = normalize_extra_legends(cfg$extra_legends),
           # S2.8: WGD normalization settings
           cnv_wgd_norm = if (!is.null(cfg$cnv_wgd_norm)) cfg$cnv_wgd_norm else FALSE,
           cnv_wgd_per_cell = if (!is.null(cfg$cnv_wgd_per_cell)) cfg$cnv_wgd_per_cell else FALSE,
@@ -13863,6 +14121,23 @@ server <- function(input, output, session) {
             if (!is.null(heatmap_entry$label_mapping) && length(heatmap_entry$label_mapping) > 0) {
               heatmap_item[[as.character(j)]]$label_mapping <- heatmap_entry$label_mapping
             }
+            # v182: Row mask settings
+            heatmap_item[[as.character(j)]]$mask_enable <- if (!is.null(heatmap_entry$mask_enable) && heatmap_entry$mask_enable) "yes" else "no"
+            heatmap_item[[as.character(j)]]$mask_column <- if (!is.null(heatmap_entry$mask_column)) heatmap_entry$mask_column else ""
+            heatmap_item[[as.character(j)]]$mask_style <- if (!is.null(heatmap_entry$mask_style)) heatmap_entry$mask_style else "gray"
+            heatmap_item[[as.character(j)]]$mask_color <- if (!is.null(heatmap_entry$mask_color)) heatmap_entry$mask_color else "#808080"
+            if (!is.null(heatmap_entry$mask_values) && length(heatmap_entry$mask_values) > 0) {
+              heatmap_item[[as.character(j)]]$mask_values <- as.list(unlist(heatmap_entry$mask_values))
+            }
+            # v183: Extra manual legends
+            if (!is.null(heatmap_entry$extra_legends) && length(heatmap_entry$extra_legends) > 0) {
+              heatmap_item[[as.character(j)]]$extra_legends <- lapply(heatmap_entry$extra_legends, function(e) {
+                entry <- list(title = if (!is.null(e$title)) e$title else "",
+                              breaks = as.list(e$breaks))
+                if (!is.null(e$labels) && length(e$labels) > 0) entry$labels <- as.list(e$labels)
+                entry
+              })
+            }
 
             # S2.0-RDATA: Add data source for RData heatmaps (was missing - caused RData heatmaps to fail in custom classification path!)
             # Note: cnv_matrix is NOT serialized to YAML - it's passed as a parameter to func.print.lineage.tree
@@ -14136,6 +14411,23 @@ server <- function(input, output, session) {
           # v108: Add label mapping
           if (!is.null(heatmap_entry$label_mapping) && length(heatmap_entry$label_mapping) > 0) {
             heatmap_item[[as.character(j)]]$label_mapping <- heatmap_entry$label_mapping
+          }
+          # v182: Row mask settings
+          heatmap_item[[as.character(j)]]$mask_enable <- if (!is.null(heatmap_entry$mask_enable) && heatmap_entry$mask_enable) "yes" else "no"
+          heatmap_item[[as.character(j)]]$mask_column <- if (!is.null(heatmap_entry$mask_column)) heatmap_entry$mask_column else ""
+          heatmap_item[[as.character(j)]]$mask_style <- if (!is.null(heatmap_entry$mask_style)) heatmap_entry$mask_style else "gray"
+          heatmap_item[[as.character(j)]]$mask_color <- if (!is.null(heatmap_entry$mask_color)) heatmap_entry$mask_color else "#808080"
+          if (!is.null(heatmap_entry$mask_values) && length(heatmap_entry$mask_values) > 0) {
+            heatmap_item[[as.character(j)]]$mask_values <- as.list(unlist(heatmap_entry$mask_values))
+          }
+          # v183: Extra manual legends
+          if (!is.null(heatmap_entry$extra_legends) && length(heatmap_entry$extra_legends) > 0) {
+            heatmap_item[[as.character(j)]]$extra_legends <- lapply(heatmap_entry$extra_legends, function(e) {
+              entry <- list(title = if (!is.null(e$title)) e$title else "",
+                            breaks = as.list(e$breaks))
+              if (!is.null(e$labels) && length(e$labels) > 0) entry$labels <- as.list(e$labels)
+              entry
+            })
           }
 
           # S1.62dev: Add data source for RData heatmaps
@@ -16676,6 +16968,35 @@ server <- function(input, output, session) {
           uiOutput(paste0("heatmap_custom_labels_ui_", i))
         ),
 
+        # v182: Row mask — gray out whole rows whose CSV column value matches
+        tags$div(
+          style = "background-color: #f0f0f5; padding: 10px; border-radius: 5px; margin-top: 10px; margin-bottom: 10px;",
+          tags$h5(icon("eye-slash"), " Gray out rows by a column"),
+          fluidRow(
+            column(4,
+                   checkboxInput(paste0("heatmap_mask_enable_", i), "Enable row masking",
+                                 value = if (!is.null(cfg$mask_enable)) cfg$mask_enable else FALSE)
+            ),
+            column(4,
+                   selectInput(paste0("heatmap_mask_column_", i), "Mask column (CSV)",
+                               choices = c("-- select --" = "", names(values$csv_data)),
+                               selected = if (!is.null(cfg$mask_column)) cfg$mask_column else "")
+            ),
+            column(4,
+                   radioButtons(paste0("heatmap_mask_style_", i), "Style",
+                                choices = c("Solid fill" = "gray", "Background" = "background", "Dots" = "dots"),
+                                selected = if (!is.null(cfg$mask_style)) cfg$mask_style else "gray",
+                                inline = TRUE),
+                   colourInput(paste0("heatmap_mask_color_", i), "Mask color (fill / dots)",
+                               value = if (!is.null(cfg$mask_color)) cfg$mask_color else "#808080",
+                               allowTransparent = FALSE)
+            )
+          ),
+          uiOutput(paste0("heatmap_mask_values_ui_", i)),
+          tags$small(style = "color:#666;",
+                     "Rows (samples) whose value in this column is one of the selected values get masked in THIS heatmap only.")
+        ),
+
         # v108: Replaced conditionalPanels with uiOutput for reactive type detection
         # This ensures the color settings show up immediately when columns are selected
         uiOutput(paste0("heatmap_type_settings_ui_", i))
@@ -16744,7 +17065,16 @@ server <- function(input, output, session) {
       cnv_wgd_per_cell = FALSE,
       cnv_wgd_column = NULL,
       # S2.8: Display mode (basic = geom_tile, detailed = geom_raster like pheatmap)
-      cnv_display_mode = "basic"
+      cnv_display_mode = "basic",
+      # v182: Per-heatmap row mask — gray out rows whose CSV column value matches
+      mask_enable = FALSE,
+      mask_column = "",
+      mask_values = list(),
+      mask_style = "gray",  # gray (solid) | background | dots
+      mask_color = "#808080",
+      # v183: Extra (manual) legends for this heatmap — same colors, custom
+      # title + tick values/labels. Each = list(title, breaks, labels).
+      extra_legends = list()
     )
     
     values$heatmap_configs <- c(values$heatmap_configs, list(new_config))
@@ -16887,17 +17217,17 @@ server <- function(input, output, session) {
             cat(file=stderr(), paste0("\n[DEBUG-COLOR] Data source changed to 'rdata' for heatmap ", i, "\n"))
             values$heatmap_configs[[i]]$type <- "continuous"
             values$heatmap_configs[[i]]$auto_type <- FALSE
-            # S1.62dev: Set red-white-blue color scheme for CNV (red=loss, blue=gain)
-            values$heatmap_configs[[i]]$low_color <- "#FF0000"   # Red for deletion/loss
+            # Blue-white-red color scheme for CNV (blue=loss, red=gain)
+            values$heatmap_configs[[i]]$low_color <- "#0000FF"   # Blue for deletion/loss
             values$heatmap_configs[[i]]$mid_color <- "#FFFFFF"   # White for neutral
-            values$heatmap_configs[[i]]$high_color <- "#0000FF"  # Blue for amplification/gain
+            values$heatmap_configs[[i]]$high_color <- "#FF0000"  # Red for amplification/gain
             values$heatmap_configs[[i]]$use_midpoint <- TRUE
             values$heatmap_configs[[i]]$midpoint <- 2  # Diploid baseline
-            cat(file=stderr(), paste0("[DEBUG-COLOR] Set config colors: low=#FF0000, mid=#FFFFFF, high=#0000FF\n"))
+            cat(file=stderr(), paste0("[DEBUG-COLOR] Set config colors: low=#0000FF, mid=#FFFFFF, high=#FF0000\n"))
             # S1.62dev: Update UI color pickers to reflect the new colors
-            updateColourInput(session, paste0("heatmap_low_color_", i), value = "#FF0000")
+            updateColourInput(session, paste0("heatmap_low_color_", i), value = "#0000FF")
             updateColourInput(session, paste0("heatmap_mid_color_", i), value = "#FFFFFF")
-            updateColourInput(session, paste0("heatmap_high_color_", i), value = "#0000FF")
+            updateColourInput(session, paste0("heatmap_high_color_", i), value = "#FF0000")
             updateCheckboxInput(session, paste0("heatmap_use_midpoint_", i), value = TRUE)
             updateNumericInput(session, paste0("heatmap_midpoint_", i), value = 2)
             cat(file=stderr(), "[DEBUG-COLOR] Called updateColourInput for low/mid/high colors\n")
@@ -17231,6 +17561,34 @@ server <- function(input, output, session) {
           }
         }
       }, ignoreInit = TRUE)
+
+      # v182: Row mask observers (sync mask controls into the heatmap config)
+      observeEvent(input[[paste0("heatmap_mask_enable_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          values$heatmap_configs[[i]]$mask_enable <- isTRUE(input[[paste0("heatmap_mask_enable_", i)]])
+        }
+      }, ignoreInit = TRUE)
+      observeEvent(input[[paste0("heatmap_mask_column_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          values$heatmap_configs[[i]]$mask_column <- input[[paste0("heatmap_mask_column_", i)]]
+        }
+      }, ignoreInit = TRUE)
+      observeEvent(input[[paste0("heatmap_mask_style_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          values$heatmap_configs[[i]]$mask_style <- input[[paste0("heatmap_mask_style_", i)]]
+        }
+      }, ignoreInit = TRUE)
+      observeEvent(input[[paste0("heatmap_mask_color_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          values$heatmap_configs[[i]]$mask_color <- input[[paste0("heatmap_mask_color_", i)]]
+        }
+      }, ignoreInit = TRUE)
+      observeEvent(input[[paste0("heatmap_mask_values_", i)]], {
+        if (i <= length(values$heatmap_configs)) {
+          v <- input[[paste0("heatmap_mask_values_", i)]]
+          values$heatmap_configs[[i]]$mask_values <- if (is.null(v)) list() else as.list(v)
+        }
+      }, ignoreInit = TRUE, ignoreNULL = FALSE)
 
       # v107: Row labels settings (with guards to prevent reactive loop)
       # Changed ignoreInit to TRUE since values are now initialized in new_config
@@ -17839,20 +18197,20 @@ server <- function(input, output, session) {
                      tags$label("Low (Deletion)"),
                      tags$div(style = "display: flex; gap: 5px; align-items: center;",
                        colourInput(paste0("heatmap_low_color_", i), NULL,
-                                   value = if (!is.null(cfg$low_color)) cfg$low_color else "#FF0000"),
+                                   value = if (!is.null(cfg$low_color)) cfg$low_color else "#0000FF"),
                        textInput(paste0("heatmap_low_color_hex_", i), NULL,
-                                 value = if (!is.null(cfg$low_color)) cfg$low_color else "#FF0000",
+                                 value = if (!is.null(cfg$low_color)) cfg$low_color else "#0000FF",
                                  width = "90px")
                      )
               ),
               column(4,
-                     # S1.62dev: Default blue for amplification/gain
+                     # Default red for amplification/gain
                      tags$label("High (Amplification)"),
                      tags$div(style = "display: flex; gap: 5px; align-items: center;",
                        colourInput(paste0("heatmap_high_color_", i), NULL,
-                                   value = if (!is.null(cfg$high_color)) cfg$high_color else "#0000FF"),
+                                   value = if (!is.null(cfg$high_color)) cfg$high_color else "#FF0000"),
                        textInput(paste0("heatmap_high_color_hex_", i), NULL,
-                                 value = if (!is.null(cfg$high_color)) cfg$high_color else "#0000FF",
+                                 value = if (!is.null(cfg$high_color)) cfg$high_color else "#FF0000",
                                  width = "90px")
                      )
               )
@@ -18180,6 +18538,32 @@ server <- function(input, output, session) {
         }
 
         return(NULL)
+      })
+    })
+  })
+
+  # v182: Render the "mask values" multiselect for each heatmap (distinct values of
+  # the chosen mask column). Rebuilds when the column/enable changes.
+  observe({
+    lapply(1:MAX_HEATMAPS, function(i) {
+      output[[paste0("heatmap_mask_values_ui_", i)]] <- renderUI({
+        enable <- input[[paste0("heatmap_mask_enable_", i)]]
+        col <- input[[paste0("heatmap_mask_column_", i)]]
+        if (!isTRUE(enable)) return(NULL)
+        if (is.null(col) || col == "") return(tags$small(style = "color:#666;", "Pick a mask column above."))
+        # Use ONLY the per-patient filtered CSV (matched to the tree tips) so the
+        # values shown are the ones relevant to this individual, not the whole CSV.
+        csv <- values$filtered_csv
+        if (is.null(csv) || nrow(csv) == 0)
+          return(tags$small(style = "color:#a00;", "Load data and click “Process Data & Match IDs” first."))
+        if (!(col %in% names(csv))) return(NULL)
+        vals <- as.character(csv[[col]])
+        vals <- sort(unique(vals[!is.na(vals) & vals != ""]))
+        cfg <- isolate(values$heatmap_configs[[i]])
+        sel <- if (!is.null(cfg$mask_values)) unlist(cfg$mask_values) else character(0)
+        selectizeInput(paste0("heatmap_mask_values_", i), "Values that gray out the row",
+                       choices = vals, selected = intersect(sel, vals), multiple = TRUE,
+                       options = list(placeholder = "Select one or more values..."))
       })
     })
   })
@@ -18902,15 +19286,23 @@ server <- function(input, output, session) {
           row_label_align = if (!is.null(input[[paste0("heatmap_row_label_align_", i)]])) input[[paste0("heatmap_row_label_align_", i)]] else "left",
           # S1.62dev: Color settings - red-white-blue for CNV (red=loss, blue=gain)
           # Note: Both 'low'/'mid'/'high' (for rendering) and 'low_color'/'mid_color'/'high_color' (for UI) are set
-          low_color = if (!is.null(cfg$low_color)) cfg$low_color else "#FF0000",   # Red for deletion/loss
+          low_color = if (!is.null(cfg$low_color)) cfg$low_color else "#0000FF",   # Blue for deletion/loss
           mid_color = if (!is.null(cfg$mid_color)) cfg$mid_color else "#FFFFFF",   # White for neutral
-          high_color = if (!is.null(cfg$high_color)) cfg$high_color else "#0000FF", # Blue for amplification/gain
-          low = if (!is.null(cfg$low_color)) cfg$low_color else "#FF0000",   # For rendering code
+          high_color = if (!is.null(cfg$high_color)) cfg$high_color else "#FF0000", # Red for amplification/gain
+          low = if (!is.null(cfg$low_color)) cfg$low_color else "#0000FF",   # For rendering code
           mid = if (!is.null(cfg$mid_color)) cfg$mid_color else "#FFFFFF",   # For rendering code
-          high = if (!is.null(cfg$high_color)) cfg$high_color else "#0000FF", # For rendering code
+          high = if (!is.null(cfg$high_color)) cfg$high_color else "#FF0000", # For rendering code
           midpoint = if (!is.null(cfg$midpoint)) cfg$midpoint else 2,  # Center at diploid (2)
           use_midpoint = TRUE,  # Always use midpoint for CNV
-          na_color = "grey90"
+          na_color = "grey90",
+          # v182: Row mask settings
+          mask_enable = if (!is.null(cfg$mask_enable)) cfg$mask_enable else FALSE,
+          mask_column = if (!is.null(cfg$mask_column)) cfg$mask_column else "",
+          mask_values = if (!is.null(cfg$mask_values)) cfg$mask_values else list(),
+          mask_style = if (!is.null(cfg$mask_style)) cfg$mask_style else "gray",
+          mask_color = if (!is.null(cfg$mask_color)) cfg$mask_color else "#808080",
+          # v183: Extra manual legends for this heatmap
+          extra_legends = if (!is.null(cfg$extra_legends)) cfg$extra_legends else list()
         )
 
         # S2.292dev-DEBUG: Log chromosome boundary settings
@@ -19132,9 +19524,17 @@ server <- function(input, output, session) {
         row_label_offset = if (!is.null(row_label_offset)) row_label_offset else 1.0,  # v111
         row_label_align = if (!is.null(row_label_align)) row_label_align else "left",  # v111
         custom_row_labels = if (!is.null(custom_row_labels)) custom_row_labels else "",
-        label_mapping = label_mapping  # v108: Per-column label mapping
+        label_mapping = label_mapping,  # v108: Per-column label mapping
+        # v182: Row mask settings
+        mask_enable = if (!is.null(cfg$mask_enable)) cfg$mask_enable else FALSE,
+        mask_column = if (!is.null(cfg$mask_column)) cfg$mask_column else "",
+        mask_values = if (!is.null(cfg$mask_values)) cfg$mask_values else list(),
+        mask_style = if (!is.null(cfg$mask_style)) cfg$mask_style else "gray",
+        mask_color = if (!is.null(cfg$mask_color)) cfg$mask_color else "#808080",
+        # v183: Extra manual legends for this heatmap
+        extra_legends = if (!is.null(cfg$extra_legends)) cfg$extra_legends else list()
       )
-      
+
       # S2.11-DEBUG: Trace through discrete color handling
       cat(file=stderr(), paste0("[S2.11-DEBUG] Heatmap ", i, " actual_type='", actual_type, "'\n"))
 
@@ -19351,6 +19751,8 @@ server <- function(input, output, session) {
       key_label_spacing = if (!is.null(input$legend_key_label_spacing)) input$legend_key_label_spacing else 0,
       # Layout controls
       reverse_order = input$legend_reverse_order,
+      # v183: Arrange legends horizontally (side by side) instead of stacked
+      box_horizontal = isTRUE(input$legend_box_horizontal),
       # v180: Background controls
       box_background = input$legend_box_background,
       margin = input$legend_margin
@@ -19376,6 +19778,136 @@ server <- function(input, output, session) {
     generate_plot()
 
     showNotification("Legend settings applied", type = "message")
+  })
+
+  # ============================================
+  # v183: EXTRA HEATMAP LEGENDS
+  # Add manual color bar(s) for a heatmap with a custom title + tick
+  # values/labels (same colors as the heatmap). Stored per-heatmap in
+  # values$heatmap_configs[[i]]$extra_legends as a compact list of entries:
+  #   list(title = "...", breaks = c(...), labels = c(...) | NULL)
+  # ============================================
+  MAX_EXTRA_LEGENDS <- 4
+
+  # Parse a comma-separated string of numbers into a numeric vector (drop blanks/NAs)
+  parse_extra_breaks <- function(txt) {
+    if (is.null(txt) || !nzchar(trimws(txt))) return(numeric(0))
+    parts <- trimws(strsplit(txt, ",", fixed = TRUE)[[1]])
+    parts <- parts[nzchar(parts)]
+    nums <- suppressWarnings(as.numeric(parts))
+    nums[!is.na(nums)]
+  }
+  # Parse a comma-separated string of labels into a character vector (keep order)
+  parse_extra_labels <- function(txt) {
+    if (is.null(txt) || !nzchar(trimws(txt))) return(character(0))
+    trimws(strsplit(txt, ",", fixed = TRUE)[[1]])
+  }
+
+  # Dropdown to pick which heatmap gets the extra legend(s)
+  output$extra_legends_heatmap_select_ui <- renderUI({
+    cfgs <- values$heatmap_configs
+    if (is.null(cfgs) || length(cfgs) == 0) {
+      return(tags$p(class = "text-muted", tags$small(
+        "No heatmaps defined yet. Add a heatmap in the Heatmap tab first."
+      )))
+    }
+    choices <- stats::setNames(
+      as.character(seq_along(cfgs)),
+      vapply(seq_along(cfgs), function(i) {
+        ttl <- cfgs[[i]]$title
+        if (is.null(ttl) || !nzchar(ttl)) ttl <- paste0("Heatmap ", i)
+        paste0(i, ": ", ttl)
+      }, character(1))
+    )
+    selectInput("extra_legends_heatmap", "Heatmap", choices = choices,
+                selected = if (!is.null(input$extra_legends_heatmap) &&
+                               input$extra_legends_heatmap %in% choices)
+                             input$extra_legends_heatmap else choices[[1]])
+  })
+
+  # Entry blocks for the selected heatmap (prefilled from its stored extra_legends)
+  output$extra_legends_entries_ui <- renderUI({
+    sel <- input$extra_legends_heatmap
+    cfgs <- values$heatmap_configs
+    if (is.null(sel) || is.null(cfgs) || length(cfgs) == 0) return(NULL)
+    i <- suppressWarnings(as.integer(sel))
+    if (is.na(i) || i < 1 || i > length(cfgs)) return(NULL)
+    stored <- cfgs[[i]]$extra_legends
+    if (is.null(stored)) stored <- list()
+
+    blocks <- lapply(seq_len(MAX_EXTRA_LEGENDS), function(k) {
+      entry <- if (k <= length(stored)) stored[[k]] else NULL
+      enabled <- !is.null(entry)
+      ttl_val <- if (!is.null(entry$title)) entry$title else ""
+      brk_val <- if (!is.null(entry$breaks)) paste(entry$breaks, collapse = ", ") else ""
+      lab_val <- if (!is.null(entry$labels) && length(entry$labels) > 0)
+                   paste(entry$labels, collapse = ", ") else ""
+      tags$div(
+        style = "border: 1px solid #ddd; border-radius: 4px; padding: 8px; margin-bottom: 8px;",
+        checkboxInput(paste0("extra_legend_enable_", k),
+                      paste0("Extra legend ", k), value = enabled),
+        conditionalPanel(
+          condition = paste0("input.extra_legend_enable_", k, " == true"),
+          textInput(paste0("extra_legend_title_", k), "Title", value = ttl_val),
+          textInput(paste0("extra_legend_breaks_", k),
+                    "Tick values (comma-separated numbers)", value = brk_val),
+          textInput(paste0("extra_legend_labels_", k),
+                    "Tick labels (optional, comma-separated)", value = lab_val),
+          tags$p(class = "text-muted", tags$small(
+            "Leave labels blank to show the tick values themselves."
+          ))
+        )
+      )
+    })
+    tagList(blocks)
+  })
+
+  # Apply: collect enabled slots into the heatmap's extra_legends and re-render
+  observeEvent(input$apply_extra_legends, {
+    sel <- input$extra_legends_heatmap
+    if (is.null(sel)) {
+      showNotification("Pick a heatmap first", type = "warning")
+      return()
+    }
+    i <- suppressWarnings(as.integer(sel))
+    if (is.na(i) || is.null(values$heatmap_configs) || i < 1 ||
+        i > length(values$heatmap_configs)) {
+      showNotification("Selected heatmap no longer exists", type = "warning")
+      return()
+    }
+
+    new_extra <- list()
+    for (k in seq_len(MAX_EXTRA_LEGENDS)) {
+      if (isTRUE(input[[paste0("extra_legend_enable_", k)]])) {
+        brks <- parse_extra_breaks(input[[paste0("extra_legend_breaks_", k)]])
+        labs <- parse_extra_labels(input[[paste0("extra_legend_labels_", k)]])
+        ttl <- input[[paste0("extra_legend_title_", k)]]
+        if (is.null(ttl)) ttl <- ""
+        # Only keep an entry that has at least a title or some ticks
+        if (nzchar(trimws(ttl)) || length(brks) > 0) {
+          entry <- list(title = ttl, breaks = brks)
+          if (length(labs) > 0) entry$labels <- labs
+          new_extra[[length(new_extra) + 1]] <- entry
+        }
+      }
+    }
+
+    values$heatmap_configs[[i]]$extra_legends <- new_extra
+    # If this heatmap is already applied to the plot, update it there too
+    if (!is.null(values$heatmaps) && i <= length(values$heatmaps)) {
+      values$heatmaps[[i]]$extra_legends <- new_extra
+    }
+    # v183: Honor the side-by-side arrangement checkbox from this same Apply
+    if (is.list(values$legend_settings)) {
+      values$legend_settings$box_horizontal <- isTRUE(input$legend_box_horizontal)
+    }
+    cat(file=stderr(), sprintf("[EXTRA-LEGENDS] Heatmap %d: %d extra legend(s) applied\n",
+                               i, length(new_extra)))
+
+    generate_plot()
+    showNotification(
+      sprintf("Applied %d extra legend(s) to heatmap %d", length(new_extra), i),
+      type = "message")
   })
 
   # ============================================
@@ -19904,6 +20436,83 @@ server <- function(input, output, session) {
     shinyjs::delay(50, { generate_plot() })
     showNotification("Cluster overlay cleared", type = "warning")
   })
+
+  # v183: Ordered tip list + tip->clade mapping downloads (Clade Clusters tab).
+  # Ordered tips follow the current left-to-right display order of the tree.
+  cluster_ordered_tips <- reactive({
+    if (!is.null(values$rendered_tip_order) && length(values$rendered_tip_order) > 0) {
+      as.character(values$rendered_tip_order)
+    } else {
+      cluster_tip_choices()
+    }
+  })
+
+  # Build a tip -> clade-name mapping for the current overlay (both modes).
+  # Tips belonging to no cluster get "NAN".
+  cluster_tip_clade_map <- reactive({
+    tips <- cluster_ordered_tips()
+    if (length(tips) == 0) return(stats::setNames(character(0), character(0)))
+    co <- values$cluster_overlay
+    clade <- rep("NAN", length(tips)); names(clade) <- tips
+    if (is.null(co)) return(clade)
+    if (identical(co$mode, "column")) {
+      # Clade = the tip's column value (the "NA" group stays "NA", matching the plot)
+      tv <- values$rendered_tip_values_col
+      if (!is.null(tv)) {
+        hit <- tips %in% names(tv)
+        vv <- as.character(tv[tips[hit]])
+        vv[is.na(vv) | vv == ""] <- "NA"
+        clade[hit] <- vv
+      }
+    } else if (identical(co$mode, "manual")) {
+      cls <- co$clusters
+      if (!is.null(cls)) {
+        idx <- stats::setNames(seq_along(tips), tips)
+        for (cl in cls) {
+          s <- as.character(cl$start_tip); e <- as.character(cl$end_tip)
+          if (is.null(s) || is.null(e) || !(s %in% tips) || !(e %in% tips)) next
+          i1 <- idx[[s]]; i2 <- idx[[e]]
+          lo <- min(i1, i2); hi <- max(i1, i2)
+          lab <- if (!is.null(cl$label) && nzchar(cl$label)) as.character(cl$label) else "NAN"
+          # First cluster covering a tip wins (don't overwrite an assignment)
+          for (k in lo:hi) if (identical(clade[[k]], "NAN")) clade[k] <- lab
+        }
+      }
+    }
+    clade
+  })
+
+  output$download_tip_order <- downloadHandler(
+    filename = function() {
+      ext <- if (identical(input$cluster_tiplist_format, "csv")) "csv" else "txt"
+      paste0("tip_order_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".", ext)
+    },
+    content = function(file) {
+      tips <- cluster_ordered_tips()
+      fmt <- input$cluster_tiplist_format
+      if (identical(fmt, "comma")) {
+        writeLines(paste(tips, collapse = ", "), file)
+      } else if (identical(fmt, "csv")) {
+        writeLines(c("tip", tips), file)
+      } else {
+        writeLines(tips, file)
+      }
+      cat(file=stderr(), sprintf("[TIP-EXPORT] Wrote %d tips (format=%s)\n", length(tips), fmt))
+    }
+  )
+
+  output$download_tip_clades <- downloadHandler(
+    filename = function() {
+      paste0("tip_clades_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".tsv")
+    },
+    content = function(file) {
+      clade <- cluster_tip_clade_map()
+      tips <- names(clade)
+      lines <- paste(tips, as.character(clade), sep = "\t")
+      writeLines(lines, file)
+      cat(file=stderr(), sprintf("[TIP-EXPORT] Wrote tip->clade mapping for %d tips\n", length(tips)))
+    }
+  )
 
   validate_rotation <- function(num_groups, rotation_prefix) {
     errors <- c()
@@ -20584,6 +21193,8 @@ server <- function(input, output, session) {
         if (!is.null(tree_result$tip_order)) {
           values$rendered_tip_order <- tree_result$tip_order
         }
+        # v183: Store the column-mode clade map (tip -> value) for CSV download
+        values$rendered_tip_values_col <- tree_result$cluster_tip_values
 
         # Store cache data for future use
         if (!is.null(tree_result$cache_data)) {
@@ -21154,7 +21765,8 @@ server <- function(input, output, session) {
           legend.box.background = element_rect(fill = box_bg, colour = NA),  # v180: Outer box background
           legend.margin = margin(legend_margin_val, legend_margin_val, legend_margin_val, legend_margin_val, "cm"),  # v180
           # v125: For top/bottom, arrange legends horizontally but stack items vertically
-          legend.box = if (is_horizontal_position) "horizontal" else "vertical",
+          # v183: Or when the user explicitly asks for side-by-side legends
+          legend.box = if (is_horizontal_position || isTRUE(legend_settings$box_horizontal)) "horizontal" else "vertical",
           legend.direction = if (is_horizontal_position) "vertical" else "vertical"
         )
 
@@ -22365,7 +22977,37 @@ server <- function(input, output, session) {
           row_label_offset = if (!is.null(cfg$row_label_offset)) cfg$row_label_offset else 1.0,
           row_label_align = if (!is.null(cfg$row_label_align)) cfg$row_label_align else "left",
           custom_row_labels = if (!is.null(cfg$custom_row_labels)) cfg$custom_row_labels else "",
-          label_mapping = if (!is.null(cfg$label_mapping)) cfg$label_mapping else list(),
+          # v182: Capture the LIVE per-column label mapping from the inputs at save
+          # time. Previously only cfg$label_mapping was read, but the mapping edits
+          # are never written back into heatmap_configs (they only reach
+          # values$heatmaps via Apply), so the config saved empty and nothing was
+          # restored on reopen. Rebuild it from the mapping text inputs here.
+          label_mapping = local({
+            lm <- if (!is.null(cfg$label_mapping)) cfg$label_mapping else list()
+            if (!is.null(cfg$row_label_source) && cfg$row_label_source == "mapping" &&
+                !is.null(cfg$columns) && length(cfg$columns) > 0) {
+              for (j in seq_along(cfg$columns)) {
+                v <- input[[paste0("heatmap_", i, "_label_", j)]]
+                if (!is.null(v) && nzchar(trimws(v))) lm[[cfg$columns[j]]] <- v
+              }
+            }
+            lm
+          }),
+          # v182: Row mask settings
+          mask_enable = if (!is.null(cfg$mask_enable) && cfg$mask_enable) "yes" else "no",
+          mask_column = if (!is.null(cfg$mask_column)) cfg$mask_column else "",
+          mask_values = if (!is.null(cfg$mask_values) && length(cfg$mask_values) > 0) as.list(unlist(cfg$mask_values)) else list(),
+          mask_style = if (!is.null(cfg$mask_style)) cfg$mask_style else "gray",
+          mask_color = if (!is.null(cfg$mask_color)) cfg$mask_color else "#808080",
+          # v183: Extra manual legends
+          extra_legends = if (!is.null(cfg$extra_legends) && length(cfg$extra_legends) > 0) {
+            lapply(cfg$extra_legends, function(e) {
+              entry <- list(title = if (!is.null(e$title)) e$title else "",
+                            breaks = as.list(e$breaks))
+              if (!is.null(e$labels) && length(e$labels) > 0) entry$labels <- as.list(e$labels)
+              entry
+            })
+          } else list(),
           # S1.62dev: Grid settings (were missing from export)
           show_grid = if (!is.null(cfg$show_grid) && cfg$show_grid) "yes" else "no",
           grid_color = if (!is.null(cfg$grid_color)) cfg$grid_color else "#000000",
