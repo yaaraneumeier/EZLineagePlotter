@@ -43,7 +43,10 @@ Needs the app's packages (see the top-level README), plus `xml2`.
 | chromosome boundaries for RData CNV heatmaps | `--annot` (an RData with an `Annot` data frame with a `Chr` column) |
 
 Patch file format — 1-based heatmap index → fields, using the field names the
-app's YAML import reads; merged into a temporary copy of the config:
+app's YAML import reads, plus optional whole heatmaps to insert
+(`insert_heatmaps: [{at: 1, heatmap: {...}}]`, applied after the field edits);
+merged into a temporary copy of the config. `ez_render()` also returns the
+rendered ggplot (`res$plot`) and left-to-right tip order (`res$tip_order`).
 
 ```yaml
 heatmaps:

@@ -84,14 +84,24 @@ ez_file_input <- function(path) {
 }
 
 # ---- main entry -------------------------------------------------------------
-# Merge recovered settings (see patches.yaml) into a temp copy of the config.
+# Merge recovered settings (see README "patch") into a temp copy of the config.
+#   patch$heatmaps:        1-based index (of the original list) -> fields to set
+#   patch$insert_heatmaps: list of {at: <1-based position>, heatmap: <full entry>},
+#                          applied after the field edits, in order
 ez_patch_yaml <- function(yaml_path, patch, dest) {
   y <- yaml::read_yaml(yaml_path)
+  hms <- y[["visual definitions"]]$heatmaps
   for (k in names(patch$heatmaps)) {
     i <- as.integer(k)
-    stopifnot(i <= length(y[["visual definitions"]]$heatmaps))
-    for (f in names(patch$heatmaps[[k]])) y[["visual definitions"]]$heatmaps[[i]][[f]] <- patch$heatmaps[[k]][[f]]
+    stopifnot(i <= length(hms))
+    for (f in names(patch$heatmaps[[k]])) hms[[i]][[f]] <- patch$heatmaps[[k]][[f]]
   }
+  for (ins in patch$insert_heatmaps) {
+    at <- as.integer(ins$at)
+    stopifnot(at >= 1, at <= length(hms) + 1)
+    hms <- append(hms, list(ins$heatmap), after = at - 1)
+  }
+  y[["visual definitions"]]$heatmaps <- hms
   yaml::write_yaml(y, dest)
   dest
 }
@@ -244,6 +254,7 @@ ez_render <- function(yaml, tree, csv, out_file, rdata = NULL, annot = NULL, pat
     result$out_file <<- out_file
     result$ok <<- file.exists(out_file)
     result$tip_order <<- values$rendered_tip_order
+    result$plot <<- values$current_plot
   })
   result
 }
