@@ -1,0 +1,26 @@
+# Keep the Docker build context small: only the .R app files are needed.
+.git
+.github
+*.md
+# Data / example inputs (not part of the image; users upload via the browser)
+*.RData
+*.rdata
+*.csv
+*.tsv
+*.newick
+*.nwk
+*.tree
+*.yaml
+*.yml
+*.pdf
+*.png
+*.jpg
+*.jpeg
+*.pptx
+# Unused R files (the image runs app.R -> combined -> single + _mt)
+EZlineagePlotter56_multi.R
+run_app.R
+# Launchers / docker meta
+Dockerfile
+.dockerignore
+run-ezlineageplotter.*

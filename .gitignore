@@ -1,0 +1,7 @@
+out/
+Rplots.pdf
+fonts/.fccache/
+paper.bak_*/
+__pycache__/
+data/
+PAPER_FIGURES_HANDOFF.md

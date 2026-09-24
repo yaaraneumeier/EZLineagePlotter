@@ -1,0 +1,77 @@
+# Settings that were active in the app when the reference figures were made
+# but that the app's "Download config" did not write to the saved YAMLs.
+# Merged into a temporary copy of each config before import; the configs
+# under "Trees 04-2026" / "Trees 07-2026" are not modified.
+#
+# Recovered by reading the reference PDFs (their text is outlined, so by eye
+# from 250 dpi renders):
+#   - label_mapping: the heatmap row labels drawn right of each heatmap
+#   - cnv_chr_*: chromosome boundary lines + 1..22 labels on the CNV heatmap
+#
+# Mutation row labels ("ESR1 p.S463P") are not listed here: they come from the
+# scIMPACT classifier workbook (mutation_labels.py -> mutation_labels.tsv) and are
+# added to every mutation heatmap by mutation_label_patch() in individuals.R.
+#
+# Keys: config file name -> heatmaps -> 1-based heatmap index -> fields,
+# using the same field names the app's YAML import reads.
+
+_brca795_v82: &brca795_v82
+  heatmaps:
+    1: {label_mapping: {ZCA: Cluster}}
+    2: {label_mapping: {Cell.type.1: Tumor / Non-tumor}}
+    3: {label_mapping: {Tissue.type.1: Tissue Source}}
+    4: {label_mapping: {Cell.type.2: Cell Type}}
+    5: {label_mapping: {Cell.type.3: Phenotype}}
+    7: {label_mapping: {Date: Sampling Date}}
+    8: {label_mapping: {WGD: WGD}}
+    9: &cnv_chr_large
+      cnv_chr_lines: 'yes'
+      cnv_chr_labels: 'yes'
+      cnv_chr_label_position: left   # engine coordinates; drawn right of the heatmap
+      cnv_chr_label_angle: 0
+      cnv_chr_label_size: 2.5
+
+BRCA-795_v82_v7 with CNV_config.yaml: *brca795_v82
+BRCA-795_v82_v8 with CNV_with node81 rotation_config.yaml: *brca795_v82
+BRCA-795_v82_v9 with CNV_with node81 rotation_colorAdjust_config (1).yaml: *brca795_v82
+BRCA-795_v82_v10 with CNV_with node81 rotation_colorAdjust_config.yaml: *brca795_v82
+
+MM-127_v82_v5 with CNV_config.yaml:
+  heatmaps:
+    1: {label_mapping: {Cell.type.1: Tumor / non-tumor}}
+    2: {label_mapping: {Tissue.type.1: Tissue Source}}
+    3: {label_mapping: {Tissue.type.2: LN type}}
+    4: {label_mapping: {Cell.type.2: Cell Type}}
+    5: {label_mapping: {Cell.type.3: Phenotype}}
+    7: {label_mapping: {NRAS_pQ61K_new3: NRAS p.Q61K survey}}
+    8: {label_mapping: {WGD: WGD}}
+    9: &cnv_chr_small
+      cnv_chr_lines: 'yes'
+      cnv_chr_labels: 'yes'
+      cnv_chr_label_position: left   # engine coordinates; drawn right of the heatmap
+      cnv_chr_label_angle: 0
+      cnv_chr_label_size: 1.5
+
+MM-127_v82_v6 with CNV_config.yaml:
+  heatmaps:
+    1: {label_mapping: {ZCA: Cluster}}
+    2: {label_mapping: {Cell.type.1: Tumor / Non-Tumor}}
+    3: {label_mapping: {Tissue.type.1: Tissue Source}}
+    4: {label_mapping: {Tissue.type.2: LN Type}}
+    5: {label_mapping: {Cell.type.2: Cell Type}}
+    6: {label_mapping: {Cell.type.3: Phenotype}}
+    8: {label_mapping: {NRAS_pQ61K_new3: NRAS p.Q61K Survey}}
+    9: {label_mapping: {WGD: WGD}}
+    10: *cnv_chr_small
+
+MM-127_v82_v7 with CNV_config.yaml:
+  heatmaps:
+    1: {label_mapping: {ZCA: Cluster}}
+    2: {label_mapping: {Cell.type.1: Tumor / Non-tumor}}
+    3: {label_mapping: {Tissue.type.1: Tissue Source}}
+    4: {label_mapping: {Tissue.type.2: LN Type}}
+    5: {label_mapping: {Cell.type.2: Cell Type}}
+    6: {label_mapping: {Cell.type.3: Phenotype}}
+    8: {label_mapping: {NRAS_pQ61K_new3: NRAS pQ61R Survey}}
+    9: {label_mapping: {WGD: WGD}}
+    10: *cnv_chr_large

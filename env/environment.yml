@@ -1,0 +1,50 @@
+# Conda environment for the headless renders and paper figures.
+#   conda env create -f env/environment.yml        (or mamba / micromamba)
+#   conda activate ez_headless
+#   Rscript env/install_cran_pins.R                 # ggplot2 4.0.2 & co. (not on conda-forge for R 4.3)
+#   Rscript env/check_env.R                         # preflight
+# Versions = the ones the figures were made with (env "amosbase8", linux-64).
+name: ez_headless
+channels:
+  - conda-forge
+  - bioconda
+  - nodefaults               # no Anaconda commercial channels
+dependencies:
+  - r-base=4.3.3
+  - poppler=24.07            # pdftoppm: banner crops
+  - fontconfig
+  - cairo                    # cairo_pdf
+  - python>=3.9              # compare.py, mutation_labels.py (optional)
+  - pillow
+  - openpyxl
+  - r-remotes
+  - bioconductor-ggtree=3.10.0
+  - bioconductor-treeio=1.26.0
+  - r-ape=5.8
+  - r-ggnewscale=0.5.0
+  - r-patchwork=1.3.0
+  - r-gridextra=2.3
+  - r-yaml=2.3.9
+  - r-png=0.1_8
+  - r-jpeg
+  - r-rcolorbrewer=1.1_3
+  - r-viridis
+  - r-cowplot=1.1.3
+  - r-ggforce=0.4.2
+  - r-data.table=1.15.4
+  - r-digest
+  - r-xml2
+  - r-stringr
+  - r-dplyr=1.1.4
+  - r-tidyverse=2.0.0
+  - r-rlang=1.1.4
+  - r-infotheo=1.2.0.1
+  - r-combinat=0.0_8
+  - r-later
+  - r-shiny=1.8.1.1          # the app's server code is driven headless via shiny::testServer
+  - r-shinyjs=2.1.0
+  - r-shinywidgets=0.8.7
+  - r-shinydashboard=0.7.2
+  - r-colourpicker=1.3.0
+  - r-dt=0.33
+  - r-systemfonts=1.1.0
