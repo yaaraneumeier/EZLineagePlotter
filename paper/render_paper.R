@@ -52,7 +52,7 @@ PAPER_ROWS <- list(
                       "CD19+" = "#A6CEE3", "gp100-MCSP-" = "#BDBDBD"),
     Tissue.type.2 = c("SLN" = "#6A51A3", "NSLN" = "#CBC9E2"),                     # Purples
     NRAS_pQ61K_new3 = c("M" = "#B2182B", "WT" = "#FDDBC7"),                       # RdBu reds
-    .mutation     = c("M" = "#1A1A1A", "WT" = "#D9D9D9"),                        # all mutation rows
+    .mutation     = c("M" = "#1A1A1A", "WT" = "#6BAED6"),                        # all mutation rows: M black, WT blue, not called white
     WGD           = c("1" = "#8E0152", "0" = "#F1B6DA")                           # PiYG pinks
   ),
   # rows not in the BRCA-795 template: cloned from its Tissue source row and
@@ -101,12 +101,13 @@ for (ex in PAPER_ROWS$extra) {
 own <- yaml::read_yaml(own_cfg)
 own_mut <- Filter(function(h) is_mut(unlist(h$columns)), own[["visual definitions"]]$heatmaps)
 mut_cols <- unique(unlist(lapply(own_mut, function(h) unlist(h$columns))))
-# ... that have calls for this patient (masterlist values other than #N/A / empty)
+# ... that are mutated ("M") in at least one of this patient's cells: loci that
+# are wild type (or not called) in every cell are not shown
 csv0 <- read.csv(CSV, check.names = TRUE, fileEncoding = "latin1")
 csv0 <- csv0[as.character(csv0$new_chosen_sr) %in% ape::read.tree(file.path(TREES, inp$tree))$tip.label, ]
-no_calls <- mut_cols[!vapply(mut_cols, function(cn) any(!as.character(csv0[[cn]]) %in% c("", "#N/A", "N/A", "NA", NA)), TRUE)]
-if (length(no_calls)) message("[render_paper] ", IND, ": no calls in masterlist for ", paste(no_calls, collapse = ", "))
-mut_cols <- setdiff(mut_cols, no_calls)
+no_m <- mut_cols[!vapply(mut_cols, function(cn) any(as.character(csv0[[cn]]) %in% "M"), TRUE)]
+if (length(no_m)) message("[render_paper] ", IND, ": no M call, row dropped: ", paste(no_m, collapse = ", "))
+mut_cols <- setdiff(mut_cols, no_m)
 message("[render_paper] ", IND, " mutation columns: ", paste(mut_cols, collapse = ", "))
 
 # 3. per-patient data: values present for each single-column row

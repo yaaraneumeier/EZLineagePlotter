@@ -36,7 +36,7 @@ TITLES <- c("scIMPACT Mutation Calls" = "Mutation (scIMPACT)",
 FIG <- list(
   "BRCA-795" = list(banner = list(page = 1, x = 250, y = 1150, w = 4800, h = 1100)),
   "BRCA-775" = list(banner = list(page = 1, x = 250, y = 2330, w = 4800, h = 1420)),
-  "MM-127"   = list(banner = list(page = 2, x = 100, y = 110,  w = 4520, h = 1250)),
+  "MM-127"   = list(banner = list(page = 2, x = 100, y = 60,   w = 4520, h = 1300)),   # y 110 -> 60: name was flush with the top
   "MM-412"   = list(banner = list(page = 2, x = 100, y = 1500, w = 4520, h = 1240)),
   "MM-423"   = list(banner = list(page = 2, x = 100, y = 2890, w = 4520, h = 1240))
 )
@@ -50,10 +50,14 @@ ROW_MM   <- 2.4                  # annotation row thickness (same for every pati
 FONT     <- "Nimbus Sans"        # Helvetica metrics, has a bold face (the default "sans" here has none)
 H_CNV    <- 34
 H_TITLE  <- 10; PT_TITLE <- 11; TITLE_COL <- "#C03830"   # title when there is no banner (banner red)
+H_GAP    <- 4                    # mm between banner/title and the tree (the root's bootstrap triangle reached into the banner)
+# banner: the light grey-blue of the timeline (#8594B6: therapies, secondary events) is
+# too pale in print - recoloured darker, antialiasing kept (blend over white / the band's light blue)
+BANNER_RECOLOR <- c(from = "#8594B6", to = "#4E5B82"); BANNER_BG <- c("#FFFFFF", "#E5EBFB")
 H_LEG    <- 34
 TREE_LOG_C  <- 0.05             # pseudo-log depth scale (0 = linear)
 BRANCH_W_SCALE <- 0.45           # branch width multiplier
-BOOT_SCALE <- 0.6                # bootstrap triangles (tree + legend keys) size multiplier
+BOOT_SCALE <- 0.35               # bootstrap triangles (tree + legend keys) size multiplier; small so the split stays visible
 RIGHT_MM <- 27                   # mm right of the last tip, for the row labels
 TIP_PAD  <- 0.075                # depth units below the deepest tip for its label
 SHOW_TIPS <- FALSE               # tip labels hidden in every paper figure (< 6 pt on all but the smallest trees)
@@ -376,7 +380,7 @@ titles <- vapply(guides, guide_title, "")
 # key ("not called", "no data") is otherwise invisible
 outline_keys <- function(gt) {
   i <- grep("^key-[0-9]+-[0-9]+-bg$", gt$layout$name)
-  for (j in i) gt <- gtable::gtable_add_grob(gt, rectGrob(gp = gpar(fill = NA, col = "grey55", lwd = 0.5)),
+  for (j in i) gt <- gtable::gtable_add_grob(gt, rectGrob(gp = gpar(fill = NA, col = "black", lwd = 0.6)),
                                              t = gt$layout$t[j], l = gt$layout$l[j], name = paste0("outline-", j), z = Inf)
   gt
 }
@@ -428,15 +432,33 @@ if (!file.exists(ban_png)) {
                         "-png", "-singlefile", shQuote(file.path(KLEIN, "patient history-5.pdf")),
                         shQuote(sub("\\.png$", "", ban_png))))
 }
-ban <- png::readPNG(ban_png)
+ban <- png::readPNG(ban_png)[, , 1:3]
+# recolour: a pixel that is a blend a*from + (1-a)*bg (bg = white or band blue) becomes a*to + (1-a)*bg
+recolor <- function(img, from, to, bgs) {
+  px <- matrix(img, ncol = 3); f <- grDevices::col2rgb(from)[, 1] / 255; t <- grDevices::col2rgb(to)[, 1] / 255
+  # pixels that are a background colour stay (the band's blue lies near the white -> from blend)
+  done <- Reduce(`|`, lapply(bgs, function(bg) rowSums((px - rep(grDevices::col2rgb(bg)[, 1] / 255, each = nrow(px)))^2) < 0.0004))
+  n_bg <- sum(done)
+  for (bg in bgs) {
+    b <- grDevices::col2rgb(bg)[, 1] / 255; d <- f - b
+    a <- ((px - rep(b, each = nrow(px))) %*% d) / sum(d^2)
+    fit <- rep(b, each = nrow(px)) + a %*% t(d)
+    hit <- !done & a > 0.08 & a <= 1.05 & rowSums((px - fit)^2) < 0.0006
+    px[hit, ] <- rep(b, each = sum(hit)) + pmin(a[hit], 1) %*% t(t - b)
+    done <- done | hit
+  }
+  message(sprintf("[paper] banner: %.2f%% of pixels recoloured %s -> %s", 100 * (sum(done) - n_bg) / nrow(px), from, to))
+  array(pmin(pmax(px, 0), 1), dim(img))
+}
+ban <- recolor(ban, BANNER_RECOLOR[["from"]], BANNER_RECOLOR[["to"]], BANNER_BG)
 H_BANNER <- (W_MM - 2 * OUTER_MM) * nrow(ban) / ncol(ban)     # full width, aspect kept
 p_ban <- wrap_elements(full = rasterGrob(ban, interpolate = TRUE)) + no_margin
 }
 
 # ---- compose ------------------------------------------------------------------
 if (is.null(p_cnv)) H_CNV <- 0
-parts <- Filter(Negate(is.null), list(p_ban, p_tree, p_rows, p_cnv, wrap_elements(full = legend_grob) + no_margin))
-hts <- c(H_BANNER, H_TREE, H_ROWS, if (H_CNV > 0) H_CNV, H_LEG)
+parts <- Filter(Negate(is.null), list(p_ban, plot_spacer(), p_tree, p_rows, p_cnv, wrap_elements(full = legend_grob) + no_margin))
+hts <- c(H_BANNER, H_GAP, H_TREE, H_ROWS, if (H_CNV > 0) H_CNV, H_LEG)
 fig <- wrap_plots(parts, ncol = 1) + plot_layout(heights = unit(hts, "mm"))
 # no per-part margins (keeps legend / banner offsets in the bands' coordinates), one outer margin
 # provenance stamp (masterlist, tag, date) on every tag except "final"
@@ -444,7 +466,7 @@ stamp <- if (TAG != "final") sprintf("%s | %s | %s | %s", IND, TAG, basename(CSV
 fig <- fig + plot_annotation(caption = stamp,
                              theme = theme(plot.margin = margin(OUTER_MM, OUTER_MM, OUTER_MM, OUTER_MM, "mm"),
                                            plot.caption = element_text(size = PT_STAMP, colour = STAMP_COL, family = FONT)))
-H_MM <- H_BANNER + H_TREE + H_ROWS + H_CNV + H_LEG + 2 * OUTER_MM + if (is.null(stamp)) 0 else 3
+H_MM <- H_BANNER + H_GAP + H_TREE + H_ROWS + H_CNV + H_LEG + 2 * OUTER_MM + if (is.null(stamp)) 0 else 3
 out <- file.path("out/paper", sprintf("%s_%s.png", IND, TAG))
 ggsave(out, fig, width = W_MM, height = H_MM, units = "mm", dpi = 300, bg = "white")
 if (PDF) ggsave(sub("\\.png$", ".pdf", out), fig, width = W_MM, height = H_MM, units = "mm", device = cairo_pdf)
